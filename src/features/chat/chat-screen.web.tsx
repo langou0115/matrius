@@ -5,6 +5,7 @@ import { useChat } from './chat-state';
 import { Composer } from './components/composer.web';
 import { useDrafts } from './draft-state';
 import { MessageContent } from './components/message-content.web';
+import { MessageActions } from './components/message-actions.web';
 
 const suggestions: { icon: IconName; title: string; prompt: string }[] = [
   { icon: 'bolt', title: '解释一个概念', prompt: '用通俗的方式解释一个概念，并举一个具体的例子。' },
@@ -23,10 +24,13 @@ export default function ChatScreen() {
   const conversation = conversations.find((item) => item.id === activeId);
   const draftKey = activeId ?? 'new';
   const draft = drafts[draftKey] ?? '';
-  const messagesEnd = useRef<HTMLDivElement>(null);
+  const messageScroller = useRef<HTMLElement>(null);
   const hasMessages = !!conversation?.messages.length;
 
-  useEffect(() => { messagesEnd.current?.scrollIntoView({ block: 'end' }); }, [activeId, conversation?.messages.length]);
+  useEffect(() => {
+    const scroller = messageScroller.current;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [activeId, conversation?.messages.length]);
   function changeDraft(value: string) { setDraft(draftKey, value); }
   function send() {
     const content = draft.trim();
@@ -37,19 +41,18 @@ export default function ChatScreen() {
     setDraft(conversationId, '');
   }
 
-  return <main className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
+  return <main ref={messageScroller} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
     <header className="chat-topbar">
-      {!sidebarOpen && <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏"><Icon name="sidebar" /></button>}
+      {!sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
       {conversation && <h1>{conversation.title}</h1>}
     </header>
     {hasMessages ? <>
       <div className="messages-scroll">
         <div className="messages-content">
           {conversation.messages.map((message) => message.role === 'user'
-            ? <article className="user-message" key={message.id} aria-label="你的消息"><p>{message.content}</p></article>
-            : <article className="assistant-message" key={message.id} aria-label="助手回复"><MessageContent content={message.content} /></article>)}
+            ? <article className="user-message" key={message.id} aria-label="你的消息"><div className="user-message-content"><MessageContent content={message.content} /></div><MessageActions message={message} /></article>
+            : <article className="assistant-message" key={message.id} aria-label="助手回复"><MessageContent content={message.content} /><MessageActions message={message} onFork={() => dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId: createId(), updatedAt: Date.now() })} /></article>)}
           {conversation.messages.at(-1)?.role === 'user' && <div className="connection-notice" role="status"><Icon name="info" size={18} /><div><strong>模型尚未连接</strong><p>暂时无法生成回复。连接模型后即可继续对话。</p></div></div>}
-          <div ref={messagesEnd} />
         </div>
       </div>
       <div className="bottom-composer"><Composer value={draft} onChange={changeDraft} onSend={send} /></div>

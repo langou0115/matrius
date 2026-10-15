@@ -15,6 +15,8 @@ npm run web                    # Web 开发
 npx expo start --port 8082      # 端口占用时换端口
 npx expo lint                  # 使用仓库 ESLint 配置检查
 npx tsc --noEmit               # TypeScript 类型检查
+npm run test:rendering         # Markdown、公式、代码高亮与折叠/复制回归
+npm run assets:katex           # 按需重新生成本地公式 CSS 和字体（npm ci 后自动生成）
 npx expo-doctor                # 诊断依赖与配置
 npx expo install <package>     # 安装 SDK 兼容依赖
 npx expo install --fix         # 按需修复不兼容版本
@@ -23,7 +25,8 @@ npx expo export --platform web # 导出 Web 静态产物到 dist/
 
 - `npm run android` / `ios` 启动开发目标，不是生产构建。Android 模拟器需要 Android SDK；本机 iOS 模拟器需要 macOS 与 Xcode。
 - Windows / WSL 开发时，确保真机或宿主机能访问 Metro 输出的地址；端口和网络以实际输出为准。不要沿用旧版 Flutter Web Server 命令。
-- 已提供 `eslint.config.js`、ESLint 与 Expo lint 配置，`npm ci` 后可直接执行 lint。测试运行器和测试脚本尚未配置。
+- `npm ci` 的 postinstall 从安装的 KaTeX 生成同版本 CSS、WOFF2 字体和许可证到 `public/vendor/katex/<版本>/`；Expo 从 public 提供这些资源，避免 CSS 相对字体 URL 在 Metro 中失效。禁用安装脚本或升级 KaTeX 后运行 `npm run assets:katex`。
+- 已提供 `eslint.config.js`、ESLint 与 Expo lint 配置，`npm ci` 后可直接执行 lint。消息渲染回归使用 Node 内置测试运行器、TypeScript 加载器和 LinkeDOM，不启动浏览器。
 - 模板的 `reset-project` 脚本与命令已移除，避免重置业务页面。
 - 若后续改为 Bun，提交对应锁文件后将 `npx` 换为 `bunx`，不要混用多套锁文件。
 
@@ -57,7 +60,7 @@ npx eas-cli@latest submit --platform ios
 ## 验证与代码规则
 
 - 完成任务前运行 `npx expo lint` 和 `npx tsc --noEmit`，如实报告结果和环境阻塞。
-- 已有测试覆盖相关行为时运行必要的测试；测试工具尚未配置前，不声称单元或组件测试通过。文档迁移无需新增业务测试。
+- 已有测试覆盖相关行为时运行必要的测试；消息渲染相关修改运行 `npm run test:rendering`；测试覆盖格式解析、公式/货币与代码边界、安全 URL/HTML、高亮、折叠和原文复制，以及消息赞/踩切换和分支上下文隔离。文档迁移无需新增业务测试。
 - 不自动启动或控制浏览器、不生成浏览器截图、不访问运行中的 Web 端口；仅在用户明确要求 Web 浏览器验证时执行。未实测的平台行为说明限制。
 - TypeScript 保持 strict；不滥用 `any`、关闭 lint 或压制告警来绕过问题。
 - 复用已有组件和服务，避免无关重构；不提交真实用户数据、密钥和令牌。
@@ -75,9 +78,11 @@ npx eas-cli@latest submit --platform ios
 ## 开发示例对话
 
 - 用户要求的界面调试数据位于 `dev/fixtures/chat-workspace.ts`，不放进业务组件或普通启动数据中。
-- `npm run web` 后直接打开 `/mock`（例如 `http://localhost:8081/mock`，端口以实际启动输出为准）。这是独立开发入口，不需要管理员后台或登录。
-- `/mock/chat` 预览对话与侧栏，`/mock/settings` 预览全页外观设置。
-- 示例包含 10 个会话、2 个置顶、多轮回复、长标题、代码块和长会话；可以操作搜索、菜单和外观设置。
+- `npm run web` 后直接打开 `/mock`（例如 `http://localhost:8081/mock`，端口以实际启动输出为准）。会直接进入 `/mock/chat` 聊天渲染测试，不需要管理员后台或登录。
+- Mock 仅保留聊天测试，移除设置页与设置入口；正式应用的 `/settings` 保持可用。
+- 参考 `../openstudio/tests/seed-software-test.mjs` 的批量长对话与专项样例结构，提供 100 个八轮对话和 9 个专项会话，共 109 个会话、1730 条消息。
+- 专项覆盖 Markdown 标题/列表/引用/表格/脚注、多语言代码块、公式与货币、50 轮长对话、40 段单条长回复、Unicode/RTL、长链接与 HTML 原文、短回复和未闭合标记；前四个专项会话置顶。
+- 点击侧栏切换样例，也可通过搜索标题或正文定位内容，支持置顶、重命名、删除与输入草稿；发送仍不调用模型或自动生成回复。
 - 示例模式不读取或写入浏览器真实工作区，变更仅保存在内存中。右下角提供重置和退出入口；刷新示例地址也会重置。
 - 通过 `__DEV__` 守卫动态加载示例模块，release 模式不开放 Mock 预览，访问这些路径会返回正常应用，示例内容不会打入生产 JS。
-- 助手消息目前提供安全的段落、粗体、行内代码与围栏代码块展示，不代表完整 Markdown、公式或语法高亮已实现。
+- 用户与助手消息共用 Markdown/GFM 与 KaTeX 渲染，支持标题、列表、引用、表格、脚注、公式和按需代码高亮；代码块可复制与折叠。Mermaid 等未知代码语言作为原文展示，未实现实时流式模型输出。

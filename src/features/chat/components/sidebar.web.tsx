@@ -1,10 +1,12 @@
 import { Link, router } from 'expo-router';
+import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useState } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
 import { useChat, type Conversation } from '../chat-state';
 import { ConversationMenu } from './conversation-menu.web';
+import { ConversationSelect } from './conversation-select.web';
 import { useIsPreview } from '@/features/workspace/preview-context';
 
 type Props = { onSearch: () => void };
@@ -31,14 +33,14 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
   return (
     <aside className="sidebar" aria-label="对话导航">
       <div className="sidebar-header">
-        <Link href={homeHref} asChild><a className="brand" onClick={() => dispatch({ type: 'select', id: null })}>Matrius<span className="brand-dot" /></a></Link>
+        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => dispatch({ type: 'select', id: null })}>Matrius<span className="brand-dot" /></LinkAnchor></Link>
         <div className="sidebar-header-actions">
           <button className="icon-button" onClick={onSearch} aria-label="搜索对话"><Icon name="search" size={19} /></button>
           <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>
         </div>
       </div>
-      <button className="new-conversation" onClick={() => select(null)}><Icon name="plus" size={18} /><span>新对话</span></button>
       <nav className={`conversation-list ${conversations.length === 0 ? 'is-empty' : ''}`} aria-label="历史对话">
+        <div className="sidebar-create"><button className="new-conversation" type="button" onClick={() => select(null)}><Icon name="compose" size={18} /><span>新对话</span></button></div>
         {conversations.length === 0 && <div className="sidebar-empty-state">
           <Icon name="chat" size={20} />
           <p>暂无历史对话</p>
@@ -48,19 +50,17 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
             <h2 className="sidebar-section-label">{group.name}</h2>
             {group.items.map((item) => (
               <div className={`conversation-item ${activeId === item.id ? 'is-active' : ''} ${menu?.conversation.id === item.id ? 'menu-open' : ''}`} key={item.id}>
-                <button className="conversation-select" aria-current={activeId === item.id ? 'page' : undefined} onClick={() => select(item.id)}>
-                  <span>{item.title}</span>
-                </button>
+                <ConversationSelect title={item.title} active={activeId === item.id} onSelect={() => select(item.id)} />
                 <button className="icon-button conversation-more" aria-label={`对话操作：${item.title}`} aria-haspopup="menu" aria-expanded={menu?.conversation.id === item.id} aria-controls={menu?.conversation.id === item.id ? 'conversation-menu' : undefined} onClick={(event) => { setMenu(menu?.conversation.id === item.id ? null : { conversation: item, anchor: event.currentTarget }); }}><Icon name="more" size={17} /></button>
               </div>
             ))}
           </section>
         ))}
       </nav>
-      <Link href={preview ? '/mock/settings' : '/settings'} asChild><a className="user-entry">
+      {!preview && <Link href="/settings" asChild><LinkAnchor className="user-entry">
         <span className="user-avatar"><Icon name="user" size={18} /></span>
         <span className="user-entry-text"><strong>本地模式</strong><span>你的空间，自由对话</span></span>
-      </a></Link>
+      </LinkAnchor></Link>}
       {menu && <ConversationMenu conversation={menu.conversation} anchor={menu.anchor} onClose={closeMenu}
         onPin={() => { dispatch({ type: 'pin', id: menu.conversation.id }); closeMenu(); }}
         onRename={() => { menu.anchor.focus(); setEditing(menu.conversation); setTitle(menu.conversation.title); setConfirmDelete(false); closeMenu(); }}

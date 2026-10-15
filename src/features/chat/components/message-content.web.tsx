@@ -1,19 +1,32 @@
-import { Fragment } from 'react';
+import { memo, useId } from 'react';
+import Markdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
-function InlineText({ text }: { text: string }) {
-  return <>{text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) =>
-    part.startsWith('**') && part.endsWith('**') ? <strong key={index}>{part.slice(2, -2)}</strong>
-      : part.startsWith('`') && part.endsWith('`') ? <code key={index}>{part.slice(1, -1)}</code>
-        : <Fragment key={index}>{part}</Fragment>)}</>;
-}
+import { normalizeMarkdown } from '../markdown/normalize-markdown';
+import { CodeBlock } from './code-block.web';
 
-// A small safe text renderer for the current UI, not a full Markdown parser.
-export function MessageContent({ content }: { content: string }) {
-  return <>{content.split(/(```[^\n]*\n[\s\S]*?```)/g).filter(Boolean).map((block, index) => {
-    if (block.startsWith('```')) {
-      const newline = block.indexOf('\n');
-      return <div className="message-code" key={index}><div className="message-code-header">{block.slice(3, newline).trim() || 'text'}</div><pre><code>{block.slice(newline + 1, -3).replace(/\n$/, '')}</code></pre></div>;
-    }
-    return <Fragment key={index}>{block.trim().split(/\n\s*\n/).filter(Boolean).map((paragraph, part) => <p key={part}><InlineText text={paragraph} /></p>)}</Fragment>;
-  })}</>;
-}
+const components: Components = {
+  pre({ node, children }) {
+    const code = node?.children[0];
+    if (code?.type !== 'element' || code.tagName !== 'code') return <pre>{children}</pre>;
+    const text = code.children.map((child) => child.type === 'text' ? child.value : '').join('').replace(/\n$/, '');
+    const classes = Array.isArray(code.properties.className) ? code.properties.className.join(' ') : '';
+    const language = /(?:^|\s)language-([^\s]+)/.exec(classes)?.[1] ?? '';
+    return <CodeBlock code={text} language={language} />;
+  },
+  table({ children }) { return <div className="message-table-scroll" tabIndex={0} role="region" aria-label="表格，可横向滚动"><table>{children}</table></div>; },
+  a({ node, children, ...props }) { return <a {...props} target={props.href?.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">{children}</a>; },
+  img({ node, alt, ...props }) { return <img {...props} alt={alt ?? ''} loading="lazy" />; },
+};
+
+export const MessageContent = memo(function MessageContent({ content }: { content: string }) {
+  const id = useId();
+  return <div className="message-markdown"><Markdown
+    components={components}
+    remarkPlugins={[remarkGfm, remarkMath]}
+    remarkRehypeOptions={{ clobberPrefix: `message-${id}-`, footnoteLabel: '注释' }}
+    rehypePlugins={[[rehypeKatex, { trust: false, strict: 'ignore', maxExpand: 1000, maxSize: 20 }]]}
+  >{normalizeMarkdown(content)}</Markdown></div>;
+});

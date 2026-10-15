@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+
+# KaTeX assets generated from the installed dependency by postinstall
+/public/vendor/katex/

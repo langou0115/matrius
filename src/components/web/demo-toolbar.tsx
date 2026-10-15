@@ -1,10 +1,10 @@
 import { Link } from 'expo-router';
+import { LinkAnchor } from '@/components/web/link-anchor';
 
 export function DemoToolbar() {
   return <div className="demo-toolbar" aria-label="开发示例预览">
-    <span>Mock 预览</span>
-    <Link href="/mock" asChild><a>目录</a></Link>
+    <span>聊天渲染测试</span>
     <button onClick={() => window.location.reload()}>重置</button>
-    <Link href="/" asChild><a>退出</a></Link>
+    <Link href="/" asChild><LinkAnchor>退出</LinkAnchor></Link>
   </div>;
 }

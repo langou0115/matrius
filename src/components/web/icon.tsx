@@ -1,8 +1,15 @@
 import type { ReactNode } from 'react';
 
 const paths = {
+  good: <><path d="M7 10l4-7c1-1 3 0 3 2v4h5a2 2 0 0 1 2 2l-2 8a2 2 0 0 1-2 2H7V10Z" /><rect x="2" y="10" width="5" height="11" rx="1" /></>,
+  bad: <><path d="M7 14l4 7c1 1 3 0 3-2v-4h5a2 2 0 0 0 2-2l-2-8a2 2 0 0 0-2-2H7v11Z" /><rect x="2" y="3" width="5" height="11" rx="1" /></>,
+  fork: <><circle cx="6" cy="4" r="2" /><circle cx="18" cy="4" r="2" /><circle cx="12" cy="20" r="2" /><path d="M6 6v3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V6m-6 6v6" /></>,
+  compose: <><path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7" /><path d="m16 3 5 5M10 14l1-5 7-7a2.1 2.1 0 0 1 3 3l-7 7-4 2Z" /></>,
+  copy: <><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></>,
+  collapse: <path d="m6 15 6-6 6 6" />,
+  expand: <path d="m6 9 6 6 6-6" />,
   search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>,
-  sidebar: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16M5.5 8h1M5.5 11h1" /></>,
+  sidebar: <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M9 3v18" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   sparkle: <><path d="m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7L12 3Z" /><path d="m20 2 .6 1.4L22 4l-1.4.6L20 6l-.6-1.4L18 4l1.4-.6L20 2Z" /></>,
   chevron: <path d="m8 10 4 4 4-4" />,

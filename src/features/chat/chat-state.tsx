@@ -14,6 +14,7 @@ type Action =
   | { type: 'send'; conversationId: string; message: Message }
   | { type: 'rename'; id: string; title: string }
   | { type: 'pin'; id: string }
+  | { type: 'fork'; conversationId: string; messageId: string; forkId: string; updatedAt: number }
   | { type: 'delete'; id: string }
   | { type: 'sidebar' };
 
@@ -36,6 +37,20 @@ function reducer(state: ChatState, action: Action): ChatState {
     case 'pin':
       return { ...state, conversations: state.conversations.map((item) =>
         item.id === action.id ? { ...item, pinned: !item.pinned } : item) };
+    case 'fork': {
+      const source = state.conversations.find((item) => item.id === action.conversationId);
+      const messageIndex = source?.messages.findIndex((message) => message.id === action.messageId) ?? -1;
+      if (!source || messageIndex < 0 || source.messages[messageIndex].role !== 'assistant'
+        || state.conversations.some((item) => item.id === action.forkId)) return state;
+      const branch: Conversation = {
+        id: action.forkId,
+        title: `${source.title} · 分支`,
+        pinned: false,
+        updatedAt: action.updatedAt,
+        messages: source.messages.slice(0, messageIndex + 1).map((message, index) => ({ ...message, id: `${action.forkId}-${index + 1}` })),
+      };
+      return { ...state, activeId: branch.id, conversations: [branch, ...state.conversations] };
+    }
     case 'send': {
       const current = state.conversations.find((item) => item.id === action.conversationId);
       const conversation: Conversation = current
