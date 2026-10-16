@@ -43,7 +43,7 @@ Web 的 Expo Router 链接通过共享 `LinkAnchor` 适配原生锚点，组件�
 准备与 [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/) 匹配的 Node.js 环境及 npm，当前仓库使用 `package-lock.json`。
 
 ```bash
-npm ci  # 自动准备本地 KaTeX CSS 和字体
+npm ci  # 自动准备 KaTeX CSS 与字体
 npx expo start
 ```
 
@@ -64,6 +64,10 @@ npm run test:rendering
 npx expo install <package>
 ```
 
+侧栏使用平面主导航（新对话），搜索按钮位于顶部与可折叠的「置顶 / 最近」分组；输入框在模型名前显示 theSVG 彩色品牌图标（展开与收起共用），未选模型时隐藏思考强度；设置页保持独立整页，通过描边的左箭头返回上一页、Home 图标直达主界面。模型选择保持在圆形发送按钮左侧，整体靠右。思考动画在思考结束时停止，正文继续生成。
+
+Linux 若启动时报 DevTools 缺少 `libatk-1.0.so.0`，属于桌面调试器系统依赖问题，Ubuntu 22.04 的修复命令见[开发与验证](doc/development.md#linux-启动时-devtools-缺少共享库)。
+
 构建、开发客户端和完整环境说明见[开发与验证](doc/development.md)。
 
 ## 文档
@@ -81,3 +85,5 @@ npx expo install <package>
 模型接入：打开设置 → 模型服务，先添加服务商（名称、协议、Base URL、API key），再自动获取并添加模型，或手动填写模型 ID。支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 和相应兼容服务；本地无鉴权接口可取消“接口需要 API key”。API key 与模型元数据分表保存在本机浏览器（密钥未加密），刷新后仍可用，删除服务商会一并删除密钥。模型请求和目录获取由浏览器直连服务商，服务商需允许 CORS；无法获取目录时仍可手动添加模型。
 
 `npm run test:models` 验证协议流、取消、错误、密钥隔离及 IndexedDB v1→v2 迁移；`npm run test:rendering` 验证消息渲染。
+
+Web 字体在大屏（≥1024px）使用更大的整数尺寸；侧栏「置顶 / 最近」使用清晰的半粗标题，展开箭头紧邻文字，不显示分组数量。

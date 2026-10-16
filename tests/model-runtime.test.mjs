@@ -176,7 +176,7 @@ test('workspace runtime keeps generations attached to their source conversation 
   }
 });
 
-test('reasoning records how long the model thought, not how long the whole reply took', async () => {
+test('reasoning stops animating before the answer starts and preserves its own duration', async () => {
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
@@ -224,6 +224,21 @@ test('reasoning records how long the model thought, not how long the whole reply
     await act(async () => { root.render(createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness))))); });
     await act(async () => { await models.save({ ...config, protocol: 'message', baseUrl: 'https://test.invalid' }, 'key'); });
     await act(async () => { assert.equal(runtime.send('问题', null, 'high'), true); });
+    await until(() => chat.conversations[0]?.messages[1]?.reasoningActive === false && !!chat.conversations[0]?.messages[1]?.reasoning);
+    const thinkingFinished = chat.conversations[0].messages[1];
+    assert.notEqual(runtime.runningId, null, 'the request is still running after thinking_end');
+    assert.equal(thinkingFinished.status, 'streaming');
+    assert.equal(thinkingFinished.content, '', 'thinking ends before the first answer token');
+    const { getReasoningState, ReasoningBlock } = await import('../src/features/chat/components/reasoning-block.web.tsx');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    assert.equal(getReasoningState(thinkingFinished), 'complete');
+    const markup = renderToStaticMarkup(createElement(ReasoningBlock, { reasoning: thinkingFinished.reasoning, state: getReasoningState(thinkingFinished), elapsedMs: thinkingFinished.thinkingMs }));
+    assert.ok(markup.includes('已完成思考'));
+    assert.ok(!markup.includes('is-running'), 'thinking animation stops while the answer is still pending');
+    assert.equal(getReasoningState({ status: 'streaming', content: '正文', reasoningActive: false }), 'complete');
+    assert.equal(getReasoningState({ status: 'streaming', content: '', reasoningActive: true }), 'running');
+    assert.equal(getReasoningState({ status: 'stopped', content: '' }), 'stopped');
+    assert.equal(getReasoningState({ status: 'error', content: '' }), 'error');
     await until(() => runtime.runningId === null);
     const reply = chat.conversations[0].messages[1];
     assert.equal(reply.content, '答案');

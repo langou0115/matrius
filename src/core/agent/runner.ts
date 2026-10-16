@@ -75,7 +75,7 @@ export function describeModelError(reason: unknown) {
   return '模型回复失败，请检查模型配置和服务商状态后重试。';
 }
 
-export type ReplyUpdate = { content: string; reasoning: string };
+export type ReplyUpdate = { content: string; reasoning: string; reasoningActive: boolean };
 export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', onUpdate, streamFn = directStream, timeoutMs = 120_000 }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
@@ -92,10 +92,16 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   let timedOut = false;
   let finalMessage: AssistantMessage | undefined;
   let unsupportedTool = false;
+  let reasoningActive = false;
   const unsubscribe = agent.subscribe((event) => {
     if ((event.type === 'message_start' || event.type === 'message_update' || event.type === 'message_end') && event.message.role === 'assistant') {
       const message = event.message;
-      onUpdate({ content: message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''), reasoning: message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join('') });
+      if (event.type === 'message_update') {
+        const type = event.assistantMessageEvent.type;
+        if (type === 'thinking_start' || type === 'thinking_delta') reasoningActive = true;
+        else if (type === 'thinking_end' || type === 'text_start' || type === 'text_delta') reasoningActive = false;
+      } else if (event.type === 'message_end') reasoningActive = false;
+      onUpdate({ reasoningActive, content: message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''), reasoning: message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join('') });
       if (event.type === 'message_end') {
         finalMessage = message;
         if (message.content.some((block) => block.type === 'toolCall')) { unsupportedTool = true; agent.abort(); }

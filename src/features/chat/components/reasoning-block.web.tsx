@@ -1,9 +1,17 @@
 import { useEffect, useId, useState } from 'react';
 
 import { Icon, type IconName } from '@/components/web/icon';
+import type { Message } from '../chat-state';
 import { MessageContent } from './message-content.web';
 
 export type ReasoningState = 'running' | 'complete' | 'stopped' | 'error';
+
+export function getReasoningState(message: Pick<Message, 'status' | 'content' | 'reasoningActive'>): ReasoningState {
+  if (message.status === 'streaming') return (message.reasoningActive ?? !message.content.trim()) ? 'running' : 'complete';
+  if (message.status === 'stopped') return 'stopped';
+  if (message.status === 'error') return 'error';
+  return 'complete';
+}
 
 const statusIcon: Record<ReasoningState, IconName> = { running: 'sparkle', complete: 'check', stopped: 'close', error: 'alert' };
 const statusLabel: Record<ReasoningState, string> = { running: '思考中', complete: '已完成思考', stopped: '已停止思考', error: '思考中断' };
@@ -54,16 +62,19 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
   const elapsed = elapsedMs === null ? seconds : Math.floor(elapsedMs / 1000);
   const showElapsed = elapsedMs !== null || (live && startedAt !== null);
   const line = <>
-    <Icon name={statusIcon[state]} size={15} className={running ? 'reasoning-icon is-running' : 'reasoning-icon'} />
+    <Icon name={statusIcon[state]} size={17} className={running ? 'reasoning-icon is-running' : 'reasoning-icon'} />
     <span className={running ? 'reasoning-label is-running' : 'reasoning-label'}>{running ? runningLabel ?? statusLabel.running : statusLabel[state]}</span>
     {/* Hidden from assistive tech: the status line is a live region, so a once-a-second
         update would be re-announced once a second. The label carries the meaning. */}
-    {showElapsed && <span className="reasoning-time" aria-hidden="true">{formatElapsed(elapsed)}</span>}
-    {text && <Icon name="chevron" size={15} className="reasoning-chevron" />}
+    <span className="reasoning-meta">
+      {showElapsed && <span className="reasoning-time" aria-hidden="true">{formatElapsed(elapsed)}</span>}
+      {text && <Icon name="chevron" size={15} className="reasoning-chevron" />}
+    </span>
   </>;
   // Nothing to reveal yet, so the line is plain text rather than an empty disclosure.
   if (!text) return <div className="reasoning"><p className="reasoning-line" role="status">{line}</p></div>;
   return <div className="reasoning">
+    <span className="sr-only" role="status">{running ? runningLabel ?? statusLabel.running : statusLabel[state]}</span>
     <button type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((value) => !value)}>{line}</button>
     <div className="reasoning-body" id={bodyId} hidden={!open}><MessageContent content={text} /></div>
   </div>;

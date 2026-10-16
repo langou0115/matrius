@@ -6,6 +6,7 @@
     "@expo/ui": "~57.0.24",
     "@mariozechner/pi-agent-core": "0.73.1",
     "@mariozechner/pi-ai": "0.73.1",
+    "@thesvg/react": "^3.4.0",
     "expo": "~57.0.29",
     "expo-constants": "~57.0.22",
     "expo-device": "~57.0.2",

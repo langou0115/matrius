@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 
 const paths = {
+  home: <><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9Z" /><path d="M9 21V12h6v9" /></>,
+  model: <><rect x="5" y="5" width="14" height="14" rx="4" /><path d="M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4m14-6h4m-4 6h4" /><path d="m9 14 3-5 3 5m-5-1h4" /></>,
   good: <><path d="M7 10l4-7c1-1 3 0 3 2v4h5a2 2 0 0 1 2 2l-2 8a2 2 0 0 1-2 2H7V10Z" /><rect x="2" y="10" width="5" height="11" rx="1" /></>,
   bad: <><path d="M7 14l4 7c1 1 3 0 3-2v-4h5a2 2 0 0 0 2-2l-2-8a2 2 0 0 0-2-2H7v11Z" /><rect x="2" y="3" width="5" height="11" rx="1" /></>,
   fork: <><circle cx="6" cy="4" r="2" /><circle cx="18" cy="4" r="2" /><circle cx="12" cy="20" r="2" /><path d="M6 6v3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V6m-6 6v6" /></>,

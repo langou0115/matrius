@@ -1,14 +1,14 @@
 import { useRef } from 'react';
 
 import { Icon, type IconName } from '@/components/web/icon';
-import { useChat, type Message } from './chat-state';
+import { useChat } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
 import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom.web';
 import { useDrafts } from './draft-state';
 import { MessageContent } from './components/message-content.web';
 import { MessageActions } from './components/message-actions.web';
-import { ReasoningBlock, type ReasoningState } from './components/reasoning-block.web';
+import { ReasoningBlock, getReasoningState } from './components/reasoning-block.web';
 import { useChatRuntime } from './chat-runtime';
 import { Link, type Href } from 'expo-router';
 import { LinkAnchor } from '@/components/web/link-anchor';
@@ -22,13 +22,6 @@ const suggestions: { icon: IconName; title: string; prompt: string }[] = [
 ];
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
-
-function replyState(status: Message['status']): ReasoningState {
-  if (status === 'streaming') return 'running';
-  if (status === 'stopped') return 'stopped';
-  if (status === 'error') return 'error';
-  return 'complete';
-}
 
 export default function ChatScreen() {
   const { conversations, activeId, sidebarOpen, lastThinkingEffort, dispatch } = useChat();
@@ -87,7 +80,7 @@ export default function ChatScreen() {
             return message.role === 'user'
               ? <article className="user-message" key={message.id} aria-label="你的消息"><div className="user-message-content"><MessageContent content={message.content} /></div><MessageActions message={message} /></article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
-              {message.reasoning?.trim() && <ReasoningBlock reasoning={message.reasoning} state={replyState(message.status)} elapsedMs={message.thinkingMs ?? null} />}
+              {message.reasoning?.trim() && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={message.id === lastMessage?.id ? liveStartedAt : null} />}
               <MessageContent content={message.content} />
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
               {message.status === 'error' && message.error && message.id !== failedReply?.id && <div className="reply-error-notice reply-error-history" role="status"><span>{message.error}</span></div>}

@@ -40,6 +40,7 @@ src/
 │   │       ├── message-content.web.tsx  用户与助手 Markdown/GFM、KaTeX 渲染
 │   │       ├── reasoning-block.web.tsx  等待与思考共用的状态行及折叠正文
 │   │       ├── code-block.web.tsx       代码高亮、复制与折叠
+│   │       ├── model-icon.web.tsx      theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
 │   │       ├── scroll-to-bottom.web.tsx  跟随滚动与回到最新消息按钮
 │   │       └── search-dialog.web.tsx   标题与正文搜索、结果片段
@@ -102,3 +103,5 @@ src/
 - `features/models/model-settings-screen.web.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型、删除确认四类对话框；`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.web.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.web.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
 - `core/llm/model-config.ts`：Provider 配置校验、运行时模型映射与三协议适配；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/agent/runner.ts`：pi Agent 流式运行与取消。
 - `features/chat/chat-runtime.tsx`：共享运行生命周期，挂在根工作区中，不随设置导航卸载。
+
+- 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部本地用户行；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。

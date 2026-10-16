@@ -5,6 +5,7 @@ import { Icon } from '@/components/web/icon';
 import { useModels } from '@/features/models/model-state';
 import { useChatRuntime } from '../chat-runtime';
 import { useChat } from '../chat-state';
+import { ModelIcon } from './model-icon.web';
 
 type Props = {
   value: string;
@@ -171,6 +172,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
               ref={models.selectedId === model.id || (!models.selectedId && model.id === models.models[0]?.id) ? selectedModelOption : undefined}
               onClick={() => { void selectModel(model.id); }}
             >
+              <ModelIcon modelId={model.modelId} name={model.name} providerName={provider.name} />
               <span className="model-choice-copy"><strong>{model.name}</strong></span>
               {models.selectedId === model.id && <Icon name="check" size={15} />}
             </button>)}
@@ -179,12 +181,14 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           <span>还没有可用模型</span>
         </div>}
         {(modelError || models.error) && <p role="alert" className="model-form-error">{modelError ?? models.error}</p>}
+        {models.selected && <>
         <div className="model-picker-divider" />
         <button type="button" className="model-picker-thinking-link" disabled={blocked || !models.selectedId} onClick={() => setPickerPage('thinking')}>
           <span>思考强度</span>
           <span className="model-picker-thinking-value">{effortOptions.find((option) => option.value === thinkingEffort)?.label}</span>
           <Icon name="chevron" size={16} />
         </button>
+        </>}
       </> : <>
         <div className="model-picker-subpage-header">
           <button type="button" aria-label="返回模型列表" onClick={() => setPickerPage('models')}><Icon name="back" size={17} /></button>
@@ -244,6 +248,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           aria-expanded={showModels}
           aria-label={models.selected ? `选择模型，当前为${models.selected.name}，思考强度${effortLabel}` : '选择模型，当前未选择模型'}
         >
+          <ModelIcon modelId={models.selected?.modelId} name={models.selected?.name} providerName={models.selected?.providerName} />
           <span className="model-picker-label">{models.selected?.name ?? '选择模型'}</span>
           {/* Sits outside the label so it survives truncation: the effort applies to the next
               request regardless of how long the model name is. */}

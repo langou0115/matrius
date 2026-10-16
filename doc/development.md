@@ -7,7 +7,7 @@
 当前使用 npm 和 `package-lock.json`，Expo SDK 57。Node.js 版本需满足[对应 SDK 要求](https://docs.expo.dev/versions/v57.0.0/)。
 
 ```bash
-npm ci                         # 根据锁文件安装依赖
+npm ci                         # 根据锁文件安装依赖，生成 KaTeX 本地资源
 npx expo start                 # Metro 开发服务
 npm run android                # 打开 Android 开发目标
 npm run ios                    # 打开 iOS 开发目标
@@ -101,3 +101,20 @@ npx eas-cli@latest submit --platform ios
 - 测试脚本显式使用 `--test-isolation=none`，确保当前 Node 与 TypeScript loader 环境执行并报告每个测试用例。模型接入修改同时运行 `npm run test:rendering`、lint、typecheck 与 Web 生产导出。
 - 首次手动使用：设置 → 模型服务 → 添加服务商，填写名称、协议、基础地址和 key；保存后获取模型列表并添加模型，也可手动填写模型 ID。返回聊天选择模型并发送；生成中可停止，失败后可重新生成。浏览器跨域和真实服务商兼容性需用自己的配置实测。
 - 密钥与 Provider、模型元数据都保留在本机浏览器，删除服务商或清除站点数据才会移除密钥。无鉴权本地模型取消“接口需要 API key”。Chat Mock 支持相同真实调用，但会话和 Provider 配置只存在本次预览内存中。
+
+## Linux 启动时 DevTools 缺少共享库
+
+如果 `npm run web` 提示 `react-native-devtools: error while loading shared libraries: libatk-1.0.so.0`，是 React Native DevTools 的 Electron 桌面程序缺少系统图形库，不是应用代码错误。当前依赖会在 Metro 初始化时准备该程序，因此只启动 Web 也可能看到此错误；Web 页面使用浏览器开发者工具调试。
+
+本机 Ubuntu 22.04 的 DevTools 二进制通过 `ldd` 检查，还缺少 GTK、Pango、AT-SPI、X11、GBM 与 ALSA 相关库。可在有管理员权限的终端安装：
+
+```bash
+sudo apt update
+sudo apt install libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libpango-1.0-0 libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 libgbm1 libxkbcommon0 libasound2
+npm run web
+```
+
+以上包名对应 Ubuntu 22.04；其他发行版需使用各自包名。打开桌面版原生 DevTools 还需要可用的图形会话，WSL 通常由 WSLg 提供。不要为此修改聊天代码、删除锁文件或重装业务依赖。
+
+
+- 模型 SVG 图标来自 `@thesvg/react`，按单图标路径导入，选择品牌提供的彩色版本并保留原始填色/渐变；无需图标生成脚本，也不运行时请求外部图片。

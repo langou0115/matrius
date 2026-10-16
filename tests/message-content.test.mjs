@@ -9,6 +9,7 @@ import { parseHTML } from 'linkedom';
 
 import { MessageContent } from '../src/features/chat/components/message-content.web.tsx';
 import { CodeBlock } from '../src/features/chat/components/code-block.web.tsx';
+import { ModelIcon } from '../src/features/chat/components/model-icon.web.tsx';
 import { normalizeMarkdown } from '../src/features/chat/markdown/normalize-markdown.ts';
 import { highlightCode } from '../src/features/chat/markdown/highlight-code.web.ts';
 import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
@@ -278,4 +279,17 @@ test('fork creates an independent conversation through the selected assistant me
     globalThis.document = previous.document;
     delete globalThis.IS_REACT_ACT_ENVIRONMENT;
   }
+});
+
+test('model icons preserve theSVG brand colors and Gemini multicolor artwork', () => {
+  const icon = (modelId, providerName = '') => renderToStaticMarkup(createElement(ModelIcon, { modelId, providerName }));
+  assert.match(icon('claude-sonnet', 'Google gateway'), /#D97757/i, 'model identity takes precedence over the gateway');
+  assert.match(icon('deepseek-chat'), /#4D6BFE/i);
+  assert.match(icon('mistral-large'), /#FF8205/i);
+  const gemini = parseHTML(icon('gemini-pro')).document;
+  const fills = new Set([...gemini.querySelectorAll('[fill]')].map((element) => element.getAttribute('fill')).filter((fill) => fill.startsWith('#')));
+  assert.ok(fills.size >= 4, 'Gemini retains its authored multicolor artwork');
+  assert.ok(gemini.querySelector('mask'), 'Gemini retains its source SVG mask');
+  assert.ok(!icon('gpt-4.1').includes('M9 1v4'), 'OpenAI models have a brand icon instead of the generic chip');
+  assert.match(icon('custom-model', 'DeepSeek'), /#4D6BFE/i, 'provider identity is used for unrecognized model names');
 });

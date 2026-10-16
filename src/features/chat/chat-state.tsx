@@ -3,7 +3,7 @@ import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 
 /** How long the model spent reasoning, measured to its last thinking token. Persisted so the
     finished reply still reports it after a reload. Absent when the model produced no reasoning. */
-export type Message = { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; thinkingMs?: number; status?: 'streaming' | 'complete' | 'stopped' | 'error'; error?: string };
+export type Message = { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; reasoningActive?: boolean; thinkingMs?: number; status?: 'streaming' | 'complete' | 'stopped' | 'error'; error?: string };
 export type Conversation = {
   id: string;
   title: string;
