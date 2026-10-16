@@ -2,6 +2,7 @@ import { Agent, type AgentMessage, type StreamFn } from '@mariozechner/pi-agent-
 import type { AssistantMessage } from '@mariozechner/pi-ai';
 
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
+import type { ThinkingEffort } from './thinking-effort';
 import type { Message } from '@/features/chat/chat-state';
 
 const usage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
@@ -75,12 +76,15 @@ export function describeModelError(reason: unknown) {
 }
 
 export type ReplyUpdate = { content: string; reasoning: string };
-export function createReplyRun({ config, apiKey, messages, onUpdate, streamFn = directStream, timeoutMs = 120_000 }: {
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', onUpdate, streamFn = directStream, timeoutMs = 120_000 }: {
   config: ModelConfig; apiKey: string; messages: Message[];
+  thinkingEffort?: ThinkingEffort;
   onUpdate: (value: ReplyUpdate) => void; streamFn?: StreamFn; timeoutMs?: number;
 }) {
+  const model = createAgentModel(config);
+  if (thinkingEffort !== 'default') model.reasoning = true;
   const agent = new Agent({
-    initialState: { model: createAgentModel(config), messages: buildContext(messages, config), systemPrompt: 'You are Matrius, a helpful assistant. Respond in the user’s language.', thinkingLevel: 'off', tools: [] },
+    initialState: { model, messages: buildContext(messages, config), systemPrompt: 'You are Matrius, a helpful assistant. Respond in the user’s language.', thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools: [] },
     getApiKey: () => apiKey || 'no-key', streamFn,
     transport: 'sse', maxRetryDelayMs: 5000,
   });

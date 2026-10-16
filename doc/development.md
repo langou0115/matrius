@@ -97,7 +97,7 @@ npx eas-cli@latest submit --platform ios
 
 ## 模型接入验证
 
-- `npm run test:models`：真实 pi 协议实现配合模拟服务商 SSE，验证三协议路径/鉴权、多轮上下文、分片 UTF-8、取消、超时、错误安全提示与内存密钥隔离，以及 IndexedDB v1→v2 原子迁移、增量正文写入和版本冲突。不会调用真实服务商，不需要 key。
+- `npm run test:models`：真实 pi 协议实现配合模拟服务商 SSE，验证三协议路径/鉴权、多轮上下文、分片 UTF-8、取消、超时、错误安全提示与会话密钥隔离，以及 IndexedDB v1→v2 原子迁移、增量正文写入、密钥独立记录和版本冲突。不会调用真实服务商，不需要 key。
 - 测试脚本显式使用 `--test-isolation=none`，确保当前 Node 与 TypeScript loader 环境执行并报告每个测试用例。模型接入修改同时运行 `npm run test:rendering`、lint、typecheck 与 Web 生产导出。
 - 首次手动使用：设置 → 模型服务 → 添加服务商，填写名称、协议、基础地址和 key；保存后获取模型列表并添加模型，也可手动填写模型 ID。返回聊天选择模型并发送；生成中可停止，失败后可重新生成。浏览器跨域和真实服务商兼容性需用自己的配置实测。
-- 密钥刷新即失效；Provider 和模型元数据保留。无鉴权本地模型取消“接口需要 API key”。Chat Mock 支持相同真实调用，但会话和 Provider 配置只存在本次预览内存中。
+- 密钥与 Provider、模型元数据都保留在本机浏览器，删除服务商或清除站点数据才会移除密钥。无鉴权本地模型取消“接口需要 API key”。Chat Mock 支持相同真实调用，但会话和 Provider 配置只存在本次预览内存中。

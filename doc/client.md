@@ -47,7 +47,8 @@
 
 - Web 已使用 IndexedDB 在浏览器中持久化会话与外观偏好；App 后续使用手机本地数据库。实现与边界见[存储与同步](data.md)，页面经数据层访问。
 - 移动端安全存储优先评估 Expo 对应模块，密钥不得进入普通业务存储、日志、崩溃上报或同步载荷。
-- 浏览器没有等价于 Keychain / Keystore 的安全存储；Web 使用 `core/platform/model-credentials.ts` 的工作区独立内存适配，刷新或关闭后清除，不把密钥持久化到 localStorage 或 IndexedDB。持久化前必须明确风险与用户选择。
+- 浏览器没有等价于 Keychain / Keystore 的安全存储；Web 的 `core/platform/model-credentials.ts` 只定义凭据接口与工作区独立的内存实现，正式工作区由 `features/models/model-credential-store.web.ts` 把密钥单独写入 IndexedDB 的 `model-credentials` 记录，刷新后仍可用；Mock 预览继续使用内存实现，不读写这份记录。
+- 该记录**未加密**，同源脚本与能访问本机浏览器配置的人都能读取，界面上必须如实说明。密钥始终不进入 `model-preferences`、工作区记录、日志、崩溃上报或同步载荷；删除服务商会一并删除对应密钥，清除站点数据会删除全部密钥。
 - 云端模式不接收服务端模型 key，不直连 PostgreSQL、Redis、RustFS 等基础设施。
 
 ## 本地 Agent Runtime 与模型调用

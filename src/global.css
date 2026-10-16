@@ -140,9 +140,45 @@ h1, h2, h3, p { margin: 0; }
 .composer textarea { width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: 15px; min-height: 58px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
 .composer textarea::placeholder { color: var(--muted-text); opacity: .8; }
 .composer-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 7px; }
-.model-picker { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 10px; color: var(--muted-text); font-size: 12px; }
-.model-picker:hover { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
-.model-status-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .5; }
+.model-picker { display: inline-flex; align-items: center; gap: 8px; width: auto; min-width: 0; max-width: min(280px, 65vw); height: 32px; min-height: 32px; padding: 0 8px; border-radius: 9px; color: var(--foreground); font-size: 13px; }
+.model-picker:hover, .model-picker.is-open { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.model-picker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker-chevron { width: 18px; height: 18px; stroke-width: 2.1; transition: transform 140ms ease; }
+.model-picker.is-open .model-picker-chevron { transform: rotate(180deg); }
+.model-picker-popover { position: fixed; z-index: 50; box-sizing: border-box; display: flex; flex-direction: column; gap: 0; overflow: hidden; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 8px 24px rgb(0 0 0 / 16%); }
+.model-picker-popover .model-choice-list { display: flex; min-height: 0; max-height: min(340px, calc(100vh - 120px)); max-height: min(340px, calc(100dvh - 120px)); flex: 1; flex-direction: column; gap: 6px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.model-provider-group { display: flex; flex-direction: column; gap: 1px; }
+.model-provider-heading { margin: 4px 8px 2px; overflow: hidden; color: var(--muted-text); font-family: var(--font-medium); font-size: 11px; font-weight: 400; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker-popover .model-choice { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 40px; padding: 0 8px; border: 0; border-radius: 8px; text-align: left; }
+.model-picker-popover .model-choice:hover, .model-picker-popover .model-choice[aria-pressed='true'] { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.model-picker-popover .model-choice:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.model-picker-popover .model-choice > svg { flex-shrink: 0; color: var(--muted-text); }
+.model-choice-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.model-choice-copy strong { overflow: hidden; font-size: 13px; font-family: var(--font-medium); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.model-choice-copy small { overflow: hidden; color: var(--muted-text); font-size: 11px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+/* The line is its own element rather than a border on the row below: a border rides the row's
+   top edge, which is the same edge its hover fill paints, so the two read as glued together.
+   Standing alone it keeps clear space on both sides — against the list and against the row. */
+.model-picker-divider { flex: none; height: 0; margin: 8px 0; border-top: 1px solid var(--border); }
+/* Shaped like a model row — same height, padding and rounded hover — so it never reads as a
+   foreign box. The right-pointing chevron marks it as a link into its own page. */
+.model-picker-thinking-link { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px; border-radius: 8px; color: var(--foreground); text-align: left; font-size: 13px; }
+.model-picker-thinking-link:hover:not(:disabled) { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.model-picker-thinking-link:focus-visible, .model-picker-subpage-header button:focus-visible, .thinking-effort-option:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.model-picker-thinking-link > span:first-child { flex: 1; }
+/* The current effort, in the collapsed trigger and in the row that opens its page. Plain muted
+   text, never a chip: next to a model name a filled box reads as a second control glued on.
+   flex: none because it rides beside a model name that is allowed to ellipsize instead. */
+.model-picker-thinking-value { flex: none; color: var(--muted-text); font-size: 11px; }
+.model-picker-thinking-link svg { color: var(--muted-text); transform: rotate(-90deg); }
+.model-picker-subpage-header { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 44px; padding: 0 4px; }
+.model-picker-subpage-header button { display: grid; width: 32px; height: 32px; flex-shrink: 0; place-items: center; border-radius: 8px; color: var(--muted-text); }
+.model-picker-subpage-header button:hover { background: color-mix(in srgb, var(--foreground) 5%, transparent); color: var(--foreground); }
+.model-picker-subpage-header strong { font-family: var(--font-medium); font-size: 13px; font-weight: 400; }
+.thinking-effort-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; }
+.thinking-effort-option { display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 7px 8px; border: 0; border-radius: 8px; text-align: left; }
+.thinking-effort-option:hover, .thinking-effort-option[aria-pressed='true'] { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.model-picker-empty { display: flex; min-height: 64px; align-items: center; justify-content: center; color: var(--muted-text); font-size: 12px; }
 .send-button { width: 36px; height: 36px; border-radius: 50%; background: var(--primary); color: var(--primary-foreground); display: grid; place-items: center; flex-shrink: 0; }
 .send-button:disabled { background: color-mix(in srgb, var(--foreground) 9%, var(--background)); color: color-mix(in srgb, var(--foreground) 45%, var(--background)); opacity: 1; }
 .send-button:not(:disabled):hover { filter: brightness(.94); }
@@ -386,15 +422,28 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .settings-theme-grid { margin-top: 22px; }
 .model-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .model-section-heading > div { display: flex; flex-direction: column; gap: 4px; }
-.model-section-heading h2, .model-config-form > h2, .provider-edit-form > h2 { font-size: 15px; font-family: var(--font-medium); font-weight: 400; }
+.model-section-heading h2 { font-size: 15px; font-family: var(--font-medium); font-weight: 400; }
 .model-section-heading .secondary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
 .provider-list { display: flex; flex-direction: column; gap: 12px; }
 .provider-card { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); }
-.provider-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px; }
+.provider-heading { display: flex; align-items: stretch; }
+.provider-toggle { display: flex; flex: 1; min-width: 0; align-items: center; gap: 14px; padding: 14px 18px; border: 0; border-radius: inherit; color: inherit; background: none; text-align: left; cursor: pointer; }
+.provider-toggle:hover { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
+.provider-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.provider-badges { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
+.provider-count { padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-text); background: var(--soft); font-size: 11px; white-space: nowrap; }
+.provider-current { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); font-size: 11px; white-space: nowrap; }
+.provider-toggle-chevron { flex-shrink: 0; color: var(--muted-text); transition: transform 140ms ease; }
+.provider-toggle[aria-expanded='true'] .provider-toggle-chevron { transform: rotate(180deg); }
+.provider-body { border-top: 1px solid var(--border); }
+.provider-body[hidden] { display: none; }
+.provider-meta { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted-text); overflow-wrap: anywhere; }
+.provider-meta > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .provider-info, .provider-model-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
 .provider-info strong, .provider-model-info strong { font-size: 14px; font-family: var(--font-medium); font-weight: 400; overflow-wrap: anywhere; }
 .provider-info span, .provider-model-info span { font-size: 11px; color: var(--muted-text); overflow-wrap: anywhere; }
-.provider-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.provider-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; padding: 12px 18px 14px; }
+.provider-action-buttons { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
 .provider-actions .secondary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 42px; }
 .provider-actions .icon-button { width: 44px; height: 44px; }
 .provider-empty { padding: 14px 18px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted-text); }
@@ -403,31 +452,32 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .provider-model-item + .provider-model-item { border-top: 1px solid var(--border); }
 .model-config-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .model-config-actions .icon-button { width: 44px; height: 44px; }
-.provider-catalog { padding: 16px 18px; border-top: 1px solid var(--border); background: var(--soft); }
-.provider-catalog-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 12px; }
-.provider-catalog-heading span { color: var(--muted-text); font-size: 11px; }
-.provider-catalog-list { display: flex; flex-direction: column; max-height: 360px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--background); }
-.provider-catalog-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; }
-.provider-catalog-item + .provider-catalog-item { border-top: 1px solid var(--border); }
-.provider-catalog-item > div { display: flex; flex: 1; min-width: 0; flex-direction: column; }
-.provider-catalog-item strong { font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
-.provider-catalog-item span { font-size: 10px; color: var(--muted-text); overflow-wrap: anywhere; }
-.model-config-form, .provider-edit-form { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px; }
-.model-config-form fieldset, .provider-edit-form fieldset { border: 0; padding: 0; margin: 20px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.catalog-dialog { width: 560px; }
+/* Only the model list may shrink, so it owns the dialog's single scrollbar;
+   the panel keeps its own overflow purely as a fallback for very short viewports. */
+.catalog-dialog .dialog-panel { display: flex; flex-direction: column; }
+.catalog-dialog .dialog-panel > :not(.catalog-list) { flex-shrink: 0; }
+.catalog-dialog .dialog-header { margin-bottom: 12px; }
+.catalog-dialog .dialog-description { margin-bottom: 14px; }
+.catalog-dialog .model-form-error { margin-top: 0; margin-bottom: 12px; }
+.catalog-filter { margin-bottom: 10px; }
+.catalog-summary { margin-bottom: 8px; font-size: 11px; color: var(--muted-text); }
+.catalog-status { padding: 26px 16px; text-align: center; font-size: 12px; color: var(--muted-text); }
+.catalog-list { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--background); }
+.catalog-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; }
+.catalog-item + .catalog-item { border-top: 1px solid var(--border); }
+.catalog-item > div { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.catalog-item strong { font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.catalog-item span { font-size: 10px; color: var(--muted-text); overflow-wrap: anywhere; }
+.model-config-form fieldset, .provider-edit-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .model-form-field { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 8px; font-size: 13px; }
 .model-form-field > span { font-size: 11px; color: var(--muted-text); line-height: 1.7; }
 .model-form-columns { display: flex; gap: 16px; }
 .model-key-toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 13px; cursor: pointer; }
 .model-key-toggle input { accent-color: var(--primary); width: 18px; height: 18px; }
 .model-form-error { margin-top: 12px; color: var(--destructive); font-size: 12px; line-height: 1.7; }
-.model-choice-list { display: flex; flex-direction: column; gap: 6px; max-height: 45vh; overflow-y: auto; }
-.model-choice { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; padding: 14px; min-height: 60px; border-radius: 12px; }
-.model-choice:hover, .model-choice[aria-pressed='true'] { background: var(--soft); }
-.model-choice > span { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.model-choice strong { font-size: 14px; overflow-wrap: anywhere; }
-.model-choice small { font-size: 11px; color: var(--muted-text); overflow-wrap: anywhere; }
-.model-picker { max-width: min(260px, 65vw); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.model-picker > svg, .model-status-dot { flex-shrink: 0; }
+.model-picker { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.model-picker > svg { flex-shrink: 0; }
 .stop-generation-icon { width: 12px; height: 12px; border-radius: 3px; background: currentColor; }
 .chat-runtime-notice { display: flex; align-items: center; gap: 12px; padding: 12px 24px; background: var(--soft); font-size: 12px; line-height: 1.6; }
 .chat-runtime-notice > span { flex: 1; }
@@ -441,19 +491,63 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .reply-error-history { justify-content: flex-start; margin: 10px 0 24px; }
 .reply-error-retry { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; min-height: 40px; border-color: color-mix(in srgb, var(--destructive) 38%, var(--border)); color: var(--destructive); background: var(--background); }
 .reply-error-retry:hover { border-color: var(--destructive); color: var(--destructive); }
-.message-reasoning { margin-bottom: 16px; color: var(--muted-text); font-size: 13px; }
-.message-reasoning summary { cursor: pointer; margin-bottom: 10px; }
+/* Reply status line. One row covers the wait before any output and the reasoning that
+   follows it, so the reply area grows a body instead of swapping components mid-flight. */
+.reasoning { min-width: 0; color: var(--muted-text); }
+.assistant-message > .reasoning { margin-bottom: 16px; }
+.messages-content > .reasoning { margin-bottom: 32px; }
+.reasoning-line, .reasoning-toggle { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 24px; margin: 0; color: var(--muted-text); font-size: 13px; line-height: 1.5; }
+.reasoning-toggle { width: 100%; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.reasoning-icon, .reasoning-chevron { flex: none; }
+.reasoning-icon.is-running { color: var(--primary); animation: reasoning-breathe 2.2s ease-in-out infinite; }
+.reasoning-label { min-width: 0; overflow-wrap: anywhere; }
+.reasoning-label.is-running { background: linear-gradient(100deg, var(--muted-text) 30%, var(--foreground) 48%, var(--muted-text) 65%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: reasoning-shimmer 2.6s linear infinite; }
+.reasoning-time { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
+.reasoning-chevron { transition: transform 180ms ease; }
+.reasoning-toggle[aria-expanded='true'] .reasoning-chevron { transform: rotate(180deg); }
+.reasoning-body { position: relative; padding: 10px 0 0 22px; }
+.reasoning-body[hidden] { display: none; }
+.reasoning-body::before { content: ''; position: absolute; inset-inline-start: 4px; top: 17px; width: 6px; height: 6px; border-radius: 50%; background: var(--muted-text); }
+/* Reasoning is supporting detail: the answer's typography demoted one step and tightened,
+   so headings inside it never compete with the headings of the answer itself. */
+.reasoning-body .message-markdown { color: var(--muted-text); font-size: 13px; line-height: 1.6; }
+.reasoning-body .message-markdown p { margin: 0 0 8px; }
+.reasoning-body .message-markdown h1, .reasoning-body .message-markdown h2, .reasoning-body .message-markdown h3, .reasoning-body .message-markdown h4, .reasoning-body .message-markdown h5, .reasoning-body .message-markdown h6 { margin: 12px 0 6px; font-size: 1em; line-height: 1.4; }
+.reasoning-body .message-markdown ul, .reasoning-body .message-markdown ol { padding-left: 18px; margin: 0 0 8px; }
+.reasoning-body .message-markdown li { margin: 3px 0; }
+.reasoning-body .message-markdown blockquote { margin: 8px 0; padding-left: 12px; }
+.reasoning-body .message-markdown hr { margin: 12px 0; }
+.reasoning-body .message-markdown code, .reasoning-body .message-code pre code { font-size: 12px; }
+.reasoning-body .message-code { margin: 8px 0; }
+.reasoning-body .message-code pre { padding: 12px; }
+.reasoning-body .message-table-scroll { margin: 8px 0; }
+.reasoning-body .message-markdown table { font-size: 12px; }
+.reasoning-body .message-markdown th, .reasoning-body .message-markdown td { padding: 6px 10px; }
+@keyframes reasoning-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes reasoning-breathe { 50% { opacity: 0.45; } }
+/* The toggle stays quiet until it is wanted; touch and reduced-motion users always see it. */
+@media (hover: hover) {
+  .reasoning-chevron { opacity: 0; }
+  .reasoning-toggle:hover .reasoning-chevron, .reasoning-toggle:focus-visible .reasoning-chevron { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-icon.is-running { animation: none; }
+  .reasoning-label.is-running { background: none; animation: none; -webkit-text-fill-color: currentColor; }
+  .reasoning-chevron { transition: none; }
+}
 @media (max-width: 600px) {
   .model-section-heading { align-items: flex-start; }
-  .provider-heading { align-items: flex-start; flex-direction: column; padding: 14px; }
-  .provider-actions { width: 100%; justify-content: flex-end; }
+  .provider-toggle { flex-wrap: wrap; padding: 14px; }
+  .provider-info { flex-basis: 100%; }
+  .provider-toggle-chevron { margin-left: auto; }
+  .provider-actions { padding-inline: 14px; }
+  .provider-meta { flex-basis: 100%; }
+  .provider-action-buttons { width: 100%; justify-content: flex-end; }
   .provider-actions .secondary-button { flex: 1; justify-content: center; }
   .provider-model-item { align-items: flex-start; flex-wrap: wrap; padding: 14px; }
   .provider-model-info { flex-basis: 100%; }
   .model-config-actions { width: 100%; justify-content: flex-end; }
-  .provider-catalog { padding: 14px; }
   .model-form-columns { flex-direction: column; }
-  .model-config-form, .provider-edit-form { padding: 16px; }
   .reply-error-notice { align-items: flex-start; flex-direction: column; }
   .reply-error-retry { align-self: flex-end; }
   .chat-runtime-notice { flex-wrap: wrap; padding-inline: 16px; }

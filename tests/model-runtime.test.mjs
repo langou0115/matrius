@@ -120,7 +120,8 @@ test('model metadata whitelists fields and credentials stay isolated in memory',
   assert.deepEqual(searchSettings('暗色').map(item => item.id), ['appearance']);
   assert.deepEqual(searchSettings('Twitter').map(item => item.id), ['appearance']);
   assert.deepEqual(searchSettings('API key').map(item => item.id), ['models']);
-  assert.match(describeModelError(new Error('429 secret')), /额度/);
+  assert.match(describeModelError(new Error('insufficient_quota')), /额度/);
+  assert.match(describeModelError(new Error('429')), /限流/);
 });
 
 test('workspace runtime keeps generations attached to their source conversation and does not resurrect deleted chats', async () => {
@@ -136,7 +137,8 @@ test('workspace runtime keeps generations attached to their source conversation 
   const root = createRoot(document.getElementById('root'));
   let chat, models, runtime;
   let requestSignal;
-  globalThis.fetch = async (_url, init) => { requestSignal = init.signal; return response('completion', init.signal, true); };
+  const requestBodies = [];
+  globalThis.fetch = async (_url, init) => { requestSignal = init.signal; requestBodies.push(JSON.parse(init.body)); return response('completion', init.signal, true); };
   function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
   async function until(predicate) {
     for (let i = 0; i < 100 && !predicate(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
@@ -147,11 +149,14 @@ test('workspace runtime keeps generations attached to their source conversation 
     await act(async () => { assert.equal(runtime.send('keep this draft', null), false); });
     assert.equal(chat.conversations.length, 0);
     await act(async () => { await models.save(config, 'key'); });
-    await act(async () => { assert.equal(runtime.send('first message', null), true); assert.equal(runtime.send('double submission', null), false); });
+    await act(async () => { assert.equal(runtime.send('first message', null, 'high'), true); assert.equal(runtime.send('double submission', null), false); });
     const sourceId = chat.activeId;
+    assert.equal(chat.conversations[0].thinkingEffort, 'high');
     await until(() => requestSignal && chat.conversations[0].messages.length === 2);
+    assert.equal(requestBodies[0].reasoning_effort, 'high');
     await act(async () => { chat.dispatch({ type: 'select', id: null }); });
     assert.equal(chat.activeId, null);
+    assert.equal(chat.lastThinkingEffort, 'high', 'a new conversation inherits the last selected effort');
     await act(async () => { runtime.stop(); });
     await until(() => runtime.runningId === null);
     assert.equal(chat.activeId, null, 'reply updates must not navigate back to their source');
@@ -160,10 +165,72 @@ test('workspace runtime keeps generations attached to their source conversation 
     requestSignal = undefined;
     await act(async () => { runtime.retry(sourceId); });
     await until(() => requestSignal && runtime.runningId === sourceId);
+    assert.equal(requestBodies[1].reasoning_effort, 'high', 'retry must keep the conversation effort');
     await act(async () => { chat.dispatch({ type: 'delete', id: sourceId }); });
     await until(() => runtime.runningId === null);
     assert.equal(requestSignal.aborted, true);
     assert.deepEqual(chat.conversations, []);
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('reasoning records how long the model thought, not how long the whole reply took', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  // Thinking finishes well before the answer, so a duration measured to the end of the turn
+  // would land near the gap while a duration measured to the last thinking token stays early.
+  const gapAfterThinkingMs = 400;
+  const frames = [
+    { type: 'message_start', message: { id: 'msg_t', type: 'message', role: 'assistant', content: [], model: 'test-model', usage: { input_tokens: 5, output_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '先想一下' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '答案' } },
+    { type: 'content_block_stop', index: 1 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } },
+    { type: 'message_stop' },
+  ];
+  globalThis.fetch = async (_url, init) => {
+    const encoder = new TextEncoder();
+    const chunks = frames.map((frame) => encoder.encode(`event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`));
+    let index = 0;
+    return new Response(new ReadableStream({
+      async pull(controller) {
+        if (index === chunks.length) { controller.close(); return; }
+        // Pause is the answer streaming after thinking has already stopped.
+        if (index === 4) await new Promise((resolve) => setTimeout(resolve, gapAfterThinkingMs));
+        controller.enqueue(chunks[index++]);
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+  };
+  let chat, models, runtime;
+  function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
+  async function until(predicate) {
+    for (let i = 0; i < 200 && !predicate(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    assert.ok(predicate(), 'expected runtime transition');
+  }
+  try {
+    await act(async () => { root.render(createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness))))); });
+    await act(async () => { await models.save({ ...config, protocol: 'message', baseUrl: 'https://test.invalid' }, 'key'); });
+    await act(async () => { assert.equal(runtime.send('问题', null, 'high'), true); });
+    await until(() => runtime.runningId === null);
+    const reply = chat.conversations[0].messages[1];
+    assert.equal(reply.content, '答案');
+    assert.equal(reply.reasoning, '先想一下');
+    assert.ok(Number.isFinite(reply.thinkingMs), 'a reply with reasoning carries a measured duration');
+    assert.ok(reply.thinkingMs >= 0 && reply.thinkingMs < gapAfterThinkingMs - 50,
+      `duration must stop at the last thinking token, measured ${reply.thinkingMs}ms`);
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;

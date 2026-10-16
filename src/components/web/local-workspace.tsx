@@ -10,9 +10,9 @@ import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 
 function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean }>) {
-  const { conversations, activeId, sidebarOpen } = useChat();
+  const { conversations, activeId, sidebarOpen, lastThinkingEffort } = useChat();
   const { themeId, mode } = useAppearance();
-  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations, activeId, sidebarOpen }, appearance: { themeId, mode } }), [conversations, activeId, sidebarOpen, themeId, mode]);
+  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations, activeId, sidebarOpen, lastThinkingEffort }, appearance: { themeId, mode } }), [conversations, activeId, sidebarOpen, lastThinkingEffort, themeId, mode]);
   const revision = useRef(initial.revision);
   const saved = useRef(JSON.stringify(initial.data));
   const queue = useRef(Promise.resolve());

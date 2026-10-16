@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 
 import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig, type ProviderModelConfig } from '@/core/llm/model-config';
-import { createModelCredentials } from '@/core/platform/model-credentials';
+import { createModelCredentials, type CredentialVault } from '@/core/platform/model-credentials';
+import { createStoredModelCredentials } from './model-credential-store.web';
 import { loadModelPreferences, saveModelPreferences, type ModelPreferences } from './model-repository.web';
 
 function useModelState(preview: boolean) {
@@ -9,7 +10,8 @@ function useModelState(preview: boolean) {
   const [ready, setReady] = useState(preview);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
-  const credentials = useRef(createModelCredentials());
+  // Preview stays on the session vault: it must not read or write real credentials.
+  const [vault] = useState<CredentialVault>(() => preview ? createModelCredentials() : createStoredModelCredentials());
   const revision = useRef(0);
   const current = useRef(data);
   const queue = useRef(Promise.resolve());
@@ -17,14 +19,13 @@ function useModelState(preview: boolean) {
 
   useEffect(() => {
     let active = true;
-    if (!preview) loadModelPreferences().then((loaded) => {
+    if (!preview) Promise.all([loadModelPreferences(), vault.load()]).then(([loaded]) => {
       if (!active) return;
       revision.current = loaded.revision; current.current = loaded.data;
       setData(loaded.data); setReady(true);
     }).catch(() => { if (active) setError('无法读取模型配置，请刷新后重试。'); });
-    const vault = credentials.current;
-    return () => { active = false; vault.clear(); };
-  }, [preview]);
+    return () => { active = false; };
+  }, [preview, vault]);
 
   function update(next: ModelPreferences): Promise<void> {
     const operation = queue.current.then(async () => {
@@ -42,8 +43,8 @@ function useModelState(preview: boolean) {
       providers: [...current.current.providers.filter((item) => item.id !== valid.id), valid],
       selectedId: current.current.selectedId ?? valid.models[0]?.id ?? null,
     });
-    if (!valid.requiresApiKey) credentials.current.delete(valid.id);
-    else if (apiKey.trim()) credentials.current.set(valid.id, apiKey);
+    if (!valid.requiresApiKey) await vault.delete(valid.id);
+    else if (apiKey.trim()) await vault.set(valid.id, apiKey);
     setVersion((value) => value + 1);
   }
 
@@ -72,7 +73,7 @@ function useModelState(preview: boolean) {
   return {
     ...data, models, ready, error, version,
     selected: models.find((item) => item.id === data.selectedId),
-    getKey: (providerId: string) => credentials.current.get(providerId),
+    getKey: (providerId: string) => vault.get(providerId),
     saveProvider,
     saveModel,
     async save(config: ModelConfig, apiKey: string) {
@@ -93,8 +94,8 @@ function useModelState(preview: boolean) {
         providers: [...current.current.providers.filter((item) => item.id !== provider.id), provider],
         selectedId: current.current.selectedId ?? valid.id,
       });
-      if (!provider.requiresApiKey) credentials.current.delete(provider.id);
-      else if (apiKey.trim()) credentials.current.set(provider.id, apiKey);
+      if (!provider.requiresApiKey) await vault.delete(provider.id);
+      else if (apiKey.trim()) await vault.set(provider.id, apiKey);
       setVersion((value) => value + 1);
     },
     async select(id: string) {
@@ -107,7 +108,7 @@ function useModelState(preview: boolean) {
       const remainingModels = flattenProviderModels(providers);
       const removed = current.current.providers.find((item) => item.id === id);
       await update({ providers, selectedId: removed?.models.some((item) => item.id === current.current.selectedId) ? remainingModels[0]?.id ?? null : current.current.selectedId });
-      credentials.current.delete(id);
+      await vault.delete(id);
       setVersion((value) => value + 1);
     },
   };

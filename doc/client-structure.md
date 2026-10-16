@@ -37,6 +37,7 @@ src/
 │   │       ├── conversation-menu.web.tsx  三点按钮旁的三项操作卡片
 │   │       ├── message-actions.web.tsx  消息复制、赞/踩与创建分支入口
 │   │       ├── message-content.web.tsx  用户与助手 Markdown/GFM、KaTeX 渲染
+│   │       ├── reasoning-block.web.tsx  等待与思考共用的状态行及折叠正文
 │   │       ├── code-block.web.tsx       代码高亮、复制与折叠
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
 │   │       └── search-dialog.web.tsx   标题与正文搜索、结果片段
@@ -96,6 +97,6 @@ src/
 
 ## 模型与 Runtime 入口
 
-- `features/models/model-settings-screen.web.tsx`：Provider、Provider 模型目录与当前模型选择；`model-state.tsx`：工作区独立状态和按 Provider 隔离的内存凭据；`model-repository.web.ts`：无密钥元数据读写及旧配置迁移。
-- `core/llm/model-config.ts`：Provider 配置校验、运行时模型映射与三协议适配；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：内存密钥适配；`core/agent/runner.ts`：pi Agent 流式运行与取消。
+- `features/models/model-settings-screen.web.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型、删除确认四类对话框；`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.web.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.web.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
+- `core/llm/model-config.ts`：Provider 配置校验、运行时模型映射与三协议适配；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/agent/runner.ts`：pi Agent 流式运行与取消。
 - `features/chat/chat-runtime.tsx`：共享运行生命周期，挂在根工作区中，不随设置导航卸载。

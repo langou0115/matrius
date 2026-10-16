@@ -79,7 +79,7 @@ Anthropic Messages
 
 用户先配置服务商（名称、协议、base URL、key），再把多个模型挂到对应服务商下。支持从服务商的 `/v1/models` 目录获取模型，也允许手动添加模型 ID。
 
-- Web key 仅在当前页面会话的内存适配层中保留；刷新或关闭后需要重新填写。它**不写入普通存储、不写入日志、不写入崩溃上报、不同步到云端**。
+- Web key 单独保存在浏览器 IndexedDB 的 `model-credentials` 记录中，刷新后仍可用；该记录不加密，界面上必须说明。它**不写入 `model-preferences` 或工作区记录、不写入日志、不写入崩溃上报、不同步到云端**。
 - 允许自定义 base URL，以覆盖兼容层服务商。
 - 服务商和模型元数据按 Provider 结构保存在本地；读取旧版扁平模型配置时按协议和 Base URL 迁移分组。
 - 界面要能展示当前用的是哪种模式的模型，避免用户混淆。
@@ -131,9 +131,9 @@ execute()
 ## 当前 Web 实现
 
 - 参考 `../openstudio/src/server/agent/models.ts` 的配置字段与三协议映射，使用固定版本 `@mariozechner/pi-agent-core` / `pi-ai` 0.73.1；服务商密钥和配置不从 OpenStudio 导入。当前仅本地文本对话，不提供工具、图片上传或云端代理。
-- `core/agent/runner.ts` 创建真实 pi Agent；`core/llm/model-config.ts` 映射模型元数据；`features/chat/chat-runtime.tsx` 连接当前工作区、上下文、生命周期与消息状态。一个工作区同时生成一条回复，切换聊天或进入设置不卸载 Runtime，删除正在生成的会话会取消，不重建已删会话。
-- `features/models/model-settings-screen.web.tsx` 管理 Provider 与其模型；模型目录由 `core/llm/provider-catalog.web.ts` 从服务商直接获取。API key 按 Provider ID 放在内存中，持久化配置只保存字段白名单。
+- `core/agent/runner.ts` 创建真实 pi Agent；`core/llm/model-config.ts` 映射模型元数据；`features/chat/chat-runtime.tsx` 连接当前工作区、上下文、生命周期与消息状态。Thinking Effort 支持 Default、Low、Medium、High，由 pi-agent-core 映射到模型请求；每个会话独立保存设置，新会话沿用最近选择，旧会话读取时默认为 Default，重试沿用会话设置。一个工作区同时生成一条回复，切换聊天或进入设置不卸载 Runtime，删除正在生成的会话会取消，不重建已删会话。
+- `features/models/model-settings-screen.web.tsx` 管理 Provider 与其模型；模型目录由 `core/llm/provider-catalog.web.ts` 从服务商直接获取。API key 按 Provider ID 单独存储，持久化的模型配置只保存字段白名单。
 - 输入校验通过后才提交消息并清空草稿；未配置模型或缺 key 时保留草稿。流式界面约 50ms 合并一次更新；存储约 300ms 写入最新正文，结束时立即提交最终状态。停止和错误保留收到的文本；刷新时将 streaming 状态恢复为 stopped，不自动继续付费请求。
 - 上下文包含当前会话已有文本，不混入其他会话或隐藏思考；使用保守字符预算检查并预留输出窗口，超限提示新建对话。单请求上限 120 秒，本地模式不执行模型返回的工具调用。支持重试最后一条失败/中止回复。
-- Web 密钥仅在工作区独立内存适配中保留，不写日志或同步。服务商地址需支持浏览器跨域；认证、额度、限流、模型不存在、上下文超限、网络和服务端错误会归一为可操作的安全提示，不直接显示或持久化 SDK 原始响应。生成失败时在回复列表末尾显示错误和重试按钮；空失败回复不渲染成空助手气泡，已有的部分回复会保留。切到其他对话时，侧栏标记尚未查看的失败对话；打开后清除未读标记。
+- Web 密钥按工作区单独存放，与模型元数据分表，不写日志或同步。服务商地址需支持浏览器跨域；认证、额度、限流、模型不存在、上下文超限、网络和服务端错误会归一为可操作的安全提示，不直接显示或持久化 SDK 原始响应。生成失败时在回复列表末尾显示错误和重试按钮；空失败回复不渲染成空助手气泡，已有的部分回复会保留。切到其他对话时，侧栏标记尚未查看的失败对话；打开后清除未读标记。
 - 旧 pi 的聚合入口含 Metro 不支持的动态 Node 导入。`metro.config.js` 在 Web 中把 pi-ai 聚合入口映射为 `pi-agent-bridge.ts` 的官方事件/校验工具导出，并把 Node 环境密钥发现映射为 `pi-browser-credentials.ts`；请求由显式 streamFn 只加载三种协议，未改写依赖文件。升级 pi 时需同时检查这些固定版本的内部工具路径。

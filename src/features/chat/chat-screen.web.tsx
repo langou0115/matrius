@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react';
 
 import { Icon, type IconName } from '@/components/web/icon';
-import { useChat } from './chat-state';
+import { useChat, type Message } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
 import { useDrafts } from './draft-state';
 import { MessageContent } from './components/message-content.web';
 import { MessageActions } from './components/message-actions.web';
+import { ReasoningBlock, type ReasoningState } from './components/reasoning-block.web';
 import { useChatRuntime } from './chat-runtime';
 import { Link, type Href } from 'expo-router';
 import { LinkAnchor } from '@/components/web/link-anchor';
@@ -21,14 +22,28 @@ const suggestions: { icon: IconName; title: string; prompt: string }[] = [
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 
+function replyState(status: Message['status']): ReasoningState {
+  if (status === 'streaming') return 'running';
+  if (status === 'stopped') return 'stopped';
+  if (status === 'error') return 'error';
+  return 'complete';
+}
+
 export default function ChatScreen() {
-  const { conversations, activeId, sidebarOpen, dispatch } = useChat();
+  const { conversations, activeId, sidebarOpen, lastThinkingEffort, dispatch } = useChat();
   const { drafts, setDraft } = useDrafts();
   const runtime = useChatRuntime();
   const settingsHref: Href = `${useSettingsRoot()}/models`;
   const conversation = conversations.find((item) => item.id === activeId);
+  const thinkingEffort = conversation?.thinkingEffort ?? lastThinkingEffort;
   const lastMessage = conversation?.messages.at(-1);
   const failedReply = lastMessage?.role === 'assistant' && lastMessage.status === 'error' ? lastMessage : null;
+  // One indicator for the whole wait, instead of separate copy for "request sent" and "no token yet".
+  // Streaming reasoning already shows its own live state, so the line would be redundant there.
+  const awaitingReply = runtime.runningId === conversation?.id
+    && !(lastMessage?.role === 'assistant' && lastMessage.content.trim())
+    && !lastMessage?.reasoning?.trim();
+  const liveStartedAt = runtime.runningId === conversation?.id ? runtime.startedAt : null;
   const messages = conversation?.messages ?? [];
   const draftKey = activeId ?? 'new';
   const draft = drafts[draftKey] ?? '';
@@ -51,7 +66,10 @@ export default function ChatScreen() {
   function send() {
     const content = draft.trim();
     if (!content) return;
-    if (runtime.send(content, activeId)) setDraft(draftKey, '');
+    if (runtime.send(content, activeId, thinkingEffort)) setDraft(draftKey, '');
+  }
+  function updateThinkingEffort(value: typeof thinkingEffort) {
+    dispatch({ type: 'thinking-effort', conversationId: conversation?.id ?? null, thinkingEffort: value });
   }
 
   return <main ref={messageScroller} onScroll={(event) => { const element = event.currentTarget; followReply.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100; }} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
@@ -73,29 +91,27 @@ export default function ChatScreen() {
             return message.role === 'user'
               ? <article className="user-message" key={message.id} aria-label="你的消息"><div className="user-message-content"><MessageContent content={message.content} /></div><MessageActions message={message} /></article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
-              {message.reasoning && <details className="message-reasoning"><summary>思考过程</summary><MessageContent content={message.reasoning} /></details>}
+              {message.reasoning?.trim() && <ReasoningBlock reasoning={message.reasoning} state={replyState(message.status)} elapsedMs={message.thinkingMs ?? null} />}
               <MessageContent content={message.content} />
-              {message.status === 'streaming' && !message.content && <p className="reply-status" role="status">正在等待模型回复…</p>}
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
               {message.status === 'error' && message.error && message.id !== failedReply?.id && <div className="reply-error-notice reply-error-history" role="status"><span>{message.error}</span></div>}
               {message.status === 'stopped' && <p className="reply-status">已停止生成</p>}
               {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message} onFork={() => dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId: createId(), updatedAt: Date.now() })} />}
-              {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id)}>重新生成</button>}
+              {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id, thinkingEffort)}>重新生成</button>}
             </article>;
           })}
-          {failedReply && runtime.runningId === conversation.id && <p className="reply-status" role="status">正在重新连接模型…</p>}
           {failedReply && runtime.runningId !== conversation.id && <div className="reply-error-notice" role="alert" aria-live="assertive">
             <div className="reply-error-copy"><strong>回复失败</strong><span>{failedReply.error ?? '模型回复失败，请稍后重试。'}</span></div>
-            <button className="secondary-button reply-error-retry" type="button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id)}><Icon name="refresh" size={15} />重新生成</button>
+            <button className="secondary-button reply-error-retry" type="button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id, thinkingEffort)}><Icon name="refresh" size={15} />重新生成</button>
           </div>}
-          {runtime.runningId === conversation.id && lastMessage?.role === 'user' && <p className="reply-status" role="status">正在连接模型…</p>}
-          {!runtime.runningId && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id)}>生成回复</button>}
+          {awaitingReply && <ReasoningBlock state="running" startedAt={liveStartedAt} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} />}
+          {!runtime.runningId && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id, thinkingEffort)}>生成回复</button>}
         </div>
       </div>
-      <div className="bottom-composer"><Composer value={draft} onChange={changeDraft} onSend={send} /></div>
+      <div className="bottom-composer"><Composer value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} /></div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
       <div className="welcome-heading"><span className="welcome-mark"><Icon name="sparkle" size={30} /></span><h2>有什么可以帮你的？</h2><p>让好奇有回响，让想法更进一步。</p></div>
-      <Composer value={draft} onChange={changeDraft} onSend={send} />
+      <Composer value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
       <div className="suggestions" aria-label="对话灵感">
         {suggestions.map((item) => <button key={item.title} onClick={() => { changeDraft(item.prompt); document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus(); }}><Icon name={item.icon} size={17} /><span>{item.title}</span></button>)}
       </div>
