@@ -434,32 +434,55 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .model-section-heading .secondary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
 .provider-list { display: flex; flex-direction: column; gap: 12px; }
 .provider-card { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); }
-.provider-heading { display: flex; align-items: stretch; }
-.provider-toggle { display: flex; flex: 1; min-width: 0; align-items: center; gap: 14px; padding: 14px 18px; border: 0; border-radius: inherit; color: inherit; background: none; text-align: left; cursor: pointer; }
-.provider-toggle:hover { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
+/* Everything about a provider sits on one row — name, state, badges and all four actions — so
+   the expanded card opens straight onto its models with no band of controls in between. */
+.provider-heading { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 16px 18px; }
+.provider-heading:hover { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
+/* Stretched across the row, and painted under the text: hovering or focusing anywhere on it
+   covers the full width, instead of a strip that stops where the action buttons begin. */
+.provider-toggle { position: absolute; z-index: 0; inset: 0; border: 0; background: none; cursor: pointer; }
 .provider-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.provider-badges { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
-.provider-count { padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-text); background: var(--soft); font-size: 11px; white-space: nowrap; }
-.provider-current { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); font-size: 11px; white-space: nowrap; }
-.provider-toggle-chevron { flex-shrink: 0; color: var(--muted-text); transition: transform 140ms ease; }
-.provider-toggle[aria-expanded='true'] .provider-toggle-chevron { transform: rotate(180deg); }
-.provider-body { border-top: 1px solid var(--border); }
+.provider-count { flex-shrink: 0; padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-text); background: var(--soft); font-size: 11px; white-space: nowrap; }
+/* Decorative: the click belongs to the overlay stretched underneath it. It needs saying
+   because rotating the arrow gives it a transform, and a transformed element paints as if it
+   were positioned with z-index: 0 — the same layer as the overlay, but later in the tree. The
+   arrow would then swallow the second click, the one that collapses the card. */
+.provider-toggle-chevron { flex-shrink: 0; pointer-events: none; color: var(--muted-text); transition: transform 140ms ease; }
+.provider-toggle[aria-expanded='true'] ~ .provider-toggle-chevron { transform: rotate(180deg); }
+/* A provider's model list can be long enough to push every other card off the page, so the card
+   stops growing at this height and the list scrolls inside it. The cap is on the body rather than
+   the card: the heading stays put above the scroll area, and a card with few models still stops
+   where its content ends. */
+.provider-body { max-height: min(560px, 64vh); overflow-x: hidden; overflow-y: auto; border-top: 1px solid var(--border); }
 .provider-body[hidden] { display: none; }
-.provider-meta { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted-text); overflow-wrap: anywhere; }
-.provider-meta > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.provider-info, .provider-model-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
-.provider-info strong, .provider-model-info strong { font-size: 14px; font-family: var(--font-medium); font-weight: 400; overflow-wrap: anywhere; }
-.provider-info span, .provider-model-info span { font-size: 11px; color: var(--muted-text); overflow-wrap: anywhere; }
-.provider-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; padding: 12px 18px 14px; }
-.provider-action-buttons { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
-.provider-actions .secondary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 42px; }
-.provider-actions .icon-button { width: 44px; height: 44px; }
-.provider-empty { padding: 14px 18px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted-text); }
-.provider-model-list { border-top: 1px solid var(--border); }
+/* Above the overlay, so the buttons keep their own clicks. */
+.provider-heading-actions { position: relative; z-index: 1; display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
+/* Four controls share this row with the name and the badges. Kept as ordinary secondary
+   buttons — a button without its outline stops reading as a button — but at tighter padding and
+   height than the ones elsewhere, because the room they take comes out of the name. */
+.provider-heading-actions .secondary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding-inline: 11px; }
+.provider-heading-actions .icon-button { width: 40px; height: 40px; }
+.provider-model-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
+.provider-model-info strong { font-size: 14px; font-family: var(--font-medium); font-weight: 400; overflow-wrap: anywhere; }
+.provider-model-info span { font-size: 11px; color: var(--muted-text); overflow-wrap: anywhere; }
+.provider-name { flex: 1; min-width: 0; font-size: 14px; font-family: var(--font-medium); font-weight: 400; overflow-wrap: anywhere; }
+.provider-meta { flex-basis: 100%; min-width: 0; font-size: 11px; color: var(--muted-text); overflow-wrap: anywhere; }
+/* .provider-body already draws the line above them. */
+.provider-empty { padding: 14px 18px; font-size: 12px; color: var(--muted-text); }
+.provider-model-list { min-width: 0; }
 .provider-model-item { display: flex; align-items: center; gap: 16px; padding: 14px 18px; }
 .provider-model-item + .provider-model-item { border-top: 1px solid var(--border); }
 .model-config-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .model-config-actions .icon-button { width: 44px; height: 44px; }
+/* Past this the four controls stop leaving the name and its address a readable column. They drop
+   to their own line rather than squeeze it; the disclosure chevron moves to the corner so it
+   still reads as a property of the card and not of the buttons. */
+@media (max-width: 900px) {
+  .provider-heading { row-gap: 8px; }
+  .provider-name { flex-basis: 100%; padding-right: 26px; }
+  .provider-heading-actions { margin-left: auto; }
+  .provider-toggle-chevron { position: absolute; top: 17px; right: 18px; }
+}
 .catalog-dialog { width: 560px; }
 /* Only the model list may shrink, so it owns the dialog's single scrollbar;
    the panel keeps its own overflow purely as a fallback for very short viewports. */
@@ -480,6 +503,31 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .model-config-form fieldset, .provider-edit-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .model-form-field { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 8px; font-size: 13px; }
 .model-form-field > span { font-size: 11px; color: var(--muted-text); line-height: 1.7; }
+/* Same box as .text-field, so the trigger lines up with the inputs around it. The field and the
+   trigger share a corner radius and padding with the native arrow replaced by the theme's icon. */
+.select-field { position: relative; display: flex; min-width: 0; flex-direction: column; gap: 8px; font-size: 13px; }
+.select-field-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 12px; color: var(--foreground); background: var(--background); font-size: 14px; text-align: left; transition: border-color 140ms, background 140ms; }
+.select-field-trigger:hover:not(:disabled) { border-color: color-mix(in srgb, var(--foreground) 22%, var(--background)); }
+/* Matches .text-field: focus moves the border colour instead of drawing a ring, so tabbing
+   through the form does not make the one dropdown look unlike the inputs beside it. */
+.select-field-trigger:focus-visible { outline: none; border-color: var(--primary); }
+.select-field-trigger[aria-expanded='true'] { border-color: color-mix(in srgb, var(--foreground) 32%, var(--background)); }
+.select-field-trigger:disabled { opacity: .5; }
+.select-field-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-field-chevron { flex-shrink: 0; color: var(--muted-text); transition: transform 140ms ease; }
+.select-field-trigger[aria-expanded='true'] .select-field-chevron { transform: rotate(180deg); }
+/* The panel is the same surface as the dialog it opens inside — both are --popover — so the
+   edge and the shadow carry the whole sense of a floating list. The border is mixed toward the
+   foreground to read as an edge in both modes: darker than the light theme's hairline, lighter
+   than the dark theme's. */
+.select-field-popover { position: absolute; z-index: 2; top: calc(100% + 6px); right: 0; left: 0; padding: 5px; border: 1px solid color-mix(in srgb, var(--foreground) 15%, var(--border)); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 2px 6px rgb(0 0 0 / 6%), 0 16px 36px rgb(0 0 0 / 18%); }
+.select-field-option { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 44px; padding: 0 10px; border-radius: 8px; text-align: left; }
+/* Same size and weight as the value in the trigger, so choosing an option does not resize the
+   text as the panel closes over it. */
+.select-field-option-label { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.select-field-option:hover, .select-field-option[aria-pressed='true'] { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.select-field-option:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.select-field-option > svg { flex-shrink: 0; color: var(--muted-text); }
 .model-form-columns { display: flex; gap: 16px; }
 .model-key-toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 13px; cursor: pointer; }
 .model-key-toggle input { accent-color: var(--primary); width: 18px; height: 18px; }
@@ -545,13 +593,8 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 }
 @media (max-width: 600px) {
   .model-section-heading { align-items: flex-start; }
-  .provider-toggle { flex-wrap: wrap; padding: 14px; }
-  .provider-info { flex-basis: 100%; }
-  .provider-toggle-chevron { margin-left: auto; }
-  .provider-actions { padding-inline: 14px; }
-  .provider-meta { flex-basis: 100%; }
-  .provider-action-buttons { width: 100%; justify-content: flex-end; }
-  .provider-actions .secondary-button { flex: 1; justify-content: center; }
+  .provider-heading { padding: 14px; }
+  .provider-toggle-chevron { top: 15px; right: 14px; }
   .provider-model-item { align-items: flex-start; flex-wrap: wrap; padding: 14px; }
   .provider-model-info { flex-basis: 100%; }
   .model-config-actions { width: 100%; justify-content: flex-end; }

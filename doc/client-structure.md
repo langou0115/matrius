@@ -23,6 +23,7 @@ src/
 │   ├── local-workspace.tsx             浏览器数据加载、保存队列与错误反馈
 │   ├── workspace.tsx                   侧栏布局、搜索入口与 Ctrl/Cmd+K
 │   ├── dialog.tsx                      原生 HTML dialog、焦点恢复与 Esc
+│   ├── select-field.web.tsx            跟随主题的单选下拉框
 │   └── icon.tsx                        统一线框 SVG 图标
 ├── features/
 │   ├── chat/

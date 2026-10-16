@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
+import { SelectField } from '@/components/web/select-field.web';
 import { fetchProviderCatalog, type CatalogModel } from '@/core/llm/provider-catalog.web';
 import { protocols, type ProviderConfig, type ProviderModelConfig } from '@/core/llm/model-config';
 import { SettingsPage } from '@/features/settings/settings-page.web';
@@ -156,51 +157,44 @@ export default function ModelSettingsScreen() {
       {models.providers.length ? <div className="provider-list">{models.providers.map((provider) => {
         const open = expanded[provider.id] ?? false;
         const bodyId = `provider-body-${provider.id}`;
-        const current = provider.models.find((model) => model.id === models.selectedId);
         const protocolLabel = protocols.find((item) => item.id === provider.protocol)?.label ?? provider.protocol;
-        const status = current ? `当前：${current.name}` : provider.requiresApiKey ? '需要 API key' : '无需 API key';
         const keyStatus = provider.requiresApiKey
           ? (models.getKey(provider.id) ? '已保存 API key' : '需要 API key')
           : '无需 API key';
         return <article className="provider-card" key={provider.id}>
           <div className="provider-heading">
+            {/* The row is one click target through an overlay rather than a button wrapped
+                around the text: the actions cannot live inside a button, and a button that
+                stops where they start leaves the hover fill and the focus ring cut in two. */}
             <button type="button" className="provider-toggle" aria-expanded={open} aria-controls={bodyId}
-              onClick={() => setProviderExpanded(provider.id, !open)}>
-              <span className="provider-info">
-                <strong>{provider.name}</strong>
-                <span>{protocolLabel} · {status}</span>
-              </span>
-              <span className="provider-badges">
-                <span className="provider-count">{provider.models.length} 个模型</span>
-                {current && <span className="provider-current"><Icon name="check" size={13} />当前模型</span>}
-              </span>
-              <Icon name="chevron" size={18} className="provider-toggle-chevron" />
-            </button>
+              aria-label={`${open ? '收起' : '展开'}${provider.name}的模型`}
+              onClick={() => setProviderExpanded(provider.id, !open)} />
+            <strong className="provider-name">{provider.name}</strong>
+            {/* No "current model" badge here: pinned to the provider name it reads as "this
+                is the current provider", and the model row already says which model it is. */}
+            <span className="provider-count">{provider.models.length} 个模型</span>
+            <div className="provider-heading-actions">
+              <button className="secondary-button" disabled={disabled} onClick={() => void discover(provider)}>获取模型列表</button>
+              <button className="secondary-button" disabled={disabled} onClick={() => editModel(provider, null)}><Icon name="plus" size={15} />手动添加</button>
+              <button className="icon-button" aria-label={`编辑服务商：${provider.name}`} disabled={disabled} onClick={() => editProvider(provider)}><Icon name="pen" size={17} /></button>
+              <button className="icon-button" aria-label={`删除服务商：${provider.name}`} disabled={disabled} onClick={() => setConfirmTarget({ kind: 'provider', id: provider.id, name: provider.name })}><Icon name="trash" size={17} /></button>
+            </div>
+            <Icon name="chevron" size={18} className="provider-toggle-chevron" />
+            {/* Its own line across the full row: sharing a line with four buttons left it a
+                column too narrow for an address, and it wrapped into three. */}
+            <span className="provider-meta">{protocolLabel} · {provider.baseUrl} · {keyStatus}</span>
           </div>
 
           <div className="provider-body" id={bodyId} hidden={!open}>
-            <div className="provider-actions">
-              <p className="provider-meta"><span>{provider.baseUrl}</span><span>{keyStatus}</span></p>
-              <div className="provider-action-buttons">
-                <button className="secondary-button" disabled={disabled} onClick={() => void discover(provider)}>获取模型列表</button>
-                <button className="secondary-button" disabled={disabled} onClick={() => editModel(provider, null)}><Icon name="plus" size={15} />手动添加</button>
-                <button className="icon-button" aria-label={`编辑服务商：${provider.name}`} disabled={disabled} onClick={() => editProvider(provider)}><Icon name="pen" size={17} /></button>
-                <button className="icon-button" aria-label={`删除服务商：${provider.name}`} disabled={disabled} onClick={() => setConfirmTarget({ kind: 'provider', id: provider.id, name: provider.name })}><Icon name="trash" size={17} /></button>
-              </div>
-            </div>
-
             {provider.models.length ? <div className="provider-model-list" aria-label={`${provider.name} 的模型`}>
               {provider.models.map((model) => <div className="provider-model-item" key={model.id}>
                 <div className="provider-model-info"><strong>{model.name}</strong><span>{model.modelId} · 上下文 {model.contextWindow.toLocaleString()} · 最大输出 {model.maxOutput.toLocaleString()}</span></div>
                 <div className="model-config-actions">
-                  <button className="secondary-button" disabled={disabled || models.selectedId === model.id} onClick={() => void perform(() => models.select(model.id), '已切换当前模型。')}>
-                    {models.selectedId === model.id ? '当前模型' : '使用'}
-                  </button>
                   <button className="icon-button" aria-label={`编辑模型：${model.name}`} disabled={disabled} onClick={() => editModel(provider, model)}><Icon name="pen" size={17} /></button>
                   <button className="icon-button" aria-label={`删除模型：${model.name}`} disabled={disabled} onClick={() => setConfirmTarget({ kind: 'model', id: model.id, name: model.name })}><Icon name="trash" size={17} /></button>
                 </div>
               </div>)}
-            </div> : <p className="provider-empty">还没有添加模型。获取模型列表，或手动填写模型 ID。</p>}
+            </div> : <p className="provider-empty">还没有添加模型。</p>}
           </div>
         </article>;
       })}</div> : <p className="settings-footnote">还没有配置服务商。添加服务商后即可获取或手动添加模型。</p>}
@@ -221,11 +215,11 @@ export default function ModelSettingsScreen() {
       }}>
         <fieldset disabled={disabled}>
           <label className="model-form-field">服务商名称<input className="text-field" value={providerForm.name} onChange={(event) => setProviderForm({ ...providerForm, name: event.target.value })} placeholder="例如：OpenAI、我的网关" required maxLength={100} /></label>
-          <label className="model-form-field">接口协议<select className="text-field" value={providerForm.protocol} onChange={(event) => {
-            const protocol = protocols.find((item) => item.id === event.target.value)!;
+          <SelectField label="接口协议" value={providerForm.protocol} options={protocols} onChange={(id) => {
+            const protocol = protocols.find((item) => item.id === id)!;
             const usingDefault = protocols.some((item) => item.baseUrl === providerForm.baseUrl);
             setProviderForm({ ...providerForm, protocol: protocol.id, baseUrl: usingDefault ? protocol.baseUrl : providerForm.baseUrl });
-          }}>{protocols.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          }} />
           <label className="model-form-field">Base URL<input className="text-field" type="url" value={providerForm.baseUrl} onChange={(event) => setProviderForm({ ...providerForm, baseUrl: event.target.value })} placeholder="https://your-provider.example/v1" required autoCapitalize="none" spellCheck={false} /><span>填写服务商的 API 基础地址，不包含 /models、/chat/completions、/responses 或 /messages。</span></label>
           <label className="model-key-toggle"><input type="checkbox" checked={providerForm.requiresApiKey} onChange={(event) => setProviderForm({ ...providerForm, requiresApiKey: event.target.checked })} />接口需要 API key</label>
           {providerForm.requiresApiKey && <label className="model-form-field">API key<input className="text-field" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder={models.getKey(providerForm.id) ? '已填写；留空保持当前 key' : '保存在此浏览器中'} /><span>与模型配置分开保存在本机浏览器，未加密；清除站点数据后需要重新填写。</span></label>}
