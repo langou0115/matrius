@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 
 import { Icon, type IconName } from '@/components/web/icon';
 import { useChat, type Message } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
+import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom.web';
 import { useDrafts } from './draft-state';
 import { MessageContent } from './components/message-content.web';
 import { MessageActions } from './components/message-actions.web';
@@ -40,6 +41,7 @@ export default function ChatScreen() {
   const failedReply = lastMessage?.role === 'assistant' && lastMessage.status === 'error' ? lastMessage : null;
   // One indicator for the whole wait, instead of separate copy for "request sent" and "no token yet".
   // Streaming reasoning already shows its own live state, so the line would be redundant there.
+  const generating = runtime.runningId !== null && runtime.runningId === activeId;
   const awaitingReply = runtime.runningId === conversation?.id
     && !(lastMessage?.role === 'assistant' && lastMessage.content.trim())
     && !lastMessage?.reasoning?.trim();
@@ -48,20 +50,14 @@ export default function ChatScreen() {
   const draftKey = activeId ?? 'new';
   const draft = drafts[draftKey] ?? '';
   const messageScroller = useRef<HTMLElement>(null);
-  const followReply = useRef(true);
   const hasMessages = !!conversation?.messages.length;
   const latestContent = conversation?.messages.at(-1)?.content;
   const latestReasoning = conversation?.messages.at(-1)?.reasoning;
-
-  useEffect(() => {
-    followReply.current = true;
-    const scroller = messageScroller.current;
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
-  }, [activeId]);
-  useEffect(() => {
-    const scroller = messageScroller.current;
-    if (scroller && followReply.current) scroller.scrollTop = scroller.scrollHeight;
-  }, [conversation?.messages.length, latestContent, latestReasoning]);
+  const { scrollToBottom, visible: scrollToBottomVisible } = useChatAutoScroll({
+    containerRef: messageScroller,
+    containerKey: activeId ?? 'new',
+    followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}`,
+  });
   function changeDraft(value: string) { setDraft(draftKey, value); }
   function send() {
     const content = draft.trim();
@@ -72,7 +68,7 @@ export default function ChatScreen() {
     dispatch({ type: 'thinking-effort', conversationId: conversation?.id ?? null, thinkingEffort: value });
   }
 
-  return <main ref={messageScroller} onScroll={(event) => { const element = event.currentTarget; followReply.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100; }} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
+  return <main ref={messageScroller} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
     <header className="chat-topbar">
       {!sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
@@ -108,7 +104,10 @@ export default function ChatScreen() {
           {!runtime.runningId && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id, thinkingEffort)}>生成回复</button>}
         </div>
       </div>
-      <div className="bottom-composer"><Composer value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} /></div>
+      <div className="bottom-composer">
+        <ScrollToBottomButton generating={generating} visible={scrollToBottomVisible} onScrollToBottom={scrollToBottom} />
+        <Composer value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
+      </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
       <div className="welcome-heading"><span className="welcome-mark"><Icon name="sparkle" size={30} /></span><h2>有什么可以帮你的？</h2><p>让好奇有回响，让想法更进一步。</p></div>
       <Composer value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />

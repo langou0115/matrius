@@ -128,7 +128,7 @@ h1, h2, h3, p { margin: 0; }
 .chat-topbar .conversation-title { min-width: 0; max-width: min(360px, 100%); margin: 0; font-size: 14px; font-family: var(--font-medium); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-topbar .conversation-title-field { position: relative; display: inline-flex; min-width: 0; max-width: min(360px, 100%); }
 .chat-topbar .conversation-title-measure { display: block; max-width: min(360px, 100%); padding: 5px 14px; border: 1px solid transparent; overflow: hidden; font-size: 14px; font-family: var(--font-medium); font-weight: 400; white-space: pre; visibility: hidden; }
-.chat-topbar .conversation-title-input { position: absolute; inset: 0; width: 100%; padding: 5px 14px; font-size: 14px; font-family: var(--font-medium); font-weight: 400; color: var(--foreground); background: none; border: 1px solid color-mix(in srgb, var(--primary) 38%, var(--background)); border-radius: 999px; outline: none; caret-color: var(--primary); }
+.chat-topbar .conversation-title-input { position: absolute; inset: 0; width: 100%; padding: 5px 14px; font-size: 14px; font-family: var(--font-medium); font-weight: 400; color: var(--foreground); background: none; border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: 999px; outline: none; caret-color: var(--primary); }
 .welcome-scroll { overflow-y: auto; flex: 1; display: flex; flex-direction: column; padding: 24px 40px 100px; }
 .welcome-content { width: 100%; max-width: 712px; margin: auto; padding-bottom: 5vh; }
 .welcome-heading { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 34px; }
@@ -136,7 +136,7 @@ h1, h2, h3, p { margin: 0; }
 .welcome-heading h2 { font-size: 30px; font-family: var(--font-medium); font-weight: 400; letter-spacing: -.8px; line-height: 1.5; }
 .welcome-heading p { font-size: 13px; color: var(--muted-text); margin-top: 9px; letter-spacing: .3px; }
 .composer { border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: var(--radius-xl); padding: 17px 16px 12px; background: var(--soft); transition: border-color 160ms; }
-.composer:focus-within { border-color: color-mix(in srgb, var(--primary) 65%, var(--background)); }
+.composer:focus-within { border-color: color-mix(in srgb, var(--foreground) 26%, var(--background)); }
 .composer textarea { width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: 15px; min-height: 58px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
 .composer textarea::placeholder { color: var(--muted-text); opacity: .8; }
 .composer-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 7px; }
@@ -206,6 +206,14 @@ h1, h2, h3, p { margin: 0; }
 .connection-notice p { margin-top: 4px; line-height: 1.8; }
 .bottom-composer { position: sticky; bottom: 0; z-index: 2; width: 100%; padding: 12px 24px 24px; flex-shrink: 0; background: linear-gradient(to bottom, transparent calc(100% - 24px - var(--radius-xl)), var(--background) calc(100% - 24px - var(--radius-xl))); }
 .bottom-composer > .composer { width: 100%; max-width: 712px; margin: 0 auto; }
+.scroll-to-bottom-anchor { position: absolute; right: 0; bottom: calc(100% + 10px); left: 0; display: flex; justify-content: center; pointer-events: none; }
+.scroll-to-bottom-button { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 50%; color: var(--foreground); background: var(--popover); box-shadow: 0 6px 20px rgb(0 0 0 / 14%); pointer-events: auto; transition: background 140ms, border-color 140ms, transform 140ms; }
+.scroll-to-bottom-button:hover { border-color: color-mix(in srgb, var(--foreground) 24%, var(--background)); background: color-mix(in srgb, var(--popover-foreground) 6%, var(--popover)); transform: translateY(-1px); }
+.scroll-to-bottom-button:active { transform: translateY(0); }
+.scroll-to-bottom-spinner { width: 18px; height: 18px; border: 2px solid color-mix(in srgb, var(--foreground) 18%, transparent); border-top-color: var(--foreground); border-radius: 50%; animation: scroll-to-bottom-spin 700ms linear infinite; }
+@keyframes scroll-to-bottom-spin { to { transform: rotate(1turn); } }
+/* Without rotation the ring still has to read as "working", so it breathes like the reply status line. */
+@media (prefers-reduced-motion: reduce) { .scroll-to-bottom-spinner { animation: reasoning-breathe 2.2s ease-in-out infinite; } }
 
 /* Dialogs */
 .dialog { padding: 0; border: 0; overflow: visible; max-height: min(80dvh, 760px); max-width: calc(100vw - 40px); width: 540px; border-radius: var(--radius-xl); background: var(--popover); color: var(--popover-foreground); box-shadow: 0 18px 80px #0002; }

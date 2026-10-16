@@ -40,6 +40,7 @@ src/
 │   │       ├── reasoning-block.web.tsx  等待与思考共用的状态行及折叠正文
 │   │       ├── code-block.web.tsx       代码高亮、复制与折叠
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
+│   │       ├── scroll-to-bottom.web.tsx  跟随滚动与回到最新消息按钮
 │   │       └── search-dialog.web.tsx   标题与正文搜索、结果片段
 │   ├── workspace/workspace-repository.web.ts  工作区存储结构校验
 │   ├── settings/settings-screen.web.tsx  独立全页设置

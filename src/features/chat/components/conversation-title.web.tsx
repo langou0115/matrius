@@ -15,7 +15,9 @@ export function ConversationTitle({ title, onRename }: Props) {
     if (!editing) return;
     const element = input.current;
     if (!element) return;
-    element.focus();
+    // The title lives in a sticky topbar; a plain focus() makes the browser scroll
+    // its flow position into view, which yanks a long conversation back to the top.
+    element.focus({ preventScroll: true });
     const end = element.value.length;
     element.setSelectionRange(end, end);
   }, [editing]);
