@@ -1,9 +1,16 @@
-import { Link } from 'expo-router';
+import { Link, usePathname } from 'expo-router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 
+import { mockItemForPath } from '@/features/mock/mock-items';
+
 export function DemoToolbar() {
+  const pathname = usePathname().replace(/\/$/, '');
+  const item = mockItemForPath(pathname);
+  // mock 索引页本身就是导航，不需要这条工具条。
+  if (!item) return null;
   return <div className="demo-toolbar" aria-label="开发示例预览">
-    <span>聊天渲染测试</span>
+    <span>{item.title}</span>
+    <Link href="/mock" asChild><LinkAnchor>索引</LinkAnchor></Link>
     <button onClick={() => window.location.reload()}>重置</button>
     <Link href="/" asChild><LinkAnchor>退出</LinkAnchor></Link>
   </div>;

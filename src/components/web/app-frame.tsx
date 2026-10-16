@@ -1,10 +1,13 @@
-import { useMemo, useSyncExternalStore, type CSSProperties, type PropsWithChildren } from 'react';
+import { lazy, Suspense, useMemo, useSyncExternalStore, type CSSProperties, type PropsWithChildren } from 'react';
 
 import { useAppearance } from '@/theme/appearance';
 import { themePresets } from '@/theme/presets';
 import { resolveTheme } from '@/theme/resolve-theme';
 import { useIsPreview } from '@/features/workspace/preview-context';
-import { DemoToolbar } from './demo-toolbar';
+
+const DemoToolbar = __DEV__
+  ? lazy(() => import('./demo-toolbar').then((module) => ({ default: module.DemoToolbar })))
+  : null;
 
 const subscribe = (callback: () => void) => {
   const query = window.matchMedia('(prefers-color-scheme: dark)');
@@ -29,5 +32,5 @@ export function AppFrame({ children }: PropsWithChildren) {
     return Object.fromEntries(Object.entries(resolveTheme(preset, resolvedMode)).map(([key, value]) => [`--${key}`, value])) as CSSProperties;
   }, [themeId, resolvedMode]);
 
-  return <div className="matrius-app" data-color-mode={resolvedMode} style={style}>{children}{preview && <DemoToolbar />}</div>;
+  return <div className="matrius-app" data-color-mode={resolvedMode} style={style}>{children}{preview && DemoToolbar && <Suspense fallback={null}><DemoToolbar /></Suspense>}</div>;
 }

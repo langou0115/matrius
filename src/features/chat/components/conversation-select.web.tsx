@@ -1,8 +1,9 @@
 import { memo, useEffect, useRef, useState } from 'react';
+import { Icon } from '@/components/web/icon';
 
-type Props = { title: string; active: boolean; onSelect: () => void };
+type Props = { title: string; active: boolean; hasUnreadError?: boolean; onSelect: () => void };
 
-export const ConversationSelect = memo(function ConversationSelect({ title, active, onSelect }: Props) {
+export const ConversationSelect = memo(function ConversationSelect({ title, active, hasUnreadError = false, onSelect }: Props) {
   const viewport = useRef<HTMLSpanElement>(null);
   const label = useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = useState(false);
@@ -61,5 +62,6 @@ export const ConversationSelect = memo(function ConversationSelect({ title, acti
     onClick={onSelect} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
     onFocus={(event) => setFocused(event.currentTarget.matches(':focus-visible'))} onBlur={() => setFocused(false)}>
     <span className="conversation-title" ref={viewport}><span className="conversation-title-text" ref={label}>{title}</span></span>
+    {hasUnreadError && <span className="conversation-error-indicator" role="img" aria-label="此对话有未查看的回复错误"><Icon name="alert" size={16} /></span>}
   </button>;
 });

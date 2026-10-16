@@ -23,6 +23,7 @@ const paths = {
   code: <><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18" /></>,
   pen: <><path d="m15 4 5 5M4 20l5-1L21 7a2.1 2.1 0 0 0-5-5L4 14l-1 7Z" /><path d="M13 21h8" /></>,
   compare: <><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" /></>,
+  refresh: <><path d="M20 11a8.1 8.1 0 0 0-14.7-4.7L3 9M3 4v5h5" /><path d="M4 13a8.1 8.1 0 0 0 14.7 4.7L21 15M21 20v-5h-5" /></>,
   bolt: <path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" />,
   pin: <><path d="m16 3 5 5-4 1-3 5v3l-2 2-7-7 2-2h3l5-3 1-4ZM2 22l6-6" /></>,
   trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7" /></>,
@@ -31,6 +32,7 @@ const paths = {
   monitor: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></>,
   check: <path d="m5 12 4 4L19 6" />,
   shield: <><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" /><path d="m8 12 3 3 5-6" /></>,
+  alert: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5m0 4h.01" /></>,
   info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10h.01" /></>,
 } satisfies Record<string, ReactNode>;
 

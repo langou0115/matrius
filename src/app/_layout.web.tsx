@@ -11,7 +11,8 @@ import { version as katexVersion } from 'katex';
 export default function WebLayout() {
   const pathname = usePathname().replace(/\/$/, '');
   const preview = __DEV__ && (pathname === '/mock' || pathname.startsWith('/mock/'));
-  const fullPage = pathname === '/settings';
+  const fullPage = pathname === '/settings' || pathname.startsWith('/settings/') || pathname === '/mock'
+    || pathname === '/mock/chat/settings' || pathname.startsWith('/mock/chat/settings/');
   useFonts({
     Inter: { uri: require('@/assets/fonts/Inter-Regular.ttf'), display: FontDisplay.SWAP },
     InterMedium: { uri: require('@/assets/fonts/Inter-Medium.ttf'), display: FontDisplay.SWAP },

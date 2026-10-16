@@ -1,17 +1,19 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
 
-export type Message = { id: string; role: 'user' | 'assistant'; content: string };
+export type Message = { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; status?: 'streaming' | 'complete' | 'stopped' | 'error'; error?: string };
 export type Conversation = {
   id: string;
   title: string;
   pinned: boolean;
   updatedAt: number;
+  errorReadAt?: number | null;
   messages: Message[];
 };
 export type ChatState = { conversations: Conversation[]; activeId: string | null; sidebarOpen: boolean };
 type Action =
   | { type: 'select'; id: string | null }
   | { type: 'send'; conversationId: string; message: Message }
+  | { type: 'reply'; conversationId: string; message: Message }
   | { type: 'rename'; id: string; title: string }
   | { type: 'pin'; id: string }
   | { type: 'fork'; conversationId: string; messageId: string; forkId: string; updatedAt: number }
@@ -20,8 +22,24 @@ type Action =
 
 function reducer(state: ChatState, action: Action): ChatState {
   switch (action.type) {
+    case 'reply':
+      return { ...state, conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== action.conversationId) return conversation;
+        const exists = conversation.messages.some((message) => message.id === action.message.id);
+        const next = { ...conversation, updatedAt: Date.now(), messages: exists
+          ? conversation.messages.map((message) => message.id === action.message.id ? action.message : message)
+          : [...conversation.messages, action.message] };
+        if (action.message.status === 'error') next.errorReadAt = state.activeId === conversation.id ? Date.now() : null;
+        else if (action.message.status === 'streaming') next.errorReadAt = null;
+        else if (action.message.status === 'complete') delete next.errorReadAt;
+        return next;
+      }) };
     case 'select':
-      return { ...state, activeId: action.id };
+      return { ...state, activeId: action.id, conversations: state.conversations.map((conversation) => {
+        const last = conversation.messages.at(-1);
+        if (conversation.id !== action.id || last?.role !== 'assistant' || last.status !== 'error' || conversation.errorReadAt != null) return conversation;
+        return { ...conversation, errorReadAt: Date.now() };
+      }) };
     case 'sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'delete':
@@ -62,6 +80,7 @@ function reducer(state: ChatState, action: Action): ChatState {
             updatedAt: Date.now(),
             messages: [action.message],
           };
+      delete conversation.errorReadAt;
       return {
         ...state,
         activeId: conversation.id,

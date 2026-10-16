@@ -1,50 +1,52 @@
-import { Link } from 'expo-router';
+import { Link, type Href } from 'expo-router';
+import { useState } from 'react';
+
+import { Icon } from '@/components/web/icon';
 import { LinkAnchor } from '@/components/web/link-anchor';
-import type { CSSProperties } from 'react';
-
-import { Icon, type IconName } from '@/components/web/icon';
-import { useResolvedColorMode } from '@/components/web/app-frame';
-import { resolveTheme } from '@/theme/resolve-theme';
-import { useAppearance, type ColorMode } from '@/theme/appearance';
+import { useAppearance } from '@/theme/appearance';
 import { themePresets } from '@/theme/presets';
-
-const modes: { id: ColorMode; label: string; icon: IconName }[] = [
-  { id: 'light', label: '浅色', icon: 'sun' },
-  { id: 'dark', label: '深色', icon: 'moon' },
-  { id: 'system', label: '跟随系统', icon: 'monitor' },
-];
+import { displayModes, searchSettings } from './settings-catalog';
+import { useModels } from '@/features/models/model-state';
+import { SettingsPage, useSettingsRoot } from './settings-page.web';
 
 export default function SettingsScreen() {
-  const { themeId, setThemeId, mode, setMode } = useAppearance();
-  const resolvedMode = useResolvedColorMode();
-  return <main className="settings-main" id="main-content" tabIndex={-1}>
-    <header className="chat-topbar">
-      <Link href="/" asChild><LinkAnchor className="settings-back"><Icon name="back" size={18} />返回对话</LinkAnchor></Link>
-    </header>
-    <div className="settings-scroll"><div className="settings-content">
-      <div className="settings-heading"><span className="eyebrow">让这里更像你</span><h1>设置</h1><p>调整你的对话空间，找到最舒适的样子。</p></div>
-      <section className="settings-section" aria-labelledby="appearance-heading">
-        <h2 id="appearance-heading">外观</h2>
-        <div className="settings-row"><div><h3>显示模式</h3><p>为白天和夜晚，选择合适的亮度。</p></div>
-          <div className="mode-switch" role="group" aria-label="显示模式">{modes.map((item) => <button key={item.id} aria-pressed={mode === item.id} onClick={() => setMode(item.id)}><Icon name={item.icon} size={17} /><span>{item.label}</span></button>)}</div>
-        </div>
-        <div className="theme-heading"><h3>配色主题</h3><p>换一种心情，布局与字体保持熟悉。</p></div>
-        <div className="theme-grid">{themePresets.map((preset) => {
-          const preview = resolveTheme(preset, resolvedMode);
-          return <button key={preset.id} className={`theme-card ${themeId === preset.id ? 'is-selected' : ''}`} aria-pressed={themeId === preset.id} onClick={() => setThemeId(preset.id)}>
-          <span className="theme-preview" style={{ '--preview-bg': preview.background, '--preview-sidebar': preview.sidebar, '--preview-primary': preview.primary, '--preview-muted': preview.muted, '--preview-fg': preview.foreground } as CSSProperties}>
-            <span className="preview-sidebar"><i /><i /><i /></span><span className="preview-content"><i /><i /><span><i /></span></span>
-          </span>
-          <span className="theme-card-label">{preset.name}<span className="theme-check">{themeId === preset.id && <Icon name="check" size={13} />}</span></span>
-        </button>;
+  const [query, setQuery] = useState('');
+  const root = useSettingsRoot();
+  const { models } = useModels();
+  const { themeId, mode } = useAppearance();
+  const results = searchSettings(query);
+  const searching = query.trim().length > 0;
+  const currentValues = {
+    appearance: `${displayModes.find((item) => item.id === mode)?.label} · ${themePresets.find((item) => item.id === themeId)?.name}`,
+    models: models.length ? `${models.length} 个模型` : '未配置',
+    about: 'v1.0.0',
+  };
+
+  return <SettingsPage title="设置" description="找到你想调整的内容。" index>
+    <div className="settings-search" role="search" aria-label="搜索设置">
+      <Icon name="search" size={19} />
+      <input type="search" aria-label="搜索设置项" placeholder="搜索设置，如深色、主题…" value={query} onChange={(event) => setQuery(event.target.value)} />
+      {query && <button className="icon-button" type="button" aria-label="清空搜索" onClick={() => setQuery('')}><Icon name="close" size={16} /></button>}
+    </div>
+    {searching && <p className="settings-result-count" role="status">找到 {results.length} 项设置</p>}
+    {results.length ? <nav aria-label="设置项目">{(searching ? ['搜索结果'] : ['偏好', '应用']).map((group) => {
+      const items = searching ? results : results.filter((item) => item.group === group);
+      if (!items.length) return null;
+      return <section className="settings-section settings-directory" key={group} aria-label={group}>
+        <h2>{group}</h2>
+        <div className="settings-entry-list">{items.map((item) => {
+          const href: Href = `${root}/${item.id}`;
+          return <Link key={item.id} href={href} asChild><LinkAnchor className="settings-entry">
+            <span className="settings-entry-icon"><Icon name={item.icon} size={21} /></span>
+            <span className="settings-entry-text"><strong>{item.title}</strong><span>{item.description}</span></span>
+            <span className="settings-entry-value">{currentValues[item.id]}</span>
+            <Icon name="chevron" size={17} className="settings-entry-chevron" />
+          </LinkAnchor></Link>;
         })}</div>
-        <p className="settings-footnote">外观偏好会自动保存在当前浏览器中。</p>
-      </section>
-      <section className="settings-section" aria-labelledby="about-heading"><h2 id="about-heading">关于</h2>
-        <div className="about-card"><span className="about-logo"><Icon name="sparkle" size={23} /></span><div><h3>Matrius</h3><p>一个安静、自由的 AI 对话空间。</p></div><span className="version-label">v1.0.0</span></div>
-        <div className="about-row"><span>运行模式</span><span><Icon name="shield" size={15} />本地模式</span></div>
-        <p className="settings-footnote">无需登录即可使用。对话保存在当前浏览器中，刷新后仍可查看；清除网站数据会删除本地记录。</p>
-      </section>
-    </div></div>
-  </main>;
+      </section>;
+    })}</nav> : <div className="settings-search-empty">
+      <Icon name="search" size={26} /><h2>没有找到相关设置</h2><p>试试“显示模式”“主题”或“版本”。</p>
+      <button className="secondary-button" onClick={() => setQuery('')}>查看全部设置</button>
+    </div>}
+  </SettingsPage>;
 }

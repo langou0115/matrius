@@ -12,11 +12,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isThemeId(value: unknown): value is ThemeId { return themePresets.some((preset) => preset.id === value); }
 function readMessage(value: unknown): Message {
   if (!isRecord(value) || typeof value.id !== 'string' || (value.role !== 'user' && value.role !== 'assistant') || typeof value.content !== 'string') throw new Error('Invalid stored message');
-  return { id: value.id, role: value.role, content: value.content };
+  const status = value.status === 'streaming' ? 'stopped' : ['complete', 'stopped', 'error'].includes(String(value.status)) ? value.status as Message['status'] : undefined;
+  return { id: value.id, role: value.role, content: value.content,
+    ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
+    ...(status ? { status } : {}),
+    ...(typeof value.error === 'string' ? { error: value.error } : {}),
+  };
 }
 function readConversation(value: unknown): Conversation {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.pinned !== 'boolean' || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) || !Array.isArray(value.messages)) throw new Error('Invalid stored conversation');
-  return { id: value.id, title: value.title, pinned: value.pinned, updatedAt: value.updatedAt, messages: value.messages.map(readMessage) };
+  if (value.errorReadAt !== undefined && value.errorReadAt !== null && (typeof value.errorReadAt !== 'number' || !Number.isFinite(value.errorReadAt))) throw new Error('Invalid stored conversation error status');
+  return { id: value.id, title: value.title, pinned: value.pinned, updatedAt: value.updatedAt, messages: value.messages.map(readMessage), ...(value.errorReadAt !== undefined ? { errorReadAt: value.errorReadAt as number | null } : {}) };
 }
 
 export async function loadWorkspace(): Promise<LoadedWorkspace> {
