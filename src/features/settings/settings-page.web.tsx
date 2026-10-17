@@ -1,7 +1,7 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from 'expo-router';
+import { ArrowLeft, Cpu, Info, Palette, Search, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
-import { Icon } from '@/components/web/icon';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useIsPreview } from '@/features/workspace/preview-context';
 
@@ -9,6 +9,19 @@ import { searchSettings, searchSettingsContent, settingsItems } from './settings
 
 export function useSettingsRoot() {
   return useIsPreview() ? '/mock/chat/settings' : '/settings';
+}
+
+/** Settings navigation uses generic UI glyphs from lucide; model brand marks stay with
+    the model picker, which renders them from thesvg. */
+const categoryIcons: Record<string, LucideIcon> = {
+  appearance: Palette,
+  models: Cpu,
+  about: Info,
+};
+
+function CategoryIcon({ id, size = 18 }: { id: string; size?: number }) {
+  const Glyph = categoryIcons[id] ?? Info;
+  return <Glyph size={size} strokeWidth={1.75} aria-hidden="true" />;
 }
 
 /** Desktop settings shell shared by every category: a fixed category rail on the left and the
@@ -51,14 +64,14 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
   return <main className="settings-main" id="main-content" tabIndex={-1}>
     <aside className="settings-sidebar" aria-label="设置导航">
       <Link href={homeHref} replace asChild>
-        <LinkAnchor className="settings-back"><Icon name="back" size={18} /><span>返回对话</span></LinkAnchor>
+        <LinkAnchor className="settings-back"><ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" /><span>返回对话</span></LinkAnchor>
       </Link>
       <div className="settings-search" role="search" aria-label="搜索设置">
-        <Icon name="search" size={16} />
+        <Search size={16} strokeWidth={1.75} aria-hidden="true" />
         <input type="search" aria-label="搜索设置项" placeholder="搜索设置" value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Escape') setQuery(''); }} />
-        {query && <button type="button" className="icon-button" aria-label="清空搜索" onClick={() => setQuery('')}><Icon name="close" size={14} /></button>}
+        {query && <button type="button" className="icon-button" aria-label="清空搜索" onClick={() => setQuery('')}><X size={14} strokeWidth={2} aria-hidden="true" /></button>}
       </div>
       <nav className="settings-nav" aria-label="设置分类">
         {searching ? (noResults
@@ -70,7 +83,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
               const href: Href = `${root}/${target.category}?focus=${target.sectionId}`;
               return <Link key={target.id} href={href} asChild>
                 <LinkAnchor className="settings-nav-item settings-search-result" onClick={() => setQuery('')}>
-                  <Icon name={category?.icon ?? 'settings'} size={18} />
+                  <CategoryIcon id={target.category} />
                   <span>{target.title}</span>
                   <span className="settings-search-result-category">{category?.title}</span>
                 </LinkAnchor>
@@ -80,7 +93,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
               const href: Href = `${root}/${item.id}`;
               return <Link key={item.id} href={href} asChild>
                 <LinkAnchor className="settings-nav-item settings-search-result" onClick={() => setQuery('')}>
-                  <Icon name={item.icon} size={18} />
+                  <CategoryIcon id={item.id} />
                   <span>{item.title}</span>
                   <span className="settings-search-result-category">{item.group}</span>
                 </LinkAnchor>
@@ -93,7 +106,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
               const href: Href = `${root}/${item.id}`;
               return <Link key={item.id} href={href} asChild>
                 <LinkAnchor className={`settings-nav-item ${activeId === item.id ? 'is-active' : ''}`} aria-current={activeId === item.id ? 'page' : undefined}>
-                  <Icon name={item.icon} size={18} />
+                  <CategoryIcon id={item.id} />
                   <span>{item.title}</span>
                 </LinkAnchor>
               </Link>;

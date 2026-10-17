@@ -24,6 +24,11 @@ const effortOptions: { value: ThinkingEffort; label: string; description: string
   { value: 'high', label: '高', description: '适合复杂任务的深入推理' },
 ];
 
+// Both picker pages swap inside the same anchored card. The thinking page's natural height
+// (header + four effort rows) is the reference: the model list is capped to it so switching
+// pages does not resize the card. The fallback below still wins on short viewports.
+const PICKER_CARD_MAX_HEIGHT = 294;
+
 export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
@@ -42,6 +47,16 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   const effortLabel = effortOptions.find((option) => option.value === thinkingEffort)?.label ?? '';
   const [modelError, setModelError] = useState<string | null>(null);
 
+  // The current model is what people come back for, so its provider group and its own row
+  // move to the front; the remaining order is untouched.
+  const selectedModel = models.selected;
+  const selectedProviderIndex = selectedModel
+    ? models.providers.findIndex((provider) => provider.models.some((model) => model.id === selectedModel.id))
+    : -1;
+  const orderedProviders = selectedProviderIndex > 0
+    ? [models.providers[selectedProviderIndex], ...models.providers.slice(0, selectedProviderIndex), ...models.providers.slice(selectedProviderIndex + 1)]
+    : models.providers;
+
   useEffect(() => {
     if (!showModels) return;
 
@@ -57,7 +72,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         left,
         bottom: viewportHeight - bounds.top + 8,
         width,
-        maxHeight: Math.max(120, bounds.top - 20),
+        maxHeight: Math.min(PICKER_CARD_MAX_HEIGHT, Math.max(120, bounds.top - 20)),
       };
       setPickerPosition((current) => current && current.left === nextPosition.left && current.bottom === nextPosition.bottom && current.width === nextPosition.width && current.maxHeight === nextPosition.maxHeight
         ? current
@@ -159,24 +174,30 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     >
       {pickerPage === 'models' ? <>
         {models.models.length ? <div className="model-choice-list" role="group" aria-label="可用模型" onKeyDown={handleModelMenuKeyDown}>
-          {models.providers.filter((provider) => provider.models.length > 0).map((provider) => <section className="model-provider-group" key={provider.id}>
-            <h3 className="model-provider-heading">{provider.name}</h3>
-            {provider.models.map((model) => <button
-              key={model.id}
-              type="button"
-              data-picker-option
-              className="model-choice"
-              disabled={blocked}
-              aria-pressed={models.selectedId === model.id}
-              aria-label={`${model.name}，${provider.name}`}
-              ref={models.selectedId === model.id || (!models.selectedId && model.id === models.models[0]?.id) ? selectedModelOption : undefined}
-              onClick={() => { void selectModel(model.id); }}
-            >
-              <ModelIcon modelId={model.modelId} name={model.name} providerName={provider.name} />
-              <span className="model-choice-copy"><strong>{model.name}</strong></span>
-              {models.selectedId === model.id && <Icon name="check" size={15} />}
-            </button>)}
-          </section>)}
+          {orderedProviders.filter((provider) => provider.models.length > 0).map((provider) => {
+            const selectedIndex = selectedModel ? provider.models.findIndex((model) => model.id === selectedModel.id) : -1;
+            const orderedModels = selectedIndex > 0
+              ? [provider.models[selectedIndex], ...provider.models.slice(0, selectedIndex), ...provider.models.slice(selectedIndex + 1)]
+              : provider.models;
+            return <section className="model-provider-group" key={provider.id}>
+              <h3 className="model-provider-heading">{provider.name}</h3>
+              {orderedModels.map((model) => <button
+                key={model.id}
+                type="button"
+                data-picker-option
+                className="model-choice"
+                disabled={blocked}
+                aria-pressed={models.selectedId === model.id}
+                aria-label={`${model.name}，${provider.name}`}
+                ref={models.selectedId === model.id || (!models.selectedId && model.id === models.models[0]?.id) ? selectedModelOption : undefined}
+                onClick={() => { void selectModel(model.id); }}
+              >
+                <ModelIcon modelId={model.modelId} name={model.name} providerName={provider.name} />
+                <span className="model-choice-copy"><strong>{model.name}</strong></span>
+                {models.selectedId === model.id && <Icon name="check" size={15} />}
+              </button>)}
+            </section>;
+          })}
         </div> : <div className="model-picker-empty">
           <span>还没有可用模型</span>
         </div>}
