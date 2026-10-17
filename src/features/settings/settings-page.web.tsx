@@ -1,30 +1,113 @@
-import { Link, router, usePathname, type Href } from 'expo-router';
-import type { PropsWithChildren } from 'react';
+import { Link, useLocalSearchParams, usePathname, type Href } from 'expo-router';
+import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useIsPreview } from '@/features/workspace/preview-context';
 
+import { searchSettings, searchSettingsContent, settingsItems } from './settings-catalog';
+
 export function useSettingsRoot() {
   return useIsPreview() ? '/mock/chat/settings' : '/settings';
 }
 
-export function SettingsPage({ title, description, index = false, children }: PropsWithChildren<{ title: string; description: string; index?: boolean }>) {
+/** Desktop settings shell shared by every category: a fixed category rail on the left and the
+    active category's content on the right. Categories are ordinary routes, so browser history
+    and direct refreshes keep working while switching only swaps this page's content. */
+export function SettingsPage({ title, description, children }: PropsWithChildren<{ title: string; description: string }>) {
+  const [query, setQuery] = useState('');
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
   const preview = useIsPreview();
   const root = useSettingsRoot();
-  const pathname = usePathname();
+  const pathname = usePathname().replace(/\/$/, '');
   const homeHref: Href = preview ? '/mock/chat' : '/';
-  const parentHref = (index ? homeHref : pathname.slice(0, pathname.lastIndexOf('/')) || root) as Href;
+  const activeId = settingsItems.find((item) => pathname === `${root}/${item.id}`)?.id;
+  const groups = settingsItems.reduce<string[]>((list, item) => (list.includes(item.group) ? list : [...list, item.group]), []);
+  const searching = query.trim().length > 0;
+  const contentMatches = searching ? searchSettingsContent(query) : [];
+  // A category row is redundant when its contents already match.
+  const categoryMatches = searching ? searchSettings(query).filter((item) => !contentMatches.some((target) => target.category === item.id)) : [];
+  const noResults = searching && !contentMatches.length && !categoryMatches.length;
+
+  // Results link to a category with `?focus=<heading id>`; scroll that heading into view once
+  // the target page mounts. The panel is the scroll container, and the 24px offset matches the
+  // section spacing so the focused heading does not stick to the top edge.
+  useEffect(() => {
+    if (!focus) return;
+    const target = document.getElementById(focus);
+    const container = target?.closest<HTMLElement>('.settings-scroll');
+    if (!target || !container) return;
+    const section = target.closest('.settings-section');
+    // The first section sits right below the category heading, so an un-scrolled page already
+    // shows it; jumping would only hide the page title.
+    if (section && section === section.parentElement?.querySelector('.settings-section') && container.scrollTop === 0) return;
+    const top = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    container.scrollTo({ top: Math.max(0, top - 24), behavior: reduceMotion ? 'auto' : 'smooth' });
+  }, [focus, pathname]);
+
+  function categoryOf(id: string) { return settingsItems.find((item) => item.id === id); }
+
   return <main className="settings-main" id="main-content" tabIndex={-1}>
-      <header className="settings-topbar">
-        <nav className="settings-navigation" aria-label="设置导航">
-          <button type="button" className="icon-button" aria-label="返回上一页" onClick={() => { if (router.canGoBack()) router.back(); else router.replace(parentHref); }}><Icon name="back" size={20} /></button>
-          <Link href={homeHref} replace asChild><LinkAnchor className="icon-button" aria-label="返回主界面"><Icon name="home" size={20} /></LinkAnchor></Link>
-        </nav>
-      </header>
-      <div className="settings-scroll"><div className="settings-content">
-        <div className="settings-heading"><h1>{title}</h1><p>{description}</p></div>
-        {children}
-      </div></div>
+    <aside className="settings-sidebar" aria-label="设置导航">
+      <Link href={homeHref} replace asChild>
+        <LinkAnchor className="settings-back"><Icon name="back" size={18} /><span>返回对话</span></LinkAnchor>
+      </Link>
+      <div className="settings-search" role="search" aria-label="搜索设置">
+        <Icon name="search" size={16} />
+        <input type="search" aria-label="搜索设置项" placeholder="搜索设置" value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Escape') setQuery(''); }} />
+        {query && <button type="button" className="icon-button" aria-label="清空搜索" onClick={() => setQuery('')}><Icon name="close" size={14} /></button>}
+      </div>
+      <nav className="settings-nav" aria-label="设置分类">
+        {searching ? (noResults
+          ? <p className="settings-search-empty" role="status">没有找到相关设置</p>
+          : <section className="settings-nav-group">
+            <h2>搜索结果</h2>
+            {contentMatches.map((target) => {
+              const category = categoryOf(target.category);
+              const href: Href = `${root}/${target.category}?focus=${target.sectionId}`;
+              return <Link key={target.id} href={href} asChild>
+                <LinkAnchor className="settings-nav-item settings-search-result" onClick={() => setQuery('')}>
+                  <Icon name={category?.icon ?? 'settings'} size={18} />
+                  <span>{target.title}</span>
+                  <span className="settings-search-result-category">{category?.title}</span>
+                </LinkAnchor>
+              </Link>;
+            })}
+            {categoryMatches.map((item) => {
+              const href: Href = `${root}/${item.id}`;
+              return <Link key={item.id} href={href} asChild>
+                <LinkAnchor className="settings-nav-item settings-search-result" onClick={() => setQuery('')}>
+                  <Icon name={item.icon} size={18} />
+                  <span>{item.title}</span>
+                  <span className="settings-search-result-category">{item.group}</span>
+                </LinkAnchor>
+              </Link>;
+            })}
+          </section>)
+          : groups.map((group) => <section className="settings-nav-group" key={group}>
+            <h2>{group}</h2>
+            {settingsItems.filter((item) => item.group === group).map((item) => {
+              const href: Href = `${root}/${item.id}`;
+              return <Link key={item.id} href={href} asChild>
+                <LinkAnchor className={`settings-nav-item ${activeId === item.id ? 'is-active' : ''}`} aria-current={activeId === item.id ? 'page' : undefined}>
+                  <Icon name={item.icon} size={18} />
+                  <span>{item.title}</span>
+                </LinkAnchor>
+              </Link>;
+            })}
+          </section>)}
+      </nav>
+    </aside>
+    <div className="settings-panel">
+      <div className="settings-scroll">
+        <div className="settings-content">
+          <div className="settings-heading"><h1>{title}</h1><p>{description}</p></div>
+          {children}
+        </div>
+      </div>
+    </div>
   </main>;
 }

@@ -1,1 +1,1 @@
-export { default } from '@/features/settings/settings-screen.web';
+export { default } from '@/features/settings/settings-root-redirect.web';
