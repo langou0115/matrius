@@ -81,7 +81,7 @@ export default function ChatScreen() {
               ? <article className="user-message" key={message.id} aria-label="你的消息"><div className="user-message-content"><MessageContent content={message.content} /></div><MessageActions message={message} /></article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
               {message.reasoning?.trim() && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={message.id === lastMessage?.id ? liveStartedAt : null} />}
-              <MessageContent content={message.content} />
+              <MessageContent content={message.content} streaming={message.status === 'streaming'} />
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
               {message.status === 'error' && message.error && message.id !== failedReply?.id && <div className="reply-error-notice reply-error-history" role="status"><span>{message.error}</span></div>}
               {message.status === 'stopped' && <p className="reply-status">已停止生成</p>}

@@ -69,6 +69,9 @@ test('three real pi providers stream text and preserve multi-turn context withou
       assert.ok(payload.includes('继续'));
       assert.ok(!payload.includes('do not resend hidden thinking'));
       assert.ok(!request.body.tools?.length);
+      // Every protocol carries the system prompt, in a different field: `messages[0]`, `input[0]`
+      // and a top-level `system`. A field left unset serialises as the string `undefined`.
+      assert.ok(!payload.includes('undefined'), protocol);
       const headers = new Headers(request.init.headers);
       assert.equal(protocol === 'message' ? headers.get('x-api-key') : headers.get('authorization'), protocol === 'message' ? 'test-session-key' : 'Bearer test-session-key');
     } finally { globalThis.fetch = original; }

@@ -48,7 +48,64 @@ $$
 \end{aligned}
 $$
 
+紧跟正文、开头的定界符不在行首的块，同样应当渲染：$$
+\iint_D xy\,dxdy = \int_0^1 x\left[\frac{1}{2}y^2\right]_{x^2}^x dx = \frac{1}{24}
+$$
+
 货币金额：$20、$1,000、USD $5.00 / 1M tokens，不应被误当作公式。`;
+
+// Raw text is what keeps `\,` and `\\` intact all the way to the renderer, but it cannot hold a
+// backtick: `` \` `` stays a backslash and a backtick, so the fence below never opened and the
+// LaTeX meant to sit inside a code block leaked out as text instead. Interpolating the fence is
+// the one escape hatch a raw string has.
+const FENCE = '```';
+
+// Models that were never told to delimit math paste the environment bare. Kept as a fixture because
+// markdown silently eats the backslashes on the way to the screen, so the failure is easy to miss.
+const bareLatexReply = String.raw`#### 【示例 1：直角坐标系】
+**题目：** 计算二重积分，其中区域由抛物线围成。
+
+**解题步骤：**
+
+3. **列式并计算：**
+\begin{aligned}
+\iint_D xy \, dxdy &= \int_0^1 dx \int_{x^2}^x xy \, dy \\
+&= \int_0^1 x \left[ \frac{1}{2}y^2 \right]_{x^2}^x dx \\
+&= \frac{1}{2} \left[ \frac{x^4}{4} - \frac{x^6}{6} \right]_0^1 = \frac{1}{2} \left( \frac{1}{4} - \frac{1}{6} \right) = \frac{1}{24}
+\end{aligned}
+
+#### 【示例 2：极坐标系】
+**题目：** 计算 $\iint_D (x^2 + y^2) \, dxdy$，其中 $D$ 是圆域 $x^2 + y^2 \le 4$。
+
+- 识别特征：区域是圆，被积函数有 $x^2 + y^2$，果断选用极坐标。
+- 矩阵写法：$\begin{bmatrix}1 & 0 \\ 0 & 1\end{bmatrix}$
+
+代码里的 LaTeX 应当保持原样：
+
+${FENCE}tex
+\begin{aligned}
+x &= 1
+\end{aligned}
+${FENCE}`;
+
+// A model that opens `$$` and only closes it much later. remark-math hands the whole stretch to
+// KaTeX, which fails, and the reader gets every heading and formula in it as red error text.
+const strayDelimiterReply = String.raw`1. **求交点：** 联立方程：
+
+$$
+\begin{cases} y = x \\ y = x^2 \end{cases} \implies x^2 - x = 0 \implies x = 0,\, x = 1
+
+交点为 $(0, 0)$ 和 $(1, 1)$。
+
+2. **选择积分次序并限定：**
+该区域既是 $X$-型也是 $Y$-型。选用 $X$-型（先积 $y$，后积 $x$）：
+$$
+
+3. **转化为累次积分并计算：**
+
+$$\iint_D xy \, dxdy = \int_0^1 dx \int_{x^2}^x xy \, dy$$
+
+先对 $y$ 积分，再对 $x$ 积分即可。`;
 
 const codeReply = [
   '下面用不同语言观察代码块的留白、连续代码块和横向滚动。',
@@ -109,6 +166,14 @@ const specialThreads: Thread[] = [
       '代码里的美元符号应该原样保留，给我一些对照。',
       '金额 **$5.00 / 1M tokens** 与 **$30.00 / 1M tokens**。\n\n`$x^2$` 与 `\\frac{a}{b}` 是行内代码。\n\n```text\n$E = mc^2$\n\\frac{1}{2}\nprice = "$20"\n```\n\n正文公式仍写作 $x^2 + y^2 = z^2$。',
     ],
+  },
+  {
+    id: 'dev-render-bare-latex', title: '公式专项｜模型漏写定界符（裸 LaTeX 兜底）',
+    turns: ['为什么这里的公式渲染成了一堆反斜杠？', bareLatexReply],
+  },
+  {
+    id: 'dev-render-stray-delimiter', title: '公式专项｜错位的 $$ 定界符跨了一大段正文',
+    turns: ['这一段为什么整块都是红色的？', strayDelimiterReply],
   },
   {
     ...createBulkThread(100, 50), id: 'dev-render-50-rounds',

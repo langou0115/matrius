@@ -76,6 +76,6 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
   return <div className="reasoning">
     <span className="sr-only" role="status">{running ? runningLabel ?? statusLabel.running : statusLabel[state]}</span>
     <button type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((value) => !value)}>{line}</button>
-    <div className="reasoning-body" id={bodyId} hidden={!open}><MessageContent content={text} /></div>
+    <div className="reasoning-body" id={bodyId} hidden={!open}><MessageContent content={text} streaming={running} /></div>
   </div>;
 }

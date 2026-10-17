@@ -356,6 +356,12 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 @media (prefers-color-scheme: dark) { .storage-screen { background: #212121; color: #b4b4b4; } .storage-screen strong { color: #ececec; } }
 
 .assistant-message { margin: 0 0 32px; color: var(--foreground); overflow-wrap: anywhere; font-size: var(--text-body); line-height: 1.6; }
+/* Deliberately not a scroll container. A box that scrolls one way has to clip the other, and
+   KaTeX's inline layout draws a couple of pixels below the line box (fractions and matrices
+   especially), so the `overflow` that would contain a wide formula also shaves the bottom off the
+   formula it was meant to protect. Normal text wrapping already moves a formula that does not fit
+   onto the next line; only a single formula wider than the whole viewport is uncontained, and that
+   one cannot be broken without changing what it says. */
 .message-markdown { min-width: 0; }
 .message-markdown > :first-child { margin-top: 0; }
 .message-markdown > :last-child { margin-bottom: 0; }
@@ -387,9 +393,20 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .message-markdown th:last-child, .message-markdown td:last-child { border-right: 0; }
 .message-markdown .footnotes { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted-text); font-size: var(--text-small); }
 .message-markdown .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.message-markdown .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 8px 2px; margin: 16px 0; }
+/* A display formula wider than the bubble scrolls inside it rather than stretching the message:
+   `overscroll-behavior` keeps a swipe that reaches either end from dragging the conversation, and
+   momentum scrolling is what makes the same gesture feel native on iOS. */
+.message-markdown .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; padding: 8px 2px; margin: 16px 0; }
+/* Inline math has to stay an inline box, and nothing here may give it an `overflow` other than
+   `visible`. Per CSS 2.1 §10.8.1, an inline-block whose overflow is not visible takes its *bottom
+   margin edge* as its baseline instead of the baseline of its contents, so the formula floats up
+   by its own depth — subscripts and descenders make it lift further. KaTeX's default baseline is
+   the correct one; size is the only thing worth changing. */
 .message-markdown .katex { font-size: 1.1em; }
-.message-markdown .katex-error { color: var(--foreground); font-family: var(--font-mono); white-space: pre-wrap; }
+/* KaTeX's own `.katex-error` styling is overridden in the rehype pass, which drops the inline
+   colour before it can outrank this rule. A half-written formula reads as its source until the
+   reply completes it. */
+.message-markdown .katex-source { color: var(--muted-text); font-family: var(--font-mono); font-size: var(--text-small); white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-code { max-width: 100%; margin: 18px 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--soft); overflow: hidden; }
 .message-code-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; min-height: 42px; padding: 4px 10px 4px 16px; color: var(--muted-text); font-size: var(--text-caption); user-select: none; }
 .message-code-language { font-family: var(--font-mono); font-size: var(--text-caption); overflow-wrap: anywhere; }
@@ -464,7 +481,6 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
    buttons — a button without its outline stops reading as a button — but at tighter padding and
    height than the ones elsewhere, because the room they take comes out of the name. */
 .provider-heading-actions .secondary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding-inline: 11px; }
-.provider-heading-actions .icon-button { width: 40px; height: 40px; }
 .provider-model-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
 .provider-model-info strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; overflow-wrap: anywhere; }
 .provider-model-info span { font-size: var(--text-caption); color: var(--muted-text); overflow-wrap: anywhere; }
@@ -476,7 +492,21 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .provider-model-item { display: flex; align-items: center; gap: 16px; padding: 14px 18px; }
 .provider-model-item + .provider-model-item { border-top: 1px solid var(--border); }
 .model-config-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.model-config-actions .icon-button { width: 44px; height: 44px; }
+/* Edit and delete appear in two rows — the provider heading and the model rows inside it — so
+   they carry a single rule instead of one size per row; sized apart, the two drifted. Same
+   outline and fill as the secondary buttons they sit beside, because a bare icon glyph does not
+   read as a button. 40px keeps them within a couple of pixels of the 38px secondary buttons
+   sharing the provider row. */
+.provider-heading-actions .icon-button,
+.model-config-actions .icon-button {
+  width: 40px; height: 40px;
+  border: 1px solid var(--border);
+  background: var(--soft);
+}
+/* The base .icon-button:hover repaints the fill, which is already the resting fill here; the
+   feedback moves to the outline instead. */
+.provider-heading-actions .icon-button:hover,
+.model-config-actions .icon-button:hover { border-color: color-mix(in srgb, var(--foreground) 24%, var(--background)); }
 /* Past this the four controls stop leaving the name and its address a readable column. They drop
    to their own line rather than squeeze it; the disclosure chevron moves to the corner so it
    still reads as a property of the card and not of the buttons. */
@@ -621,7 +651,9 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (pointer: coarse) {
   .settings-navigation .icon-button { min-width: 44px; }
-  .model-picker, .settings-navigation .icon-button, .sidebar-section-label button, .new-conversation, .conversation-select, .reasoning-toggle { min-height: 44px; }
+  .model-picker, .settings-navigation .icon-button, .sidebar-section-label button, .new-conversation, .conversation-select, .reasoning-toggle, .provider-heading-actions .icon-button, .model-config-actions .icon-button { min-height: 44px; }
+  /* The card action buttons are square; the coarse-pointer minimum has to grow the pair together. */
+  .provider-heading-actions .icon-button, .model-config-actions .icon-button { width: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .sidebar-section-label svg, .model-picker-chevron { transition: none; }

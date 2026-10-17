@@ -41,8 +41,95 @@ test('math renders fractions, matrices and both provider delimiter styles', () =
   for (const content of ['$3.14159$', '$E=mc^2$', '$\\frac{1}{2}$', '$$\\sqrt{x^2}$$', '\\(x_i^2\\)', '\\[\\sum_{n=1}^{10} n\\]', '$$\n\\begin{bmatrix}1 & 0 \\\\ 0 & 1\\end{bmatrix}\n$$']) {
     const doc = documentFor(content);
     assert.ok(doc.querySelector('.katex'), content);
-    assert.equal(doc.querySelector('.katex-error'), null, content);
+    assert.equal(doc.querySelector('.katex-source'), null, content);
     assert.ok(doc.querySelector('math'), 'accessible MathML');
+  }
+});
+
+test('a display block still renders when its opening $$ shares a line with prose', () => {
+  const aligned = '\\begin{aligned}\nx &= 1 \\\\\n&= 2\n\\end{aligned}';
+  for (const content of [`计算：$$\n${aligned}\n$$`, `计算：$$${aligned}$$`, `计算：$$\n${aligned}\n$$\n\n以上。`]) {
+    const doc = documentFor(content);
+    assert.ok(doc.querySelector('.katex-display'), content);
+    assert.equal(doc.querySelector('.katex-source'), null, content);
+    assert.match(doc.querySelector('.message-markdown').textContent, /计算：/, content);
+  }
+});
+
+test('an inline $$ pair stays where it is, inside its sentence, list item and table cell', () => {
+  const paragraph = documentFor('设 $$y = x^2$$ 为抛物线。');
+  assert.equal(paragraph.querySelector('.katex-display'), null);
+  assert.match(paragraph.querySelector('p').textContent, /^设 .* 为抛物线。$/);
+
+  const list = documentFor('- 项一 $$x^2$$\n- 项二');
+  assert.equal(list.querySelectorAll('ul').length, 1, 'the list is not split in two');
+  assert.equal(list.querySelectorAll('li').length, 2);
+  assert.ok(list.querySelector('li .katex'));
+
+  const table = documentFor('| 公式 | 说明 |\n| --- | --- |\n| $$\\frac{1}{2}$$ | 一半 |');
+  assert.equal(table.querySelector('.katex-display'), null, 'nothing is hoisted out of the table');
+  assert.equal(table.querySelectorAll('tbody td').length, 2);
+  assert.ok(table.querySelector('td .katex'));
+  assert.match(table.querySelectorAll('tbody td')[1].textContent, /一半/);
+});
+
+test('a $$ pair covering whole lines is still a display block', () => {
+  const doc = documentFor('文字\n\n$$x^2$$\n\n后面');
+  assert.ok(doc.querySelector('.katex-display'));
+  assert.equal(doc.querySelector('.katex-source'), null);
+});
+
+test('an environment a model pasted without delimiters still renders as math', () => {
+  // Providers that are not told to delimit math paste the environment bare; markdown then eats the
+  // backslashes (`\,` becomes `,`, `\\` becomes `\`) and the derivation arrives as a wall of source.
+  const aligned = '\\begin{aligned}\n\\iint_D xy \\, dxdy &= \\int_0^1 dx \\int_{x^2}^x xy \\, dy \\\\\n&= \\frac{1}{24}\n\\end{aligned}';
+  const body = (markdown) => {
+    const markup = parseHTML('<div>' + parseHTML(render(markdown)).document.querySelector('.message-markdown').innerHTML + '</div>').document.querySelector('div');
+    for (const element of markup.querySelectorAll('code, pre, annotation')) element.remove();
+    return markup.textContent;
+  };
+  for (const content of [`列式并计算：\n${aligned}`, `3. **列式并计算：**\n${aligned}\n\n以上。`, `矩阵：\\begin{bmatrix}1 & 0 \\\\ 0 & 1\\end{bmatrix}`]) {
+    const doc = documentFor(content);
+    assert.ok(doc.querySelector('.katex'), content);
+    assert.equal(doc.querySelector('.katex-source'), null, content);
+    assert.ok(!body(content).includes('\\begin{'), content);
+    assert.ok(!body(content).includes('\\\\'), content);
+  }
+
+  // The fallback runs after every delimited formula is a placeholder, so a delimited environment is
+  // never wrapped a second time, and text already inside a fence or span is left alone.
+  assert.equal(documentFor('行内 $\\begin{aligned} a &= b \\end{aligned}$ 结束。').querySelectorAll('.katex').length, 1);
+  const code = documentFor('```tex\n\\begin{aligned}\nx &= 1\n\\end{aligned}\n```');
+  assert.equal(code.querySelector('.katex'), null);
+  assert.match(code.querySelector('code').textContent, /\\begin\{aligned\}/);
+});
+
+test('a $$ pair left open across prose does not swallow that prose into one KaTeX error', () => {
+  // The failure this guards against: `$$` opens, the body runs on through a blank line, a bolded
+  // heading and a nested `$X$`, and remark-math hands the whole stretch to KaTeX. Everything
+  // between the delimiters came back as the formula renderer's error source — asterisks included.
+  const body = (content) => {
+    const markup = parseHTML('<div>' + parseHTML(render(content)).document.querySelector('.message-markdown').innerHTML + '</div>').document.querySelector('div');
+    for (const element of markup.querySelectorAll('code, pre, annotation')) element.remove();
+    return markup.textContent;
+  };
+  const content = '求交点：\n\n$$\n\\begin{cases} y = x \\\\ y = x^2 \\end{cases} \\implies x^2 - x = 0\n\n**选择积分次序并限定：**\n该区域是 $X$-型。\n$$';
+  const doc = documentFor(content);
+  assert.equal(doc.querySelector('.katex-source'), null);
+  assert.ok(doc.querySelector('strong'), 'markdown inside the body still renders as markdown');
+  assert.ok(doc.querySelector('.katex-display'), 'the environment inside the body still renders as math');
+  assert.ok(!body(content).includes('**'), 'the bold markers do not reach the screen');
+  assert.ok(!body(content).includes('\\implies'), 'the derivation joins the formula instead of leaking');
+
+  // A derivation that runs past `\end{…}` on the same line is one formula, not a formula plus tail.
+  const tail = body('\\begin{cases} y = x \\\\ y = x^2 \\end{cases} \\implies x^2 - x = 0 \\implies x = 0');
+  assert.ok(!tail.includes('\\implies') && !tail.includes('\\begin{'), tail);
+  assert.equal(documentFor('\\begin{cases} y = x \\end{cases} 其中 y 是纵坐标').querySelector('.katex-error'), null, 'prose after the environment stays prose');
+});
+
+test('normalizing is idempotent, so a streamed reply that is re-rendered mid-flight stays stable', () => {
+  for (const content of ['列式并计算：\n\\begin{aligned}\\iint_D xy \\, dxdy &= \\frac{1}{24}\\end{aligned}', '计算：$$\n\\begin{aligned}x &= 1\\end{aligned}\n$$', '$$\\frac{1}{2}$$ 与 $x^2$ 与 $5.00', '求交点：\n\n$$\n\\begin{cases} y = x\\end{cases} \\implies x = 0\n\n**接下来：**\n$$', '\\begin{cases} y = x \\end{cases} 其中 y 是纵坐标']) {
+    assert.equal(normalizeMarkdown(normalizeMarkdown(content)), normalizeMarkdown(content), content);
   }
 });
 
@@ -86,7 +173,7 @@ test('all Mock replies render without a KaTeX parse error except the intentional
     for (const message of conversation.messages) {
       const html = render(message.content);
       assert.ok(html.length > 0);
-      if (conversation.id !== 'dev-render-partial') assert.ok(!html.includes('class="katex-error"'), conversation.id);
+      if (conversation.id !== 'dev-render-partial') assert.ok(!html.includes('katex-source'), conversation.id);
     }
   }
 });
