@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { Icon, type IconName } from '@/components/web/icon';
+import { Dialog } from '@/components/web/dialog';
 import { useChat, type MessageImage } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
@@ -10,7 +11,9 @@ import { MessageContent } from './components/message-content.web';
 import { MessageActions } from './components/message-actions.web';
 import { ReasoningBlock, getReasoningState } from './components/reasoning-block.web';
 import { useChatRuntime } from './chat-runtime';
-import { Link, type Href } from 'expo-router';
+import { Link, router, type Href } from 'expo-router';
+import { useIsPreview } from '@/features/workspace/preview-context';
+import { conversationHref } from './conversation-href';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useSettingsRoot } from '@/features/settings/settings-page.web';
 
@@ -27,6 +30,7 @@ export default function ChatScreen() {
   const { conversations, activeId, sidebarOpen, lastThinkingEffort, dispatch } = useChat();
   const { drafts, setDraft } = useDrafts();
   const runtime = useChatRuntime();
+  const preview = useIsPreview();
   const settingsHref: Href = `${useSettingsRoot()}/models`;
   const conversation = conversations.find((item) => item.id === activeId);
   const thinkingEffort = conversation?.thinkingEffort ?? lastThinkingEffort;
@@ -59,8 +63,12 @@ export default function ChatScreen() {
   function send(images: MessageImage[]) {
     const content = draft.trim();
     if (!content && !images.length) return false;
-    const sent = runtime.send(content, activeId, thinkingEffort, images);
-    if (sent) setDraft(draftKey, '');
+    const conversationId = activeId ?? createId();
+    const sent = runtime.send(content, conversationId, thinkingEffort, images);
+    if (sent) {
+      setDraft(draftKey, '');
+      if (!activeId) router.replace(conversationHref(conversationId, preview));
+    }
     return sent;
   }
   function updateThinkingEffort(value: typeof thinkingEffort) {
@@ -73,15 +81,20 @@ export default function ChatScreen() {
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
         onRename={(title) => dispatch({ type: 'rename', id: conversation.id, title })} />}
     </header>
-    {runtime.error && <div className="chat-runtime-notice" role="alert"><span>{runtime.error}</span><Link href={settingsHref} asChild><LinkAnchor>配置模型</LinkAnchor></Link><button className="icon-button" aria-label="关闭提示" onClick={runtime.clearError}><Icon name="close" size={16} /></button></div>}
+    {runtime.error && <Dialog title="操作失败" className="compact-dialog" onClose={runtime.clearError}>
+      <p className="dialog-description" role="alert">{runtime.error}</p>
+      <footer className="dialog-footer">
+        <Link href={settingsHref} asChild><LinkAnchor className="secondary-button" onClick={runtime.clearError}>配置模型</LinkAnchor></Link>
+        <button type="button" className="secondary-button" onClick={runtime.clearError}>知道了</button>
+      </footer>
+    </Dialog>}
     {runtime.runningId && runtime.runningId !== activeId && <div className="chat-runtime-notice" role="status"><span>另一个对话正在生成回复。</span><button onClick={runtime.stop}>停止生成</button></div>}
     {hasMessages ? <>
       <div className="messages-scroll">
         <div className="messages-content">
           {messages.map((message) => {
             if (message.role === 'assistant' && message.status === 'error' && !message.content.trim() && !message.reasoning?.trim()) {
-              if (message.id === failedReply?.id) return null;
-              return <div className="reply-error-notice reply-error-history" key={message.id} role="status"><span>{message.error ?? '模型回复失败。'}</span></div>;
+              return null;
             }
             const live = message.id === liveReply?.id;
             // A live reply shows the disclosure before reasoning arrives, so it can be opened
@@ -101,14 +114,16 @@ export default function ChatScreen() {
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
               <MessageContent content={message.content} streaming={message.status === 'streaming'} />
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
-              {message.status === 'error' && message.error && message.id !== failedReply?.id && <div className="reply-error-notice reply-error-history" role="status"><span>{message.error}</span></div>}
               {message.status === 'stopped' && <p className="reply-status">已停止生成</p>}
-              {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message} onFork={() => dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId: createId(), updatedAt: Date.now() })} />}
+              {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message} onFork={() => {
+                const forkId = createId();
+                dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId, updatedAt: Date.now() });
+                router.push(conversationHref(forkId, preview));
+              }} />}
               {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id, thinkingEffort)}>重新生成</button>}
             </article>;
           })}
-          {failedReply && runtime.runningId !== conversation.id && <div className="reply-error-notice" role="alert" aria-live="assertive">
-            <div className="reply-error-copy"><strong>回复失败</strong><span>{failedReply.error ?? '模型回复失败，请稍后重试。'}</span></div>
+          {failedReply && runtime.runningId !== conversation.id && <div>
             <button className="secondary-button reply-error-retry" type="button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id, thinkingEffort)}><Icon name="refresh" size={15} />重新生成</button>
           </div>}
           {awaitingReply && <ReasoningBlock state="running" startedAt={liveStartedAt} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={liveReasoningOpen} onOpenChange={setLiveReasoningOpen} />}

@@ -12,6 +12,7 @@ src/
 │   ├── _layout.web.tsx                 Web Provider、应用框架与路由插槽
 │   ├── _layout.tsx                     原生路由插槽
 │   ├── index.web.tsx                   聊天路由
+│   ├── c/[conversationId].web.tsx      已有对话的独立 URL
 │   ├── mock/                          开发预览路由（索引页与各项测试）
 │   ├── settings.web.tsx                设置路由
 │   ├── index.tsx                       移动端待适配说明页
@@ -30,6 +31,9 @@ src/
 │   │   ├── chat-state.tsx              会话状态、选择与管理动作
 │   │   ├── draft-state.tsx             独立草稿状态，跨设置导航保留
 │   │   ├── chat-screen.web.tsx         欢迎页、消息区、按会话保存的输入草稿
+│   │   ├── chat-route.web.tsx          URL 选择对话与不存在提示
+│   │   ├── conversation-href.ts        正式与 Mock 对话地址
+│   │   ├── conversation-route-state.ts  URL 对话选择与有效性状态
 │   │   ├── markdown/                   公式/货币规范化与高亮语言按需加载
 │   │   └── components/
 │   │       ├── sidebar.web.tsx         侧栏、会话管理与设置入口
@@ -42,6 +46,8 @@ src/
 │   │       ├── code-block.web.tsx       代码高亮、复制与折叠
 │   │       ├── model-icon.web.tsx      theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
+│   │       ├── attachment-list.web.tsx  附件卡片、文件类型图标与全屏图片预览
+│   │       ├── file-type-icon.web.tsx   后缀匹配与本地 Material 专用文件图标
 │   │       ├── scroll-to-bottom.web.tsx  跟随滚动与回到最新消息按钮
 │   │       └── search-dialog.web.tsx   标题与正文搜索、结果片段
 │   ├── workspace/workspace-repository.web.ts  工作区存储结构校验
@@ -64,6 +70,7 @@ src/
 - Web 会话与外观通过 IndexedDB 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过本地 Runtime 生成真实回复。
 - 发送、置顶、重命名和删除会写回浏览器数据库；读取或保存失败有提示。当前会话、侧栏和外观状态也会恢复，草稿仅在本次页面会话中保留。
 - `/settings` 在根布局中使用独立全页，不包在聊天 Workspace 内；Provider 保持挂载，返回时会话与草稿不丢失。
+- `/` 为新对话，`/c/<conversation-id>` 为已创建对话；首次发送成功后替换为空白页对应的新地址，侧栏、搜索和分支切换通过 Router 写入历史，浏览器前进后退按 URL 选择对话。设置返回当前对话地址；无效 ID 使用弹窗提示并提供返回新对话操作。Mock 使用 `/mock/chat/c/<conversation-id>`，仍受开发守卫保护。URL 在本地仓储加载后解析，不依赖上次保存的 activeId。
 
 ## 后续入口
 
@@ -97,6 +104,7 @@ src/
 - `/settings` 是可搜索的设置目录；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/about` 展示应用信息；旧 display/theme 路径跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫。
 - `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-screen.web.tsx` 渲染目录，`settings-detail-screen.web.tsx` 复用原有设置控件，`settings-page.web.tsx` 管理共用页面框架与返回入口。
 - 设置子页均不卸载根工作区 Provider，导航期间保留会话、草稿与外观状态。
+- `/settings/personalization` 与 `/mock/chat/settings/personalization` 提供自定义指令和关于你的表单，入口与搜索集中在 `settings-catalog.ts`。`personalization.ts` 定义字段、默认值与校验，`personalization-state.tsx` 保存共享状态，`personalization-screen.web.tsx` 实现 Web 表单；根工作区通过已有仓储恢复和自动保存，Runtime 在每次请求开始时组装系统提示。记忆入口尚未提供。
 
 ## 模型与 Runtime 入口
 

@@ -3,8 +3,9 @@ import { isThinkingEffort } from '@/core/agent/thinking-effort';
 import type { ChatState, Conversation, Message } from '@/features/chat/chat-state';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
+import { readPersonalization, type PersonalizationPreferences } from '@/features/settings/personalization';
 
-export type WorkspaceData = { schemaVersion: 1; chat: ChatState; appearance: AppearancePreferences };
+export type WorkspaceData = { schemaVersion: 1; chat: ChatState; appearance: AppearancePreferences; personalization?: PersonalizationPreferences };
 export type LoadedWorkspace = { data: WorkspaceData; revision: number };
 
 /** Attached images are request-only: keep their bytes out of every snapshot written to storage.
@@ -55,6 +56,7 @@ export async function loadWorkspace(): Promise<LoadedWorkspace> {
       schemaVersion: 1,
       chat: { conversations, activeId, sidebarOpen: chat.sidebarOpen, lastThinkingEffort: isThinkingEffort(chat.lastThinkingEffort) ? chat.lastThinkingEffort : conversations.find((item) => item.id === activeId)?.thinkingEffort ?? 'default' },
       appearance: { themeId: appearance.themeId, mode: appearance.mode as AppearancePreferences['mode'] },
+      personalization: readPersonalization(value.personalization),
     },
   };
 }

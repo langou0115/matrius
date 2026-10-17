@@ -38,6 +38,14 @@ Web 对话、消息、置顶状态、每个会话的 Thinking Effort 和最近�
 
 Web 的 Expo Router 链接通过共享 `LinkAnchor` 适配原生锚点，组件入口见[客户端结构](doc/client-structure.md)。
 
+新对话使用 `/`，已创建的对话使用 `/c/<conversation-id>`；侧栏、搜索、分支与设置返回均保留对应地址，刷新后按 URL 恢复对话。本地模式链接只定位当前浏览器的数据，不会公开或上传对话。聊天错误通过紧凑弹窗显示；回形针入口始终可添加附件，发送时统一校验，目前仅可向支持图片的模型发送图片。附件卡片显示文件类型、名称与大小，以分割线隔开输入区；悬停可查看完整文件名，图片支持点击全屏预览。
+
+Web 使用单页输出（`web.output: single`），部署时将页面请求回退至 `index.html`，保留静态资源的正常路径，以支持动态对话链接直接访问和刷新。
+
+附件的 Word、Excel、PowerPoint、PDF、Markdown 等专用图标使用本地 Material Icon Theme SVG；来源版本与许可证见 [文件图标资源](public/vendor/file-icons/README.md)。
+
+设置 → 个性化支持自定义指令、称呼、职业与更多个人信息，自动保存在当前浏览器，对所有模型的后续发送和重新生成生效。填写内容会随请求发送给当前模型服务商；Mock 仅保留在预览内存中。记忆功能尚未实现。
+
 ## 快速开始
 
 准备与 [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/) 匹配的 Node.js 环境及 npm，当前仓库使用 `package-lock.json`。

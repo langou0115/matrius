@@ -8,11 +8,13 @@ import { AppearanceProvider, useAppearance } from '@/theme/appearance';
 import { PreviewContext } from '@/features/workspace/preview-context';
 import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
+import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
 
 function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean }>) {
   const { conversations, activeId, sidebarOpen, lastThinkingEffort } = useChat();
   const { themeId, mode } = useAppearance();
-  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), activeId, sidebarOpen, lastThinkingEffort }, appearance: { themeId, mode } }), [conversations, activeId, sidebarOpen, lastThinkingEffort, themeId, mode]);
+  const { preferences: personalization } = usePersonalization();
+  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), activeId, sidebarOpen, lastThinkingEffort }, appearance: { themeId, mode }, personalization }), [conversations, activeId, sidebarOpen, lastThinkingEffort, themeId, mode, personalization]);
   const revision = useRef(initial.revision);
   const saved = useRef(JSON.stringify(initial.data));
   const queue = useRef(Promise.resolve());
@@ -77,8 +79,8 @@ export function LocalWorkspace({ children, preview }: PropsWithChildren<{ previe
   </div>;
 
   return <AppearanceProvider initialPreferences={loaded.data.appearance}>
-    <ChatProvider initialState={loaded.data.chat}><DraftProvider>
+    <PersonalizationProvider initialPreferences={loaded.data.personalization}><ChatProvider initialState={loaded.data.chat}><DraftProvider>
       <PreviewContext value={loaded.preview}><ModelProvider preview={loaded.preview}><ChatRuntimeProvider><WorkspacePersistence initial={loaded} preview={loaded.preview}>{children}</WorkspacePersistence></ChatRuntimeProvider></ModelProvider></PreviewContext>
-    </DraftProvider></ChatProvider>
+    </DraftProvider></ChatProvider></PersonalizationProvider>
   </AppearanceProvider>;
 }

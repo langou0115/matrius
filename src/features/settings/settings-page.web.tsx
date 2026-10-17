@@ -1,9 +1,11 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from 'expo-router';
-import { ArrowLeft, Cpu, Info, Palette, Search, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Cpu, Info, Palette, Search, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useIsPreview } from '@/features/workspace/preview-context';
+import { useChat } from '@/features/chat/chat-state';
+import { conversationHref } from '@/features/chat/conversation-href';
 
 import { searchSettings, searchSettingsContent, settingsItems } from './settings-catalog';
 
@@ -15,6 +17,7 @@ export function useSettingsRoot() {
     the model picker, which renders them from thesvg. */
 const categoryIcons: Record<string, LucideIcon> = {
   appearance: Palette,
+  personalization: SlidersHorizontal,
   models: Cpu,
   about: Info,
 };
@@ -31,9 +34,10 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
   const [query, setQuery] = useState('');
   const { focus } = useLocalSearchParams<{ focus?: string }>();
   const preview = useIsPreview();
+  const { activeId: conversationId } = useChat();
   const root = useSettingsRoot();
   const pathname = usePathname().replace(/\/$/, '');
-  const homeHref: Href = preview ? '/mock/chat' : '/';
+  const homeHref = conversationHref(conversationId, preview);
   const activeId = settingsItems.find((item) => pathname === `${root}/${item.id}`)?.id;
   const groups = settingsItems.reduce<string[]>((list, item) => (list.includes(item.group) ? list : [...list, item.group]), []);
   const searching = query.trim().length > 0;

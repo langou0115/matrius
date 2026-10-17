@@ -2,10 +2,13 @@ import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent
 
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { Icon } from '@/components/web/icon';
+import { Dialog } from '@/components/web/dialog';
+import { Paperclip } from 'lucide-react';
 import { useModels } from '@/features/models/model-state';
 import { useChatRuntime } from '../chat-runtime';
 import { useChat, type MessageImage } from '../chat-state';
 import { ModelIcon } from './model-icon.web';
+import { AttachmentList, type StagedAttachment } from './attachment-list.web';
 
 type Props = {
   value: string;
@@ -15,8 +18,7 @@ type Props = {
   onThinkingEffortChange: (value: ThinkingEffort) => void;
 };
 
-// All three supported protocols accept these four types. The cap keeps one request well below
-// common provider payload limits and stops a drop of a photo album from freezing the composer.
+// Validate only on send; selecting an attachment never depends on the current model.
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -51,7 +53,16 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   const fileInput = useRef<HTMLInputElement>(null);
   // Staged for the next message only. The parent keys this component by conversation, so a
   // switch remounts it and drops both the previews and any selection error.
-  const [attachments, setAttachments] = useState<MessageImage[]>([]);
+  const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
+  const previewUrls = useRef(new Set<string>());
+  const mounted = useRef(true);
+  const preparing = useRef(false);
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    mounted.current = true;
+    const urls = previewUrls.current;
+    return () => { mounted.current = false; urls.forEach((url) => URL.revokeObjectURL(url)); urls.clear(); };
+  }, []);
   const [attachError, setAttachError] = useState<string | null>(null);
   const composing = useRef(false);
   const [showModels, setShowModels] = useState(false);
@@ -150,56 +161,54 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     element.style.height = `${Math.min(192, Math.max(58, element.scrollHeight))}px`;
   }, [value]);
 
-  // Only models explicitly marked as vision-capable may receive images. The flag lives in the
-  // model editor, so the composer explains where to turn it on instead of failing at the provider.
-  const imageInputEnabled = models.selected?.supportsImage === true;
-  const attachBlocked = blocked || !imageInputEnabled;
-  const attachLabel = !models.selected
-    ? '请先选择模型'
-    : !models.selected.supportsImage ? '当前模型未开启图片输入，请在模型设置中开启' : '上传图片';
-
-  async function addImages(files: File[]) {
+  function addImages(files: File[]) {
     if (!files.length) return;
     setAttachError(null);
-    const unsupported = files.find((file) => !IMAGE_TYPES.includes(file.type));
-    if (unsupported) { setAttachError('只支持 PNG、JPEG、WebP 或 GIF 格式的图片。'); return; }
-    const oversized = files.find((file) => file.size > MAX_IMAGE_BYTES);
-    if (oversized) { setAttachError(`图片「${oversized.name}」超过 10MB。`); return; }
-    const room = MAX_IMAGES - attachments.length;
-    if (room <= 0) { setAttachError(`每条消息最多添加 ${MAX_IMAGES} 张图片。`); return; }
-    const accepted = files.slice(0, room);
-    if (accepted.length < files.length) setAttachError(`每条消息最多添加 ${MAX_IMAGES} 张图片，超出的已忽略。`);
-    try {
-      const images = await Promise.all(accepted.map(async (file) => ({
-        id: createId(),
-        name: file.name || '图片',
-        mimeType: file.type,
-        dataUrl: await readImageDataUrl(file),
-      })));
-      // The same picture pasted twice is still two attachments; identity is per selection.
-      setAttachments((current) => [...current, ...images].slice(0, MAX_IMAGES));
-    } catch {
-      setAttachError('读取图片失败，请重试。');
-    }
+    const next = files.map((file) => {
+      const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg|avif|bmp|ico)$/i.test(file.name);
+      const preview = isImage ? URL.createObjectURL(file) : null;
+      if (preview) previewUrls.current.add(preview);
+      return { id: createId(), file, preview };
+    });
+    setAttachments((current) => [...current, ...next]);
   }
 
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
     const files = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === 'file')
       .map((item) => item.getAsFile())
-      .filter((file): file is File => !!file && file.type.startsWith('image/'));
+      .filter((file): file is File => !!file);
     if (!files.length) return;
     event.preventDefault();
     void addImages(files);
   }
 
-  function submit() {
-    if (blocked || (!value.trim() && !attachments.length)) return;
-    if (attachments.length && !imageInputEnabled) { setAttachError('当前模型未开启图片输入，请在模型设置中开启后重试。'); return; }
-    if (!onSend(attachments)) return;
-    setAttachments([]);
-    setAttachError(null);
-    input.current?.focus();
+  async function submit() {
+    if (blocked || preparing.current || (!value.trim() && !attachments.length)) return;
+    if (!models.ready || !models.selected) { setAttachError(models.error ?? '请先在设置 → 模型服务中添加并选择模型。'); return; }
+    const unsupported = attachments.find(({ file }) => !IMAGE_TYPES.includes(file.type));
+    if (unsupported) { setAttachError(`暂不支持文件「${unsupported.file.name}」，目前仅支持 PNG、JPEG、WebP 或 GIF 图片。`); return; }
+    if (attachments.length > MAX_IMAGES) { setAttachError(`每条消息最多发送 ${MAX_IMAGES} 张图片，请移除多余附件。`); return; }
+    const oversized = attachments.find(({ file }) => file.size > MAX_IMAGE_BYTES);
+    if (oversized) { setAttachError(`图片「${oversized.file.name}」超过 10MB，请移除或压缩后重试。`); return; }
+    if (attachments.length && !models.selected.supportsImage) { setAttachError('当前模型未开启图片输入，请切换支持图片的模型，或在模型设置中确认图片输入能力。'); return; }
+    preparing.current = true;
+    setSending(true);
+    try {
+      const images = await Promise.all(attachments.map(async ({ id, file }) => ({ id, name: file.name, mimeType: file.type, dataUrl: await readImageDataUrl(file) })));
+      if (!mounted.current) return;
+      if (!onSend(images)) return;
+      const sentIds = new Set(attachments.map(({ id }) => id));
+      setAttachments((current) => current.filter(({ id }) => !sentIds.has(id)));
+      attachments.forEach(({ preview }) => { if (preview) { URL.revokeObjectURL(preview); previewUrls.current.delete(preview); } });
+      setAttachError(null);
+      input.current?.focus();
+    } catch {
+      if (mounted.current) setAttachError('读取附件失败，请重试。');
+    } finally {
+      preparing.current = false;
+      if (mounted.current) setSending(false);
+    }
   }
 
   async function selectModel(id: string) {
@@ -254,7 +263,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
                 type="button"
                 data-picker-option
                 className="model-choice"
-                disabled={blocked}
+                disabled={blocked || sending}
                 aria-pressed={models.selectedId === model.id}
                 aria-label={`${model.name}，${provider.name}`}
                 ref={models.selectedId === model.id || (!models.selectedId && model.id === models.models[0]?.id) ? selectedModelOption : undefined}
@@ -269,10 +278,9 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         </div> : <div className="model-picker-empty">
           <span>还没有可用模型</span>
         </div>}
-        {(modelError || models.error) && <p role="alert" className="model-form-error">{modelError ?? models.error}</p>}
         {models.selected && <>
         <div className="model-picker-divider" />
-        <button type="button" className="model-picker-thinking-link" disabled={blocked || !models.selectedId} onClick={() => setPickerPage('thinking')}>
+        <button type="button" className="model-picker-thinking-link" disabled={blocked || sending || !models.selectedId} onClick={() => setPickerPage('thinking')}>
           <span>思考强度</span>
           <span className="model-picker-thinking-value">{effortOptions.find((option) => option.value === thinkingEffort)?.label}</span>
           <Icon name="chevron" size={16} />
@@ -290,7 +298,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
             type="button"
             data-picker-option
             className="thinking-effort-option"
-            disabled={blocked}
+            disabled={blocked || sending}
             aria-pressed={thinkingEffort === option.value}
             onClick={() => { onThinkingEffortChange(option.value); setPickerPage('models'); }}
           >
@@ -303,24 +311,20 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     : null;
 
   return <>
-    <form className="composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      <input ref={fileInput} className="composer-file-input" type="file" accept={IMAGE_TYPES.join(',')} multiple
+    <form className="composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <input ref={fileInput} className="composer-file-input" type="file" multiple
         onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addImages(files); }} />
-      {attachments.length > 0 && <div className="composer-attachments" aria-label="待发送的图片">
-        {attachments.map((image) => <div className="composer-attachment" key={image.id}>
-          <img src={image.dataUrl} alt={image.name} />
-          <button type="button" className="composer-attachment-remove" aria-label={`移除图片 ${image.name}`}
-            onClick={() => { setAttachError(null); setAttachments((current) => current.filter((item) => item.id !== image.id)); }}>
-            <Icon name="close" size={12} />
-          </button>
-        </div>)}
-      </div>}
-      {attachError && <p className="composer-attach-error" role="alert">{attachError}</p>}
+      {attachments.length > 0 && <AttachmentList attachments={attachments} removingDisabled={sending} onRemove={(attachment) => {
+        setAttachError(null);
+        if (attachment.preview) { URL.revokeObjectURL(attachment.preview); previewUrls.current.delete(attachment.preview); }
+        setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+      }} />}
       <textarea
         ref={input}
         aria-label="消息内容"
         placeholder={attachments.length ? '' : '发消息，探索更多可能…'}
         value={value}
+        readOnly={sending}
         rows={2}
         onPaste={handlePaste}
         onChange={(event) => onChange(event.target.value)}
@@ -329,20 +333,20 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey && window.matchMedia('(pointer: fine)').matches && !composing.current && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
             event.preventDefault();
-            submit();
+            void submit();
           }
         }}
       />
       <div className="composer-toolbar">
         <button type="button" className="composer-attach" onClick={() => { setAttachError(null); fileInput.current?.click(); }}
-          disabled={attachBlocked} aria-label={attachLabel} title={attachLabel}>
-          <Icon name="plus" size={20} />
+          aria-label="添加附件">
+          <Paperclip size={22} strokeWidth={1.75} aria-hidden="true" />
         </button>
         <button
           ref={pickerTrigger}
           type="button"
           className={`model-picker${showModels ? ' is-open' : ''}`}
-          onClick={() => { setShowModels((open) => !open); setPickerPage('models'); setModelError(null); }}
+          onClick={() => { setShowModels((open) => !open); setPickerPage('models'); setModelError(models.error); }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' && !showModels) {
               event.preventDefault();
@@ -362,9 +366,13 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           <Icon name="chevron" size={18} className="model-picker-chevron" />
         </button>
         {running ? <button type="button" className="send-button" onClick={runtime.stop} aria-label="停止生成"><span className="stop-generation-icon" /></button>
-          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length) || blocked} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
+          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length) || blocked || sending} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
       </div>
     </form>
     {modelPopover}
+    {(attachError || modelError) && <Dialog title="操作失败" className="compact-dialog" onClose={() => { setAttachError(null); setModelError(null); }}>
+      <p className="dialog-description" role="alert">{attachError ?? modelError}</p>
+      <footer className="dialog-footer"><button type="button" className="secondary-button" onClick={() => { setAttachError(null); setModelError(null); }}>知道了</button></footer>
+    </Dialog>}
   </>;
 }

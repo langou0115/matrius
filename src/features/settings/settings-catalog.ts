@@ -8,6 +8,7 @@ export const displayModes = [
 
 export const settingsItems = [
   { id: 'appearance', title: '外观', description: '调整显示模式与配色主题。', group: '偏好', keywords: `显示 浅色 深色 暗色 夜间 跟随系统 亮度 颜色 皮肤 light dark system theme ${themePresets.map((item) => `${item.id} ${item.name}`).join(' ')}` },
+  { id: 'personalization', title: '个性化', description: '自定义指令、称呼与个人信息。', group: '偏好', keywords: '个性化 自定义 指令 提示词 回复 风格 偏好 称呼 职业 关于你 personalization instructions prompt profile' },
   { id: 'models', title: '模型服务', description: '添加服务商、API key 与模型，开始对话。', group: '偏好', keywords: '模型 服务商 接入 密钥 地址 协议 base url api key openai anthropic responses' },
   { id: 'about', title: '关于 Matrius', description: '查看应用版本、运行模式与本地数据说明。', group: '应用', keywords: '版本 本地 存储 数据 浏览器 隐私 about version' },
 ] as const satisfies readonly { id: string; title: string; description: string; group: string; keywords: string }[];
@@ -23,6 +24,8 @@ export function searchSettings(query: string) {
 /** Individual settings inside a category, so search can reach the controls themselves rather
     than stopping at the category. `sectionId` matches the heading id on the target page. */
 export const settingsTargets = [
+  { id: 'personalization-instructions', title: '自定义指令', description: '设置模型的回复方式与偏好', category: 'personalization', sectionId: 'instructions-heading', keywords: '个性化 自定义 指令 系统 提示词 回复 风格 偏好 instructions prompt' },
+  { id: 'personalization-profile', title: '关于你', description: '设置称呼、职业与个人信息', category: 'personalization', sectionId: 'profile-heading', keywords: '个性化 关于你 称呼 名字 昵称 职业 兴趣 背景 个人 资料 信息 profile' },
   { id: 'appearance-display', title: '显示模式', description: '选择浅色、深色或跟随系统', category: 'appearance', sectionId: 'display-heading', keywords: '显示 模式 外观 浅色 深色 暗色 夜间 跟随系统 系统 亮度 颜色 light dark system mode' },
   { id: 'appearance-theme', title: '配色主题', description: '选择界面的配色主题', category: 'appearance', sectionId: 'theme-heading', keywords: `配色 主题 皮肤 颜色 外观 theme color ${themePresets.map((item) => `${item.id} ${item.name}`).join(' ')}` },
   { id: 'models-provider', title: '服务商', description: '添加服务商、接口协议与 API key', category: 'models', sectionId: 'providers-heading', keywords: '服务商 添加 编辑 删除 连接 接口 协议 密钥 api key base url 地址 获取模型列表 手动添加' },

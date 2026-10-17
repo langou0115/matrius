@@ -28,7 +28,7 @@ export function Dialog({ title, onClose, className = '', children }: Props) {
       <div className="dialog-panel">
         <header className="dialog-header">
           <h2 id={titleId}>{title}</h2>
-          <button className="icon-button" aria-label="关闭弹窗" onClick={onClose}><Icon name="close" /></button>
+          <button type="button" className="icon-button" aria-label="关闭弹窗" onClick={onClose}><Icon name="close" /></button>
         </header>
         {children}
       </div>

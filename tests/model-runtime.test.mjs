@@ -5,9 +5,28 @@ import { createReplyRun, buildContext, describeModelError } from '../src/core/ag
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
 import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
 import { searchSettings } from '../src/features/settings/settings-catalog.ts';
+import { PersonalizationProvider, usePersonalization } from '../src/features/settings/personalization-state.tsx';
+import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from '../src/core/agent/system-prompt.ts';
 
 const config = { id: 'test', name: 'Test model', protocol: 'completion', baseUrl: 'https://test.invalid/v1', modelId: 'test-model', contextWindow: 128000, maxOutput: 4096, requiresApiKey: true };
 const history = [{ id: 'u1', role: 'user', content: '你好' }, { id: 'a1', role: 'assistant', content: '先前的回答', reasoning: 'do not resend hidden thinking' }, { id: 'u2', role: 'user', content: '继续' }];
+test('personalization defaults, limits and prompt composition keep optional sections out of empty requests', () => {
+  assert.deepEqual(readPersonalization(undefined), defaultPersonalization);
+  assert.equal(buildSystemPrompt(defaultPersonalization), DEFAULT_SYSTEM_PROMPT);
+  assert.equal(buildSystemPrompt({ ...defaultPersonalization, customInstructions: '  \n  ' }), DEFAULT_SYSTEM_PROMPT);
+  const preferences = readPersonalization({ customInstructions: '  使用中文\n先给结论  ', aboutName: '小林', memoryEnabled: true });
+  assert.equal(preferences.customInstructions, '  使用中文\n先给结论  ', 'editing preserves whitespace');
+  assert.equal(preferences.memoryEnabled, undefined, 'memory is outside the stored contract');
+  assert.match(buildSystemPrompt(preferences), /使用中文\n先给结论/);
+  assert.match(buildSystemPrompt(preferences), /称呼：小林/);
+  assert.ok(!buildSystemPrompt(preferences).includes('职业：'));
+  assert.throws(() => readPersonalization({ occupation: 'x'.repeat(101) }));
+  assert.throws(() => readPersonalization({ customInstructions: 'x'.repeat(10001) }));
+  assert.throws(() => readPersonalization({ aboutMore: 42 }));
+  assert.equal(readPersonalization({ customInstructions: 'x'.repeat(10000) }).customInstructions.length, 10000);
+  assert.deepEqual(searchSettings('自定义指令').map(item => item.id), ['personalization']);
+});
 function events(protocol) {
   if (protocol === 'completion') return [
     { choices: [{ index: 0, delta: { role: 'assistant', content: '你好' }, finish_reason: null }] },
@@ -57,7 +76,8 @@ test('three real pi providers stream text and preserve multi-turn context withou
     };
     const updates = [];
     try {
-      const run = createReplyRun({ config: { ...config, protocol, baseUrl: protocol === 'message' ? 'https://test.invalid' : config.baseUrl }, apiKey: 'test-session-key', messages: history, onUpdate: value => updates.push(value) });
+      const systemPrompt = buildSystemPrompt({ customInstructions: '优先给出简洁结论', aboutName: '小林', occupation: '设计师', aboutMore: '正在学习编程' });
+      const run = createReplyRun({ config: { ...config, protocol, baseUrl: protocol === 'message' ? 'https://test.invalid' : config.baseUrl }, apiKey: 'test-session-key', messages: history, systemPrompt, onUpdate: value => updates.push(value) });
       assert.equal((await run.start()).status, 'complete');
       assert.equal(updates.at(-1).content, '你好，世界');
       assert.ok(updates.some(value => value.content === '你好'));
@@ -65,6 +85,9 @@ test('three real pi providers stream text and preserve multi-turn context withou
       assert.equal(request.body.model, 'test-model');
       assert.equal(request.body.stream, true);
       const payload = JSON.stringify(request.body);
+      const systemPayload = JSON.stringify(protocol === 'message' ? request.body.system
+        : (protocol === 'responses' ? request.body.input : request.body.messages).filter(item => item.role === 'system' || item.role === 'developer'));
+      for (const preference of ['优先给出简洁结论', '小林', '设计师', '正在学习编程']) assert.ok(systemPayload.includes(preference), `${protocol} carries personalization as system instructions`);
       assert.ok(payload.includes('先前的回答'));
       assert.ok(payload.includes('继续'));
       assert.ok(!payload.includes('do not resend hidden thinking'));
@@ -164,25 +187,28 @@ test('workspace runtime keeps generations attached to their source conversation 
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
-  let chat, models, runtime;
+  let chat, models, runtime, personalization;
   let requestSignal;
   const requestBodies = [];
   globalThis.fetch = async (_url, init) => { requestSignal = init.signal; requestBodies.push(JSON.parse(init.body)); return response('completion', init.signal, true); };
-  function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
+  function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); personalization = usePersonalization(); return null; }
   async function until(predicate) {
     for (let i = 0; i < 100 && !predicate(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness))))); });
+    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
     await act(async () => { assert.equal(runtime.send('keep this draft', null), false); });
     assert.equal(chat.conversations.length, 0);
     await act(async () => { await models.save(config, 'key'); });
+    await act(async () => { personalization.update({ customInstructions: 'first preference' }); });
     await act(async () => { assert.equal(runtime.send('first message', null, 'high'), true); assert.equal(runtime.send('double submission', null), false); });
     const sourceId = chat.activeId;
     assert.equal(chat.conversations[0].thinkingEffort, 'high');
     await until(() => requestSignal && chat.conversations[0].messages.length === 2);
     assert.equal(requestBodies[0].reasoning_effort, 'high');
+    assert.ok(JSON.stringify(requestBodies[0]).includes('first preference'));
+    await act(async () => { personalization.update({ customInstructions: 'updated preference' }); });
     await act(async () => { chat.dispatch({ type: 'select', id: null }); });
     assert.equal(chat.activeId, null);
     assert.equal(chat.lastThinkingEffort, 'high', 'a new conversation inherits the last selected effort');
@@ -195,6 +221,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     await act(async () => { runtime.retry(sourceId); });
     await until(() => requestSignal && runtime.runningId === sourceId);
     assert.equal(requestBodies[1].reasoning_effort, 'high', 'retry must keep the conversation effort');
+    assert.ok(JSON.stringify(requestBodies[1]).includes('updated preference'), 'retry reads the latest personalization');
     await act(async () => { chat.dispatch({ type: 'delete', id: sourceId }); });
     await until(() => runtime.runningId === null);
     assert.equal(requestSignal.aborted, true);
@@ -202,6 +229,150 @@ test('workspace runtime keeps generations attached to their source conversation 
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('conversation URLs override saved selection, follow history changes and reject missing or deleted IDs', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { useConversationRouteState } = await import('../src/features/chat/conversation-route-state.ts');
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const initialState = { conversations: ['a', 'b'].map(id => ({ id, title: id, pinned: false, updatedAt: 0, messages: [] })), activeId: 'a', sidebarOpen: true, lastThinkingEffort: 'default' };
+  let chat, route;
+  function Harness({ id }) { chat = useChat(); route = useConversationRouteState(id); return null; }
+  async function navigate(id) {
+    await act(async () => { root.render(createElement(ChatProvider, { initialState }, createElement(Harness, { id }))); });
+  }
+  try {
+    await navigate('b');
+    assert.equal(chat.activeId, 'b', 'a direct URL wins over the saved active ID');
+    assert.equal(route.ready, true);
+    await navigate('a');
+    assert.equal(chat.activeId, 'a');
+    await navigate('b');
+    assert.equal(chat.activeId, 'b', 'back/forward URL changes select the matching conversation');
+    await act(async () => { chat.dispatch({ type: 'delete', id: 'b' }); });
+    assert.equal(route.exists, false);
+    assert.equal(chat.activeId, null);
+    await navigate('missing');
+    assert.equal(route.exists, false);
+    assert.equal(chat.conversations.length, 1, 'an unknown URL never creates a conversation');
+    await navigate(null);
+    assert.equal(route.ready, true);
+    assert.equal(chat.activeId, null);
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('common file extensions use dedicated local Material icons, including uppercase and unknown formats', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { parseHTML } = await import('linkedom');
+  const { existsSync } = await import('node:fs');
+  const { FileTypeIcon } = await import('../src/features/chat/components/file-type-icon.web.tsx');
+  const cases = [
+    ['report.doc', 'word'], ['report.DOCX', 'word'], ['budget.xls', 'table'], ['budget.xlsx', 'table'],
+    ['slides.ppt', 'powerpoint'], ['slides.pptx', 'powerpoint'], ['report.pdf', 'pdf'],
+    ['README.md', 'markdown'], ['notes.MARKDOWN', 'markdown'], ['notes.mdx', 'markdown'],
+    ['data.json', 'json'], ['source.tsx', 'typescript'], ['source.py', 'python'], ['archive.zip', 'zip'],
+    ['notes.txt', 'document'], ['no-extension', 'document'], ['file.unknown', 'document'],
+  ];
+  for (const [name, icon] of cases) {
+    const markup = renderToStaticMarkup(createElement(FileTypeIcon, { file: { name, type: '' } }));
+    const { document } = parseHTML(markup);
+    const image = document.querySelector('.file-type-icon');
+    assert.equal(image.getAttribute('src'), `/vendor/file-icons/${icon}.svg`, name);
+    assert.ok(existsSync(`public/vendor/file-icons/${icon}.svg`), `${name} resolves to a shipped asset`);
+  }
+});
+
+test('composer stages attachments without a model and validates only on send in a popup', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider } = await import('../src/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
+  const { ChatRuntimeProvider } = await import('../src/features/chat/chat-runtime.tsx');
+  const { Composer } = await import('../src/features/chat/components/composer.web.tsx');
+  const { conversationHref } = await import('../src/features/chat/conversation-href.ts');
+  assert.equal(conversationHref(null), '/');
+  assert.equal(conversationHref('a/b'), '/c/a%2Fb');
+  assert.equal(conversationHref('demo', true), '/mock/chat/c/demo');
+  const previous = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.HTMLElement = window.HTMLElement; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  window.HTMLElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  window.HTMLElement.prototype.close = function () { this.removeAttribute('open'); };
+  const root = createRoot(document.getElementById('root'));
+  let models;
+  let sent = 0;
+  function Harness() {
+    models = useModels();
+    return createElement(Composer, { value: '保留草稿', onChange() {}, onSend() { sent++; return false; }, thinkingEffort: 'default', onThinkingEffortChange() {} });
+  }
+  async function choose(file) {
+    const input = document.querySelector('input[type="file"]');
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    await act(async () => { input.dispatchEvent(new window.Event('change', { bubbles: true })); });
+  }
+  async function submit() {
+    await act(async () => { document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); });
+    assert.ok(document.querySelector('dialog[open]'), 'errors appear in a popup');
+    assert.equal(sent, 0, 'invalid attachments never reach the runtime');
+    assert.equal(document.querySelector('textarea').value, '保留草稿');
+    assert.equal(document.querySelectorAll('.composer-attachment').length, 1, 'failed sends keep attachments');
+  }
+  async function closePopup() {
+    await act(async () => { document.querySelector('[aria-label="关闭弹窗"]').click(); });
+  }
+  try {
+    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    assert.equal(document.querySelector('.composer-attach').disabled, false);
+    assert.equal(document.querySelector('input[type="file"]').hasAttribute('accept'), false);
+    await choose(new File(['document'], 'notes.pdf', { type: 'application/pdf' }));
+    assert.equal(document.querySelector('.composer-attachment').getAttribute('title'), 'notes.pdf');
+    assert.equal(document.querySelector('.composer-attachment .file-type-icon').getAttribute('data-file-icon'), 'pdf');
+    assert.equal(document.querySelector('.attachment-name').textContent, 'notes.pdf');
+    assert.equal(document.querySelector('.attachment-meta').textContent, '8 B');
+    assert.equal(document.querySelector('dialog'), null, 'selection does not validate files');
+    await submit();
+    assert.match(document.querySelector('dialog').textContent, /添加并选择模型/);
+    await closePopup();
+    await act(async () => { await models.save(config, 'key'); });
+    await submit();
+    assert.match(document.querySelector('dialog').textContent, /暂不支持文件/);
+    await closePopup();
+    await act(async () => { document.querySelector('.composer-attachment-remove').click(); });
+    await choose(new File(['image'], 'photo.png', { type: 'image/png' }));
+    assert.equal(document.querySelector('dialog'), null);
+    await act(async () => { document.querySelector('.attachment-preview-trigger').click(); });
+    assert.ok(document.querySelector('dialog[open].image-preview-dialog'), 'image opens a full-screen preview');
+    assert.equal(document.querySelector('.image-preview-stage img').getAttribute('alt'), 'photo.png');
+    assert.equal(sent, 0, 'preview does not submit the composer');
+    await closePopup();
+    assert.equal(document.querySelector('dialog'), null);
+    assert.equal(document.querySelectorAll('.composer-attachment').length, 1, 'closing preview keeps the attachment');
+    await act(async () => { document.querySelector('.attachment-preview-trigger').click(); });
+    await act(async () => { document.querySelector('.image-preview-stage img').click(); });
+    assert.ok(document.querySelector('dialog[open]'), 'clicking the image keeps the preview open');
+    await act(async () => { document.querySelector('.image-preview-stage').click(); });
+    assert.equal(document.querySelector('dialog'), null, 'clicking the surrounding mask closes the preview');
+    await act(async () => { document.querySelector('.attachment-preview-trigger').click(); });
+    await act(async () => { document.querySelector('dialog').dispatchEvent(new window.Event('cancel', { bubbles: true, cancelable: true })); });
+    assert.equal(document.querySelector('dialog'), null, 'Escape dismisses the preview');
+    assert.equal(document.querySelector('.composer-attach').disabled, false, 'text models can still select attachments');
+    await submit();
+    assert.match(document.querySelector('dialog').textContent, /图片输入/);
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.HTMLElement = previous.HTMLElement; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
   }
 });
 
@@ -250,7 +421,7 @@ test('reasoning stops animating before the answer starts and preserves its own d
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness))))); });
+    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
     await act(async () => { await models.save({ ...config, protocol: 'message', baseUrl: 'https://test.invalid' }, 'key'); });
     await act(async () => { assert.equal(runtime.send('问题', null, 'high'), true); });
     await until(() => chat.conversations[0]?.messages[1]?.reasoningActive === false && !!chat.conversations[0]?.messages[1]?.reasoning);

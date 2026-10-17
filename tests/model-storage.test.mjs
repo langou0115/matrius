@@ -37,6 +37,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     assert.equal((await loadWorkspace()).data.chat.conversations[0].messages[0].content, 'preserve my history');
     assert.equal((await loadWorkspace()).data.chat.conversations[0].thinkingEffort, 'default', 'legacy conversations receive the default effort');
     assert.equal((await loadWorkspace()).data.chat.lastThinkingEffort, 'default', 'legacy workspaces receive the default last effort');
+    assert.deepEqual((await loadWorkspace()).data.personalization, { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' }, 'legacy workspaces receive empty personalization without losing data');
     assert.equal(await writeWorkspace(initial, 4), 5);
     database = await open(2);
     const metadata = await requestResult(database.transaction('state').objectStore('state').get('workspace'));
@@ -46,6 +47,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     let messageWrites = 0;
     IDBObjectStore.prototype.put = function (...args) { if (this.name === 'messages') messageWrites++; return originalPut.apply(this, args); };
     const next = structuredClone(initial);
+    next.personalization = { customInstructions: '先给结论', aboutName: '小林', occupation: '设计师', aboutMore: '学习编程' };
     next.chat.conversations[0].messages.push({ id: 'a', role: 'assistant', content: 'partial', reasoning: 'visible provider reasoning', thinkingMs: 4200, status: 'streaming' });
     await writeWorkspace(next, 5);
     assert.equal(messageWrites, 1);
@@ -54,6 +56,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     await writeWorkspace(next, 6);
     assert.equal(messageWrites, 1, 'unchanged user message must not be rewritten');
     const restored = await loadWorkspace();
+    assert.deepEqual(restored.data.personalization, next.personalization, 'all personalization fields survive reloading from IndexedDB');
     assert.equal(restored.data.chat.conversations[0].messages[1].content, 'partial reply');
     assert.equal(restored.data.chat.conversations[0].messages[1].status, 'stopped');
     assert.equal(restored.data.chat.conversations[0].messages[1].thinkingMs, 4200, 'thinking duration survives a reload');

@@ -1,1 +1,1 @@
-export { default } from '@/features/chat/chat-screen.web';
+export { default } from '@/features/chat/chat-route.web';

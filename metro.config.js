@@ -10,7 +10,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (moduleName === '@mariozechner/pi-ai') {
       return { type: 'sourceFile', filePath: path.join(__dirname, 'src/core/llm/pi-agent-bridge.ts') };
     }
-    if (context.originModulePath.includes('/@mariozechner/pi-ai/') && moduleName.endsWith('/env-api-keys.js')) {
+    if (context.originModulePath.replace(/\\/g, '/').includes('/@mariozechner/pi-ai/') && moduleName.endsWith('/env-api-keys.js')) {
       return { type: 'sourceFile', filePath: path.join(__dirname, 'src/core/llm/pi-browser-credentials.ts') };
     }
   }

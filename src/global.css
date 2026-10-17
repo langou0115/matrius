@@ -147,20 +147,39 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .composer textarea { width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: var(--text-body); min-height: 58px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
 .composer textarea::placeholder { color: var(--muted-text); opacity: .8; }
 .composer-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 7px; }
-/* Mirrors the send button on the opposite edge. Quiet by default so it never competes with
-   the model picker, and it recedes further when the selected model cannot receive images. */
-.composer-attach { display: grid; flex-shrink: 0; place-items: center; width: 36px; height: 36px; margin-right: auto; border: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent); border-radius: 50%; background: transparent; color: var(--muted-text); transition: background 140ms, border-color 140ms, color 140ms; }
-.composer-attach:hover:not(:disabled) { border-color: color-mix(in srgb, var(--foreground) 26%, transparent); background: color-mix(in srgb, var(--foreground) 4%, transparent); color: var(--foreground); }
-.composer-attach:disabled { border-color: color-mix(in srgb, var(--foreground) 8%, transparent); background: transparent; color: var(--muted-text); opacity: .5; cursor: default; }
+/* A clear, borderless entry point; the surface appears only during interaction. */
+.composer-attach { position: relative; display: grid; flex-shrink: 0; place-items: center; width: 36px; height: 36px; padding: 0; margin-right: auto; border-radius: var(--radius-sm); background: transparent; color: color-mix(in srgb, var(--foreground) 78%, var(--soft)); transition: background 140ms, color 140ms; touch-action: manipulation; }
+.composer-attach::before { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
+@media (hover: hover) { .composer-attach:hover { background: color-mix(in srgb, var(--foreground) 7%, var(--soft)); color: var(--foreground); } }
+.composer-attach:active { background: color-mix(in srgb, var(--foreground) 12%, var(--soft)); color: var(--foreground); }
+.composer-attach:focus-visible { outline-offset: 2px; background: color-mix(in srgb, var(--foreground) 7%, var(--soft)); color: var(--foreground); }
+@media (prefers-reduced-motion: reduce) { .composer-attach { transition: none; } }
 .composer-file-input { display: none; }
-/* Thumbnails sit inside the composer above the textarea, the same way chat sites stage
-   attachments before sending. The remove chip stays visible so it works on touch too. */
-.composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 4px 12px; }
-.composer-attachment { position: relative; flex-shrink: 0; width: 64px; height: 64px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--foreground) 10%, var(--background)); border-radius: 12px; background: var(--background); }
-.composer-attachment img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.composer-attachment-remove { position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: rgb(0 0 0 / 55%); color: #fff; transition: background 140ms; }
-.composer-attachment-remove:hover { background: rgb(0 0 0 / 78%); }
-.composer-attach-error { padding: 0 4px 10px; color: var(--destructive); font-size: var(--text-caption); line-height: 1.6; }
+.composer-attachments { display: flex; max-width: 100%; gap: 8px; overflow-x: auto; padding: 8px 4px 12px; margin-bottom: 12px; border-bottom: 1px solid color-mix(in srgb, var(--foreground) 12%, var(--soft)); scrollbar-width: thin; }
+.composer-attachment { position: relative; display: grid; flex: 0 0 180px; width: 180px; min-width: 0; max-width: 180px; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; gap: 7px; padding: 6px; border: 1px solid color-mix(in srgb, var(--foreground) 10%, var(--background)); border-radius: 10px; color: var(--foreground); background: color-mix(in srgb, var(--foreground) 2%, var(--background)); }
+.attachment-artwork { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 7px; background: color-mix(in srgb, var(--primary) 9%, var(--background)); color: var(--primary); }
+.attachment-artwork.is-image { background: var(--soft); }
+.attachment-artwork img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.attachment-artwork .file-type-icon { width: 24px; height: 24px; border-radius: 0; object-fit: contain; }
+.attachment-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--foreground); }
+.attachment-meta { overflow: hidden; text-overflow: ellipsis; color: var(--muted-text); font-size: 11px; white-space: nowrap; }
+.attachment-preview-trigger { display: block; width: 100%; height: 100%; padding: 0; border-radius: inherit; cursor: zoom-in; }
+.attachment-preview-trigger:focus-visible { outline-offset: -2px; }
+.composer-attachment-remove { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent); border-radius: 50%; color: var(--muted-text); }
+.composer-attachment-remove:hover:not(:disabled) { background: var(--soft); color: var(--foreground); }
+.composer-attachment-remove:focus-visible { outline-offset: 0; }
+@media (pointer: coarse) { .composer-attachment { grid-template-columns: 30px minmax(0, 1fr) 44px; } .composer-attachment-remove { width: 44px; height: 44px; } .attachment-artwork { overflow: visible; } .attachment-preview-trigger { position: relative; } .attachment-preview-trigger::before { content: ''; position: absolute; inset: -7px; } .attachment-artwork img { border-radius: 7px; } }
+.dialog.image-preview-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.dialog.image-preview-dialog::backdrop { background: rgb(0 0 0 / 48%); backdrop-filter: blur(4px); }
+.image-preview-dialog .dialog-panel { position: relative; height: 100%; max-height: none; overflow: hidden; padding: 0; border: 0; background: transparent; }
+.image-preview-dialog .dialog-header { position: absolute; z-index: 1; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); margin: 0; }
+.image-preview-dialog .dialog-header h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.image-preview-dialog .dialog-header button { width: 44px; height: 44px; border-radius: 50%; background: rgb(0 0 0 / 24%); color: #fff; }
+.image-preview-dialog .dialog-header button:hover { background: rgb(0 0 0 / 42%); }
+.image-preview-dialog .dialog-header button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.image-preview-stage { display: grid; place-items: center; width: 100%; height: 100%; padding: 48px 16px; cursor: zoom-out; }
+.image-preview-stage img { display: block; max-width: min(96vw, 1400px, 100%); max-height: calc(100dvh - 96px); width: auto; height: auto; object-fit: contain; cursor: default; }
 .model-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--foreground); }
 .model-picker { display: inline-flex; align-items: center; gap: 8px; width: auto; min-width: 0; max-width: min(280px, 65vw); height: 32px; min-height: 32px; padding: 0 8px; border-radius: 9px; color: var(--foreground); font-size: var(--text-small); }
 .model-picker:hover, .model-picker.is-open { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
@@ -353,6 +372,10 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .theme-check { width: 15px; height: 15px; flex-shrink: 0; display: grid; place-items: center; color: var(--primary-foreground); border-radius: 50%; }
 .is-selected .theme-check { background: var(--primary); }
 .settings-footnote { font-size: var(--text-caption); color: var(--muted-text); margin-top: 16px; line-height: 1.8; }
+.personalization-fields { display: flex; flex-direction: column; gap: 22px; padding-top: 22px; max-width: 720px; }
+.personalization-field { display: flex; min-width: 0; flex-direction: column; gap: 8px; font-size: var(--text-ui); }
+.personalization-field textarea { display: block; resize: none; min-height: 112px; max-height: 240px; overflow-y: auto; scrollbar-width: thin; line-height: 1.7; }
+.personalization-field small { align-self: flex-end; color: var(--muted-text); font-size: var(--text-caption); }
 .about-card { display: flex; align-items: center; gap: 13px; padding: 23px 0 18px; }
 .about-logo { display: grid; place-items: center; width: 45px; height: 45px; border-radius: 15px; background: var(--soft); color: var(--primary); }
 .about-card h3 { font-size: 17px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.5px; }
