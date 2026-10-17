@@ -52,6 +52,10 @@ h1, h2, h3, p { margin: 0; }
 .skip-link:focus { top: 12px; }
 .icon-button { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; color: var(--muted-text); flex-shrink: 0; transition: background 140ms, color 140ms; }
 .icon-button:hover { color: var(--foreground); background: var(--soft); }
+/* Only the glyph turns red; the button keeps the same outline and fill as the edit button
+   beside it. The element selector outranks the neutral .icon-button:hover colour. */
+button.icon-button.danger-icon,
+button.icon-button.danger-icon:hover { color: var(--destructive); }
 
 /* Keep native scrolling and a visible, easy-to-grab thumb in each scroll area. */
 .matrius-app * { scrollbar-width: auto; scrollbar-color: var(--scrollbar-thumb) transparent; }
@@ -74,8 +78,7 @@ h1, h2, h3, p { margin: 0; }
 /* Sidebar: flat navigation, quiet groups and one consistent content gutter. */
 .sidebar { --sidebar-text-muted: color-mix(in srgb, var(--sidebar-foreground) 70%, var(--sidebar)); width: 260px; min-width: 260px; height: 100%; display: flex; flex-direction: column; background: var(--sidebar); color: var(--sidebar-foreground); padding: 0 12px 12px; border-right: 1px solid color-mix(in srgb, var(--sidebar-foreground) 7%, var(--sidebar)); }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; height: var(--header-height); flex-shrink: 0; padding: 0 6px 0 8px; margin-bottom: 16px; }
-.brand { display: inline-flex; align-items: center; gap: 9px; font-size: 17px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.5px; line-height: 1; }
-.brand-symbol { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--sidebar-foreground); color: var(--sidebar); }
+.brand { display: inline-flex; align-items: center; font-size: 17px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.5px; line-height: 1; }
 .sidebar-header-actions { display: flex; align-items: center; gap: 4px; }
 .sidebar .icon-button { color: var(--sidebar-text-muted); }
 .sidebar .icon-button:hover { background: var(--sidebar-selected); color: var(--sidebar-foreground); }
@@ -599,6 +602,9 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .reasoning-body { position: relative; padding: 10px 0 0 22px; }
 .reasoning-body[hidden] { display: none; }
 .reasoning-body::before { content: ''; position: absolute; inset-inline-start: 8px; top: 12px; bottom: 4px; width: 1px; background: var(--border); }
+/* Opened before the first thinking token arrived: a caret holds the line so the stream
+   visibly starts writing into the space the user already revealed. */
+.reasoning-cursor { display: inline-block; width: 2px; height: 14px; vertical-align: -2px; border-radius: 1px; background: currentColor; animation: reasoning-breathe 1s ease-in-out infinite; }
 /* Reasoning is supporting detail: the answer's typography demoted one step and tightened,
    so headings inside it never compete with the headings of the answer itself. */
 .reasoning-body .message-markdown { color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; }
@@ -623,6 +629,7 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 }
 @media (prefers-reduced-motion: reduce) {
   .reasoning-icon.is-running { animation: none; }
+  .reasoning-cursor { animation: none; }
   .reasoning-label.is-running { background: none; animation: none; -webkit-text-fill-color: currentColor; }
   .reasoning-chevron { transition: none; }
 }

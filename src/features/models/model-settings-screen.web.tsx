@@ -1,7 +1,7 @@
+import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
-import { Icon } from '@/components/web/icon';
 import { SelectField } from '@/components/web/select-field.web';
 import { fetchProviderCatalog, type CatalogModel } from '@/core/llm/provider-catalog.web';
 import { protocols, type ProviderConfig, type ProviderModelConfig } from '@/core/llm/model-config';
@@ -10,7 +10,7 @@ import { useChatRuntime } from '@/features/chat/chat-runtime';
 import { useModels } from './model-state';
 
 type ProviderForm = Omit<ProviderConfig, 'models'>;
-type ConfirmTarget = { kind: 'provider' | 'model'; name: string; id: string };
+type ConfirmTarget = { name: string; id: string };
 
 function createId(prefix: string) {
   return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -113,12 +113,8 @@ export default function ModelSettingsScreen() {
     const target = confirmTarget;
     if (!target) return;
     setConfirmTarget(null);
-    if (target.kind === 'provider') {
-      if (catalogProviderId === target.id) closeCatalog();
-      void perform(() => models.removeProvider(target.id), '已删除服务商及其模型配置。');
-    } else {
-      void perform(() => models.removeModel(target.id), '已删除模型配置。');
-    }
+    if (catalogProviderId === target.id) closeCatalog();
+    void perform(() => models.removeProvider(target.id), '已删除服务商及其模型配置。');
   }
 
   // Errors go into the dialog: the modal covers anything the page would show behind it.
@@ -151,7 +147,7 @@ export default function ModelSettingsScreen() {
     <section className="settings-section" aria-labelledby="providers-heading">
       <div className="model-section-heading">
         <div><h2 id="providers-heading">服务商</h2><p className="settings-footnote">一个服务商配置可以包含多个模型。</p></div>
-        <button className="secondary-button" disabled={disabled} onClick={() => editProvider(null)}><Icon name="plus" size={16} />添加服务商</button>
+        <button className="secondary-button" disabled={disabled} onClick={() => editProvider(null)}><Plus size={16} strokeWidth={1.75} aria-hidden="true" />添加服务商</button>
       </div>
 
       {models.providers.length ? <div className="provider-list">{models.providers.map((provider) => {
@@ -175,11 +171,11 @@ export default function ModelSettingsScreen() {
             <span className="provider-count">{provider.models.length} 个模型</span>
             <div className="provider-heading-actions">
               <button className="secondary-button" disabled={disabled} onClick={() => void discover(provider)}>获取模型列表</button>
-              <button className="secondary-button" disabled={disabled} onClick={() => editModel(provider, null)}><Icon name="plus" size={15} />手动添加</button>
-              <button className="icon-button" aria-label={`编辑服务商：${provider.name}`} disabled={disabled} onClick={() => editProvider(provider)}><Icon name="pen" size={17} /></button>
-              <button className="icon-button" aria-label={`删除服务商：${provider.name}`} disabled={disabled} onClick={() => setConfirmTarget({ kind: 'provider', id: provider.id, name: provider.name })}><Icon name="trash" size={17} /></button>
+              <button className="secondary-button" disabled={disabled} onClick={() => editModel(provider, null)}><Plus size={15} strokeWidth={1.75} aria-hidden="true" />手动添加</button>
+              <button className="icon-button" aria-label={`编辑服务商：${provider.name}`} disabled={disabled} onClick={() => editProvider(provider)}><Pencil size={17} strokeWidth={1.75} aria-hidden="true" /></button>
+              <button className="icon-button danger-icon" aria-label={`删除服务商：${provider.name}`} disabled={disabled} onClick={() => setConfirmTarget({ id: provider.id, name: provider.name })}><Trash2 size={17} strokeWidth={1.75} aria-hidden="true" /></button>
             </div>
-            <Icon name="chevron" size={18} className="provider-toggle-chevron" />
+            <ChevronDown size={18} strokeWidth={1.75} className="provider-toggle-chevron" aria-hidden="true" />
             {/* Its own line across the full row: sharing a line with four buttons left it a
                 column too narrow for an address, and it wrapped into three. */}
             <span className="provider-meta">{protocolLabel} · {provider.baseUrl} · {keyStatus}</span>
@@ -190,8 +186,10 @@ export default function ModelSettingsScreen() {
               {provider.models.map((model) => <div className="provider-model-item" key={model.id}>
                 <div className="provider-model-info"><strong>{model.name}</strong><span>{model.modelId} · 上下文 {model.contextWindow.toLocaleString()} · 最大输出 {model.maxOutput.toLocaleString()}</span></div>
                 <div className="model-config-actions">
-                  <button className="icon-button" aria-label={`编辑模型：${model.name}`} disabled={disabled} onClick={() => editModel(provider, model)}><Icon name="pen" size={17} /></button>
-                  <button className="icon-button" aria-label={`删除模型：${model.name}`} disabled={disabled} onClick={() => setConfirmTarget({ kind: 'model', id: model.id, name: model.name })}><Icon name="trash" size={17} /></button>
+                  <button className="icon-button" aria-label={`编辑模型：${model.name}`} disabled={disabled} onClick={() => editModel(provider, model)}><Pencil size={17} strokeWidth={1.75} aria-hidden="true" /></button>
+                  {/* Removing one model only drops a config row — undoable by re-adding it — so it
+                      runs straight away instead of stopping at a confirmation. */}
+                  <button className="icon-button danger-icon" aria-label={`删除模型：${model.name}`} disabled={disabled} onClick={() => void perform(() => models.removeModel(model.id), '已删除模型配置。')}><Trash2 size={17} strokeWidth={1.75} aria-hidden="true" /></button>
                 </div>
               </div>)}
             </div> : <p className="provider-empty">还没有添加模型。</p>}
@@ -271,15 +269,13 @@ export default function ModelSettingsScreen() {
       </div>
     </Dialog>}
 
-    {confirmTarget && <Dialog title={confirmTarget.kind === 'provider' ? '删除服务商？' : '删除模型？'} onClose={() => setConfirmTarget(null)} className="compact-dialog">
+    {confirmTarget && <Dialog title="删除服务商？" onClose={() => setConfirmTarget(null)} className="compact-dialog">
       <p className="dialog-description">
-        {confirmTarget.kind === 'provider'
-          ? `“${confirmTarget.name}”及其模型配置将被删除，已有对话会保留。`
-          : `删除模型配置“${confirmTarget.name}”？已有对话会保留。`}
+        “{confirmTarget.name}”及其模型配置将被删除，已有对话会保留。
       </p>
       <div className="dialog-footer">
         <button className="secondary-button" onClick={() => setConfirmTarget(null)}>取消</button>
-        <button className="danger-button" disabled={disabled} onClick={confirmRemoval}>{confirmTarget.kind === 'provider' ? '删除服务商' : '删除模型'}</button>
+        <button className="danger-button" disabled={disabled} onClick={confirmRemoval}>删除服务商</button>
       </div>
     </Dialog>}
   </SettingsPage>;

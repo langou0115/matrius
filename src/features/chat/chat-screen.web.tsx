@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 
 import { Icon, type IconName } from '@/components/web/icon';
 import { useChat } from './chat-state';
@@ -33,12 +33,16 @@ export default function ChatScreen() {
   const lastMessage = conversation?.messages.at(-1);
   const failedReply = lastMessage?.role === 'assistant' && lastMessage.status === 'error' ? lastMessage : null;
   // One indicator for the whole wait, instead of separate copy for "request sent" and "no token yet".
-  // Streaming reasoning already shows its own live state, so the line would be redundant there.
+  // Until the reply message exists the line lives outside the list; once it does, the reply renders
+  // the same line itself, so the two never show together.
   const generating = runtime.runningId !== null && runtime.runningId === activeId;
-  const awaitingReply = runtime.runningId === conversation?.id
-    && !(lastMessage?.role === 'assistant' && lastMessage.content.trim())
-    && !lastMessage?.reasoning?.trim();
+  const liveReply = lastMessage?.role === 'assistant' ? lastMessage : null;
+  const awaitingReply = runtime.runningId === conversation?.id && !liveReply;
   const liveStartedAt = runtime.runningId === conversation?.id ? runtime.startedAt : null;
+  // Shared by the wait line and the reply's own line so expanding before the first token keeps
+  // the reasoning body open when the text starts streaming into it. It also carries across runs:
+  // someone who opened the stream once is asking to watch it, not to open it every time.
+  const [liveReasoningOpen, setLiveReasoningOpen] = useState(false);
   const messages = conversation?.messages ?? [];
   const draftKey = activeId ?? 'new';
   const draft = drafts[draftKey] ?? '';
@@ -77,10 +81,16 @@ export default function ChatScreen() {
               if (message.id === failedReply?.id) return null;
               return <div className="reply-error-notice reply-error-history" key={message.id} role="status"><span>{message.error ?? '模型回复失败。'}</span></div>;
             }
+            const live = message.id === liveReply?.id;
+            // A live reply shows the disclosure before reasoning arrives, so it can be opened
+            // while the response is still warming up. Once prose starts without reasoning the
+            // line has nothing to reveal and disappears.
+            const showReasoning = !!message.reasoning?.trim()
+              || (live && message.status === 'streaming' && !message.content.trim());
             return message.role === 'user'
               ? <article className="user-message" key={message.id} aria-label="你的消息"><div className="user-message-content"><MessageContent content={message.content} /></div><MessageActions message={message} /></article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
-              {message.reasoning?.trim() && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={message.id === lastMessage?.id ? liveStartedAt : null} />}
+              {showReasoning && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
               <MessageContent content={message.content} streaming={message.status === 'streaming'} />
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
               {message.status === 'error' && message.error && message.id !== failedReply?.id && <div className="reply-error-notice reply-error-history" role="status"><span>{message.error}</span></div>}
@@ -93,7 +103,7 @@ export default function ChatScreen() {
             <div className="reply-error-copy"><strong>回复失败</strong><span>{failedReply.error ?? '模型回复失败，请稍后重试。'}</span></div>
             <button className="secondary-button reply-error-retry" type="button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id, thinkingEffort)}><Icon name="refresh" size={15} />重新生成</button>
           </div>}
-          {awaitingReply && <ReasoningBlock state="running" startedAt={liveStartedAt} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} />}
+          {awaitingReply && <ReasoningBlock state="running" startedAt={liveStartedAt} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={liveReasoningOpen} onOpenChange={setLiveReasoningOpen} />}
           {!runtime.runningId && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id, thinkingEffort)}>生成回复</button>}
         </div>
       </div>

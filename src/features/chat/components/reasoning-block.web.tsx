@@ -41,6 +41,11 @@ type Props = {
   startedAt?: number | null;
   /** Wording for the running line: waiting on a model that was not asked to think is not "thinking". */
   runningLabel?: string;
+  /** Controlled disclosure. A caller that renders the same reasoning across two positions
+      (the wait line before the reply exists, then the reply itself) owns the state so
+      expanding early stays expanded once the first token arrives. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 /**
@@ -48,8 +53,9 @@ type Props = {
  * reasoning the model produced. Sending and thinking share one row so the reply area
  * never swaps components mid-flight: the line simply grows an expandable body.
  */
-export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, startedAt = null, runningLabel }: Props) {
-  const [open, setOpen] = useState(false);
+export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, startedAt = null, runningLabel, open: controlledOpen, onOpenChange }: Props) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
   const bodyId = useId();
   const running = state === 'running';
   // Whitespace-only reasoning is no reasoning: an empty disclosure would read as "已完成思考"
@@ -61,6 +67,11 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
   const seconds = useElapsed(live ? startedAt : null);
   const elapsed = elapsedMs === null ? seconds : Math.floor(elapsedMs / 1000);
   const showElapsed = elapsedMs !== null || (live && startedAt !== null);
+  function toggle() {
+    const next = !open;
+    if (controlledOpen === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  }
   const line = <>
     <Icon name={statusIcon[state]} size={17} className={running ? 'reasoning-icon is-running' : 'reasoning-icon'} />
     <span className={running ? 'reasoning-label is-running' : 'reasoning-label'}>{running ? runningLabel ?? statusLabel.running : statusLabel[state]}</span>
@@ -68,14 +79,17 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
         update would be re-announced once a second. The label carries the meaning. */}
     <span className="reasoning-meta">
       {showElapsed && <span className="reasoning-time" aria-hidden="true">{formatElapsed(elapsed)}</span>}
-      {text && <Icon name="chevron" size={15} className="reasoning-chevron" />}
+      <Icon name="chevron" size={15} className="reasoning-chevron" />
     </span>
   </>;
-  // Nothing to reveal yet, so the line is plain text rather than an empty disclosure.
-  if (!text) return <div className="reasoning"><p className="reasoning-line" role="status">{line}</p></div>;
+  // The row is a disclosure from the first moment, even before any reasoning has arrived:
+  // expanding it then means the streamed thinking is visible as it is written instead of
+  // being folded away until the user notices it and opens it afterwards.
   return <div className="reasoning">
     <span className="sr-only" role="status">{running ? runningLabel ?? statusLabel.running : statusLabel[state]}</span>
-    <button type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((value) => !value)}>{line}</button>
-    <div className="reasoning-body" id={bodyId} hidden={!open}><MessageContent content={text} streaming={running} /></div>
+    <button type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>{line}</button>
+    <div className="reasoning-body" id={bodyId} hidden={!open}>
+      {text ? <MessageContent content={text} streaming={running} /> : <span className="reasoning-cursor" aria-hidden="true" />}
+    </div>
   </div>;
 }

@@ -34,7 +34,7 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
   return (
     <aside className="sidebar" aria-label="对话导航">
       <div className="sidebar-header">
-        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => dispatch({ type: 'select', id: null })}><span className="brand-symbol"><Icon name="sparkle" size={17} /></span><span>Matrius</span></LinkAnchor></Link>
+        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => dispatch({ type: 'select', id: null })}>Matrius</LinkAnchor></Link>
         <div className="sidebar-header-actions">
           <button className="icon-button" onClick={onSearch} aria-label="搜索对话"><Icon name="search" size={19} /></button>
           <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>
