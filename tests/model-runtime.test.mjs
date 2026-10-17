@@ -78,6 +78,30 @@ test('three real pi providers stream text and preserve multi-turn context withou
   });
 });
 
+test('image attachments reach every protocol as native image blocks', async (t) => {
+  const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const image = { id: 'img-1', name: 'dot.png', mimeType: 'image/png', dataUrl };
+  for (const protocol of ['completion', 'responses', 'message']) await t.test(protocol, async () => {
+    const original = globalThis.fetch;
+    let body;
+    globalThis.fetch = async (_url, init) => { body = JSON.parse(init.body); return response(protocol, init.signal); };
+    try {
+      const run = createReplyRun({
+        config: { ...config, protocol, baseUrl: protocol === 'message' ? 'https://test.invalid' : config.baseUrl, supportsImage: true },
+        apiKey: 'test-key',
+        messages: [{ id: 'u1', role: 'user', content: '这是什么？', images: [image] }],
+        onUpdate() {},
+      });
+      assert.equal((await run.start()).status, 'complete');
+      const payload = JSON.stringify(body);
+      assert.ok(payload.includes('iVBORw0KGgo'), `${protocol} carries the base64 payload`);
+      assert.ok(payload.includes('这是什么？'), `${protocol} keeps the accompanying text`);
+      // OpenAI's two APIs wrap the bytes in a data URL; Anthropic takes base64 plus a media type.
+      assert.equal(payload.includes('data:image/png;base64'), protocol !== 'message', `${protocol} uses its native image shape`);
+    } finally { globalThis.fetch = original; }
+  });
+});
+
 test('stop keeps partial text and cancels the provider request', async () => {
   const original = globalThis.fetch;
   let signal;
@@ -112,6 +136,8 @@ test('model metadata whitelists fields and credentials stay isolated in memory',
   assert.ok(!JSON.stringify(normalized).includes('must-not-persist'));
   assert.equal(createAgentModel(normalized).api, 'openai-completions');
   assert.deepEqual(createAgentModel(normalized).input, ['text']);
+  assert.equal(normalized.supportsImage, false, 'older records default to text-only');
+  assert.deepEqual(createAgentModel({ ...normalized, supportsImage: true }).input, ['text', 'image']);
   for (const baseUrl of ['javascript:alert(1)', 'https://u:secret@test.invalid', 'https://test.invalid?key=secret']) assert.throws(() => validateModelConfig({ ...config, baseUrl }));
   assert.throws(() => validateModelConfig({ ...config, maxOutput: config.contextWindow }));
   const local = createModelCredentials();

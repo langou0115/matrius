@@ -3,14 +3,28 @@ import type { AssistantMessage } from '@mariozechner/pi-ai';
 
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message } from '@/features/chat/chat-state';
+import type { Message, MessageImage } from '@/features/chat/chat-state';
 
 const usage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+/** pi-ai's image block wants raw base64; the UI keeps the data URL for previewing. */
+function toImageBlock(image: MessageImage) {
+  return { type: 'image' as const, data: image.dataUrl.slice(image.dataUrl.indexOf(',') + 1), mimeType: image.mimeType };
+}
 export function buildContext(messages: Message[], config: ModelConfig): AgentMessage[] {
   const model = createAgentModel(config);
-  return messages.filter((message) => message.content.trim()).map((message) => message.role === 'user'
-    ? { role: 'user', content: message.content, timestamp: Date.now() }
-    : { role: 'assistant', content: [{ type: 'text', text: message.content }], api: model.api, provider: model.provider, model: model.id, usage: usage(), stopReason: 'stop', timestamp: Date.now() });
+  return messages.filter((message) => message.content.trim() || message.images?.length).map((message) => {
+    if (message.role === 'assistant') {
+      return { role: 'assistant', content: [{ type: 'text', text: message.content }], api: model.api, provider: model.provider, model: model.id, usage: usage(), stopReason: 'stop', timestamp: Date.now() };
+    }
+    const images = (message.images ?? []).map(toImageBlock);
+    return {
+      role: 'user',
+      content: images.length
+        ? [...images, ...(message.content.trim() ? [{ type: 'text' as const, text: message.content }] : [])]
+        : message.content,
+      timestamp: Date.now(),
+    };
+  });
 }
 
 const directStream: StreamFn = async (model, context, options) => {

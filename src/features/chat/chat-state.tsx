@@ -1,9 +1,12 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 
+/** An image to send with a user message. It lives in memory only: the workspace snapshot drops
+    `images` before writing, so a reload keeps the text and forgets the picture. */
+export type MessageImage = { id: string; name: string; mimeType: string; dataUrl: string };
 /** How long the model spent reasoning, measured to its last thinking token. Persisted so the
     finished reply still reports it after a reload. Absent when the model produced no reasoning. */
-export type Message = { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; reasoningActive?: boolean; thinkingMs?: number; status?: 'streaming' | 'complete' | 'stopped' | 'error'; error?: string };
+export type Message = { id: string; role: 'user' | 'assistant'; content: string; images?: MessageImage[]; reasoning?: string; reasoningActive?: boolean; thinkingMs?: number; status?: 'streaming' | 'complete' | 'stopped' | 'error'; error?: string };
 export type Conversation = {
   id: string;
   title: string;
@@ -87,7 +90,7 @@ function reducer(state: ChatState, action: Action): ChatState {
         ? { ...current, thinkingEffort: action.thinkingEffort, messages: [...current.messages, action.message], updatedAt: Date.now() }
         : {
             id: action.conversationId,
-            title: action.message.content.replace(/\s+/g, ' ').slice(0, 32),
+            title: action.message.content.replace(/\s+/g, ' ').trim().slice(0, 32) || (action.message.images?.length ? '图片对话' : '新对话'),
             pinned: false,
             updatedAt: Date.now(),
             thinkingEffort: action.thinkingEffort,

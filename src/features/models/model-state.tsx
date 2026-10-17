@@ -87,7 +87,7 @@ function useModelState(preview: boolean) {
         baseUrl: valid.baseUrl,
         requiresApiKey: valid.requiresApiKey,
         models: [...(existing?.models ?? []).filter((item) => item.id !== valid.id), {
-          id: valid.id, name: valid.name, modelId: valid.modelId, contextWindow: valid.contextWindow, maxOutput: valid.maxOutput,
+          id: valid.id, name: valid.name, modelId: valid.modelId, supportsImage: valid.supportsImage, contextWindow: valid.contextWindow, maxOutput: valid.maxOutput,
         }],
       });
       await update({

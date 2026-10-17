@@ -12,6 +12,8 @@ export type ProviderModelConfig = {
   id: string;
   name: string;
   modelId: string;
+  /** Whether the model accepts image content. Drives pi-ai's `Model.input`. */
+  supportsImage: boolean;
   contextWindow: number;
   maxOutput: number;
 };
@@ -52,6 +54,8 @@ function validateModelValues(value: ProviderModelConfig): ProviderModelConfig {
     id: value.id,
     name: value.name.trim(),
     modelId: value.modelId.trim(),
+    // Older records predate this flag: keep them text-only until the user opts in.
+    supportsImage: value.supportsImage === true,
     contextWindow: value.contextWindow,
     maxOutput: value.maxOutput,
   };
@@ -110,7 +114,7 @@ export function createAgentModel(config: ModelConfig): Model<Api> {
   return {
     api: protocolToApi[config.protocol], baseUrl: config.baseUrl,
     id: config.modelId, name: config.name, provider: `matrius-${config.providerId || config.id}`,
-    reasoning: false, input: ['text'], contextWindow: config.contextWindow, maxTokens: config.maxOutput,
+    reasoning: false, input: config.supportsImage ? ['text', 'image'] : ['text'], contextWindow: config.contextWindow, maxTokens: config.maxOutput,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     ...(config.protocol === 'completion' ? { compat: { supportsStore: false, supportsDeveloperRole: false, maxTokensField: 'max_tokens' as const } } : {}),
   };

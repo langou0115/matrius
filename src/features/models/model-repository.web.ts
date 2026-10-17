@@ -35,6 +35,7 @@ function normalizePreferences(value: ModelPreferences | LegacyModelPreferences):
         id: model.id,
         name: model.name,
         modelId: model.modelId,
+        supportsImage: model.supportsImage,
         contextWindow: model.contextWindow,
         maxOutput: model.maxOutput,
       });

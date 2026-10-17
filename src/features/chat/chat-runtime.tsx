@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState, type PropsWithC
 import type { createReplyRun } from '@/core/agent/runner';
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { useModels } from '@/features/models/model-state';
-import { useChat, type Message } from './chat-state';
+import { useChat, type Message, type MessageImage } from './chat-state';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 
@@ -25,8 +25,9 @@ function useRuntime() {
     if (!config || !models.ready) { setError('请先在设置 → 模型服务中添加并选择模型。'); return false; }
     if (active.current) return false;
     if (config.requiresApiKey && !models.getKey(config.providerId)) { setError('请在模型服务中填写当前服务商的 API key。'); return false; }
-    // Conservative character estimate, leaving room for the output and system prompt.
-    if (history.reduce((sum, item) => sum + item.content.length + 32, 0) > config.contextWindow - config.maxOutput - 256) {
+    // Conservative character estimate, leaving room for the output and system prompt. An image
+    // costs roughly a thousand tokens regardless of its encoded size, so count it as 4000 chars.
+    if (history.reduce((sum, item) => sum + item.content.length + (item.images?.length ?? 0) * 4000 + 32, 0) > config.contextWindow - config.maxOutput - 256) {
       setError('对话可能超出上下文窗口，请新建对话或在模型设置中调整窗口。'); return false;
     }
     const apiKey = config.requiresApiKey ? models.getKey(config.providerId) : '';
@@ -70,10 +71,10 @@ function useRuntime() {
   return {
     runningId, startedAt, error, clearError: () => setError(null),
     stop: () => active.current?.abort(),
-    send(content: string, existingId: string | null, thinkingEffort: ThinkingEffort = 'default') {
+    send(content: string, existingId: string | null, thinkingEffort: ThinkingEffort = 'default', images: MessageImage[] = []) {
       const conversationId = existingId ?? createId();
       const current = conversations.find((item) => item.id === conversationId);
-      const message: Message = { id: createId(), role: 'user', content };
+      const message: Message = { id: createId(), role: 'user', content, ...(images.length ? { images } : {}) };
       // start schedules work on a microtask; dispatch user before any reply update.
       if (!start(conversationId, [...(current?.messages ?? []), message], createId(), thinkingEffort)) return false;
       dispatch({ type: 'send', conversationId, message, thinkingEffort });

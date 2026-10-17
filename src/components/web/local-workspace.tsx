@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from 're
 import { LocalDataConflict, writeWorkspace } from '@/core/database/browser-store.web';
 import { ChatProvider, useChat } from '@/features/chat/chat-state';
 import { DraftProvider } from '@/features/chat/draft-state';
-import { loadWorkspace, type LoadedWorkspace, type WorkspaceData } from '@/features/workspace/workspace-repository.web';
+import { loadWorkspace, stripMessageImages, type LoadedWorkspace, type WorkspaceData } from '@/features/workspace/workspace-repository.web';
 import { AppearanceProvider, useAppearance } from '@/theme/appearance';
 import { PreviewContext } from '@/features/workspace/preview-context';
 import { ModelProvider } from '@/features/models/model-state';
@@ -12,7 +12,7 @@ import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean }>) {
   const { conversations, activeId, sidebarOpen, lastThinkingEffort } = useChat();
   const { themeId, mode } = useAppearance();
-  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations, activeId, sidebarOpen, lastThinkingEffort }, appearance: { themeId, mode } }), [conversations, activeId, sidebarOpen, lastThinkingEffort, themeId, mode]);
+  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), activeId, sidebarOpen, lastThinkingEffort }, appearance: { themeId, mode } }), [conversations, activeId, sidebarOpen, lastThinkingEffort, themeId, mode]);
   const revision = useRef(initial.revision);
   const saved = useRef(JSON.stringify(initial.data));
   const queue = useRef(Promise.resolve());

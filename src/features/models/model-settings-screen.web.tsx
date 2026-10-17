@@ -21,7 +21,7 @@ function newProvider(): ProviderForm {
 }
 
 function newModel(): ProviderModelConfig {
-  return { id: createId('model'), name: '', modelId: '', contextWindow: 128000, maxOutput: 4096 };
+  return { id: createId('model'), name: '', modelId: '', supportsImage: false, contextWindow: 128000, maxOutput: 4096 };
 }
 
 function errorMessage(reason: unknown) {
@@ -124,7 +124,7 @@ export default function ModelSettingsScreen() {
     setCatalogError(null);
     try {
       await models.saveModel(provider.id, {
-        id: createId('model'), name: item.name, modelId: item.id, contextWindow: 128000, maxOutput: 4096,
+        id: createId('model'), name: item.name, modelId: item.id, supportsImage: false, contextWindow: 128000, maxOutput: 4096,
       });
     } catch (reason) {
       setCatalogError(errorMessage(reason));
@@ -184,7 +184,7 @@ export default function ModelSettingsScreen() {
           <div className="provider-body" id={bodyId} hidden={!open}>
             {provider.models.length ? <div className="provider-model-list" aria-label={`${provider.name} 的模型`}>
               {provider.models.map((model) => <div className="provider-model-item" key={model.id}>
-                <div className="provider-model-info"><strong>{model.name}</strong><span>{model.modelId} · 上下文 {model.contextWindow.toLocaleString()} · 最大输出 {model.maxOutput.toLocaleString()}</span></div>
+                <div className="provider-model-info"><strong>{model.name}</strong><span>{model.modelId} · 上下文 {model.contextWindow.toLocaleString()} · 最大输出 {model.maxOutput.toLocaleString()}{model.supportsImage ? ' · 支持图片' : ''}</span></div>
                 <div className="model-config-actions">
                   <button className="icon-button" aria-label={`编辑模型：${model.name}`} disabled={disabled} onClick={() => editModel(provider, model)}><Pencil size={17} strokeWidth={1.75} aria-hidden="true" /></button>
                   {/* Removing one model only drops a config row — undoable by re-adding it — so it
@@ -219,7 +219,7 @@ export default function ModelSettingsScreen() {
             setProviderForm({ ...providerForm, protocol: protocol.id, baseUrl: usingDefault ? protocol.baseUrl : providerForm.baseUrl });
           }} />
           <label className="model-form-field">Base URL<input className="text-field" type="url" value={providerForm.baseUrl} onChange={(event) => setProviderForm({ ...providerForm, baseUrl: event.target.value })} placeholder="https://your-provider.example/v1" required autoCapitalize="none" spellCheck={false} /><span>填写服务商的 API 基础地址，不包含 /models、/chat/completions、/responses 或 /messages。</span></label>
-          <label className="model-key-toggle"><input type="checkbox" checked={providerForm.requiresApiKey} onChange={(event) => setProviderForm({ ...providerForm, requiresApiKey: event.target.checked })} />接口需要 API key</label>
+          <label className="model-key-toggle"><input className="model-checkbox-input" type="checkbox" checked={providerForm.requiresApiKey} onChange={(event) => setProviderForm({ ...providerForm, requiresApiKey: event.target.checked })} /><span className="model-checkbox" aria-hidden="true" />接口需要 API key</label>
           {providerForm.requiresApiKey && <label className="model-form-field">API key<input className="text-field" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder={models.getKey(providerForm.id) ? '已填写；留空保持当前 key' : '保存在此浏览器中'} /><span>与模型配置分开保存在本机浏览器，未加密；清除站点数据后需要重新填写。</span></label>}
           <div className="dialog-footer"><button type="button" className="secondary-button" onClick={closeProviderForm}>取消</button><button type="submit" className="primary-button">{saving ? '保存中…' : '保存服务商'}</button></div>
         </fieldset>
@@ -237,6 +237,7 @@ export default function ModelSettingsScreen() {
         <fieldset disabled={disabled}>
           <label className="model-form-field">显示名称<input className="text-field" value={modelForm.name} onChange={(event) => setModelForm({ ...modelForm, name: event.target.value })} placeholder="例如：日常对话" required maxLength={100} /></label>
           <label className="model-form-field">模型 ID<input className="text-field" value={modelForm.modelId} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} placeholder="服务商返回的准确模型 ID" required autoCapitalize="none" spellCheck={false} /></label>
+          <label className="model-key-toggle model-image-toggle"><input className="model-checkbox-input" type="checkbox" checked={modelForm.supportsImage} onChange={(event) => setModelForm({ ...modelForm, supportsImage: event.target.checked })} /><span className="model-checkbox" aria-hidden="true" /><span className="model-toggle-copy"><strong>支持图片输入</strong><small>仅在服务商和该模型本身支持视觉输入时开启。</small></span></label>
           <div className="model-form-columns">
             <label className="model-form-field">上下文窗口<input className="text-field" type="number" min={512} step={1} value={modelForm.contextWindow} onChange={(event) => setModelForm({ ...modelForm, contextWindow: Number(event.target.value) })} required /></label>
             <label className="model-form-field">最大输出 tokens<input className="text-field" type="number" min={1} step={1} value={modelForm.maxOutput} onChange={(event) => setModelForm({ ...modelForm, maxOutput: Number(event.target.value) })} required /></label>

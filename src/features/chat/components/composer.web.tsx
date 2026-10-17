@@ -1,19 +1,36 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { Icon } from '@/components/web/icon';
 import { useModels } from '@/features/models/model-state';
 import { useChatRuntime } from '../chat-runtime';
-import { useChat } from '../chat-state';
+import { useChat, type MessageImage } from '../chat-state';
 import { ModelIcon } from './model-icon.web';
 
 type Props = {
   value: string;
   onChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (images: MessageImage[]) => boolean;
   thinkingEffort: ThinkingEffort;
   onThinkingEffortChange: (value: ThinkingEffort) => void;
 };
+
+// All three supported protocols accept these four types. The cap keeps one request well below
+// common provider payload limits and stops a drop of a photo album from freezing the composer.
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+
+function readImageDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('Cannot read image'));
+    reader.readAsDataURL(file);
+  });
+}
 
 // Labels are written out rather than derived from the value: the stored identifiers stay
 // English, but everything the picker prints is Chinese.
@@ -31,6 +48,11 @@ const PICKER_CARD_MAX_HEIGHT = 294;
 
 export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  // Staged for the next message only. The parent keys this component by conversation, so a
+  // switch remounts it and drops both the previews and any selection error.
+  const [attachments, setAttachments] = useState<MessageImage[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const composing = useRef(false);
   const [showModels, setShowModels] = useState(false);
   const [pickerPage, setPickerPage] = useState<'models' | 'thinking'>('models');
@@ -128,9 +150,55 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     element.style.height = `${Math.min(192, Math.max(58, element.scrollHeight))}px`;
   }, [value]);
 
+  // Only models explicitly marked as vision-capable may receive images. The flag lives in the
+  // model editor, so the composer explains where to turn it on instead of failing at the provider.
+  const imageInputEnabled = models.selected?.supportsImage === true;
+  const attachBlocked = blocked || !imageInputEnabled;
+  const attachLabel = !models.selected
+    ? '请先选择模型'
+    : !models.selected.supportsImage ? '当前模型未开启图片输入，请在模型设置中开启' : '上传图片';
+
+  async function addImages(files: File[]) {
+    if (!files.length) return;
+    setAttachError(null);
+    const unsupported = files.find((file) => !IMAGE_TYPES.includes(file.type));
+    if (unsupported) { setAttachError('只支持 PNG、JPEG、WebP 或 GIF 格式的图片。'); return; }
+    const oversized = files.find((file) => file.size > MAX_IMAGE_BYTES);
+    if (oversized) { setAttachError(`图片「${oversized.name}」超过 10MB。`); return; }
+    const room = MAX_IMAGES - attachments.length;
+    if (room <= 0) { setAttachError(`每条消息最多添加 ${MAX_IMAGES} 张图片。`); return; }
+    const accepted = files.slice(0, room);
+    if (accepted.length < files.length) setAttachError(`每条消息最多添加 ${MAX_IMAGES} 张图片，超出的已忽略。`);
+    try {
+      const images = await Promise.all(accepted.map(async (file) => ({
+        id: createId(),
+        name: file.name || '图片',
+        mimeType: file.type,
+        dataUrl: await readImageDataUrl(file),
+      })));
+      // The same picture pasted twice is still two attachments; identity is per selection.
+      setAttachments((current) => [...current, ...images].slice(0, MAX_IMAGES));
+    } catch {
+      setAttachError('读取图片失败，请重试。');
+    }
+  }
+
+  function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => !!file && file.type.startsWith('image/'));
+    if (!files.length) return;
+    event.preventDefault();
+    void addImages(files);
+  }
+
   function submit() {
-    if (!value.trim() || blocked) return;
-    onSend();
+    if (blocked || (!value.trim() && !attachments.length)) return;
+    if (attachments.length && !imageInputEnabled) { setAttachError('当前模型未开启图片输入，请在模型设置中开启后重试。'); return; }
+    if (!onSend(attachments)) return;
+    setAttachments([]);
+    setAttachError(null);
     input.current?.focus();
   }
 
@@ -236,12 +304,25 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
 
   return <>
     <form className="composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <input ref={fileInput} className="composer-file-input" type="file" accept={IMAGE_TYPES.join(',')} multiple
+        onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addImages(files); }} />
+      {attachments.length > 0 && <div className="composer-attachments" aria-label="待发送的图片">
+        {attachments.map((image) => <div className="composer-attachment" key={image.id}>
+          <img src={image.dataUrl} alt={image.name} />
+          <button type="button" className="composer-attachment-remove" aria-label={`移除图片 ${image.name}`}
+            onClick={() => { setAttachError(null); setAttachments((current) => current.filter((item) => item.id !== image.id)); }}>
+            <Icon name="close" size={12} />
+          </button>
+        </div>)}
+      </div>}
+      {attachError && <p className="composer-attach-error" role="alert">{attachError}</p>}
       <textarea
         ref={input}
         aria-label="消息内容"
-        placeholder="发消息，探索更多可能…"
+        placeholder={attachments.length ? '' : '发消息，探索更多可能…'}
         value={value}
         rows={2}
+        onPaste={handlePaste}
         onChange={(event) => onChange(event.target.value)}
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={() => { composing.current = false; }}
@@ -253,6 +334,10 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         }}
       />
       <div className="composer-toolbar">
+        <button type="button" className="composer-attach" onClick={() => { setAttachError(null); fileInput.current?.click(); }}
+          disabled={attachBlocked} aria-label={attachLabel} title={attachLabel}>
+          <Icon name="plus" size={20} />
+        </button>
         <button
           ref={pickerTrigger}
           type="button"
@@ -277,7 +362,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           <Icon name="chevron" size={18} className="model-picker-chevron" />
         </button>
         {running ? <button type="button" className="send-button" onClick={runtime.stop} aria-label="停止生成"><span className="stop-generation-icon" /></button>
-          : <button type="submit" className="send-button" disabled={!value.trim() || blocked} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
+          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length) || blocked} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
       </div>
     </form>
     {modelPopover}

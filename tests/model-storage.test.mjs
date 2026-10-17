@@ -3,7 +3,7 @@ import test from 'node:test';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 
 import { readWorkspace, writeWorkspace, readLocalValue, writeLocalValue, LocalDataConflict } from '../src/core/database/browser-store.web.ts';
-import { loadWorkspace } from '../src/features/workspace/workspace-repository.web.ts';
+import { loadWorkspace, stripMessageImages } from '../src/features/workspace/workspace-repository.web.ts';
 import { saveModelPreferences, loadModelPreferences } from '../src/features/models/model-repository.web.ts';
 import { createStoredModelCredentials } from '../src/features/models/model-credential-store.web.ts';
 
@@ -90,6 +90,20 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     database?.close();
     globalThis.indexedDB = previous;
   }
+});
+
+test('attached image bytes never reach the persisted workspace', () => {
+  const conversations = [{
+    id: 'chat', title: '看图', pinned: false, updatedAt: 1,
+    messages: [{ id: 'u', role: 'user', content: '这是什么？', images: [
+      { id: 'img', name: 'dot.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,SECRET-PIXELS' },
+    ] }],
+  }];
+  const stripped = stripMessageImages(conversations);
+  assert.equal(stripped[0].messages[0].content, '这是什么？', 'the text survives');
+  assert.equal(stripped[0].messages[0].images, undefined, 'the image is dropped');
+  assert.ok(!JSON.stringify(stripped).includes('SECRET-PIXELS'));
+  assert.deepEqual(stripMessageImages([]), []);
 });
 
 test('API keys persist in their own record and never reach the synced metadata', async () => {

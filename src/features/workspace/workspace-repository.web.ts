@@ -7,6 +7,15 @@ import { themePresets, type ThemeId } from '@/theme/presets';
 export type WorkspaceData = { schemaVersion: 1; chat: ChatState; appearance: AppearancePreferences };
 export type LoadedWorkspace = { data: WorkspaceData; revision: number };
 
+/** Attached images are request-only: keep their bytes out of every snapshot written to storage.
+    The in-memory messages are untouched, so the pictures stay visible until the page reloads. */
+export function stripMessageImages(conversations: Conversation[]): Conversation[] {
+  return conversations.map((conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map(({ images, ...message }) => message),
+  }));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

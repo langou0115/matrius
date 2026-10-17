@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { Icon, type IconName } from '@/components/web/icon';
-import { useChat } from './chat-state';
+import { useChat, type MessageImage } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
 import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom.web';
@@ -56,10 +56,12 @@ export default function ChatScreen() {
     followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}`,
   });
   function changeDraft(value: string) { setDraft(draftKey, value); }
-  function send() {
+  function send(images: MessageImage[]) {
     const content = draft.trim();
-    if (!content) return;
-    if (runtime.send(content, activeId, thinkingEffort)) setDraft(draftKey, '');
+    if (!content && !images.length) return false;
+    const sent = runtime.send(content, activeId, thinkingEffort, images);
+    if (sent) setDraft(draftKey, '');
+    return sent;
   }
   function updateThinkingEffort(value: typeof thinkingEffort) {
     dispatch({ type: 'thinking-effort', conversationId: conversation?.id ?? null, thinkingEffort: value });
@@ -88,7 +90,13 @@ export default function ChatScreen() {
             const showReasoning = !!message.reasoning?.trim()
               || (live && message.status === 'streaming' && !message.content.trim());
             return message.role === 'user'
-              ? <article className="user-message" key={message.id} aria-label="你的消息"><div className="user-message-content"><MessageContent content={message.content} /></div><MessageActions message={message} /></article>
+              ? <article className="user-message" key={message.id} aria-label="你的消息">
+                <div className={`user-message-content${message.images?.length ? ' has-images' : ''}`}>
+                  {!!message.images?.length && <div className="user-message-images">{message.images.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name} />)}</div>}
+                  {message.content.trim() ? <MessageContent content={message.content} /> : null}
+                </div>
+                <MessageActions message={message} />
+              </article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
               <MessageContent content={message.content} streaming={message.status === 'streaming'} />
@@ -109,11 +117,11 @@ export default function ChatScreen() {
       </div>
       <div className="bottom-composer">
         <ScrollToBottomButton generating={generating} visible={scrollToBottomVisible} onScrollToBottom={scrollToBottom} />
-        <Composer value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
+        <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
       </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
       <div className="welcome-heading"><span className="welcome-mark"><Icon name="sparkle" size={30} /></span><h2>有什么可以帮你的？</h2><p>让好奇有回响，让想法更进一步。</p></div>
-      <Composer value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
+      <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
       <div className="suggestions" aria-label="对话灵感">
         {suggestions.map((item) => <button key={item.title} onClick={() => { changeDraft(item.prompt); document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus(); }}><Icon name={item.icon} size={17} /><span>{item.title}</span></button>)}
       </div>
