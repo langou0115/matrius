@@ -5,8 +5,13 @@ import { Icon } from '@/components/web/icon';
 // Rounding leaves a pixel or two between scrollTop and the real end.
 const BOTTOM_EPSILON = 2;
 // The reader counts as "at the bottom" while the drift stays inside this share
-// of the viewport, so the button shows at the very distance where following stops.
+// of the viewport, so following stops as soon as they scroll away deliberately.
 const AT_BOTTOM_RATIO = 0.12;
+// Showing the button at the same small distance made it pop up after a single
+// notch of the wheel. It is only worth offering once the reader has scrolled a
+// whole screen away from the newest message, so visibility gets its own,
+// deliberately generous threshold.
+const SHOW_ABOVE_RATIO = 1;
 // Safety net for a smooth scroll that never reports a landing position.
 const JUMP_TIMEOUT = 800;
 
@@ -25,6 +30,10 @@ function distanceFromBottom(element: HTMLElement) {
 
 function atBottomThreshold(element: HTMLElement) {
   return Math.max(BOTTOM_EPSILON, element.clientHeight * AT_BOTTOM_RATIO);
+}
+
+function showThreshold(element: HTMLElement) {
+  return Math.max(BOTTOM_EPSILON, element.clientHeight * SHOW_ABOVE_RATIO);
 }
 
 /**
@@ -56,7 +65,7 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey }: Cha
     if (!element) return;
     const distance = distanceFromBottom(element);
     if (!preserve) following.current = distance <= atBottomThreshold(element);
-    setVisible(!jumping.current && distance > atBottomThreshold(element));
+    setVisible(!jumping.current && distance > showThreshold(element));
   }, [containerRef]);
 
   const pin = useCallback(() => {
