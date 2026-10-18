@@ -172,7 +172,18 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey }: Cha
     element.scrollTo({ behavior: 'smooth', top: element.scrollHeight });
   }, [containerRef, stopJump, sync]);
 
-  return { scrollToBottom, visible };
+  const scrollToMessage = useCallback((target: HTMLElement) => {
+    const element = containerRef.current;
+    if (!element || !element.contains(target)) return;
+    stopJump();
+    following.current = false;
+    pinned.current = false;
+    const top = element.scrollTop + target.getBoundingClientRect().top - element.getBoundingClientRect().top - 76;
+    element.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
+    sync(true);
+  }, [containerRef, stopJump, sync]);
+
+  return { scrollToBottom, scrollToMessage, visible };
 }
 
 type ScrollToBottomButtonProps = {

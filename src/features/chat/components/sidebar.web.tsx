@@ -1,6 +1,7 @@
 import { Link, router } from 'expo-router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useState } from 'react';
+import { SquarePen } from 'lucide-react';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
@@ -41,7 +42,7 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
         </div>
       </div>
       <nav className="sidebar-primary" aria-label="工作区">
-        <button className={`new-conversation ${activeId === null ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><Icon name="compose" size={19} /><span>新对话</span></button>
+        <button className={`new-conversation ${activeId === null ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
       </nav>
       <nav className="conversation-list" aria-label="历史对话">
         {groups.map((group) => (

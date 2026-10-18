@@ -3,11 +3,12 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/web/icon';
 import { copyText } from '@/core/platform/clipboard.web';
 import type { Message } from '../chat-state';
+import type { MessageFeedback } from '@/core/agent/types';
+import { getCopyText } from '../message-text';
 
-type Props = { message: Message; onFork?: () => void };
+type Props = { message: Message; onFork?: () => void; onFeedback?: (feedback?: MessageFeedback) => void };
 
-export const MessageActions = memo(function MessageActions({ message, onFork }: Props) {
-  const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
+export const MessageActions = memo(function MessageActions({ message, onFork, onFeedback }: Props) {
   const [copyStatus, setCopyStatus] = useState('');
   const resetCopy = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
@@ -22,7 +23,7 @@ export const MessageActions = memo(function MessageActions({ message, onFork }: 
   async function copy() {
     if (resetCopy.current) clearTimeout(resetCopy.current);
     let status: string;
-    try { await copyText(message.content); status = '已复制'; }
+    try { await copyText(getCopyText(message)); status = '已复制'; }
     catch { status = '复制失败，请手动选择消息'; }
     if (!mounted.current) return;
     setCopyStatus(status);
@@ -35,8 +36,8 @@ export const MessageActions = memo(function MessageActions({ message, onFork }: 
       <Icon name={copyStatus === '已复制' ? 'check' : 'copy'} size={17} />
     </button>
     {message.role === 'assistant' && <>
-      <button className="message-action" type="button" aria-label="赞" aria-pressed={feedback === 'good'} onClick={() => setFeedback((value) => value === 'good' ? null : 'good')}><Icon name="good" size={17} /></button>
-      <button className="message-action" type="button" aria-label="踩" aria-pressed={feedback === 'bad'} onClick={() => setFeedback((value) => value === 'bad' ? null : 'bad')}><Icon name="bad" size={17} /></button>
+      <button className="message-action" type="button" aria-label="赞" aria-pressed={message.feedback === 'good'} disabled={!onFeedback} onClick={() => onFeedback?.(message.feedback === 'good' ? undefined : 'good')}><Icon name="good" size={17} /></button>
+      <button className="message-action" type="button" aria-label="踩" aria-pressed={message.feedback === 'bad'} disabled={!onFeedback} onClick={() => onFeedback?.(message.feedback === 'bad' ? undefined : 'bad')}><Icon name="bad" size={17} /></button>
       <button className="message-action" type="button" aria-label="从此处创建分支对话" onClick={onFork}><Icon name="fork" size={17} /></button>
     </>}
   </div>;

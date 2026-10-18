@@ -25,6 +25,8 @@ function readMessage(value: unknown): Message {
   if (!isRecord(value) || typeof value.id !== 'string' || (value.role !== 'user' && value.role !== 'assistant') || typeof value.content !== 'string') throw new Error('Invalid stored message');
   const status = value.status === 'streaming' ? 'stopped' : ['complete', 'stopped', 'error'].includes(String(value.status)) ? value.status as Message['status'] : undefined;
   return { id: value.id, role: value.role, content: value.content,
+    ...(typeof value.quote === 'string' ? { quote: value.quote } : {}),
+    ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
     ...(typeof value.thinkingMs === 'number' && Number.isFinite(value.thinkingMs) ? { thinkingMs: value.thinkingMs } : {}),
     ...(status ? { status } : {}),

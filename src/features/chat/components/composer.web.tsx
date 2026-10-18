@@ -9,6 +9,7 @@ import { useChatRuntime } from '../chat-runtime';
 import { useChat, type MessageImage } from '../chat-state';
 import { ModelIcon } from './model-icon.web';
 import { AttachmentList, type StagedAttachment } from './attachment-list.web';
+import { QuoteCard } from './quote-card.web';
 
 type Props = {
   value: string;
@@ -16,6 +17,8 @@ type Props = {
   onSend: (images: MessageImage[]) => boolean;
   thinkingEffort: ThinkingEffort;
   onThinkingEffortChange: (value: ThinkingEffort) => void;
+  quote?: string;
+  onRemoveQuote?: () => void;
 };
 
 // Validate only on send; selecting an attachment never depends on the current model.
@@ -48,7 +51,7 @@ const effortOptions: { value: ThinkingEffort; label: string; description: string
 // pages does not resize the card. The fallback below still wins on short viewports.
 const PICKER_CARD_MAX_HEIGHT = 294;
 
-export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange }: Props) {
+export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, quote, onRemoveQuote }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // Staged for the next message only. The parent keys this component by conversation, so a
@@ -184,7 +187,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   }
 
   async function submit() {
-    if (blocked || preparing.current || (!value.trim() && !attachments.length)) return;
+    if (blocked || preparing.current || (!value.trim() && !attachments.length && !quote?.trim())) return;
     if (!models.ready || !models.selected) { setAttachError(models.error ?? '请先在设置 → 模型服务中添加并选择模型。'); return; }
     const unsupported = attachments.find(({ file }) => !IMAGE_TYPES.includes(file.type));
     if (unsupported) { setAttachError(`暂不支持文件「${unsupported.file.name}」，目前仅支持 PNG、JPEG、WebP 或 GIF 图片。`); return; }
@@ -312,6 +315,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
 
   return <>
     <form className="composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      {quote && <QuoteCard content={quote} onRemove={sending ? undefined : onRemoveQuote} />}
       <input ref={fileInput} className="composer-file-input" type="file" multiple
         onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addImages(files); }} />
       {attachments.length > 0 && <AttachmentList attachments={attachments} removingDisabled={sending} onRemove={(attachment) => {
@@ -366,7 +370,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           <Icon name="chevron" size={18} className="model-picker-chevron" />
         </button>
         {running ? <button type="button" className="send-button" onClick={runtime.stop} aria-label="停止生成"><span className="stop-generation-icon" /></button>
-          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length) || blocked || sending} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
+          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length && !quote?.trim()) || blocked || sending} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
       </div>
     </form>
     {modelPopover}

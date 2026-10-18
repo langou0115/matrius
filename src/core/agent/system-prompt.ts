@@ -1,8 +1,8 @@
-import type { PersonalizationPreferences } from '@/features/settings/personalization';
+import type { AgentProfile } from './types';
 
 export const DEFAULT_SYSTEM_PROMPT = 'You are Matrius, a helpful assistant. Respond in the user’s language.';
 
-export function buildSystemPrompt(preferences: PersonalizationPreferences): string {
+export function buildSystemPrompt(preferences: AgentProfile): string {
   const profile = [
     preferences.aboutName.trim() ? `称呼：${preferences.aboutName.trim()}` : '',
     preferences.occupation.trim() ? `职业：${preferences.occupation.trim()}` : '',

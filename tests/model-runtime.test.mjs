@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createReplyRun, buildContext, describeModelError } from '../src/core/agent/runner.ts';
+import { createReplyRun, describeModelError } from '../src/core/agent/runner.ts';
+import { buildContext, buildRetryHistory, validateAgentRequest } from '../src/core/agent/context.ts';
+import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
 import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
 import { searchSettings } from '../src/features/settings/settings-catalog.ts';
@@ -10,7 +12,112 @@ import { defaultPersonalization, readPersonalization } from '../src/features/set
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from '../src/core/agent/system-prompt.ts';
 
 const config = { id: 'test', name: 'Test model', protocol: 'completion', baseUrl: 'https://test.invalid/v1', modelId: 'test-model', contextWindow: 128000, maxOutput: 4096, requiresApiKey: true };
-const history = [{ id: 'u1', role: 'user', content: '你好' }, { id: 'a1', role: 'assistant', content: '先前的回答', reasoning: 'do not resend hidden thinking' }, { id: 'u2', role: 'user', content: '继续' }];
+const history = [{ id: 'u1', role: 'user', content: '你好' }, { id: 'a1', role: 'assistant', content: '先前的回答', reasoning: 'do not resend hidden thinking' }, { id: 'u2', role: 'user', content: '继续', quote: '选中的历史回复\n第二段引用' }];
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((accept, fail) => { resolve = accept; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+test('shared runtime works without a UI, freezes request inputs and preserves partial replies on cancellation', async () => {
+  const completion = deferred();
+  const loaded = deferred();
+  const finished = deferred();
+  const replies = [];
+  let request, aborts = 0, notifications = 0;
+  const runtime = createAgentRuntime({
+    onReply(conversationId, message) { replies.push({ conversationId, message }); if (message.status !== 'streaming') finished.resolve(); },
+    loadRunner: async () => ({ createReplyRun(options) {
+      request = options;
+      loaded.resolve();
+      options.onUpdate({ content: 'partial answer', reasoning: 'actual reasoning', reasoningActive: false });
+      return { abort() { aborts++; }, start: () => completion.promise };
+    } }),
+  });
+  const unsubscribe = runtime.subscribe(() => { notifications++; });
+  const requestConfig = { ...config };
+  const messages = structuredClone(history);
+  assert.equal(runtime.start({ conversationId: 'a', replyId: 'reply', config: requestConfig, apiKey: 'session-secret', messages }), true);
+  assert.equal(runtime.getSnapshot().runningId, 'a');
+  assert.equal(runtime.start({ conversationId: 'b', replyId: 'other', config, apiKey: 'key', messages: history }), false, 'one active run per workspace');
+  requestConfig.modelId = 'edited-after-send';
+  messages[2].quote = 'edited quote';
+  await loaded.promise;
+  assert.equal(request.config.modelId, 'test-model');
+  assert.equal(request.messages[2].quote, '选中的历史回复\n第二段引用');
+  assert.equal(replies.length, 0, 'streaming updates are batched');
+  runtime.stop();
+  request.onUpdate({ content: 'late answer that must be ignored', reasoning: '', reasoningActive: false });
+  completion.resolve({ status: 'complete' });
+  await finished.promise;
+  assert.equal(aborts, 1);
+  assert.equal(replies.length, 1, 'the final flush cancels the pending batch');
+  assert.equal(replies[0].conversationId, 'a');
+  assert.equal(replies[0].message.status, 'stopped');
+  assert.equal(replies[0].message.content, 'partial answer');
+  assert.ok(Number.isFinite(replies[0].message.thinkingMs));
+  assert.equal(runtime.getSnapshot().runningId, null);
+  assert.equal(runtime.getSnapshot().startedAt, null);
+  assert.ok(!JSON.stringify(runtime.getSnapshot()).includes('session-secret'));
+  assert.ok(notifications >= 2);
+  unsubscribe();
+  const before = notifications;
+  runtime.clearError();
+  assert.equal(notifications, before, 'unsubscribed clients do not receive further updates');
+  runtime.dispose();
+});
+
+test('shared runtime validates requests, handles cancellation during lazy loading and discards disposed replies', async () => {
+  const loader = deferred();
+  const finished = deferred();
+  let calls = 0, replies = 0;
+  const runtime = createAgentRuntime({
+    loadRunner: () => { calls++; return loader.promise; },
+    onReply(_id, message) { replies++; if (message.status === 'stopped') finished.resolve(); },
+  });
+  const input = { conversationId: 'chat', replyId: 'reply', config, apiKey: 'key', messages: history };
+  assert.equal(runtime.start({ ...input, config: undefined }), false);
+  assert.match(runtime.getSnapshot().error, /配置|添加/);
+  assert.equal(runtime.start({ ...input, apiKey: '' }), false);
+  assert.match(runtime.getSnapshot().error, /API key/);
+  assert.equal(runtime.start({ ...input, config: { ...config, contextWindow: 4200 }, messages: [{ id: 'u', role: 'user', content: 'x'.repeat(5000) }] }), false);
+  assert.match(runtime.getSnapshot().error, /上下文/);
+  assert.equal(calls, 0, 'validation does not load provider modules');
+  assert.equal(runtime.start(input), true);
+  runtime.stop();
+  loader.resolve({ createReplyRun() { assert.fail('a cancelled lazy load must not create a runner'); } });
+  await finished.promise;
+  assert.equal(runtime.getSnapshot().runningId, null);
+  assert.equal(replies, 1);
+  const disposedLoader = deferred();
+  const disposed = createAgentRuntime({ loadRunner: () => disposedLoader.promise, onReply() { assert.fail('disposed runtimes must not publish replies'); } });
+  assert.equal(disposed.start(input), true);
+  disposed.dispose();
+  assert.equal(disposed.getSnapshot().runningId, null);
+  disposedLoader.reject(new Error('sensitive provider failure'));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(disposed.start(input), false);
+  runtime.dispose();
+});
+
+test('agent core has no UI, feature-module or browser dependencies', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const ts = (await import('typescript')).default;
+  const directory = new URL('../src/core/agent/', import.meta.url);
+  for (const file of readdirSync(directory).filter((name) => name.endsWith('.ts'))) {
+    const source = ts.createSourceFile(file, readFileSync(new URL(file, directory), 'utf8'), ts.ScriptTarget.Latest, true);
+    function visit(node) {
+      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+        const specifier = node.moduleSpecifier?.text ?? '';
+        assert.ok(!/features\/|\.web(?:\.|$)|^react(?:$|-)|^expo(?:$|-)/.test(specifier), `${file} must not depend on ${specifier}`);
+      }
+      if (ts.isIdentifier(node)) assert.ok(!['window', 'document', 'indexedDB', 'localStorage'].includes(node.text), `${file} contains a browser dependency`);
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+});
 test('personalization defaults, limits and prompt composition keep optional sections out of empty requests', () => {
   assert.deepEqual(readPersonalization(undefined), defaultPersonalization);
   assert.equal(buildSystemPrompt(defaultPersonalization), DEFAULT_SYSTEM_PROMPT);
@@ -90,6 +197,8 @@ test('three real pi providers stream text and preserve multi-turn context withou
       for (const preference of ['优先给出简洁结论', '小林', '设计师', '正在学习编程']) assert.ok(systemPayload.includes(preference), `${protocol} carries personalization as system instructions`);
       assert.ok(payload.includes('先前的回答'));
       assert.ok(payload.includes('继续'));
+      assert.ok(payload.includes('选中的历史回复'), `${protocol} includes the selected quote`);
+      assert.ok(payload.includes('仅作为参考资料'), `${protocol} separates the quote from the new instruction`);
       assert.ok(!payload.includes('do not resend hidden thinking'));
       assert.ok(!request.body.tools?.length);
       // Every protocol carries the system prompt, in a different field: `messages[0]`, `input[0]`
@@ -122,6 +231,40 @@ test('image attachments reach every protocol as native image blocks', async (t) 
       // OpenAI's two APIs wrap the bytes in a data URL; Anthropic takes base64 plus a media type.
       assert.equal(payload.includes('data:image/png;base64'), protocol !== 'message', `${protocol} uses its native image shape`);
     } finally { globalThis.fetch = original; }
+  });
+});
+
+test('good and bad feedback reach all pi providers as user feedback tied to the preceding answer', async (t) => {
+  const rated = [
+    { id: 'u1', role: 'user', content: 'first question' },
+    { id: 'a1', role: 'assistant', content: 'first answer', feedback: 'good' },
+    { id: 'u2', role: 'user', content: 'second question' },
+    { id: 'a2', role: 'assistant', content: 'second answer', feedback: 'bad' },
+    { id: 'u3', role: 'user', content: 'continue' },
+  ];
+  const context = buildContext(rated, config);
+  assert.deepEqual(context.map(message => message.role), ['user', 'assistant', 'user', 'user', 'assistant', 'user', 'user']);
+  assert.equal(context[1].content[0].text, 'first answer', 'feedback does not alter the assistant answer');
+  assert.match(context[2].content, /赞（有帮助）/);
+  assert.match(context[5].content, /踩（没有帮助）/);
+  assert.equal(buildContext(rated.map(({ feedback, ...message }) => message), config).length, rated.length, 'cancelled feedback adds no context');
+  assert.equal(validateAgentRequest({ ...config, contextWindow: 4700 }, 'key', rated.map(({ feedback, ...message }) => message), 'x'.repeat(30)), null);
+  assert.match(validateAgentRequest({ ...config, contextWindow: 4700 }, 'key', rated, 'x'.repeat(30)), /上下文/, 'feedback is counted in the input budget');
+  const retry = buildRetryHistory(rated.slice(0, -1));
+  assert.equal(retry.at(-2).feedback, 'bad');
+  assert.match(retry.at(-1).content, /重新回答/);
+  for (const protocol of ['completion', 'responses', 'message']) await t.test(protocol, async () => {
+    const previousFetch = globalThis.fetch;
+    let body;
+    globalThis.fetch = async (_url, init) => { body = JSON.parse(init.body); return response(protocol, init.signal); };
+    try {
+      const run = createReplyRun({ config: { ...config, protocol, baseUrl: protocol === 'message' ? 'https://test.invalid' : config.baseUrl }, apiKey: 'test-key', messages: rated, onUpdate() {} });
+      assert.equal((await run.start()).status, 'complete');
+      const payload = JSON.stringify(body);
+      assert.ok(payload.includes('赞（有帮助）'), `${protocol} includes positive feedback`);
+      assert.ok(payload.includes('踩（没有帮助）'), `${protocol} includes negative feedback`);
+      assert.ok(payload.includes('用户没有提供更具体的原因'), 'does not invent a reason for the rating');
+    } finally { globalThis.fetch = previousFetch; }
   });
 });
 
@@ -202,9 +345,10 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.equal(chat.conversations.length, 0);
     await act(async () => { await models.save(config, 'key'); });
     await act(async () => { personalization.update({ customInstructions: 'first preference' }); });
-    await act(async () => { assert.equal(runtime.send('first message', null, 'high'), true); assert.equal(runtime.send('double submission', null), false); });
+    await act(async () => { assert.equal(runtime.send('first message', null, 'high', [], '引用需要保留'), true); assert.equal(runtime.send('double submission', null), false); });
     const sourceId = chat.activeId;
     assert.equal(chat.conversations[0].thinkingEffort, 'high');
+    assert.equal(chat.conversations[0].messages[0].quote, '引用需要保留');
     await until(() => requestSignal && chat.conversations[0].messages.length === 2);
     assert.equal(requestBodies[0].reasoning_effort, 'high');
     assert.ok(JSON.stringify(requestBodies[0]).includes('first preference'));
@@ -217,11 +361,15 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.equal(chat.activeId, null, 'reply updates must not navigate back to their source');
     assert.equal(chat.conversations[0].messages[1].content, '你好');
     assert.equal(chat.conversations[0].messages[1].status, 'stopped');
+    await act(async () => { chat.dispatch({ type: 'feedback', conversationId: sourceId, messageId: chat.conversations[0].messages[1].id, feedback: 'bad' }); });
+    assert.equal(requestBodies.length, 1, 'rating an answer alone does not start a request');
     requestSignal = undefined;
     await act(async () => { runtime.retry(sourceId); });
     await until(() => requestSignal && runtime.runningId === sourceId);
     assert.equal(requestBodies[1].reasoning_effort, 'high', 'retry must keep the conversation effort');
     assert.ok(JSON.stringify(requestBodies[1]).includes('updated preference'), 'retry reads the latest personalization');
+    assert.ok(JSON.stringify(requestBodies[1]).includes('引用需要保留'), 'retry includes the original quote');
+    assert.ok(JSON.stringify(requestBodies[1]).includes('踩（没有帮助）'), 'retry includes feedback on the version being replaced');
     await act(async () => { chat.dispatch({ type: 'delete', id: sourceId }); });
     await until(() => runtime.runningId === null);
     assert.equal(requestSignal.aborted, true);

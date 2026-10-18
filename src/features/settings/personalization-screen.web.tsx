@@ -26,7 +26,9 @@ function AutoSizeTextarea(props: ComponentProps<'textarea'>) {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  return <textarea {...props} ref={ref} />;
+  return <span className={`${props.className ?? ''} personalization-textarea-frame`}>
+    <textarea {...props} className="personalization-textarea" ref={ref} />
+  </span>;
 }
 
 export default function PersonalizationSettingsScreen() {

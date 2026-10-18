@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 
-import { Icon, type IconName } from '@/components/web/icon';
+import { Icon } from '@/components/web/icon';
 import { Dialog } from '@/components/web/dialog';
 import { useChat, type MessageImage } from './chat-state';
 import { Composer } from './components/composer.web';
@@ -16,19 +16,15 @@ import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from './conversation-href';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useSettingsRoot } from '@/features/settings/settings-page.web';
-
-const suggestions: { icon: IconName; title: string; prompt: string }[] = [
-  { icon: 'bolt', title: '解释一个概念', prompt: '用通俗的方式解释一个概念，并举一个具体的例子。' },
-  { icon: 'code', title: '帮我看看代码', prompt: '帮我看看接下来这段代码，有哪些可以改进的地方？' },
-  { icon: 'pen', title: '润色文字', prompt: '帮我把接下来的文字改得更简洁，保留原意。' },
-  { icon: 'compare', title: '做个技术选型', prompt: '帮我比较两个技术方案的适用场景和取舍。' },
-];
+import { SelectionQuote } from './components/selection-quote.web';
+import { QuoteCard } from './components/quote-card.web';
+import { ConversationNavigator } from './components/conversation-navigator.web';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 
 export default function ChatScreen() {
   const { conversations, activeId, sidebarOpen, lastThinkingEffort, dispatch } = useChat();
-  const { drafts, setDraft } = useDrafts();
+  const { drafts, setDraft, quotes, setQuote } = useDrafts();
   const runtime = useChatRuntime();
   const preview = useIsPreview();
   const settingsHref: Href = `${useSettingsRoot()}/models`;
@@ -50,11 +46,12 @@ export default function ChatScreen() {
   const messages = conversation?.messages ?? [];
   const draftKey = activeId ?? 'new';
   const draft = drafts[draftKey] ?? '';
+  const quote = quotes[draftKey] ?? '';
   const messageScroller = useRef<HTMLElement>(null);
   const hasMessages = !!conversation?.messages.length;
   const latestContent = conversation?.messages.at(-1)?.content;
   const latestReasoning = conversation?.messages.at(-1)?.reasoning;
-  const { scrollToBottom, visible: scrollToBottomVisible } = useChatAutoScroll({
+  const { scrollToBottom, scrollToMessage, visible: scrollToBottomVisible } = useChatAutoScroll({
     containerRef: messageScroller,
     containerKey: activeId ?? 'new',
     followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}`,
@@ -62,11 +59,12 @@ export default function ChatScreen() {
   function changeDraft(value: string) { setDraft(draftKey, value); }
   function send(images: MessageImage[]) {
     const content = draft.trim();
-    if (!content && !images.length) return false;
+    if (!content && !images.length && !quote.trim()) return false;
     const conversationId = activeId ?? createId();
-    const sent = runtime.send(content, conversationId, thinkingEffort, images);
+    const sent = runtime.send(content, conversationId, thinkingEffort, images, quote);
     if (sent) {
       setDraft(draftKey, '');
+      setQuote(draftKey, '');
       if (!activeId) router.replace(conversationHref(conversationId, preview));
     }
     return sent;
@@ -75,7 +73,7 @@ export default function ChatScreen() {
     dispatch({ type: 'thinking-effort', conversationId: conversation?.id ?? null, thinkingEffort: value });
   }
 
-  return <main ref={messageScroller} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
+  return <div className="chat-screen"><main ref={messageScroller} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
     <header className="chat-topbar">
       {!sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
@@ -103,8 +101,9 @@ export default function ChatScreen() {
             const showReasoning = !!message.reasoning?.trim()
               || (live && message.status === 'streaming' && !message.content.trim());
             return message.role === 'user'
-              ? <article className="user-message" key={message.id} aria-label="你的消息">
+              ? <article className="user-message" key={message.id} data-user-message-id={message.id} aria-label="你的消息">
                 <div className={`user-message-content${message.images?.length ? ' has-images' : ''}`}>
+                  {message.quote && <QuoteCard content={message.quote} />}
                   {!!message.images?.length && <div className="user-message-images">{message.images.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name} />)}</div>}
                   {message.content.trim() ? <MessageContent content={message.content} /> : null}
                 </div>
@@ -112,10 +111,11 @@ export default function ChatScreen() {
               </article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
-              <MessageContent content={message.content} streaming={message.status === 'streaming'} />
+              <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
               {message.status === 'stopped' && <p className="reply-status">已停止生成</p>}
-              {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message} onFork={() => {
+              {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message}
+                onFeedback={(feedback) => dispatch({ type: 'feedback', conversationId: conversation.id, messageId: message.id, feedback })} onFork={() => {
                 const forkId = createId();
                 dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId, updatedAt: Date.now() });
                 router.push(conversationHref(forkId, preview));
@@ -132,14 +132,18 @@ export default function ChatScreen() {
       </div>
       <div className="bottom-composer">
         <ScrollToBottomButton generating={generating} visible={scrollToBottomVisible} onScrollToBottom={scrollToBottom} />
-        <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
+        <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} />
       </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
-      <div className="welcome-heading"><span className="welcome-mark"><Icon name="sparkle" size={30} /></span><h2>有什么可以帮你的？</h2><p>让好奇有回响，让想法更进一步。</p></div>
-      <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} />
-      <div className="suggestions" aria-label="对话灵感">
-        {suggestions.map((item) => <button key={item.title} onClick={() => { changeDraft(item.prompt); document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus(); }}><Icon name={item.icon} size={17} /><span>{item.title}</span></button>)}
-      </div>
+      <div className="welcome-heading"><h1>Matrius</h1></div>
+      <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} />
     </div></div>}
-  </main>;
+  </main>
+    {hasMessages && <SelectionQuote key={`selection-${draftKey}`} containerRef={messageScroller} onQuote={(content) => {
+      setQuote(draftKey, content);
+      scrollToBottom();
+      messageScroller.current?.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus({ preventScroll: true });
+    }} />}
+    {hasMessages && <ConversationNavigator key={`navigator-${draftKey}`} messages={messages} containerRef={messageScroller} onNavigate={scrollToMessage} />}
+  </div>;
 }

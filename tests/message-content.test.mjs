@@ -277,6 +277,7 @@ test('conversation titles scroll only on overflow and engagement, cancel on exit
 
 test('message actions copy original text, toggle exclusive feedback and invoke fork; user messages have copy only', async () => {
   const { MessageActions } = await import('../src/features/chat/components/message-actions.web.tsx');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   const previous = { window: globalThis.window, document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator') };
   globalThis.window = window;
@@ -287,21 +288,31 @@ test('message actions copy original text, toggle exclusive feedback and invoke f
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async (text) => { copied = text; } } } });
   const root = createRoot(document.getElementById('root'));
   const message = { id: 'a1', role: 'assistant', content: '**原始 Markdown**\n\n```ts\nconst x = 1;\n```' };
+  let chat;
+  function Harness() {
+    chat = useChat();
+    return createElement(MessageActions, { message: chat.conversations[0].messages[0], onFork: () => forks++, onFeedback: (feedback) => chat.dispatch({ type: 'feedback', conversationId: 'chat', messageId: message.id, feedback }) });
+  }
+  const renderActions = (key) => createElement(ChatProvider, { initialState: { conversations: [{ id: 'chat', title: 'test', pinned: false, updatedAt: 1, messages: [message] }], activeId: 'chat', sidebarOpen: true, lastThinkingEffort: 'default' } }, createElement(Harness, { key }));
   const click = async (name) => { await act(async () => { document.querySelector(`button[aria-label="${name}"]`).click(); }); };
   const pressed = (name) => document.querySelector(`button[aria-label="${name}"]`).getAttribute('aria-pressed');
   try {
-    await act(async () => { root.render(createElement(MessageActions, { message, onFork: () => forks++ })); });
+    await act(async () => { root.render(renderActions('first')); });
     assert.equal(document.querySelectorAll('button').length, 4);
     await click('复制消息');
     assert.equal(copied, message.content);
     await click('赞');
     assert.equal(pressed('赞'), 'true');
+    assert.equal(chat.conversations[0].messages[0].feedback, 'good');
+    await act(async () => { root.render(renderActions('remount')); });
+    assert.equal(pressed('赞'), 'true', 'feedback is restored from the message after a UI remount');
     assert.equal(pressed('踩'), 'false');
     await click('踩');
     assert.equal(pressed('赞'), 'false');
     assert.equal(pressed('踩'), 'true');
     await click('踩');
     assert.equal(pressed('踩'), 'false');
+    assert.equal(chat.conversations[0].messages[0].feedback, undefined, 'clicking again removes the stored feedback');
     await click('从此处创建分支对话');
     assert.equal(forks, 1);
     navigator.clipboard.writeText = async () => { throw new Error('denied'); };
@@ -330,8 +341,8 @@ test('fork creates an independent conversation through the selected assistant me
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
   const source = { id: 'original', title: '原会话', pinned: true, updatedAt: 1, messages: [
-    { id: 'u1', role: 'user', content: 'question' },
-    { id: 'a1', role: 'assistant', content: 'answer' },
+    { id: 'u1', role: 'user', content: 'question', quote: '引用历史原文' },
+    { id: 'a1', role: 'assistant', content: 'answer', feedback: 'bad' },
     { id: 'u2', role: 'user', content: 'follow up' },
     { id: 'a2', role: 'assistant', content: 'later answer' },
   ] };
@@ -344,6 +355,8 @@ test('fork creates an independent conversation through the selected assistant me
     assert.equal(state.activeId, 'branch');
     assert.equal(state.conversations.length, 2);
     const branch = state.conversations[0];
+    assert.equal(branch.messages[0].quote, '引用历史原文', 'forks retain the quoted text independently of source message IDs');
+    assert.equal(branch.messages[1].feedback, 'bad', 'forks retain feedback on the copied replies');
     assert.equal(branch.pinned, false);
     assert.deepEqual(branch.messages.map(m => m.content), ['question', 'answer']);
     assert.equal(branch.updatedAt, 42);

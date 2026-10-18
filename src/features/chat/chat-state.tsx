@@ -1,12 +1,8 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
+import type { Message, MessageFeedback } from '@/core/agent/types';
+export type { Message, MessageImage } from '@/core/agent/types';
 
-/** An image to send with a user message. It lives in memory only: the workspace snapshot drops
-    `images` before writing, so a reload keeps the text and forgets the picture. */
-export type MessageImage = { id: string; name: string; mimeType: string; dataUrl: string };
-/** How long the model spent reasoning, measured to its last thinking token. Persisted so the
-    finished reply still reports it after a reload. Absent when the model produced no reasoning. */
-export type Message = { id: string; role: 'user' | 'assistant'; content: string; images?: MessageImage[]; reasoning?: string; reasoningActive?: boolean; thinkingMs?: number; status?: 'streaming' | 'complete' | 'stopped' | 'error'; error?: string };
 export type Conversation = {
   id: string;
   title: string;
@@ -22,6 +18,7 @@ type Action =
   | { type: 'send'; conversationId: string; message: Message; thinkingEffort: ThinkingEffort }
   | { type: 'thinking-effort'; conversationId: string | null; thinkingEffort: ThinkingEffort }
   | { type: 'reply'; conversationId: string; message: Message }
+  | { type: 'feedback'; conversationId: string; messageId: string; feedback?: MessageFeedback }
   | { type: 'rename'; id: string; title: string }
   | { type: 'pin'; id: string }
   | { type: 'fork'; conversationId: string; messageId: string; forkId: string; updatedAt: number }
@@ -30,6 +27,15 @@ type Action =
 
 function reducer(state: ChatState, action: Action): ChatState {
   switch (action.type) {
+    case 'feedback':
+      return { ...state, conversations: state.conversations.map((conversation) => conversation.id !== action.conversationId ? conversation : {
+        ...conversation,
+        messages: conversation.messages.map((message) => {
+          if (message.id !== action.messageId || message.role !== 'assistant' || message.status === 'streaming') return message;
+          const { feedback, ...rest } = message;
+          return action.feedback ? { ...rest, feedback: action.feedback } : rest;
+        }),
+      }) };
     case 'reply':
       return { ...state, conversations: state.conversations.map((conversation) => {
         if (conversation.id !== action.conversationId) return conversation;

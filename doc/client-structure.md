@@ -30,6 +30,8 @@ src/
 │   ├── chat/
 │   │   ├── chat-state.tsx              会话状态、选择与管理动作
 │   │   ├── draft-state.tsx             独立草稿状态，跨设置导航保留
+│   │   ├── message-text.ts            用户消息与引用的完整复制文本
+│   │   ├── chat-runtime.tsx           聊天状态/模型设置与共享 Agent 核心之间的 React 适配
 │   │   ├── chat-screen.web.tsx         欢迎页、消息区、按会话保存的输入草稿
 │   │   ├── chat-route.web.tsx          URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
@@ -46,6 +48,9 @@ src/
 │   │       ├── code-block.web.tsx       代码高亮、复制与折叠
 │   │       ├── model-icon.web.tsx      theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
+│   │       ├── selection-quote.web.tsx 助手正文选区与浮动引用操作
+│   │       ├── quote-card.web.tsx      草稿与已发送引用预览、移除和全文弹窗
+│   │       ├── conversation-navigator.web.tsx 提问目录、阅读位置与消息定位
 │   │       ├── attachment-list.web.tsx  附件卡片、文件类型图标与全屏图片预览
 │   │       ├── file-type-icon.web.tsx   后缀匹配与本地 Material 专用文件图标
 │   │       ├── scroll-to-bottom.web.tsx  跟随滚动与回到最新消息按钮
@@ -55,6 +60,14 @@ src/
 │   └── mock/
 │       ├── mock-items.ts               预览项清单与按路径反查
 │       └── mock-index-screen.web.tsx   独立全页预览索引
+├── core/agent/
+│   ├── runtime.ts                     跨端运行入口、状态订阅、回复批处理与取消
+│   ├── runner.ts                      pi-agent 实例、流式事件与超时
+│   ├── context.ts                     引用、图片与历史上下文组装、请求校验
+│   ├── types.ts                       共享消息、用户资料和运行状态契约
+│   ├── system-prompt.ts               用户资料与自定义指令的系统提示
+│   └── thinking-effort.ts             共享思考强度
+├── core/llm/direct-stream.ts           三协议流式传输
 ├── core/platform/clipboard.web.ts      Web 原文复制适配
 ├── core/database/browser-store.web.ts  IndexedDB 事务、版本与冲突检查
 ├── theme/
@@ -109,7 +122,8 @@ src/
 ## 模型与 Runtime 入口
 
 - `features/models/model-settings-screen.web.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型、删除确认四类对话框；`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.web.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.web.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
-- `core/llm/model-config.ts`：Provider 配置校验、运行时模型映射与三协议适配；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/agent/runner.ts`：pi Agent 流式运行与取消。
-- `features/chat/chat-runtime.tsx`：共享运行生命周期，挂在根工作区中，不随设置导航卸载。
+- `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现。
+- `core/agent/runtime.ts`：无 React/DOM 依赖的共享运行入口，持有活动请求、批量回复和运行状态；`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
+- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。未来原生页面复用同一 Agent 核心，凭据、存储和流式传输环境单独适配。
 
 - 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部本地用户行；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。

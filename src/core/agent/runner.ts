@@ -1,45 +1,12 @@
-import { Agent, type AgentMessage, type StreamFn } from '@mariozechner/pi-agent-core';
+import { Agent, type StreamFn } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage } from '@mariozechner/pi-ai';
 
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
+import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, MessageImage } from '@/features/chat/chat-state';
+import type { Message, ReplyUpdate, ReplyResult } from './types';
 import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
-
-const usage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
-/** pi-ai's image block wants raw base64; the UI keeps the data URL for previewing. */
-function toImageBlock(image: MessageImage) {
-  return { type: 'image' as const, data: image.dataUrl.slice(image.dataUrl.indexOf(',') + 1), mimeType: image.mimeType };
-}
-export function buildContext(messages: Message[], config: ModelConfig): AgentMessage[] {
-  const model = createAgentModel(config);
-  return messages.filter((message) => message.content.trim() || message.images?.length).map((message) => {
-    if (message.role === 'assistant') {
-      return { role: 'assistant', content: [{ type: 'text', text: message.content }], api: model.api, provider: model.provider, model: model.id, usage: usage(), stopReason: 'stop', timestamp: Date.now() };
-    }
-    const images = (message.images ?? []).map(toImageBlock);
-    return {
-      role: 'user',
-      content: images.length
-        ? [...images, ...(message.content.trim() ? [{ type: 'text' as const, text: message.content }] : [])]
-        : message.content,
-      timestamp: Date.now(),
-    };
-  });
-}
-
-const directStream: StreamFn = async (model, context, options) => {
-  if (model.api === 'anthropic-messages') {
-    const { streamSimpleAnthropic } = await import('@mariozechner/pi-ai/anthropic');
-    return streamSimpleAnthropic({ ...model, api: 'anthropic-messages' }, context, options);
-  }
-  if (model.api === 'openai-responses') {
-    const { streamSimpleOpenAIResponses } = await import('@mariozechner/pi-ai/openai-responses');
-    return streamSimpleOpenAIResponses({ ...model, api: 'openai-responses' }, context, options);
-  }
-  const { streamSimpleOpenAICompletions } = await import('@mariozechner/pi-ai/openai-completions');
-  return streamSimpleOpenAICompletions({ ...model, api: 'openai-completions' }, context, options);
-};
+import { buildContext } from './context';
 
 function getErrorSignal(value: unknown, seen = new Set<object>(), depth = 0): string {
   if (depth > 3 || value == null) return '';
@@ -90,7 +57,6 @@ export function describeModelError(reason: unknown) {
   return '模型回复失败，请检查模型配置和服务商状态后重试。';
 }
 
-export type ReplyUpdate = { content: string; reasoning: string; reasoningActive: boolean };
 export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, onUpdate, streamFn = directStream, timeoutMs = 120_000 }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
@@ -126,7 +92,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   });
   return {
     abort() { stopped = true; agent.abort(); },
-    async start(): Promise<{ status: 'complete' | 'stopped' | 'error'; error?: string }> {
+    async start(): Promise<ReplyResult> {
       if (stopped) { unsubscribe(); return { status: 'stopped' }; }
       const timeout = setTimeout(() => { timedOut = true; agent.abort(); }, timeoutMs);
       try {

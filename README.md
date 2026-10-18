@@ -42,6 +42,12 @@ Web 的 Expo Router 链接通过共享 `LinkAnchor` 适配原生锚点，组件�
 
 Web 使用单页输出（`web.output: single`），部署时将页面请求回退至 `index.html`，保留静态资源的正常路径，以支持动态对话链接直接访问和刷新。
 
+选中助手回复正文后可点击「引用」，在输入框中带上选中片段继续提问；引用可预览、移除，发送后随消息保存，并在重新生成和分支中保留。累计 4 次提问后显示对话导航：宽屏悬停右侧短线展开提问目录，窄屏点击顶栏导航按钮，点击条目跳转对应提问；跳转会暂停生成时的自动跟随，可点击回到最新消息恢复。
+
+Agent 共享核心独立位于 [`src/core/agent/`](src/core/agent/)：`runtime.ts` 提供启动、取消和状态订阅，`runner.ts` 接入 pi-agent，`context.ts` 组装引用、图片与历史消息。核心不依赖 React 或浏览器；聊天界面通过 `features/chat/chat-runtime.tsx` 适配。Web 已接入，移动端复用核心，页面、存储及传输环境后续适配。接口与边界见 [Agent 文档](doc/agent.md)。
+
+助手回复的赞/踩会随消息保存，并在后续提问或重新生成时通过 pi-agent 传给所选模型；再次点击可取消。单独评分不发起模型请求。
+
 附件的 Word、Excel、PowerPoint、PDF、Markdown 等专用图标使用本地 Material Icon Theme SVG；来源版本与许可证见 [文件图标资源](public/vendor/file-icons/README.md)。
 
 设置 → 个性化支持自定义指令、称呼、职业与更多个人信息，自动保存在当前浏览器，对所有模型的后续发送和重新生成生效。填写内容会随请求发送给当前模型服务商；Mock 仅保留在预览内存中。记忆功能尚未实现。

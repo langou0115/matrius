@@ -1,4 +1,6 @@
-export type PersonalizationPreferences = { customInstructions: string; aboutName: string; occupation: string; aboutMore: string };
+import type { AgentProfile } from '@/core/agent/types';
+
+export type PersonalizationPreferences = AgentProfile;
 
 export const personalizationLimits = { customInstructions: 10000, aboutName: 100, occupation: 100, aboutMore: 4000 } as const;
 export const defaultPersonalization: PersonalizationPreferences = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' };
