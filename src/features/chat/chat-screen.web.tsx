@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
-import { Dialog } from '@/components/web/dialog';
 import { useChat, type MessageImage } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
@@ -11,11 +10,10 @@ import { MessageContent } from './components/message-content.web';
 import { MessageActions } from './components/message-actions.web';
 import { ReasoningBlock, getReasoningState } from './components/reasoning-block.web';
 import { useChatRuntime } from './chat-runtime';
-import { Link, router, type Href } from 'expo-router';
+import { router } from 'expo-router';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from './conversation-href';
-import { LinkAnchor } from '@/components/web/link-anchor';
-import { useSettingsRoot } from '@/features/settings/settings-page.web';
+import { ChatNotice } from './components/chat-notice.web';
 import { SelectionQuote } from './components/selection-quote.web';
 import { QuoteCard } from './components/quote-card.web';
 import { ConversationNavigator } from './components/conversation-navigator.web';
@@ -27,7 +25,7 @@ export default function ChatScreen() {
   const { drafts, setDraft, quotes, setQuote } = useDrafts();
   const runtime = useChatRuntime();
   const preview = useIsPreview();
-  const settingsHref: Href = `${useSettingsRoot()}/models`;
+  const [notice, setNotice] = useState<string | null>(null);
   const conversation = conversations.find((item) => item.id === activeId);
   const thinkingEffort = conversation?.thinkingEffort ?? lastThinkingEffort;
   const lastMessage = conversation?.messages.at(-1);
@@ -57,6 +55,7 @@ export default function ChatScreen() {
     followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}`,
   });
   function changeDraft(value: string) { setDraft(draftKey, value); }
+  function showNotice(message: string | null) { setNotice(message); runtime.clearError(); }
   function send(images: MessageImage[]) {
     const content = draft.trim();
     if (!content && !images.length && !quote.trim()) return false;
@@ -79,13 +78,6 @@ export default function ChatScreen() {
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
         onRename={(title) => dispatch({ type: 'rename', id: conversation.id, title })} />}
     </header>
-    {runtime.error && <Dialog title="操作失败" className="compact-dialog" onClose={runtime.clearError}>
-      <p className="dialog-description" role="alert">{runtime.error}</p>
-      <footer className="dialog-footer">
-        <Link href={settingsHref} asChild><LinkAnchor className="secondary-button" onClick={runtime.clearError}>配置模型</LinkAnchor></Link>
-        <button type="button" className="secondary-button" onClick={runtime.clearError}>知道了</button>
-      </footer>
-    </Dialog>}
     {runtime.runningId && runtime.runningId !== activeId && <div className="chat-runtime-notice" role="status"><span>另一个对话正在生成回复。</span><button onClick={runtime.stop}>停止生成</button></div>}
     {hasMessages ? <>
       <div className="messages-scroll">
@@ -132,13 +124,14 @@ export default function ChatScreen() {
       </div>
       <div className="bottom-composer">
         <ScrollToBottomButton generating={generating} visible={scrollToBottomVisible} onScrollToBottom={scrollToBottom} />
-        <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} />
+        <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
       </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
       <div className="welcome-heading"><h1>Matrius</h1></div>
-      <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} />
+      <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
     </div></div>}
   </main>
+    <ChatNotice message={runtime.error ?? notice} onClose={() => showNotice(null)} />
     {hasMessages && <SelectionQuote key={`selection-${draftKey}`} containerRef={messageScroller} onQuote={(content) => {
       setQuote(draftKey, content);
       scrollToBottom();

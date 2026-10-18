@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent
 
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { Icon } from '@/components/web/icon';
-import { Dialog } from '@/components/web/dialog';
 import { Paperclip } from 'lucide-react';
 import { useModels } from '@/features/models/model-state';
 import { useChatRuntime } from '../chat-runtime';
@@ -19,6 +18,7 @@ type Props = {
   onThinkingEffortChange: (value: ThinkingEffort) => void;
   quote?: string;
   onRemoveQuote?: () => void;
+  onNotice: (message: string | null) => void;
 };
 
 // Validate only on send; selecting an attachment never depends on the current model.
@@ -51,7 +51,7 @@ const effortOptions: { value: ThinkingEffort; label: string; description: string
 // pages does not resize the card. The fallback below still wins on short viewports.
 const PICKER_CARD_MAX_HEIGHT = 294;
 
-export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, quote, onRemoveQuote }: Props) {
+export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, quote, onRemoveQuote, onNotice }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // Staged for the next message only. The parent keys this component by conversation, so a
@@ -66,7 +66,6 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     const urls = previewUrls.current;
     return () => { mounted.current = false; urls.forEach((url) => URL.revokeObjectURL(url)); urls.clear(); };
   }, []);
-  const [attachError, setAttachError] = useState<string | null>(null);
   const composing = useRef(false);
   const [showModels, setShowModels] = useState(false);
   const [pickerPage, setPickerPage] = useState<'models' | 'thinking'>('models');
@@ -81,7 +80,6 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   const running = runtime.runningId !== null && runtime.runningId === activeId;
   const blocked = runtime.runningId !== null;
   const effortLabel = effortOptions.find((option) => option.value === thinkingEffort)?.label ?? '';
-  const [modelError, setModelError] = useState<string | null>(null);
 
   // The current model is what people come back for, so its provider group and its own row
   // move to the front; the remaining order is untouched.
@@ -166,7 +164,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
 
   function addImages(files: File[]) {
     if (!files.length) return;
-    setAttachError(null);
+    onNotice(null);
     const next = files.map((file) => {
       const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg|avif|bmp|ico)$/i.test(file.name);
       const preview = isImage ? URL.createObjectURL(file) : null;
@@ -188,13 +186,13 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
 
   async function submit() {
     if (blocked || preparing.current || (!value.trim() && !attachments.length && !quote?.trim())) return;
-    if (!models.ready || !models.selected) { setAttachError(models.error ?? '请先在设置 → 模型服务中添加并选择模型。'); return; }
+    if (!models.ready || !models.selected) { onNotice(models.error ?? '请先在设置 → 模型服务中添加并选择模型。'); return; }
     const unsupported = attachments.find(({ file }) => !IMAGE_TYPES.includes(file.type));
-    if (unsupported) { setAttachError(`暂不支持文件「${unsupported.file.name}」，目前仅支持 PNG、JPEG、WebP 或 GIF 图片。`); return; }
-    if (attachments.length > MAX_IMAGES) { setAttachError(`每条消息最多发送 ${MAX_IMAGES} 张图片，请移除多余附件。`); return; }
+    if (unsupported) { onNotice(`暂不支持文件「${unsupported.file.name}」，目前仅支持 PNG、JPEG、WebP 或 GIF 图片。`); return; }
+    if (attachments.length > MAX_IMAGES) { onNotice(`每条消息最多发送 ${MAX_IMAGES} 张图片，请移除多余附件。`); return; }
     const oversized = attachments.find(({ file }) => file.size > MAX_IMAGE_BYTES);
-    if (oversized) { setAttachError(`图片「${oversized.file.name}」超过 10MB，请移除或压缩后重试。`); return; }
-    if (attachments.length && !models.selected.supportsImage) { setAttachError('当前模型未开启图片输入，请切换支持图片的模型，或在模型设置中确认图片输入能力。'); return; }
+    if (oversized) { onNotice(`图片「${oversized.file.name}」超过 10MB，请移除或压缩后重试。`); return; }
+    if (attachments.length && !models.selected.supportsImage) { onNotice('当前模型未开启图片输入，请切换支持图片的模型，或在模型设置中确认图片输入能力。'); return; }
     preparing.current = true;
     setSending(true);
     try {
@@ -204,10 +202,10 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       const sentIds = new Set(attachments.map(({ id }) => id));
       setAttachments((current) => current.filter(({ id }) => !sentIds.has(id)));
       attachments.forEach(({ preview }) => { if (preview) { URL.revokeObjectURL(preview); previewUrls.current.delete(preview); } });
-      setAttachError(null);
+      onNotice(null);
       input.current?.focus();
     } catch {
-      if (mounted.current) setAttachError('读取附件失败，请重试。');
+      if (mounted.current) onNotice('读取附件失败，请重试。');
     } finally {
       preparing.current = false;
       if (mounted.current) setSending(false);
@@ -217,12 +215,12 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   async function selectModel(id: string) {
     try {
       await models.select(id);
-      setModelError(null);
+      onNotice(null);
       setShowModels(false);
       setPickerPage('models');
       pickerTrigger.current?.focus();
     } catch {
-      setModelError('切换模型失败，请刷新后重试。');
+      onNotice('切换模型失败，请刷新后重试。');
     }
   }
 
@@ -319,7 +317,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       <input ref={fileInput} className="composer-file-input" type="file" multiple
         onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addImages(files); }} />
       {attachments.length > 0 && <AttachmentList attachments={attachments} removingDisabled={sending} onRemove={(attachment) => {
-        setAttachError(null);
+        onNotice(null);
         if (attachment.preview) { URL.revokeObjectURL(attachment.preview); previewUrls.current.delete(attachment.preview); }
         setAttachments((current) => current.filter((item) => item.id !== attachment.id));
       }} />}
@@ -342,7 +340,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         }}
       />
       <div className="composer-toolbar">
-        <button type="button" className="composer-attach" onClick={() => { setAttachError(null); fileInput.current?.click(); }}
+        <button type="button" className="composer-attach" onClick={() => { onNotice(null); fileInput.current?.click(); }}
           aria-label="添加附件">
           <Paperclip size={22} strokeWidth={1.75} aria-hidden="true" />
         </button>
@@ -350,7 +348,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           ref={pickerTrigger}
           type="button"
           className={`model-picker${showModels ? ' is-open' : ''}`}
-          onClick={() => { setShowModels((open) => !open); setPickerPage('models'); setModelError(models.error); }}
+          onClick={() => { setShowModels((open) => !open); setPickerPage('models'); onNotice(models.error); }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' && !showModels) {
               event.preventDefault();
@@ -374,9 +372,5 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       </div>
     </form>
     {modelPopover}
-    {(attachError || modelError) && <Dialog title="操作失败" className="compact-dialog" onClose={() => { setAttachError(null); setModelError(null); }}>
-      <p className="dialog-description" role="alert">{attachError ?? modelError}</p>
-      <footer className="dialog-footer"><button type="button" className="secondary-button" onClick={() => { setAttachError(null); setModelError(null); }}>知道了</button></footer>
-    </Dialog>}
   </>;
 }

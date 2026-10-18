@@ -123,6 +123,14 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .chat-main, .settings-main, .mock-main { display: flex; flex-direction: column; height: 100%; min-height: 0; outline: none; }
 .chat-main { background: transparent; }
 .chat-screen { position: relative; height: 100%; min-height: 0; }
+.chat-notice-anchor { position: absolute; top: calc(var(--header-height) + 8px); left: 50%; transform: translateX(-50%); z-index: 10; width: calc(100% - 48px); max-width: 712px; pointer-events: none; }
+.chat-notice { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 10px 8px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 9%, transparent); pointer-events: auto; }
+.chat-notice > svg { flex-shrink: 0; color: var(--muted-text); }
+.chat-notice > p { flex: 1; min-width: 0; font-size: var(--text-small); line-height: 1.6; overflow-wrap: anywhere; }
+.chat-notice > button { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px; color: var(--muted-text); }
+.chat-notice > button:hover { background: color-mix(in srgb, var(--foreground) 5%, transparent); color: var(--foreground); }
+@media (max-width: 600px) { .chat-notice-anchor { width: calc(100% - 32px); } }
+@media (pointer: coarse) { .chat-notice > button { width: 44px; height: 44px; } }
 .selection-quote-action { position: fixed; z-index: 20; display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; background: var(--popover); color: var(--foreground); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 3px 12px color-mix(in srgb, var(--foreground) 8%, transparent); font-size: var(--text-small); user-select: none; }
 .selection-quote-action:hover { background: var(--soft); }
 .quote-card { display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 10px 12px; border-left: 3px solid var(--muted-text); border-radius: 8px; background: color-mix(in srgb, var(--foreground) 5%, transparent); color: var(--muted-text); }

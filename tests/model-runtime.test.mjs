@@ -441,14 +441,15 @@ test('common file extensions use dedicated local Material icons, including upper
   }
 });
 
-test('composer stages attachments without a model and validates only on send in a popup', async () => {
-  const { createElement, act } = await import('react');
+test('composer reports validation in a compact chat notice without blocking input or losing drafts', async () => {
+  const { createElement, act, useState } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
   const { ChatProvider } = await import('../src/features/chat/chat-state.tsx');
   const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
   const { ChatRuntimeProvider } = await import('../src/features/chat/chat-runtime.tsx');
   const { Composer } = await import('../src/features/chat/components/composer.web.tsx');
+  const { ChatNotice } = await import('../src/features/chat/components/chat-notice.web.tsx');
   const { conversationHref } = await import('../src/features/chat/conversation-href.ts');
   assert.equal(conversationHref(null), '/');
   assert.equal(conversationHref('a/b'), '/c/a%2Fb');
@@ -463,7 +464,10 @@ test('composer stages attachments without a model and validates only on send in 
   let sent = 0;
   function Harness() {
     models = useModels();
-    return createElement(Composer, { value: '保留草稿', onChange() {}, onSend() { sent++; return false; }, thinkingEffort: 'default', onThinkingEffortChange() {} });
+    const [notice, setNotice] = useState(null);
+    return createElement('div', { className: 'chat-screen' },
+      createElement(ChatNotice, { message: notice, onClose: () => setNotice(null) }),
+      createElement(Composer, { value: '保留草稿', onChange() {}, onSend() { sent++; return false; }, thinkingEffort: 'default', onThinkingEffortChange() {}, onNotice: setNotice }));
   }
   async function choose(file) {
     const input = document.querySelector('input[type="file"]');
@@ -472,13 +476,15 @@ test('composer stages attachments without a model and validates only on send in 
   }
   async function submit() {
     await act(async () => { document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); });
-    assert.ok(document.querySelector('dialog[open]'), 'errors appear in a popup');
+    assert.ok(document.querySelector('.chat-notice[role="alert"]'), 'errors appear in the chat notice card');
+    assert.equal(document.querySelector('dialog'), null, 'errors do not create a modal or backdrop');
+    assert.equal(document.querySelector('textarea').hasAttribute('readonly'), false, 'the input stays editable');
     assert.equal(sent, 0, 'invalid attachments never reach the runtime');
     assert.equal(document.querySelector('textarea').value, '保留草稿');
     assert.equal(document.querySelectorAll('.composer-attachment').length, 1, 'failed sends keep attachments');
   }
   async function closePopup() {
-    await act(async () => { document.querySelector('[aria-label="关闭弹窗"]').click(); });
+    await act(async () => { (document.querySelector('[aria-label="关闭提示"]') ?? document.querySelector('[aria-label="关闭弹窗"]')).click(); });
   }
   try {
     await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
@@ -491,11 +497,11 @@ test('composer stages attachments without a model and validates only on send in 
     assert.equal(document.querySelector('.attachment-meta').textContent, '8 B');
     assert.equal(document.querySelector('dialog'), null, 'selection does not validate files');
     await submit();
-    assert.match(document.querySelector('dialog').textContent, /添加并选择模型/);
+    assert.match(document.querySelector('.chat-notice').textContent, /添加并选择模型/);
     await closePopup();
     await act(async () => { await models.save(config, 'key'); });
     await submit();
-    assert.match(document.querySelector('dialog').textContent, /暂不支持文件/);
+    assert.match(document.querySelector('.chat-notice').textContent, /暂不支持文件/);
     await closePopup();
     await act(async () => { document.querySelector('.composer-attachment-remove').click(); });
     await choose(new File(['image'], 'photo.png', { type: 'image/png' }));
@@ -517,7 +523,7 @@ test('composer stages attachments without a model and validates only on send in 
     assert.equal(document.querySelector('dialog'), null, 'Escape dismisses the preview');
     assert.equal(document.querySelector('.composer-attach').disabled, false, 'text models can still select attachments');
     await submit();
-    assert.match(document.querySelector('dialog').textContent, /图片输入/);
+    assert.match(document.querySelector('.chat-notice').textContent, /图片输入/);
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.HTMLElement = previous.HTMLElement; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;

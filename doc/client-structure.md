@@ -48,6 +48,7 @@ src/
 │   │       ├── code-block.web.tsx       代码高亮、复制与折叠
 │   │       ├── model-icon.web.tsx      theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
+│   │       ├── chat-notice.web.tsx     聊天区顶部的非模态错误提示卡片
 │   │       ├── selection-quote.web.tsx 助手正文选区与浮动引用操作
 │   │       ├── quote-card.web.tsx      草稿与已发送引用预览、移除和全文弹窗
 │   │       ├── conversation-navigator.web.tsx 提问目录、阅读位置与消息定位
