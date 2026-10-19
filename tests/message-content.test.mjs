@@ -37,6 +37,17 @@ test('CommonMark and GFM render real headings, lists, quotes, tables, tasks and 
   assert.ok(doc.getElementById(reference.getAttribute('href').slice(1)));
 });
 
+test('emphasis delimited by CJK punctuation still renders as emphasis', () => {
+  // CommonMark's delimiter rules only count Unicode punctuation and whitespace, so `**` next to a
+  // Chinese quotation mark fails the left-flanking test and the markers are shown as literal text.
+  const doc = documentFor('是两只**“还不算完全是鸡的原鸡祖先”进行了交配，孵出了第一只鸡**。');
+  assert.equal(doc.querySelector('strong').textContent, '“还不算完全是鸡的原鸡祖先”进行了交配，孵出了第一只鸡');
+  assert.ok(!doc.body.textContent.includes('**'));
+  // Ordinary emphasis and literal asterisks keep their existing meaning.
+  assert.equal(documentFor('**加粗**').querySelector('strong').textContent, '加粗');
+  assert.equal(documentFor('2 * 3 * 4').querySelector('em'), null);
+});
+
 test('math renders fractions, matrices and both provider delimiter styles', () => {
   for (const content of ['$3.14159$', '$E=mc^2$', '$\\frac{1}{2}$', '$$\\sqrt{x^2}$$', '\\(x_i^2\\)', '\\[\\sum_{n=1}^{10} n\\]', '$$\n\\begin{bmatrix}1 & 0 \\\\ 0 & 1\\end{bmatrix}\n$$']) {
     const doc = documentFor(content);

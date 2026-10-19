@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
+import { withoutFailedTurn } from '@/core/agent/history';
 import type { Message, MessageFeedback } from '@/core/agent/types';
 export type { Message, MessageImage } from '@/core/agent/types';
 
@@ -92,8 +93,10 @@ function reducer(state: ChatState, action: Action): ChatState {
     }
     case 'send': {
       const current = state.conversations.find((item) => item.id === action.conversationId);
+      // Sending a new message supersedes a failed turn: the unanswered question and its error
+      // report are both dropped, so the conversation history matches what was actually answered.
       const conversation: Conversation = current
-        ? { ...current, thinkingEffort: action.thinkingEffort, messages: [...current.messages, action.message], updatedAt: Date.now() }
+        ? { ...current, thinkingEffort: action.thinkingEffort, messages: [...withoutFailedTurn(current.messages), action.message], updatedAt: Date.now() }
         : {
             id: action.conversationId,
             title: action.message.content.replace(/\s+/g, ' ').trim().slice(0, 32) || (action.message.images?.length ? '图片对话' : '新对话'),

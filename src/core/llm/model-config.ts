@@ -1,5 +1,7 @@
 import type { Api, Model } from '@mariozechner/pi-ai';
 
+import { resolveModelProxyRoute } from './model-proxy';
+
 export const protocols = [
   { id: 'completion', label: 'OpenAI Chat Completions', baseUrl: 'https://api.openai.com/v1' },
   { id: 'responses', label: 'OpenAI Responses', baseUrl: 'https://api.openai.com/v1' },
@@ -111,11 +113,15 @@ export function flattenProviderModels(providers: ProviderConfig[]): ModelConfig[
 
 const protocolToApi = { completion: 'openai-completions', responses: 'openai-responses', message: 'anthropic-messages' } as const;
 export function createAgentModel(config: ModelConfig): Model<Api> {
+  // Web builds always use the same-origin relay; native builds have no page
+  // origin, so resolveModelProxyRoute returns null and they connect directly.
+  const proxy = resolveModelProxyRoute(config.baseUrl);
   return {
-    api: protocolToApi[config.protocol], baseUrl: config.baseUrl,
+    api: protocolToApi[config.protocol], baseUrl: proxy?.baseUrl ?? config.baseUrl,
     id: config.modelId, name: config.name, provider: `matrius-${config.providerId || config.id}`,
     reasoning: false, input: config.supportsImage ? ['text', 'image'] : ['text'], contextWindow: config.contextWindow, maxTokens: config.maxOutput,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    ...(proxy ? { headers: proxy.headers } : {}),
     ...(config.protocol === 'completion' ? { compat: { supportsStore: false, supportsDeveloperRole: false, maxTokensField: 'max_tokens' as const } } : {}),
   };
 }

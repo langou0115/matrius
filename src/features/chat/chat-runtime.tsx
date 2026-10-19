@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useSyncExternalStore, t
 
 import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
+import { withoutFailedTurn } from '@/core/agent/history';
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
@@ -39,7 +40,9 @@ function useRuntime() {
       const current = conversations.find((item) => item.id === conversationId);
       const message: Message = { id: createId(), role: 'user', content, ...(images.length ? { images } : {}), ...(quote?.trim() ? { quote: quote.trim() } : {}) };
       // start schedules work on a microtask; dispatch user before any reply update.
-      if (!start(conversationId, [...(current?.messages ?? []), message], createId(), thinkingEffort)) return false;
+      // Sending a new message supersedes a failed turn, so neither its question nor its error report
+      // is part of the conversation the model continues from.
+      if (!start(conversationId, [...withoutFailedTurn(current?.messages ?? []), message], createId(), thinkingEffort)) return false;
       dispatch({ type: 'send', conversationId, message, thinkingEffort });
       return true;
     },

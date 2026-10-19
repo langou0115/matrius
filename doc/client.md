@@ -73,7 +73,7 @@ Runtime 消费工具调用事件，经云端工具 API 获取结果并回填上�
 - 解码器不得依赖网络库，只消费分帧结果。覆盖 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages，允许自定义 base URL。
 - 分帧处理多行 `data:`、`[DONE]`、CRLF、注释、跨块 UTF-8 字符和缺失尾换行。
 - 传输适配覆盖增量读取、取消、错误和结束，不能假定移动端与浏览器的流式接口行为完全相同。
-- 部分服务商受浏览器 CORS 限制；明确提示 Web 不可用的服务商，不添加隐式代理绕过本地模式边界。
+- Web 端模型请求统一经本站同源的 `/api/model-proxy` 转发，避免服务商 CORS 预检差异；原生端直接连接服务商。中继无状态，不保存密钥或对话。
 
 ## 依赖与原生配置
 

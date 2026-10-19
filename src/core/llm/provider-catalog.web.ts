@@ -1,4 +1,5 @@
 import type { ProviderConfig } from './model-config';
+import { resolveModelProxyRoute } from './model-proxy';
 
 export type CatalogModel = { id: string; name: string };
 
@@ -49,7 +50,8 @@ export async function fetchProviderCatalog(provider: Pick<ProviderConfig, 'baseU
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const proxy = resolveModelProxyRoute(provider.baseUrl);
+  const headers: Record<string, string> = { Accept: 'application/json', ...proxy?.headers };
   if (apiKey.trim()) {
     if (provider.protocol === 'message') {
       headers['x-api-key'] = apiKey.trim();
@@ -68,7 +70,7 @@ export async function fetchProviderCatalog(provider: Pick<ProviderConfig, 'baseU
     // OpenStudio uses the same /v1/models discovery shape. Anthropic's catalog is paginated;
     // request the largest page and continue with its documented cursor when needed.
     for (let page = 0; page < 10; page += 1) {
-      const url = getModelsUrl(provider.baseUrl);
+      const url = getModelsUrl(proxy?.baseUrl ?? provider.baseUrl);
       if (provider.protocol === 'message') {
         url.searchParams.set('limit', '1000');
         if (afterId) url.searchParams.set('after_id', afterId);
@@ -96,7 +98,7 @@ export async function fetchProviderCatalog(provider: Pick<ProviderConfig, 'baseU
     }
   } catch (reason) {
     if (reason instanceof Error && reason.name === 'AbortError') throw new Error('获取模型列表超时，请检查服务商地址和网络。');
-    if (reason instanceof TypeError) throw new Error('无法连接服务商。浏览器 CORS 可能阻止了模型目录请求；也可以手动添加模型。');
+    if (reason instanceof TypeError) throw new Error('无法连接服务商，请检查服务商地址和网络后重试，或手动添加模型。');
     throw reason;
   } finally {
     clearTimeout(timeout);

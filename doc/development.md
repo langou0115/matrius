@@ -21,6 +21,8 @@ npx expo-doctor                # 诊断依赖与配置
 npx expo install <package>     # 安装 SDK 兼容依赖
 npx expo install --fix         # 按需修复不兼容版本
 npx expo export --platform web # 导出 Web 静态产物到 dist/
+npm run export:web             # 同上
+npm run serve                  # 托管 dist/ 并提供同源模型中继（默认 8081）
 ```
 
 - `npm run android` / `ios` 启动开发目标，不是生产构建。Android 模拟器需要 Android SDK；本机 iOS 模拟器需要 macOS 与 Xcode。
@@ -33,6 +35,22 @@ npx expo export --platform web # 导出 Web 静态产物到 dist/
 ## 构建与发布
 
 Web 使用 `web.output: single` 输出单页应用，支持运行时创建的 `/c/<conversation-id>`。托管服务需把页面路径回退到 `index.html`（如 Nginx `try_files $uri $uri/ /index.html;`）；静态资源仍按原路径提供。不能预生成浏览器本地的对话 ID。发布前验证对话链接直达、刷新、前进后退与无效 ID 提示。配置依据见 [Expo Web 发布](https://docs.expo.dev/guides/publishing-websites/)。
+
+仓库内置零依赖的生产服务 `scripts/server.mjs`，执行 `npm run export:web && npm run serve` 即可同时托管 `dist/` 和同源模型中继 `/api/model-proxy`。静态回退规则与 Nginx 配置一致；SSE 响应直接透传，不做缓冲。可用 `PORT`、`HOST`、`MATRIUS_STATIC_DIR` 调整监听地址与产物目录。
+
+中继只接受带 `x-matrius-target-origin` 的 GET/POST，并默认拒绝回环、私网和链路本地目标；生产环境建议设置 `MATRIUS_PROXY_ALLOW_HOSTS=api.example.com,another.example.com` 限定允许的服务商主机。确需访问私网端点时再设置 `MATRIUS_PROXY_ALLOW_PRIVATE=1`。若改用 Nginx 等托管服务，需要额外代理 `/api/model-proxy/`，保留请求头并关闭响应缓冲（`proxy_buffering off`）以支持流式输出。
+
+中继逻辑与服务器框架解耦，导出为 `handleModelProxy(req, res): boolean`。后续接入多端同步后端时，把它挂到同一个进程即可，不需要再部署第二个服务。例如 Express：
+
+```js
+import modelProxy from './scripts/model-proxy.cjs';
+
+app.use((req, res, next) => {
+  if (!modelProxy.handleModelProxy(req, res)) next();
+});
+```
+
+静态页面也可由该进程托管，或交给 Nginx/CDN；只要页面与 `/api/model-proxy` 保持同源，浏览器就不会遇到 CORS。
 
 使用 [EAS Build](https://docs.expo.dev/build/introduction/) 构建和签名，EAS Submit 提交商店，EAS Update 发布兼容的 OTA 更新。
 
@@ -104,7 +122,7 @@ npx eas-cli@latest submit --platform ios
 - 同一脚本也直接测试无 React/DOM 的 `createAgentRuntime`，覆盖输入快照、单请求限制、批量回复、取消时保留正文、模块加载期间停止、销毁和订阅清理；检查 `core/agent/` 不导入功能模块、React 或 Web 实现。原生传输和真机行为需单独验证。
 - 个性化回归包含默认值与字符上限、旧快照兼容、IndexedDB 保存/恢复、三协议系统提示注入，以及编辑偏好后重新生成采用最新指令。手动验证时从设置搜索“自定义指令”进入表单，编辑后返回对话、刷新或重新生成；Mock 执行相同流程但不写真实记录。记忆功能不在当前范围。
 - 测试脚本显式使用 `--test-isolation=none`，确保当前 Node 与 TypeScript loader 环境执行并报告每个测试用例。模型接入修改同时运行 `npm run test:rendering`、lint、typecheck 与 Web 生产导出。
-- 首次手动使用：设置 → 模型服务 → 添加服务商，填写名称、协议、基础地址和 key；保存后获取模型列表并添加模型，也可手动填写模型 ID。返回聊天选择模型并发送；生成中可停止，失败后可重新生成。浏览器跨域和真实服务商兼容性需用自己的配置实测。
+- 首次手动使用：设置 → 模型服务 → 添加服务商，填写名称、协议、基础地址和 key；保存后获取模型列表并添加模型，也可手动填写模型 ID。返回聊天选择模型并发送；生成中可停止，失败后可重新生成。模型请求与目录获取均经 `/api/model-proxy` 同源转发，本地/内网地址及原生端仍直连。`npm run web` 与 `npm run serve` 均已内置该中继；真实服务商兼容性仍需用自己的配置实测。
 - 密钥与 Provider、模型元数据都保留在本机浏览器，删除服务商或清除站点数据才会移除密钥。无鉴权本地模型取消“接口需要 API key”。Chat Mock 支持相同真实调用，但会话和 Provider 配置只存在本次预览内存中。
 
 ## Linux 启动时 DevTools 缺少共享库

@@ -34,6 +34,7 @@
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.10.1",
     "rehype-katex": "^7.0.1",
+    "remark-cjk-friendly": "^2.3.2",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0"
   },
@@ -50,6 +51,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "export:web": "expo export --platform web",
+    "serve": "node scripts/server.mjs",
     "lint": "expo lint",
     "test:rendering": "node --import ./tests/register.mjs --test --test-isolation=none tests/message-content.test.mjs tests/markdown-robustness.test.mjs tests/formula-layout.test.mjs tests/chat-scroll.test.mjs",
     "assets:katex": "node scripts/sync-katex.mjs",

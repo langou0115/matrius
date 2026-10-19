@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import { createReplyRun, describeModelError } from '../src/core/agent/runner.ts';
 import { buildContext, buildRetryHistory, validateAgentRequest } from '../src/core/agent/context.ts';
+import { withoutFailedTurn } from '../src/core/agent/history.ts';
 import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
+import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.web.ts';
 import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
 import { searchSettings } from '../src/features/settings/settings-catalog.ts';
 import { PersonalizationProvider, usePersonalization } from '../src/features/settings/personalization-state.tsx';
@@ -268,6 +270,65 @@ test('good and bad feedback reach all pi providers as user feedback tied to the 
   });
 });
 
+test('a failed reply never reaches the next model request', () => {
+  const failed = [
+    { id: 'u1', role: 'user', content: 'first question' },
+    { id: 'a1', role: 'assistant', content: 'half an answer', status: 'error', error: '超时' },
+  ];
+  const context = buildContext(failed, config);
+  assert.deepEqual(context.map(message => message.role), ['user'], 'only the original question remains');
+  assert.ok(!JSON.stringify(context).includes('half an answer'), 'a partial failed reply is not replayed as an answer');
+  assert.ok(!JSON.stringify(context).includes('超时'), 'the error text is not part of the conversation');
+  // Continuing with a new question must not smuggle the failed turn in either.
+  assert.ok(!JSON.stringify(buildContext([...failed, { id: 'u2', role: 'user', content: 'another question' }], config)).includes('half an answer'));
+  assert.deepEqual(buildRetryHistory(failed).map(message => message.id), ['u1'], 'retry re-sends the original question');
+  // A fresh message supersedes the failed turn: its unanswered question goes too.
+  assert.deepEqual(withoutFailedTurn(failed), [], 'both the failed error and its question are dropped');
+  assert.deepEqual(
+    withoutFailedTurn([{ id: 'u0', role: 'user', content: 'earlier' }, { id: 'a0', role: 'assistant', content: 'answer', status: 'complete' }, ...failed]).map(message => message.id),
+    ['u0', 'a0'],
+    'only the failed turn is dropped; answered history stays',
+  );
+  // A stopped turn is different: it holds text the user may want to continue from.
+  const stopped = [failed[0], { id: 'a1', role: 'assistant', content: 'partial answer', status: 'stopped' }];
+  assert.ok(JSON.stringify(buildContext(stopped, config)).includes('partial answer'));
+  assert.deepEqual(buildRetryHistory(stopped).map(message => message.id), ['u1']);
+});
+
+test('sending after a failure removes the whole failed turn from local history', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  let chat;
+  const initialState = {
+    conversations: [{
+      id: 'c1', title: 'c1', pinned: false, updatedAt: 0, errorReadAt: 1, thinkingEffort: 'default',
+      messages: [
+        { id: 'u1', role: 'user', content: 'question' },
+        { id: 'a1', role: 'assistant', content: 'partial', status: 'error', error: '超时' },
+      ],
+    }],
+    activeId: 'c1', sidebarOpen: true, lastThinkingEffort: 'default',
+  };
+  function Harness() { chat = useChat(); return null; }
+  try {
+    await act(async () => { root.render(createElement(ChatProvider, { initialState }, createElement(Harness))); });
+    await act(async () => {
+      chat.dispatch({ type: 'send', conversationId: 'c1', message: { id: 'u2', role: 'user', content: 'next' }, thinkingEffort: 'default' });
+    });
+    assert.deepEqual(chat.conversations[0].messages.map(message => message.id), ['u2'], 'the failed question and its error report are gone');
+    assert.equal(chat.conversations[0].errorReadAt, undefined, 'the unread-error marker is cleared');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
 test('stop keeps partial text and cancels the provider request', async () => {
   const original = globalThis.fetch;
   let signal;
@@ -317,6 +378,33 @@ test('model metadata whitelists fields and credentials stay isolated in memory',
   assert.deepEqual(searchSettings('API key').map(item => item.id), ['models']);
   assert.match(describeModelError(new Error('insufficient_quota')), /额度/);
   assert.match(describeModelError(new Error('429')), /限流/);
+});
+
+test('web model calls and catalog always route through the same-origin relay', async () => {
+  const normalized = validateModelConfig(config);
+  assert.equal(createAgentModel(normalized).baseUrl, config.baseUrl, 'native builds without a page origin stay direct');
+
+  const originalLocation = globalThis.location;
+  globalThis.location = { origin: 'https://app.example' };
+  const originalFetch = globalThis.fetch;
+  try {
+    const model = createAgentModel(normalized);
+    assert.equal(model.baseUrl, 'https://app.example/api/model-proxy/v1');
+    assert.equal(model.headers['x-matrius-target-origin'], 'https://test.invalid');
+
+    let requestedUrl = '';
+    globalThis.fetch = async (url) => {
+      requestedUrl = String(url);
+      return new Response(JSON.stringify({ data: [{ id: 'relay-model' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const catalog = await fetchProviderCatalog({ baseUrl: config.baseUrl, protocol: 'completion', requiresApiKey: true }, 'secret');
+    assert.deepEqual(catalog, [{ id: 'relay-model', name: 'relay-model' }]);
+    assert.equal(requestedUrl, 'https://app.example/api/model-proxy/v1/models');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalLocation === undefined) delete globalThis.location;
+    else globalThis.location = originalLocation;
+  }
 });
 
 test('workspace runtime keeps generations attached to their source conversation and does not resurrect deleted chats', async () => {

@@ -200,7 +200,7 @@ export default function ModelSettingsScreen() {
 
     {failure && <p className="model-form-error" role="alert">{failure}</p>}
     {feedback && <p className="settings-footnote" role="status">{feedback}</p>}
-    <p className="settings-footnote">模型请求及目录获取会直接发送至你填写的服务商地址。部分服务商不允许浏览器跨域请求；这种情况下可以手动添加模型 ID。</p>
+    <p className="settings-footnote">模型请求及目录获取均经本站服务器同源转发，请求内容只发送给你填写的服务商。</p>
 
     {providerForm && <Dialog title={providerFormEditing ? '编辑服务商' : '添加服务商'} onClose={closeProviderForm} className="model-form-dialog">
       <form className="provider-edit-form" onSubmit={(event) => {
@@ -248,7 +248,7 @@ export default function ModelSettingsScreen() {
     </Dialog>}
 
     {catalogProvider && <Dialog title={`${catalogProvider.name} 的模型列表`} onClose={closeCatalog} className="catalog-dialog">
-      <p className="dialog-description">由浏览器直接向服务商获取，勾选要用的模型加进来。</p>
+      <p className="dialog-description">经本站服务器向服务商获取，勾选要用的模型加进来。</p>
       {catalogError && <p className="model-form-error" role="alert">{catalogError}</p>}
       {catalogLoading ? <p className="catalog-status" role="status">正在获取模型列表…</p> : availableModels.length ? <>
         <input className="text-field catalog-filter" type="search" value={catalogFilter} aria-label="筛选模型"

@@ -1,5 +1,6 @@
 import { memo, useId } from 'react';
 import Markdown, { type Components } from 'react-markdown';
+import remarkCjkFriendly from 'remark-cjk-friendly/parseOnly';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -69,7 +70,7 @@ export const MessageContent = memo(function MessageContent({ content, streaming 
   const id = useId();
   return <div className="message-markdown"><Markdown
     components={components}
-    remarkPlugins={[remarkGfm, remarkMath]}
+    remarkPlugins={[remarkGfm, remarkCjkFriendly, remarkMath]}
     remarkRehypeOptions={{ clobberPrefix: `message-${id}-`, footnoteLabel: '注释' }}
     rehypePlugins={[[rehypeKatex, { trust: false, strict: 'ignore', maxExpand: 1000, maxSize: 20 }], [rehypeFormulaSource, { streaming }]]}
   >{normalizeMarkdown(content)}</Markdown></div>;

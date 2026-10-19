@@ -69,7 +69,7 @@ npm run ios
 npm run web
 ```
 
-`npm run web` 打开当前 Web 界面。开发时访问 `/mock` 会看到预览索引页，可进入 `/mock/chat`：包含 100 个八轮对话及 Markdown、公式、代码、50 轮长会话等 9 个专项样例，共 109 个会话、1730 条消息，复用完整聊天界面，保留设置入口，并增加右下角 Mock 工具卡片。无需测试账号，示例变更不写入真实记录，release 模式由 `/mock` 目录统一守卫，访问预览地址会跳回首页。Web 发布使用 `npx expo export --platform web` 的生产产物；不要把 Metro 开发服务用于发布。Android / iOS 当前仅为后续适配的说明页。Android 模拟器需要 Android SDK；本机 iOS 模拟器需要 macOS 与 Xcode，Windows/WSL 可用支持当前 SDK 的真机客户端调试，或通过 EAS 构建开发客户端。Expo Go 仅支持其内置的原生模块。
+`npm run web` 打开当前 Web 界面。开发时访问 `/mock` 会看到预览索引页，可进入 `/mock/chat`：包含 100 个八轮对话及 Markdown、公式、代码、50 轮长会话等 9 个专项样例，共 109 个会话、1730 条消息，复用完整聊天界面，保留设置入口，并增加右下角 Mock 工具卡片。无需测试账号，示例变更不写入真实记录，release 模式由 `/mock` 目录统一守卫，访问预览地址会跳回首页。Web 发布使用 `npx expo export --platform web` 的生产产物；不要把 Metro 开发服务用于发布。生产环境可运行 `npm run export:web && npm run serve`，由内置 Node 服务同时提供静态页面和同源模型中继（默认 `0.0.0.0:8081`，可用 `PORT`、`HOST` 覆盖）。Android / iOS 当前仅为后续适配的说明页。Android 模拟器需要 Android SDK；本机 iOS 模拟器需要 macOS 与 Xcode，Windows/WSL 可用支持当前 SDK 的真机客户端调试，或通过 EAS 构建开发客户端。Expo Go 仅支持其内置的原生模块。
 
 ```bash
 npx expo lint
@@ -96,7 +96,7 @@ Linux 若启动时报 DevTools 缺少 `libatk-1.0.so.0`，属于桌面调试器�
 
 设置采用可搜索的项目目录：从侧栏进入后，可搜索外观、模型服务或应用信息，再进入对应子页调整；显示模式与配色主题放在同一个外观页。正式页面与 Chat Mock 共用这套设置流程。
 
-模型接入：打开设置 → 模型服务，先添加服务商（名称、协议、Base URL、API key），再自动获取并添加模型，或手动填写模型 ID。支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 和相应兼容服务；本地无鉴权接口可取消“接口需要 API key”。API key 与模型元数据分表保存在本机浏览器（密钥未加密），刷新后仍可用，删除服务商会一并删除密钥。模型请求和目录获取由浏览器直连服务商，服务商需允许 CORS；无法获取目录时仍可手动添加模型。
+模型接入：打开设置 → 模型服务，先添加服务商（名称、协议、Base URL、API key），再自动获取并添加模型，或手动填写模型 ID。支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 和相应兼容服务；本地无鉴权接口可取消“接口需要 API key”。API key 与模型元数据分表保存在本机浏览器（密钥未加密），刷新后仍可用，删除服务商会一并删除密钥。模型请求和目录获取均经本站同源的 `/api/model-proxy` 转发，不受服务商 CORS 预检影响，内容只发送给该服务商；本地/内网地址及原生端仍直连。`npm run web` 的开发服务和 `npm run serve` 的生产服务均已内置该中继；无法获取目录时仍可手动添加模型。
 
 `npm run test:models` 验证协议流、取消、错误、密钥隔离及 IndexedDB v1→v2 迁移；`npm run test:rendering` 验证消息渲染。
 
