@@ -220,8 +220,7 @@ export function createDemoWorkspace(): WorkspaceData {
     title: thread.title,
     pinned: thread.pinned ?? false,
     updatedAt: now - index * 3_600_000,
-    thinkingEffort: 'default',
     messages: thread.turns.map((content, turn) => ({ id: `${thread.id}-${turn + 1}`, role: turn % 2 === 0 ? 'user' : 'assistant', content })),
   }));
-  return { schemaVersion: 1, chat: { conversations, activeId: conversations[0].id, sidebarOpen: true, lastThinkingEffort: conversations[0].thinkingEffort ?? 'default' }, appearance: { themeId: 'twitter', mode: 'system' } };
+  return { schemaVersion: 1, chat: { conversations, activeId: conversations[0].id, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' } };
 }

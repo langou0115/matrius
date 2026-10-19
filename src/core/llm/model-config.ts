@@ -1,5 +1,6 @@
 import type { Api, Model } from '@mariozechner/pi-ai';
 
+import { isThinkingEffort, type ThinkingEffort } from '@/core/agent/thinking-effort';
 import { resolveModelProxyRoute } from './model-proxy';
 
 export const protocols = [
@@ -18,6 +19,8 @@ export type ProviderModelConfig = {
   supportsImage: boolean;
   contextWindow: number;
   maxOutput: number;
+  /** Thinking depth is a property of the model, not of the conversation: each model remembers its own. */
+  thinkingEffort?: ThinkingEffort;
 };
 
 export type ProviderConfig = {
@@ -60,6 +63,7 @@ function validateModelValues(value: ProviderModelConfig): ProviderModelConfig {
     supportsImage: value.supportsImage === true,
     contextWindow: value.contextWindow,
     maxOutput: value.maxOutput,
+    thinkingEffort: isThinkingEffort(value.thinkingEffort) ? value.thinkingEffort : 'default',
   };
 }
 

@@ -1,5 +1,5 @@
 /** Shared request and reply contracts for Web and native clients. */
-export type MessageImage = { id: string; name: string; mimeType: string; dataUrl: string };
+export type MessageImage = { id: string; name: string; mimeType: string; dataUrl: string; size?: number };
 export type MessageFeedback = 'good' | 'bad';
 
 export type Message = {

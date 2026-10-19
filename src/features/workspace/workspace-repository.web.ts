@@ -1,5 +1,4 @@
 import { readWorkspace } from '@/core/database/browser-store.web';
-import { isThinkingEffort } from '@/core/agent/thinking-effort';
 import type { ChatState, Conversation, Message } from '@/features/chat/chat-state';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
@@ -36,19 +35,18 @@ function readMessage(value: unknown): Message {
 function readConversation(value: unknown): Conversation {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.pinned !== 'boolean' || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) || !Array.isArray(value.messages)) throw new Error('Invalid stored conversation');
   if (value.errorReadAt !== undefined && value.errorReadAt !== null && (typeof value.errorReadAt !== 'number' || !Number.isFinite(value.errorReadAt))) throw new Error('Invalid stored conversation error status');
-  if (value.thinkingEffort !== undefined && !isThinkingEffort(value.thinkingEffort)) throw new Error('Invalid stored thinking effort');
   return { id: value.id, title: value.title, pinned: value.pinned, updatedAt: value.updatedAt,
-    thinkingEffort: isThinkingEffort(value.thinkingEffort) ? value.thinkingEffort : 'default',
+    ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
     messages: value.messages.map(readMessage), ...(value.errorReadAt !== undefined ? { errorReadAt: value.errorReadAt as number | null } : {}) };
 }
 
 export async function loadWorkspace(): Promise<LoadedWorkspace> {
   const stored = await readWorkspace();
-  if (!stored) return { revision: 0, data: { schemaVersion: 1, chat: { conversations: [], activeId: null, sidebarOpen: true, lastThinkingEffort: 'default' }, appearance: { themeId: 'twitter', mode: 'system' } } };
+  if (!stored) return { revision: 0, data: { schemaVersion: 1, chat: { conversations: [], activeId: null, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' } } };
   const value = stored.value;
   if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.chat) || !isRecord(value.appearance)) throw new Error('Invalid stored workspace');
   const { chat, appearance } = value;
-  if (!Array.isArray(chat.conversations) || (chat.activeId !== null && typeof chat.activeId !== 'string') || typeof chat.sidebarOpen !== 'boolean' || (chat.lastThinkingEffort !== undefined && !isThinkingEffort(chat.lastThinkingEffort)) || !isThemeId(appearance.themeId) || !['light', 'dark', 'system'].includes(String(appearance.mode))) throw new Error('Invalid stored preferences');
+  if (!Array.isArray(chat.conversations) || (chat.activeId !== null && typeof chat.activeId !== 'string') || typeof chat.sidebarOpen !== 'boolean' || !isThemeId(appearance.themeId) || !['light', 'dark', 'system'].includes(String(appearance.mode))) throw new Error('Invalid stored preferences');
   const conversations = chat.conversations.map(readConversation);
   if (new Set(conversations.map((conversation) => conversation.id)).size !== conversations.length) throw new Error('Duplicate stored conversations');
   const activeId = conversations.some((item) => item.id === chat.activeId) ? chat.activeId as string : null;
@@ -56,7 +54,7 @@ export async function loadWorkspace(): Promise<LoadedWorkspace> {
     revision: stored.revision,
     data: {
       schemaVersion: 1,
-      chat: { conversations, activeId, sidebarOpen: chat.sidebarOpen, lastThinkingEffort: isThinkingEffort(chat.lastThinkingEffort) ? chat.lastThinkingEffort : conversations.find((item) => item.id === activeId)?.thinkingEffort ?? 'default' },
+      chat: { conversations, activeId, sidebarOpen: chat.sidebarOpen },
       appearance: { themeId: appearance.themeId, mode: appearance.mode as AppearancePreferences['mode'] },
       personalization: readPersonalization(value.personalization),
     },

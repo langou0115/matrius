@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 
+import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig, type ProviderModelConfig } from '@/core/llm/model-config';
 import { createModelCredentials, type CredentialVault } from '@/core/platform/model-credentials';
 import { createStoredModelCredentials } from './model-credential-store.web';
@@ -51,9 +52,12 @@ function useModelState(preview: boolean) {
   async function saveModel(providerId: string, value: ProviderModelConfig) {
     const provider = current.current.providers.find((item) => item.id === providerId);
     if (!provider) throw new Error('找不到该服务商，请刷新后重试。');
+    // The settings form does not edit thinking depth, so keep whatever the model last used.
+    const existing = provider.models.find((item) => item.id === value.id);
+    const next = { ...value, thinkingEffort: value.thinkingEffort ?? existing?.thinkingEffort };
     const valid = validateProviderConfig({
       ...provider,
-      models: [...provider.models.filter((item) => item.id !== value.id), value],
+      models: [...provider.models.filter((item) => item.id !== value.id), next],
     });
     await update({
       providers: current.current.providers.map((item) => item.id === providerId ? valid : item),
@@ -88,6 +92,7 @@ function useModelState(preview: boolean) {
         requiresApiKey: valid.requiresApiKey,
         models: [...(existing?.models ?? []).filter((item) => item.id !== valid.id), {
           id: valid.id, name: valid.name, modelId: valid.modelId, supportsImage: valid.supportsImage, contextWindow: valid.contextWindow, maxOutput: valid.maxOutput,
+          thinkingEffort: valid.thinkingEffort,
         }],
       });
       await update({
@@ -100,6 +105,17 @@ function useModelState(preview: boolean) {
     },
     async select(id: string) {
       if (flattenProviderModels(current.current.providers).some((item) => item.id === id)) await update({ ...current.current, selectedId: id });
+    },
+    /** Each model keeps its own thinking depth, so switching models restores what that model last used. */
+    async setThinkingEffort(id: string, thinkingEffort: ThinkingEffort) {
+      if (flattenProviderModels(current.current.providers).find((item) => item.id === id)?.thinkingEffort === thinkingEffort) return;
+      await update({
+        ...current.current,
+        providers: current.current.providers.map((provider) => ({
+          ...provider,
+          models: provider.models.map((model) => model.id === id ? { ...model, thinkingEffort } : model),
+        })),
+      });
     },
     removeModel,
     async remove(id: string) { return removeModel(id); },

@@ -6,10 +6,13 @@ import { FileTypeIcon } from './file-type-icon.web';
 
 export type StagedAttachment = { id: string; file: globalThis.File; preview: string | null };
 
+export function formatFileSize(bytes: number) {
+  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
+    ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function fileDetails(file: globalThis.File) {
-  const size = file.size < 1024 ? `${file.size} B` : file.size < 1024 * 1024
-    ? `${Math.round(file.size / 1024)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-  return { size };
+  return { size: formatFileSize(file.size) };
 }
 
 export function ImagePreview({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {

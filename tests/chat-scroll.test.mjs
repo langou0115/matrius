@@ -181,6 +181,55 @@ test('quote drafts are isolated per conversation and survive screen remounts', a
   }
 });
 
+test('each conversation reopens where it was left, using the position saved in the browser', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT, localStorage: globalThis.localStorage };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => { values.set(key, String(value)); },
+    removeItem: (key) => { values.delete(key); },
+    clear: () => values.clear(),
+    key: () => null,
+    get length() { return values.size; },
+  };
+  const root = createRoot(document.getElementById('root'));
+  function Harness({ containerKey, scrollKey }) {
+    const ref = useRef(null);
+    useChatAutoScroll({ containerRef: ref, containerKey, followKey: containerKey, scrollKey });
+    return createElement('div', { ref, id: 'scroller' });
+  }
+  try {
+    await act(async () => { root.render(createElement(Harness, { containerKey: 'a', scrollKey: 'a' })); });
+    const scroller = document.getElementById('scroller');
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 4000 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    await act(async () => { scroller.scrollTop = 900; scroller.dispatchEvent(new window.Event('scroll')); });
+    // Leave the conversation; its offset is captured even if the save debounce has not fired.
+    await act(async () => { root.render(createElement(Harness, { containerKey: 'b', scrollKey: 'b' })); });
+    assert.equal(scroller.scrollTop, 4000, 'a conversation without a position opens at the newest message');
+    await act(async () => { scroller.dispatchEvent(new window.Event('scroll')); });
+    await act(async () => { root.render(createElement(Harness, { containerKey: 'a', scrollKey: 'a' })); });
+    assert.equal(scroller.scrollTop, 900, 'returning to a conversation restores its reading position');
+    await act(async () => { scroller.scrollTop = 4000; scroller.dispatchEvent(new window.Event('scroll')); });
+    await act(async () => { root.render(createElement(Harness, { containerKey: 'b', scrollKey: 'b' })); });
+    await act(async () => { root.render(createElement(Harness, { containerKey: 'a', scrollKey: 'a' })); });
+    assert.equal(scroller.scrollTop, 4000, 'a conversation left at the bottom opens at the bottom');
+    const saved = JSON.parse(values.get('matrius.chat-scroll-positions'));
+    assert.deepEqual(saved.a, { top: 4000, atBottom: true });
+    assert.deepEqual(saved.b, { top: 4000, atBottom: true });
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+    if (previous.localStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = previous.localStorage;
+  }
+});
+
 test('conversation navigation tracks reading, opens the question card and jumps to a selected question', async () => {
   const { ConversationNavigator } = await import('../src/features/chat/components/conversation-navigator.web.tsx');
   const names = ['window', 'document', 'Node', 'ResizeObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'IS_REACT_ACT_ENVIRONMENT'];

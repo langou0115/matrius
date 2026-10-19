@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 
 import { Icon } from '@/components/web/icon';
+import { flushScrollPositions, readScrollPosition, rememberScrollPosition } from '../scroll-position.web';
 
 // Rounding leaves a pixel or two between scrollTop and the real end.
 const BOTTOM_EPSILON = 2;
@@ -22,6 +23,8 @@ type ChatAutoScrollOptions = {
   containerKey: string;
   /** Changes whenever the conversation grows, streamed text included. */
   followKey: string;
+  /** Conversation whose reading position is restored and remembered; omit for unsaved drafts. */
+  scrollKey?: string | null;
 };
 
 function distanceFromBottom(element: HTMLElement) {
@@ -42,7 +45,7 @@ function showThreshold(element: HTMLElement) {
  * next streamed token. Returns whether the "jump to latest" button should be
  * offered, and the callback that acts on it.
  */
-export function useChatAutoScroll({ containerRef, containerKey, followKey }: ChatAutoScrollOptions) {
+export function useChatAutoScroll({ containerRef, containerKey, followKey, scrollKey }: ChatAutoScrollOptions) {
   const [visible, setVisible] = useState(false);
   const following = useRef(true);
   // Set while we move the scroller ourselves, so the scroll event it produces is
@@ -82,12 +85,22 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey }: Cha
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
+    const key = scrollKey;
     stopJump();
-    following.current = true;
     pinned.current = false;
-    element.scrollTop = element.scrollHeight;
-    setVisible(false);
-  }, [containerKey, containerRef, stopJump]);
+    following.current = true;
+    // Reopen where the reader stopped. "At the bottom" resolves against the current height,
+    // so a reply that arrived while the conversation was closed stays visible.
+    const saved = key ? readScrollPosition(key) : null;
+    element.scrollTop = saved && !saved.atBottom
+      ? Math.min(saved.top, Math.max(0, element.scrollHeight - element.clientHeight))
+      : element.scrollHeight;
+    sync();
+    // The scroll listener records every move as it happens, so switching only has to make
+    // sure the most recent position has reached storage. Reading the shared scroller here
+    // would already see the next conversation's content and could overwrite the old offset.
+    return flushScrollPositions;
+  }, [containerKey, scrollKey, containerRef, stopJump, sync]);
 
   useEffect(() => { pin(); }, [followKey, pin]);
 
@@ -104,7 +117,18 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey }: Cha
       sync(true);
     };
 
+    const remember = () => {
+      if (!scrollKey) return;
+      // The element is shared by every conversation. Once React has swapped in another one,
+      // a scroll event caused by the new content's height must not be filed under the old ID.
+      if (element.dataset.conversationKey != null && element.dataset.conversationKey !== containerKey) return;
+      rememberScrollPosition(scrollKey, {
+        top: element.scrollTop,
+        atBottom: distanceFromBottom(element) <= atBottomThreshold(element),
+      });
+    };
     const handleScroll = () => {
+      remember();
       if (pinned.current) {
         // Our own pin landed on the end, so refresh the button but keep following.
         pinned.current = false;
@@ -150,7 +174,7 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey }: Cha
       element.removeEventListener('touchcancel', handleTouchEnd);
       element.removeEventListener('keydown', handleKeyDown);
     };
-  }, [containerKey, containerRef, stopJump, sync]);
+  }, [containerKey, scrollKey, containerRef, stopJump, sync]);
 
   useEffect(() => stopJump, [stopJump]);
 

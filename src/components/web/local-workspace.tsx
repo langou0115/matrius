@@ -11,10 +11,10 @@ import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
 
 function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean }>) {
-  const { conversations, activeId, sidebarOpen, lastThinkingEffort } = useChat();
+  const { conversations, activeId, sidebarOpen } = useChat();
   const { themeId, mode } = useAppearance();
   const { preferences: personalization } = usePersonalization();
-  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), activeId, sidebarOpen, lastThinkingEffort }, appearance: { themeId, mode }, personalization }), [conversations, activeId, sidebarOpen, lastThinkingEffort, themeId, mode, personalization]);
+  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), activeId, sidebarOpen }, appearance: { themeId, mode }, personalization }), [conversations, activeId, sidebarOpen, themeId, mode, personalization]);
   const revision = useRef(initial.revision);
   const saved = useRef(JSON.stringify(initial.data));
   const queue = useRef(Promise.resolve());

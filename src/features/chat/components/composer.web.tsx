@@ -16,6 +16,8 @@ type Props = {
   onSend: (images: MessageImage[]) => boolean;
   thinkingEffort: ThinkingEffort;
   onThinkingEffortChange: (value: ThinkingEffort) => void;
+  /** Called after the model switch is stored, so the conversation can remember it. */
+  onModelChange?: (id: string) => void;
   quote?: string;
   onRemoveQuote?: () => void;
   onNotice: (message: string | null) => void;
@@ -51,7 +53,7 @@ const effortOptions: { value: ThinkingEffort; label: string; description: string
 // pages does not resize the card. The fallback below still wins on short viewports.
 const PICKER_CARD_MAX_HEIGHT = 294;
 
-export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, quote, onRemoveQuote, onNotice }: Props) {
+export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, onModelChange, quote, onRemoveQuote, onNotice }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // Staged for the next message only. The parent keys this component by conversation, so a
@@ -196,7 +198,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     preparing.current = true;
     setSending(true);
     try {
-      const images = await Promise.all(attachments.map(async ({ id, file }) => ({ id, name: file.name, mimeType: file.type, dataUrl: await readImageDataUrl(file) })));
+      const images = await Promise.all(attachments.map(async ({ id, file }) => ({ id, name: file.name, mimeType: file.type, dataUrl: await readImageDataUrl(file), size: file.size })));
       if (!mounted.current) return;
       if (!onSend(images)) return;
       const sentIds = new Set(attachments.map(({ id }) => id));
@@ -215,6 +217,9 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   async function selectModel(id: string) {
     try {
       await models.select(id);
+      // The conversation may have been switched while the preference was saving.
+      if (!mounted.current) return;
+      onModelChange?.(id);
       onNotice(null);
       setShowModels(false);
       setPickerPage('models');

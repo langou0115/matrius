@@ -307,19 +307,19 @@ test('sending after a failure removes the whole failed turn from local history',
   let chat;
   const initialState = {
     conversations: [{
-      id: 'c1', title: 'c1', pinned: false, updatedAt: 0, errorReadAt: 1, thinkingEffort: 'default',
+      id: 'c1', title: 'c1', pinned: false, updatedAt: 0, errorReadAt: 1,
       messages: [
         { id: 'u1', role: 'user', content: 'question' },
         { id: 'a1', role: 'assistant', content: 'partial', status: 'error', error: '超时' },
       ],
     }],
-    activeId: 'c1', sidebarOpen: true, lastThinkingEffort: 'default',
+    activeId: 'c1', sidebarOpen: true,
   };
   function Harness() { chat = useChat(); return null; }
   try {
     await act(async () => { root.render(createElement(ChatProvider, { initialState }, createElement(Harness))); });
     await act(async () => {
-      chat.dispatch({ type: 'send', conversationId: 'c1', message: { id: 'u2', role: 'user', content: 'next' }, thinkingEffort: 'default' });
+      chat.dispatch({ type: 'send', conversationId: 'c1', message: { id: 'u2', role: 'user', content: 'next' }, modelId: 'test' });
     });
     assert.deepEqual(chat.conversations[0].messages.map(message => message.id), ['u2'], 'the failed question and its error report are gone');
     assert.equal(chat.conversations[0].errorReadAt, undefined, 'the unread-error marker is cleared');
@@ -432,10 +432,11 @@ test('workspace runtime keeps generations attached to their source conversation 
     await act(async () => { assert.equal(runtime.send('keep this draft', null), false); });
     assert.equal(chat.conversations.length, 0);
     await act(async () => { await models.save(config, 'key'); });
+    await act(async () => { await models.setThinkingEffort('test', 'high'); });
     await act(async () => { personalization.update({ customInstructions: 'first preference' }); });
-    await act(async () => { assert.equal(runtime.send('first message', null, 'high', [], '引用需要保留'), true); assert.equal(runtime.send('double submission', null), false); });
+    await act(async () => { assert.equal(runtime.send('first message', null, [], '引用需要保留'), true); assert.equal(runtime.send('double submission', null), false); });
     const sourceId = chat.activeId;
-    assert.equal(chat.conversations[0].thinkingEffort, 'high');
+    assert.equal(chat.conversations[0].modelId, 'test', 'a new conversation binds to the model that answered it');
     assert.equal(chat.conversations[0].messages[0].quote, '引用需要保留');
     await until(() => requestSignal && chat.conversations[0].messages.length === 2);
     assert.equal(requestBodies[0].reasoning_effort, 'high');
@@ -443,7 +444,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     await act(async () => { personalization.update({ customInstructions: 'updated preference' }); });
     await act(async () => { chat.dispatch({ type: 'select', id: null }); });
     assert.equal(chat.activeId, null);
-    assert.equal(chat.lastThinkingEffort, 'high', 'a new conversation inherits the last selected effort');
+    assert.equal(models.selectedId, 'test', 'a new conversation keeps the most recently used model');
     await act(async () => { runtime.stop(); });
     await until(() => runtime.runningId === null);
     assert.equal(chat.activeId, null, 'reply updates must not navigate back to their source');
@@ -454,7 +455,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     requestSignal = undefined;
     await act(async () => { runtime.retry(sourceId); });
     await until(() => requestSignal && runtime.runningId === sourceId);
-    assert.equal(requestBodies[1].reasoning_effort, 'high', 'retry must keep the conversation effort');
+    assert.equal(requestBodies[1].reasoning_effort, 'high', 'retry resolves the effort of the conversation model');
     assert.ok(JSON.stringify(requestBodies[1]).includes('updated preference'), 'retry reads the latest personalization');
     assert.ok(JSON.stringify(requestBodies[1]).includes('引用需要保留'), 'retry includes the original quote');
     assert.ok(JSON.stringify(requestBodies[1]).includes('踩（没有帮助）'), 'retry includes feedback on the version being replaced');
@@ -478,7 +479,7 @@ test('conversation URLs override saved selection, follow history changes and rej
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
-  const initialState = { conversations: ['a', 'b'].map(id => ({ id, title: id, pinned: false, updatedAt: 0, messages: [] })), activeId: 'a', sidebarOpen: true, lastThinkingEffort: 'default' };
+  const initialState = { conversations: ['a', 'b'].map(id => ({ id, title: id, pinned: false, updatedAt: 0, messages: [] })), activeId: 'a', sidebarOpen: true };
   let chat, route;
   function Harness({ id }) { chat = useChat(); route = useConversationRouteState(id); return null; }
   async function navigate(id) {
@@ -665,7 +666,7 @@ test('reasoning stops animating before the answer starts and preserves its own d
   try {
     await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
     await act(async () => { await models.save({ ...config, protocol: 'message', baseUrl: 'https://test.invalid' }, 'key'); });
-    await act(async () => { assert.equal(runtime.send('问题', null, 'high'), true); });
+    await act(async () => { assert.equal(runtime.send('问题', null), true); });
     await until(() => chat.conversations[0]?.messages[1]?.reasoningActive === false && !!chat.conversations[0]?.messages[1]?.reasoning);
     const thinkingFinished = chat.conversations[0].messages[1];
     assert.notEqual(runtime.runningId, null, 'the request is still running after thinking_end');

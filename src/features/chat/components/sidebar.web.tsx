@@ -10,6 +10,7 @@ import { ConversationMenu } from './conversation-menu.web';
 import { ConversationSelect } from './conversation-select.web';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from '../conversation-href';
+import { forgetScrollPosition } from '../scroll-position.web';
 
 type Props = { onSearch: () => void };
 
@@ -73,7 +74,7 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
       {editing && <Dialog title={confirmDelete ? '删除这段对话？' : '重命名对话'} onClose={() => setEditing(null)} className="compact-dialog">
         {confirmDelete ? <>
           <p className="dialog-description">“{editing.title}”及其消息将被删除，此操作无法撤销。</p>
-          <div className="dialog-footer"><button className="secondary-button" onClick={() => setEditing(null)}>取消</button><button className="danger-button" onClick={() => { dispatch({ type: 'delete', id: editing.id }); if (activeId === editing.id) router.replace(conversationHref(null, preview)); setEditing(null); }}>删除对话</button></div>
+          <div className="dialog-footer"><button className="secondary-button" onClick={() => setEditing(null)}>取消</button><button className="danger-button" onClick={() => { dispatch({ type: 'delete', id: editing.id }); forgetScrollPosition(editing.id); if (activeId === editing.id) router.replace(conversationHref(null, preview)); setEditing(null); }}>删除对话</button></div>
         </> : <>
           <form onSubmit={(event) => { event.preventDefault(); if (title.trim()) { dispatch({ type: 'rename', id: editing.id, title }); setEditing(null); } }}>
             <label className="field-label" htmlFor="conversation-title">对话标题</label>

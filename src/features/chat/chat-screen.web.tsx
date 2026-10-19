@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { useChat, type MessageImage } from './chat-state';
@@ -7,9 +7,12 @@ import { ConversationTitle } from './components/conversation-title.web';
 import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom.web';
 import { useDrafts } from './draft-state';
 import { MessageContent } from './components/message-content.web';
+import { MessageAttachments } from './components/message-attachments.web';
+import { CollapsibleMessageContent } from './components/collapsible-message-content.web';
 import { MessageActions } from './components/message-actions.web';
 import { ReasoningBlock, getReasoningState } from './components/reasoning-block.web';
 import { useChatRuntime } from './chat-runtime';
+import { useModels } from '@/features/models/model-state';
 import { router } from 'expo-router';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from './conversation-href';
@@ -21,13 +24,19 @@ import { ConversationNavigator } from './components/conversation-navigator.web';
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 
 export default function ChatScreen() {
-  const { conversations, activeId, sidebarOpen, lastThinkingEffort, dispatch } = useChat();
+  const { conversations, activeId, sidebarOpen, dispatch } = useChat();
   const { drafts, setDraft, quotes, setQuote } = useDrafts();
   const runtime = useChatRuntime();
+  const models = useModels();
   const preview = useIsPreview();
   const [notice, setNotice] = useState<string | null>(null);
   const conversation = conversations.find((item) => item.id === activeId);
-  const thinkingEffort = conversation?.thinkingEffort ?? lastThinkingEffort;
+  // Each conversation remembers its model. Restoring it once per switch keeps the picker in
+  // sync with what the next request will use, while a model change inside a conversation
+  // is bound back through the composer callback instead of this effect.
+  const restoredFor = useRef<string | null | undefined>(undefined);
+  // The effort follows the model: switching models shows the depth that model last used.
+  const thinkingEffort = models.selected?.thinkingEffort ?? 'default';
   const lastMessage = conversation?.messages.at(-1);
   const failedReply = lastMessage?.role === 'assistant' && lastMessage.status === 'error' ? lastMessage : null;
   // One indicator for the whole wait, instead of separate copy for "request sent" and "no token yet".
@@ -53,14 +62,29 @@ export default function ChatScreen() {
     containerRef: messageScroller,
     containerKey: activeId ?? 'new',
     followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}`,
+    scrollKey: activeId,
   });
   function changeDraft(value: string) { setDraft(draftKey, value); }
+  // The composer is keyed by conversation, so a pending model switch can only bind the
+  // conversation whose picker started it.
+  function bindModel(modelId: string) {
+    if (activeId) dispatch({ type: 'bind-model', conversationId: activeId, modelId });
+  }
   function showNotice(message: string | null) { setNotice(message); runtime.clearError(); }
+  useEffect(() => {
+    if (!models.ready) return;
+    const id = conversation?.id ?? null;
+    if (restoredFor.current === id) return;
+    restoredFor.current = id;
+    const bound = conversation?.modelId;
+    if (!bound || bound === models.selectedId || !models.models.some((model) => model.id === bound)) return;
+    void models.select(bound).catch(() => setNotice('恢复该对话的模型失败，请重试。'));
+  }, [conversation, models]);
   function send(images: MessageImage[]) {
     const content = draft.trim();
     if (!content && !images.length && !quote.trim()) return false;
     const conversationId = activeId ?? createId();
-    const sent = runtime.send(content, conversationId, thinkingEffort, images, quote);
+    const sent = runtime.send(content, conversationId, images, quote);
     if (sent) {
       setDraft(draftKey, '');
       setQuote(draftKey, '');
@@ -69,10 +93,11 @@ export default function ChatScreen() {
     return sent;
   }
   function updateThinkingEffort(value: typeof thinkingEffort) {
-    dispatch({ type: 'thinking-effort', conversationId: conversation?.id ?? null, thinkingEffort: value });
+    if (!models.selected) return;
+    void models.setThinkingEffort(models.selected.id, value).catch(() => showNotice('保存思考强度失败，请重试。'));
   }
 
-  return <div className="chat-screen"><main ref={messageScroller} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
+  return <div className="chat-screen"><main ref={messageScroller} data-conversation-key={draftKey} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
     <header className="chat-topbar">
       {!sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
@@ -94,11 +119,11 @@ export default function ChatScreen() {
               || (live && message.status === 'streaming' && !message.content.trim());
             return message.role === 'user'
               ? <article className="user-message" key={message.id} data-user-message-id={message.id} aria-label="你的消息">
-                <div className={`user-message-content${message.images?.length ? ' has-images' : ''}`}>
+                {!!message.images?.length && <MessageAttachments images={message.images} />}
+                {(message.quote || message.content.trim()) && <div className="user-message-content">
                   {message.quote && <QuoteCard content={message.quote} />}
-                  {!!message.images?.length && <div className="user-message-images">{message.images.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name} />)}</div>}
-                  {message.content.trim() ? <MessageContent content={message.content} /> : null}
-                </div>
+                  {message.content.trim() ? <CollapsibleMessageContent content={message.content} /> : null}
+                </div>}
                 <MessageActions message={message} />
               </article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
@@ -112,23 +137,23 @@ export default function ChatScreen() {
                 dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId, updatedAt: Date.now() });
                 router.push(conversationHref(forkId, preview));
               }} />}
-              {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id, thinkingEffort)}>重新生成</button>}
+              {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id)}>重新生成</button>}
             </article>;
           })}
           {failedReply && runtime.runningId !== conversation.id && <div>
-            <button className="secondary-button reply-error-retry" type="button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id, thinkingEffort)}><Icon name="refresh" size={15} />重新生成</button>
+            <button className="secondary-button reply-error-retry" type="button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id)}><Icon name="refresh" size={15} />重新生成</button>
           </div>}
           {awaitingReply && <ReasoningBlock state="running" startedAt={liveStartedAt} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={liveReasoningOpen} onOpenChange={setLiveReasoningOpen} />}
-          {!runtime.runningId && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id, thinkingEffort)}>生成回复</button>}
+          {!runtime.runningId && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id)}>生成回复</button>}
         </div>
       </div>
       <div className="bottom-composer">
         <ScrollToBottomButton generating={generating} visible={scrollToBottomVisible} onScrollToBottom={scrollToBottom} />
-        <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
+        <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
       </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
       <div className="welcome-heading"><h1>Matrius</h1></div>
-      <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
+      <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
     </div></div>}
   </main>
     <ChatNotice message={runtime.error ?? notice} onClose={() => showNotice(null)} />

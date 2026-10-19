@@ -281,13 +281,21 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 @media (hover: none) { .user-message > .message-actions { opacity: 1; pointer-events: auto; } }
 @media (pointer: coarse) { .message-action { width: 44px; height: 44px; } }
 .user-message-content { min-width: 0; overflow-wrap: anywhere; padding: 12px 18px; max-width: 86%; background: var(--user-bubble); border-radius: var(--radius-lg); font-size: var(--text-body); line-height: 1.6; }
-/* Images are the message here, so the bubble becomes a tight frame around them and the text,
-   when present, keeps its own inset instead of taking the frame's padding twice. */
-.user-message-content.has-images { padding: 8px; }
-.user-message-content.has-images > .message-markdown { padding: 4px 10px; }
-.user-message-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.user-message-images img { display: block; width: auto; max-width: 100%; max-height: 280px; border-radius: 12px; object-fit: cover; }
-.user-message-images + .message-markdown { padding-top: 8px; }
+/* Long user messages fold at about eight lines. The body is always capped until expanded, so the
+   overflow check has something to measure; short messages simply never reach the cap. */
+.collapsible-message-body { position: relative; max-height: 13em; overflow: hidden; }
+.collapsible-message.is-expanded .collapsible-message-body { max-height: none; overflow: visible; }
+.collapsible-message.is-folded .collapsible-message-body::after { content: ''; position: absolute; right: 0; bottom: 0; left: 0; height: 2.6em; background: linear-gradient(to bottom, transparent, var(--user-bubble)); pointer-events: none; }
+.collapsible-message-toggle { display: inline-flex; align-items: center; gap: 3px; margin-top: 6px; padding: 2px 0; color: var(--muted-text); font-size: var(--text-small); }
+.collapsible-message-toggle:hover { color: var(--foreground); }
+/* Sent files keep the composer's card shape but sit above the bubble: the bubble belongs to the
+   typed text, and an image-only message then has no empty bubble at all. */
+.message-attachments { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 86%; margin-bottom: 8px; }
+.message-attachment-grid { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 100%; }
+.message-attachments-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 1px solid color-mix(in srgb, var(--foreground) 10%, var(--background)); border-radius: 999px; background: color-mix(in srgb, var(--foreground) 3%, var(--background)); color: var(--muted-text); font-size: var(--text-caption); }
+.message-attachments-toggle:hover { background: var(--soft); color: var(--foreground); }
+.message-attachment { grid-template-columns: 30px minmax(0, 1fr); cursor: default; }
+@media (pointer: coarse) { .message-attachment { grid-template-columns: 30px minmax(0, 1fr); } .message-attachments-toggle { min-height: 44px; } }
 .connection-notice { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0 24px; padding: 12px 0; color: var(--muted-text); font-size: var(--text-caption); }
 .connection-notice > svg { margin-top: 2px; }
 .connection-notice strong { font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
