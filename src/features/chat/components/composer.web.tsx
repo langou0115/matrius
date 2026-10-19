@@ -79,8 +79,9 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   const models = useModels();
   const runtime = useChatRuntime();
   const { activeId } = useChat();
-  const running = runtime.runningId !== null && runtime.runningId === activeId;
-  const blocked = runtime.runningId !== null;
+  // Only this conversation is blocked: another chat may keep generating in the background.
+  const running = runtime.isRunning(activeId);
+  const blocked = running;
   const effortLabel = effortOptions.find((option) => option.value === thinkingEffort)?.label ?? '';
 
   // The current model is what people come back for, so its provider group and its own row
@@ -372,7 +373,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           {models.selected && <span className="model-picker-thinking-value">{effortLabel}</span>}
           <Icon name="chevron" size={18} className="model-picker-chevron" />
         </button>
-        {running ? <button type="button" className="send-button" onClick={runtime.stop} aria-label="停止生成"><span className="stop-generation-icon" /></button>
+        {running ? <button type="button" className="send-button" onClick={() => runtime.stop(activeId ?? undefined)} aria-label="停止生成"><span className="stop-generation-icon" /></button>
           : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length && !quote?.trim()) || blocked || sending} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
       </div>
     </form>

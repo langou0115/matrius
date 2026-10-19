@@ -20,4 +20,6 @@ export type Message = {
 export type AgentProfile = { customInstructions: string; aboutName: string; occupation: string; aboutMore: string };
 export type ReplyUpdate = { content: string; reasoning: string; reasoningActive: boolean };
 export type ReplyResult = { status: 'complete' | 'stopped' | 'error'; error?: string };
-export type RuntimeSnapshot = { runningId: string | null; startedAt: number | null; error: string | null };
+export type RuntimeRun = { conversationId: string; replyId: string; startedAt: number };
+/** Requests are tracked per conversation so independent chats can generate at the same time. */
+export type RuntimeSnapshot = { runs: Record<string, RuntimeRun>; error: string | null };

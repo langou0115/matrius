@@ -5,6 +5,7 @@ import Head from 'expo-router/head';
 import { AppFrame } from '@/components/web/app-frame';
 import { Workspace } from '@/components/web/workspace';
 import { LocalWorkspace } from '@/components/web/local-workspace';
+import { BackgroundNotifications } from '@/features/chat/components/background-notifications.web';
 import '@/global.css';
 import { version as katexVersion } from 'katex';
 
@@ -25,6 +26,8 @@ export default function WebLayout() {
     <Head><title>Matrius · 自由对话</title><meta name="description" content="一个安静、自由的 AI 对话空间。" /><link rel="stylesheet" href={`/vendor/katex/${katexVersion}/katex.min.css`} /></Head>
     <LocalWorkspace key={preview ? 'mock' : 'local'} preview={preview}><AppFrame>
       {fullPage ? <Slot /> : <Workspace><Slot /></Workspace>}
+      {/* Inside the themed shell and above every route, including full-page settings. */}
+      <BackgroundNotifications />
     </AppFrame></LocalWorkspace>
   </>;
 }

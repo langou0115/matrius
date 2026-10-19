@@ -39,13 +39,15 @@ src/core/agent/
 ├── context.ts         # 引用、图片、历史上下文与请求长度检查
 ├── types.ts           # Message、MessageImage、AgentProfile 与运行状态契约
 ├── system-prompt.ts   # 基础系统提示与用户偏好组装
+├── title.ts           # 独立的一次性会话标题请求与规范化
 └── thinking-effort.ts # 跨端思考强度契约
 ```
 
 - 模型传输与协议解码放在 `src/core/llm/`，Runtime 不与某一种模型协议耦合。
-- `createAgentRuntime({ onReply })` 返回 `start(request)`、`stop()`、`getSnapshot()`、`subscribe(listener)`、`clearError()` 和 `dispose()`；每个工作区独立创建实例，同一实例只允许一个活动请求。`start` 接收模型配置、临时凭据、消息、会话/回复 ID、系统提示与思考强度；请求开始时复制输入，后续 UI 修改不改变正在运行的请求。凭据不进入可订阅状态或消息存储。
+- `createAgentRuntime({ onReply })` 返回 `start(request)`、`stop(conversationId?)`、`getSnapshot()`、`subscribe(listener)`、`clearError()` 和 `dispose()`；每个工作区独立创建实例。运行状态按会话记录（`runs: Record<conversationId, RuntimeRun>`）：同一会话只允许一个活动请求，不同会话可以并发；`stop(id)` 只取消指定会话，无参调用取消全部（仅用于工作区卸载）。`start` 接收模型配置、临时凭据、消息、会话/回复 ID、系统提示与思考强度；请求开始时复制输入，后续 UI 修改不改变正在运行的请求。凭据不进入可订阅状态或消息存储。运行失败写入对应助手消息（`status: 'error'`）而不是工作区级 `error`，避免后台失败串到当前打开的会话；`error` 仅承载发送前的配置/凭据/上下文校验错误。
 - Runtime 默认延迟加载 `runner.ts`，也可通过 `loadRunner` 注入兼容实现。`core/llm/direct-stream.ts` 负责三种协议的流式传输；平台差异留在传输、凭据和存储适配层，不引入核心依赖。
-- `features/chat/chat-runtime.tsx` 是 React 聊天适配层，只读取当前模型/凭据与偏好、处理发送/重试、把核心回复写入会话状态；通过 `useSyncExternalStore` 订阅核心状态。删除运行中的对话或卸载工作区会取消请求，切换设置或其他会话不改变生成所属会话。复制文本、选区和导航继续属于聊天 UI。
+- `features/chat/chat-runtime.tsx` 是 React 聊天适配层，只读取当前模型/凭据与偏好、处理发送/重试、把核心回复写入会话状态；通过 `useSyncExternalStore` 订阅核心状态。删除运行中的对话只取消该会话的请求，卸载工作区取消全部；切换设置或其他会话不改变生成所属会话。后台回复完成且用户不在该会话（或处于设置等全页路由）时，会话写入 `completedReadAt: null` 并在适配层生成最多 3 条临时通知卡片；打开会话后清除未读。复制文本、选区和导航继续属于聊天 UI。
+- 会话标题由 `core/agent/title.ts` 通过默认 `directStream` 单独请求生成，不经过 `createAgentRuntime`：不创建运行记录、不占用会话运行槽、不被正在生成的回复阻塞，也不会写入会话历史或触发后台通知。首条消息发送后与回复并行发起，只读取首条用户消息（含引用，正文 4000、引用 2000 字符上限）；请求默认 20 秒超时并可随会话删除或工作区卸载取消。模型输出经 `normalizeConversationTitle` 取首行、去掉 Markdown/“标题：”前缀与成对引号并截断到 32 个字形。失败、超时、缺 key 或空输出静默返回 `null`，保留首条消息的截断标题；后续回复成功后由聊天适配层重试。生成结果只替换带 `titleSource: 'auto'` 且标题仍等于请求时快照的会话，手动重命名与分支永不被覆盖。
 - 共享核心已通过无 UI 的 Node 测试，覆盖取消、加载期间停止、输入快照、销毁与订阅清理；现有 Web 调用已接入。移动端页面、凭据/数据库及实际流式传输环境仍待接入和真机验证，抽取核心不代表已完成原生端适配。
 - 引用回复通过用户消息的可选 `quote` 字段进入上下文；请求组装时把引用原文作为参考资料与本次提问分开，三种模型协议共用同一格式，长度计入上下文检查。重新生成继续携带原引用；不把引用改写为系统消息，也不重发历史思考正文。
 - 助手消息的可选 `feedback: 'good' | 'bad'` 由 `context.ts` 在对应助手回复之后组装为用户反馈消息，再交给 pi-agent。三种协议都携带，反馈文本计入输入长度，不改写助手原文、不推断评分原因。评分变更用于下一次请求，不更改正在生成的请求快照；取消评分后不再组装该反馈。重新生成已评分的旧版本时，用旧回复、评分及临时重答请求作为上下文；临时请求不写入历史，新版回复不继承旧评分。

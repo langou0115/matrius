@@ -1,10 +1,10 @@
 import { readWorkspace } from '@/core/database/browser-store.web';
-import type { ChatState, Conversation, Message } from '@/features/chat/chat-state';
+import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
 import { readPersonalization, type PersonalizationPreferences } from '@/features/settings/personalization';
 
-export type WorkspaceData = { schemaVersion: 1; chat: ChatState; appearance: AppearancePreferences; personalization?: PersonalizationPreferences };
+export type WorkspaceData = { schemaVersion: 1; chat: PersistedChatState; appearance: AppearancePreferences; personalization?: PersonalizationPreferences };
 export type LoadedWorkspace = { data: WorkspaceData; revision: number };
 
 /** Attached images are request-only: keep their bytes out of every snapshot written to storage.
@@ -35,9 +35,14 @@ function readMessage(value: unknown): Message {
 function readConversation(value: unknown): Conversation {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.pinned !== 'boolean' || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) || !Array.isArray(value.messages)) throw new Error('Invalid stored conversation');
   if (value.errorReadAt !== undefined && value.errorReadAt !== null && (typeof value.errorReadAt !== 'number' || !Number.isFinite(value.errorReadAt))) throw new Error('Invalid stored conversation error status');
+  if (value.completedReadAt !== undefined && value.completedReadAt !== null && (typeof value.completedReadAt !== 'number' || !Number.isFinite(value.completedReadAt))) throw new Error('Invalid stored conversation completion status');
+  const titleSource = value.titleSource === 'auto' || value.titleSource === 'ai' || value.titleSource === 'manual' ? value.titleSource : undefined;
   return { id: value.id, title: value.title, pinned: value.pinned, updatedAt: value.updatedAt,
     ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
-    messages: value.messages.map(readMessage), ...(value.errorReadAt !== undefined ? { errorReadAt: value.errorReadAt as number | null } : {}) };
+    ...(titleSource ? { titleSource } : {}),
+    messages: value.messages.map(readMessage),
+    ...(value.errorReadAt !== undefined ? { errorReadAt: value.errorReadAt as number | null } : {}),
+    ...(value.completedReadAt !== undefined ? { completedReadAt: value.completedReadAt as number | null } : {}) };
 }
 
 export async function loadWorkspace(): Promise<LoadedWorkspace> {

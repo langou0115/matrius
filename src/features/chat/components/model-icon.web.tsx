@@ -28,7 +28,8 @@ export function ModelIcon({ modelId = '', name = '', providerName = '', size = 1
     if (/kimi|moonshot/.test(id)) return <Kimi {...props} />;
     if (id.includes('minimax')) return <Minimax {...props} />;
     if (/doubao|豆包/.test(id)) return <Doubao {...props} variant="color" />;
-    if (/openai|chatgpt|gpt-|(?:^|[\s/])o[1-9](?:[-\s]|$)/.test(id)) return <Openai {...props} variant="light" />;
+    // `gpt` may be followed by a space ("GPT Astra"), not only a hyphen ("gpt-4o").
+    if (/openai|chatgpt|(?:^|[\s/_-])gpt(?=[-_.\s/]|\d|$)|(?:^|[\s/])o[1-9](?:[-\s]|$)/.test(id)) return <Openai {...props} variant="light" />;
     if (/grok|xai|x\.ai/.test(id)) return <Grok {...props} />;
     // These brands provide monochrome marks; use their authored theme-safe variant.
     if (id.includes('anthropic')) return <Anthropic {...props} variant="mono" />;

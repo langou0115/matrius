@@ -42,10 +42,11 @@ export default function ChatScreen() {
   // One indicator for the whole wait, instead of separate copy for "request sent" and "no token yet".
   // Until the reply message exists the line lives outside the list; once it does, the reply renders
   // the same line itself, so the two never show together.
-  const generating = runtime.runningId !== null && runtime.runningId === activeId;
+  const conversationRun = activeId ? runtime.runs[activeId] : undefined;
+  const generating = !!conversationRun;
   const liveReply = lastMessage?.role === 'assistant' ? lastMessage : null;
-  const awaitingReply = runtime.runningId === conversation?.id && !liveReply;
-  const liveStartedAt = runtime.runningId === conversation?.id ? runtime.startedAt : null;
+  const awaitingReply = generating && !liveReply;
+  const liveStartedAt = conversationRun?.startedAt ?? null;
   // Shared by the wait line and the reply's own line so expanding before the first token keeps
   // the reasoning body open when the text starts streaming into it. It also carries across runs:
   // someone who opened the stream once is asking to watch it, not to open it every time.
@@ -71,6 +72,12 @@ export default function ChatScreen() {
     if (activeId) dispatch({ type: 'bind-model', conversationId: activeId, modelId });
   }
   function showNotice(message: string | null) { setNotice(message); runtime.clearError(); }
+  // Settings and other full-page routes unmount this screen while a run may still be going;
+  // completion must stay unread in that case even though activeId did not change.
+  useEffect(() => {
+    dispatch({ type: 'visible', value: true });
+    return () => dispatch({ type: 'visible', value: false });
+  }, [dispatch]);
   useEffect(() => {
     if (!models.ready) return;
     const id = conversation?.id ?? null;
@@ -103,13 +110,16 @@ export default function ChatScreen() {
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
         onRename={(title) => dispatch({ type: 'rename', id: conversation.id, title })} />}
     </header>
-    {runtime.runningId && runtime.runningId !== activeId && <div className="chat-runtime-notice" role="status"><span>另一个对话正在生成回复。</span><button onClick={runtime.stop}>停止生成</button></div>}
     {hasMessages ? <>
       <div className="messages-scroll">
         <div className="messages-content">
           {messages.map((message) => {
+            // A failed request can leave no prose at all. The error still has to be visible
+            // here rather than in the workspace-wide notice, which now belongs to this reply.
             if (message.role === 'assistant' && message.status === 'error' && !message.content.trim() && !message.reasoning?.trim()) {
-              return null;
+              return <article className="assistant-message" key={message.id} aria-label="助手回复">
+                <p className="reply-status" role="alert">{message.error ?? '模型回复失败，请稍后重试。'}</p>
+              </article>;
             }
             const live = message.id === liveReply?.id;
             // A live reply shows the disclosure before reasoning arrives, so it can be opened
@@ -130,6 +140,7 @@ export default function ChatScreen() {
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
               <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
+              {message.status === 'error' && <p className="reply-status" role="alert">{message.error ?? '模型回复失败，请稍后重试。'}</p>}
               {message.status === 'stopped' && <p className="reply-status">已停止生成</p>}
               {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message}
                 onFeedback={(feedback) => dispatch({ type: 'feedback', conversationId: conversation.id, messageId: message.id, feedback })} onFork={() => {
@@ -137,14 +148,14 @@ export default function ChatScreen() {
                 dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId, updatedAt: Date.now() });
                 router.push(conversationHref(forkId, preview));
               }} />}
-              {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id)}>重新生成</button>}
+              {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={generating} onClick={() => runtime.retry(conversation.id)}>重新生成</button>}
             </article>;
           })}
-          {failedReply && runtime.runningId !== conversation.id && <div>
-            <button className="secondary-button reply-error-retry" type="button" disabled={runtime.runningId !== null} onClick={() => runtime.retry(conversation.id)}><Icon name="refresh" size={15} />重新生成</button>
+          {failedReply && !generating && <div>
+            <button className="secondary-button reply-error-retry" type="button" disabled={generating} onClick={() => runtime.retry(conversation.id)}><Icon name="refresh" size={15} />重新生成</button>
           </div>}
           {awaitingReply && <ReasoningBlock state="running" startedAt={liveStartedAt} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={liveReasoningOpen} onOpenChange={setLiveReasoningOpen} />}
-          {!runtime.runningId && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id)}>生成回复</button>}
+          {!generating && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id)}>生成回复</button>}
         </div>
       </div>
       <div className="bottom-composer">

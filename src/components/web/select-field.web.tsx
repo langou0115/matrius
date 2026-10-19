@@ -1,10 +1,12 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 
 import { Icon } from './icon';
 
 export type SelectFieldOption = {
   id: string;
   label: string;
+  /** Optional leading mark, for example a model brand icon. */
+  icon?: ReactNode;
 };
 
 type SelectFieldProps = {
@@ -35,8 +37,11 @@ export function SelectField({ disabled = false, label, onChange, options, value 
     if (!open) return;
     const element = popover.current;
     if (!element) return;
-    // Land on the current value, so arrow keys start from where the reader is.
-    element.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus({ preventScroll: true });
+    // Land on the current value, so arrow keys start from where the reader is. The list
+    // scrolls once it grows past its max height, so bring that option into view.
+    const selected = element.querySelector<HTMLButtonElement>('[aria-pressed="true"]');
+    selected?.focus({ preventScroll: true });
+    selected?.scrollIntoView({ block: 'nearest' });
 
     function dismissOnOutsidePointer(event: PointerEvent) {
       if (!(event.target instanceof Node)) return;
@@ -93,6 +98,7 @@ export function SelectField({ disabled = false, label, onChange, options, value 
         setOpen(true);
       }}
     >
+      {current?.icon && <span className="select-field-icon" aria-hidden="true">{current.icon}</span>}
       <span id={valueId} className="select-field-value">{current?.label ?? ''}</span>
       <Icon name="chevron" size={16} className="select-field-chevron" />
     </button>
@@ -105,6 +111,7 @@ export function SelectField({ disabled = false, label, onChange, options, value 
         aria-pressed={option.id === value}
         onClick={() => choose(option.id)}
       >
+        {option.icon && <span className="select-field-icon" aria-hidden="true">{option.icon}</span>}
         <span className="select-field-option-label">{option.label}</span>
         {option.id === value && <Icon name="check" size={15} />}
       </button>)}

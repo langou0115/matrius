@@ -9,6 +9,7 @@ import { useChat, type Conversation } from '../chat-state';
 import { ConversationMenu } from './conversation-menu.web';
 import { ConversationSelect } from './conversation-select.web';
 import { useIsPreview } from '@/features/workspace/preview-context';
+import { useChatRuntime } from '../chat-runtime';
 import { conversationHref } from '../conversation-href';
 import { forgetScrollPosition } from '../scroll-position.web';
 
@@ -16,6 +17,7 @@ type Props = { onSearch: () => void };
 
 export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
   const { conversations, activeId, dispatch } = useChat();
+  const runtime = useChatRuntime();
   const preview = useIsPreview();
   const homeHref = preview ? '/mock/chat' : '/';
   const [editing, setEditing] = useState<Conversation | null>(null);
@@ -50,14 +52,21 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
           <section className="conversation-group" key={group.name}>
             <h2 className="sidebar-section-label"><button type="button" aria-expanded={!collapsed[group.name]} aria-controls={`sidebar-${group.name}`} onClick={() => setCollapsed((current) => ({ ...current, [group.name]: !current[group.name] }))}><span>{group.name}</span><Icon name="chevron" size={16} /></button></h2>
             <div id={`sidebar-${group.name}`} hidden={collapsed[group.name]}>
-            {group.items.map((item) => (
-              <div className={`conversation-item ${activeId === item.id ? 'is-active' : ''} ${menu?.conversation.id === item.id ? 'menu-open' : ''}`} key={item.id}>
+            {group.items.map((item) => {
+              const last = item.messages.at(-1);
+              // Status is only meaningful while the conversation is not the one on screen;
+              // a background run wins over an older unread completion.
+              const status = item.id !== activeId && runtime.isRunning(item.id) ? 'running' as const
+                : item.id !== activeId && item.completedReadAt === null && last?.role === 'assistant' && last.status === 'complete' ? 'completed' as const
+                  : undefined;
+              return <div className={`conversation-item ${activeId === item.id ? 'is-active' : ''} ${menu?.conversation.id === item.id ? 'menu-open' : ''}`} key={item.id}>
                 <ConversationSelect title={item.title} active={activeId === item.id}
-                  hasUnreadError={item.errorReadAt == null && item.messages.at(-1)?.role === 'assistant' && item.messages.at(-1)?.status === 'error'}
+                  hasUnreadError={item.errorReadAt == null && last?.role === 'assistant' && last.status === 'error'}
+                  status={status}
                   onSelect={() => select(item.id)} />
                 <button className="icon-button conversation-more" aria-label={`对话操作：${item.title}`} aria-haspopup="menu" aria-expanded={menu?.conversation.id === item.id} aria-controls={menu?.conversation.id === item.id ? 'conversation-menu' : undefined} onClick={(event) => { setMenu(menu?.conversation.id === item.id ? null : { conversation: item, anchor: event.currentTarget }); }}><Icon name="more" size={17} /></button>
-              </div>
-            ))}
+              </div>;
+            })}
             </div>
           </section>
         ))}

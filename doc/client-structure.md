@@ -31,7 +31,7 @@ src/
 │   │   ├── chat-state.tsx              会话状态、选择与管理动作
 │   │   ├── draft-state.tsx             独立草稿状态，跨设置导航保留
 │   │   ├── message-text.ts            用户消息与引用的完整复制文本
-│   │   ├── chat-runtime.tsx           聊天状态/模型设置与共享 Agent 核心之间的 React 适配
+│   │   ├── chat-runtime.tsx           聊天状态/模型设置与共享 Agent 核心之间的 React 适配，含标题请求调度
 │   │   ├── chat-screen.web.tsx         欢迎页、消息区、按会话保存的输入草稿
 │   │   ├── chat-route.web.tsx          URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
@@ -49,6 +49,7 @@ src/
 │   │       ├── model-icon.web.tsx      theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
 │   │       ├── chat-notice.web.tsx     聊天区顶部的非模态错误提示卡片
+│   │       ├── background-notifications.web.tsx  后台完成回复的临时卡片与跳转
 │   │       ├── selection-quote.web.tsx 助手正文选区与浮动引用操作
 │   │       ├── quote-card.web.tsx      草稿与已发送引用预览、移除和全文弹窗
 │   │       ├── conversation-navigator.web.tsx 提问目录、阅读位置与消息定位
@@ -67,6 +68,7 @@ src/
 │   ├── context.ts                     引用、图片与历史上下文组装、请求校验
 │   ├── types.ts                       共享消息、用户资料和运行状态契约
 │   ├── system-prompt.ts               用户资料与自定义指令的系统提示
+│   ├── title.ts                       独立会话标题请求、超时与标题规范化
 │   └── thinking-effort.ts             共享思考强度
 ├── core/llm/direct-stream.ts           三协议流式传输
 ├── core/platform/clipboard.web.ts      Web 原文复制适配
@@ -82,6 +84,7 @@ src/
 - 模板 Explore、标签导航、启动动画组件和 reset-project 脚本已移除。
 - `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 9 个专项会话。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需加一个路由文件与一条清单记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；`src/app/mock/_layout.tsx` 用 `__DEV__` 统一保护所有子路由，生产模式跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
 - Web 会话与外观通过 IndexedDB 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过本地 Runtime 生成真实回复。
+- 新建对话首条消息发送后，`chat-runtime.tsx` 在回复之外并行调用 `core/agent/title.ts` 生成标题；`titleModelId` 已配置时使用该模型，否则跟随会话绑定的模型。生成失败保留首条消息截断标题，并在后续回复成功后重试；`titleSource` 防止迟到的结果覆盖手动重命名或分支标题。每个会话最多一个进行中的标题请求，删除会话或卸载工作区时取消。
 - 发送、置顶、重命名和删除会写回浏览器数据库；读取或保存失败有提示。当前会话、侧栏和外观状态也会恢复，草稿仅在本次页面会话中保留。
 - `/settings` 在根布局中使用独立全页，不包在聊天 Workspace 内；Provider 保持挂载，返回时会话与草稿不丢失。
 - `/` 为新对话，`/c/<conversation-id>` 为已创建对话；首次发送成功后替换为空白页对应的新地址，侧栏、搜索和分支切换通过 Router 写入历史，浏览器前进后退按 URL 选择对话。设置返回当前对话地址；无效 ID 使用弹窗提示并提供返回新对话操作。Mock 使用 `/mock/chat/c/<conversation-id>`，仍受开发守卫保护。URL 在本地仓储加载后解析，不依赖上次保存的 activeId。
@@ -124,7 +127,7 @@ src/
 
 - `features/models/model-settings-screen.web.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型、删除确认四类对话框；`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.web.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.web.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
 - `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现。
-- `core/agent/runtime.ts`：无 React/DOM 依赖的共享运行入口，持有活动请求、批量回复和运行状态；`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
-- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。未来原生页面复用同一 Agent 核心，凭据、存储和流式传输环境单独适配。
+- `core/agent/runtime.ts`：无 React/DOM 依赖的共享运行入口，按会话持有一组活动请求（`runs`）、批量回复和运行状态；同一会话不可重复启动，不同会话可并发，`stop(id)` 只取消对应会话。`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
+- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。未来原生页面复用同一 Agent 核心，凭据、存储和流式传输环境单独适配。
 
-- 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部本地用户行；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。
+- 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部本地用户行；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读 check（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。

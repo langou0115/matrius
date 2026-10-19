@@ -30,7 +30,7 @@ function errorMessage(reason: unknown) {
 
 export default function ModelSettingsScreen() {
   const models = useModels();
-  const { runningId } = useChatRuntime();
+  const { isAnyRunning } = useChatRuntime();
   const [providerForm, setProviderForm] = useState<ProviderForm | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [modelForm, setModelForm] = useState<ProviderModelConfig | null>(null);
@@ -75,7 +75,7 @@ export default function ModelSettingsScreen() {
     finally { setSaving(false); }
   }
 
-  const disabled = saving || !models.ready || !!runningId;
+  const disabled = saving || !models.ready || isAnyRunning;
   const providerFormEditing = !!providerForm && models.providers.some((item) => item.id === providerForm.id);
   const modelFormEditing = !!modelForm && !!models.providers.find((item) => item.id === modelProviderId)?.models.some((item) => item.id === modelForm.id);
 
@@ -142,7 +142,7 @@ export default function ModelSettingsScreen() {
   return <SettingsPage title="模型服务" description="按服务商管理连接信息，再发现并添加要使用的模型。">
     {models.error && <p className="model-form-error" role="alert">{models.error}</p>}
     {!models.ready && !models.error && <p role="status" className="settings-footnote">正在读取模型配置…</p>}
-    {runningId && <p className="settings-footnote" role="status">正在生成回复，请先停止或等待完成后再修改配置。</p>}
+    {isAnyRunning && <p className="settings-footnote" role="status">正在生成回复，请先停止或等待完成后再修改配置。</p>}
 
     <section className="settings-section" aria-labelledby="providers-heading">
       <div className="model-section-heading">

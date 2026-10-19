@@ -7,7 +7,7 @@ import { createStoredModelCredentials } from './model-credential-store.web';
 import { loadModelPreferences, saveModelPreferences, type ModelPreferences } from './model-repository.web';
 
 function useModelState(preview: boolean) {
-  const [data, setData] = useState<ModelPreferences>({ providers: [], selectedId: null });
+  const [data, setData] = useState<ModelPreferences>({ providers: [], selectedId: null, titleModelId: null });
   const [ready, setReady] = useState(preview);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
@@ -43,6 +43,7 @@ function useModelState(preview: boolean) {
     await update({
       providers: [...current.current.providers.filter((item) => item.id !== valid.id), valid],
       selectedId: current.current.selectedId ?? valid.models[0]?.id ?? null,
+      titleModelId: current.current.titleModelId,
     });
     if (!valid.requiresApiKey) await vault.delete(valid.id);
     else if (apiKey.trim()) await vault.set(valid.id, apiKey);
@@ -62,6 +63,7 @@ function useModelState(preview: boolean) {
     await update({
       providers: current.current.providers.map((item) => item.id === providerId ? valid : item),
       selectedId: current.current.selectedId ?? value.id,
+      titleModelId: current.current.titleModelId,
     });
   }
 
@@ -71,12 +73,17 @@ function useModelState(preview: boolean) {
       models: provider.models.filter((item) => item.id !== id),
     }));
     const remainingModels = flattenProviderModels(providers);
-    await update({ providers, selectedId: current.current.selectedId === id ? remainingModels[0]?.id ?? null : current.current.selectedId });
+    await update({
+      providers,
+      selectedId: current.current.selectedId === id ? remainingModels[0]?.id ?? null : current.current.selectedId,
+      titleModelId: current.current.titleModelId === id ? null : current.current.titleModelId,
+    });
   }
 
   return {
     ...data, models, ready, error, version,
     selected: models.find((item) => item.id === data.selectedId),
+    titleModel: models.find((item) => item.id === data.titleModelId),
     getKey: (providerId: string) => vault.get(providerId),
     saveProvider,
     saveModel,
@@ -98,6 +105,7 @@ function useModelState(preview: boolean) {
       await update({
         providers: [...current.current.providers.filter((item) => item.id !== provider.id), provider],
         selectedId: current.current.selectedId ?? valid.id,
+        titleModelId: current.current.titleModelId,
       });
       if (!provider.requiresApiKey) await vault.delete(provider.id);
       else if (apiKey.trim()) await vault.set(provider.id, apiKey);
@@ -105,6 +113,12 @@ function useModelState(preview: boolean) {
     },
     async select(id: string) {
       if (flattenProviderModels(current.current.providers).some((item) => item.id === id)) await update({ ...current.current, selectedId: id });
+    },
+    /** `null` follows the conversation's bound model; a title request never changes it. */
+    async setTitleModelId(id: string | null) {
+      if (id !== null && !flattenProviderModels(current.current.providers).some((item) => item.id === id)) return;
+      if (current.current.titleModelId === id) return;
+      await update({ ...current.current, titleModelId: id });
     },
     /** Each model keeps its own thinking depth, so switching models restores what that model last used. */
     async setThinkingEffort(id: string, thinkingEffort: ThinkingEffort) {
@@ -123,7 +137,11 @@ function useModelState(preview: boolean) {
       const providers = current.current.providers.filter((item) => item.id !== id);
       const remainingModels = flattenProviderModels(providers);
       const removed = current.current.providers.find((item) => item.id === id);
-      await update({ providers, selectedId: removed?.models.some((item) => item.id === current.current.selectedId) ? remainingModels[0]?.id ?? null : current.current.selectedId });
+      await update({
+        providers,
+        selectedId: removed?.models.some((item) => item.id === current.current.selectedId) ? remainingModels[0]?.id ?? null : current.current.selectedId,
+        titleModelId: removed?.models.some((item) => item.id === current.current.titleModelId) ? null : current.current.titleModelId,
+      });
       await vault.delete(id);
       setVersion((value) => value + 1);
     },

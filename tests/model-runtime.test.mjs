@@ -12,6 +12,7 @@ import { searchSettings } from '../src/features/settings/settings-catalog.ts';
 import { PersonalizationProvider, usePersonalization } from '../src/features/settings/personalization-state.tsx';
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from '../src/core/agent/system-prompt.ts';
+import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
 
 const config = { id: 'test', name: 'Test model', protocol: 'completion', baseUrl: 'https://test.invalid/v1', modelId: 'test-model', contextWindow: 128000, maxOutput: 4096, requiresApiKey: true };
 const history = [{ id: 'u1', role: 'user', content: '你好' }, { id: 'a1', role: 'assistant', content: '先前的回答', reasoning: 'do not resend hidden thinking' }, { id: 'u2', role: 'user', content: '继续', quote: '选中的历史回复\n第二段引用' }];
@@ -41,8 +42,9 @@ test('shared runtime works without a UI, freezes request inputs and preserves pa
   const requestConfig = { ...config };
   const messages = structuredClone(history);
   assert.equal(runtime.start({ conversationId: 'a', replyId: 'reply', config: requestConfig, apiKey: 'session-secret', messages }), true);
-  assert.equal(runtime.getSnapshot().runningId, 'a');
-  assert.equal(runtime.start({ conversationId: 'b', replyId: 'other', config, apiKey: 'key', messages: history }), false, 'one active run per workspace');
+  assert.equal(runtime.getSnapshot().runs.a.conversationId, 'a');
+  assert.equal(runtime.getSnapshot().runs.a.replyId, 'reply');
+  assert.equal(runtime.start({ conversationId: 'a', replyId: 'other', config, apiKey: 'key', messages: history }), false, 'a conversation cannot start twice');
   requestConfig.modelId = 'edited-after-send';
   messages[2].quote = 'edited quote';
   await loaded.promise;
@@ -59,8 +61,7 @@ test('shared runtime works without a UI, freezes request inputs and preserves pa
   assert.equal(replies[0].message.status, 'stopped');
   assert.equal(replies[0].message.content, 'partial answer');
   assert.ok(Number.isFinite(replies[0].message.thinkingMs));
-  assert.equal(runtime.getSnapshot().runningId, null);
-  assert.equal(runtime.getSnapshot().startedAt, null);
+  assert.deepEqual(runtime.getSnapshot().runs, {});
   assert.ok(!JSON.stringify(runtime.getSnapshot()).includes('session-secret'));
   assert.ok(notifications >= 2);
   unsubscribe();
@@ -90,16 +91,50 @@ test('shared runtime validates requests, handles cancellation during lazy loadin
   runtime.stop();
   loader.resolve({ createReplyRun() { assert.fail('a cancelled lazy load must not create a runner'); } });
   await finished.promise;
-  assert.equal(runtime.getSnapshot().runningId, null);
+  assert.deepEqual(runtime.getSnapshot().runs, {});
   assert.equal(replies, 1);
   const disposedLoader = deferred();
   const disposed = createAgentRuntime({ loadRunner: () => disposedLoader.promise, onReply() { assert.fail('disposed runtimes must not publish replies'); } });
   assert.equal(disposed.start(input), true);
   disposed.dispose();
-  assert.equal(disposed.getSnapshot().runningId, null);
+  assert.deepEqual(disposed.getSnapshot().runs, {});
   disposedLoader.reject(new Error('sensitive provider failure'));
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(disposed.start(input), false);
+  runtime.dispose();
+});
+
+test('shared runtime runs different conversations concurrently and stops them by id', async () => {
+  const completions = new Map([['a', deferred()], ['b', deferred()]]);
+  const controls = new Map();
+  const runtime = createAgentRuntime({
+    onReply() {},
+    loadRunner: async () => ({ createReplyRun(options) {
+      const id = options.messages.at(-1).content;
+      const control = { aborts: 0 };
+      controls.set(id, control);
+      return { abort() { control.aborts++; }, start: () => completions.get(id).promise };
+    } }),
+  });
+  const request = (id) => ({ conversationId: id, replyId: `reply-${id}`, config, apiKey: 'key', messages: [{ id: `u-${id}`, role: 'user', content: id }] });
+  async function until(predicate) {
+    for (let i = 0; i < 100 && !predicate(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(predicate(), 'expected runtime transition');
+  }
+  assert.equal(runtime.start(request('a')), true);
+  assert.equal(runtime.start(request('b')), true);
+  assert.deepEqual(Object.keys(runtime.getSnapshot().runs).sort(), ['a', 'b']);
+  await until(() => controls.size === 2);
+  runtime.stop('a');
+  assert.equal(controls.get('a').aborts, 1);
+  assert.equal(controls.get('b').aborts, 0, 'stopping one conversation leaves the other running');
+  completions.get('a').resolve({ status: 'complete' });
+  await until(() => !runtime.getSnapshot().runs.a);
+  assert.deepEqual(Object.keys(runtime.getSnapshot().runs), ['b'], 'the other run survives the first one finishing');
+  runtime.stop();
+  assert.equal(controls.get('b').aborts, 1);
+  completions.get('b').resolve({ status: 'complete' });
+  await until(() => Object.keys(runtime.getSnapshot().runs).length === 0);
   runtime.dispose();
 });
 
@@ -161,6 +196,11 @@ function events(protocol) {
     { type: 'response.output_item.done', output_index: 0, item: { id: 'msg_test', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '你好，世界', annotations: [] }], status: 'completed' } },
     { type: 'response.completed', response: { id: 'resp_test', status: 'completed', usage: { input_tokens: 5, output_tokens: 5, total_tokens: 10 } } },
   ];
+}
+/** Title generation is a separate, optional request; harness mocks answer it immediately so
+    chat assertions keep seeing only reply traffic. */
+function isTitleRequest(body) {
+  return JSON.stringify(body?.messages ?? body?.system ?? '').includes('你负责为一段对话生成简短标题');
 }
 function response(protocol, signal, hang = false) {
   const source = events(protocol).map((event) => `${event.type ? `event: ${event.type}\n` : ''}data: ${JSON.stringify(event)}\n\n`).join('');
@@ -380,6 +420,62 @@ test('model metadata whitelists fields and credentials stay isolated in memory',
   assert.match(describeModelError(new Error('429')), /限流/);
 });
 
+test('generated titles are normalised, bounded and silently optional', async () => {
+  assert.equal(normalizeConversationTitle('## “数据库迁移方案”\n换个说法'), '数据库迁移方案');
+  assert.equal(normalizeConversationTitle('标题：异步任务重试'), '异步任务重试');
+  assert.equal(normalizeConversationTitle('1. Title: Weekly plan'), 'Weekly plan');
+  assert.equal(normalizeConversationTitle('普通标题。'), '普通标题。', 'a sentence-ending mark inside the title is kept');
+  assert.equal(normalizeConversationTitle('   \n\t'), null);
+  assert.equal(normalizeConversationTitle('标'.repeat(50)), '标'.repeat(32), 'titles are cut to 32 graphemes');
+
+  let captured;
+  const success = async (model, context, options) => {
+    captured = { model, context, options };
+    return { result: async () => ({ role: 'assistant', content: [{ type: 'text', text: '  “AI 标题”  ' }], stopReason: 'stop' }) };
+  };
+  assert.equal(await generateConversationTitle({ config, apiKey: 'session-secret', content: '  first message  ', streamFn: success }), 'AI 标题');
+  assert.equal(captured.model.id, config.modelId);
+  assert.equal(captured.context.systemPrompt, TITLE_SYSTEM_PROMPT);
+  assert.equal(captured.context.messages[0].content, 'first message');
+  assert.equal(captured.options.apiKey, 'session-secret');
+  assert.equal(captured.options.maxTokens, 64, 'title requests stay small');
+  assert.ok(captured.options.signal instanceof AbortSignal);
+
+  let calls = 0;
+  const counted = async () => { calls++; return { result: async () => ({ content: [], stopReason: 'stop' }) }; };
+  assert.equal(await generateConversationTitle({ config, apiKey: '', content: 'hi', streamFn: counted }), null, 'a missing key fails before the request');
+  assert.equal(await generateConversationTitle({ config, apiKey: 'key', content: '   ', streamFn: counted }), null, 'an empty first message has nothing to title');
+  assert.equal(calls, 0);
+  assert.equal(await generateConversationTitle({ config: { ...config, requiresApiKey: false }, apiKey: '', content: 'hi', streamFn: async (_model, _context, options) => {
+    assert.equal(options.apiKey, 'no-key');
+    return { result: async () => ({ content: [{ type: 'text', text: 'ok' }], stopReason: 'stop' }) };
+  } }), 'ok', 'models without keys still work');
+  const failing = async (_model, _context, options) => {
+    options.signal.throwIfAborted();
+    return { result: async () => ({ content: [{ type: 'text', text: 'nope' }], stopReason: 'error' }) };
+  };
+  assert.equal(await generateConversationTitle({ config, apiKey: 'key', content: 'hi', streamFn: failing }), null, 'provider errors stay silent');
+  assert.equal(await generateConversationTitle({ config, apiKey: 'key', content: 'hi', streamFn: async () => { throw new Error('boom'); } }), null, 'transport errors stay silent');
+  const aborted = new AbortController();
+  aborted.abort();
+  calls = 0;
+  assert.equal(await generateConversationTitle({ config, apiKey: 'key', content: 'hi', signal: aborted.signal, streamFn: counted }), null);
+  assert.equal(calls, 0, 'an already-cancelled conversation never starts a title request');
+  let timeoutSignal;
+  const hanging = async (_model, _context, options) => { timeoutSignal = options.signal; return { result: () => new Promise(() => {}) }; };
+  assert.equal(await generateConversationTitle({ config, apiKey: 'key', content: 'hi', streamFn: hanging, timeoutMs: 10 }), null);
+  assert.equal(timeoutSignal.aborted, true, 'a timeout cancels the provider request');
+
+  let input;
+  await generateConversationTitle({ config, apiKey: 'key', content: 'c'.repeat(5000), quote: 'q'.repeat(3000), streamFn: async (_model, context) => {
+    input = context.messages[0].content;
+    return { result: async () => ({ content: [{ type: 'text', text: 'ok' }], stopReason: 'stop' }) };
+  } });
+  assert.ok(input.startsWith('用户引用的历史回复（仅作参考）：'));
+  assert.equal(input.split('\n')[1].length, 2000, 'the quote is bounded');
+  assert.equal(input.split('用户消息：\n')[1].length, 4000, 'the message is bounded');
+});
+
 test('web model calls and catalog always route through the same-origin relay', async () => {
   const normalized = validateModelConfig(config);
   assert.equal(createAgentModel(normalized).baseUrl, config.baseUrl, 'native builds without a page origin stay direct');
@@ -421,7 +517,13 @@ test('workspace runtime keeps generations attached to their source conversation 
   let chat, models, runtime, personalization;
   let requestSignal;
   const requestBodies = [];
-  globalThis.fetch = async (_url, init) => { requestSignal = init.signal; requestBodies.push(JSON.parse(init.body)); return response('completion', init.signal, true); };
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) return response('completion', init.signal);
+    requestSignal = init.signal;
+    requestBodies.push(body);
+    return response('completion', init.signal, true);
+  };
   function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); personalization = usePersonalization(); return null; }
   async function until(predicate) {
     for (let i = 0; i < 100 && !predicate(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
@@ -446,7 +548,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.equal(chat.activeId, null);
     assert.equal(models.selectedId, 'test', 'a new conversation keeps the most recently used model');
     await act(async () => { runtime.stop(); });
-    await until(() => runtime.runningId === null);
+    await until(() => Object.keys(runtime.runs).length === 0);
     assert.equal(chat.activeId, null, 'reply updates must not navigate back to their source');
     assert.equal(chat.conversations[0].messages[1].content, '你好');
     assert.equal(chat.conversations[0].messages[1].status, 'stopped');
@@ -454,15 +556,230 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.equal(requestBodies.length, 1, 'rating an answer alone does not start a request');
     requestSignal = undefined;
     await act(async () => { runtime.retry(sourceId); });
-    await until(() => requestSignal && runtime.runningId === sourceId);
+    await until(() => requestSignal && !!runtime.runs[sourceId]);
     assert.equal(requestBodies[1].reasoning_effort, 'high', 'retry resolves the effort of the conversation model');
     assert.ok(JSON.stringify(requestBodies[1]).includes('updated preference'), 'retry reads the latest personalization');
     assert.ok(JSON.stringify(requestBodies[1]).includes('引用需要保留'), 'retry includes the original quote');
     assert.ok(JSON.stringify(requestBodies[1]).includes('踩（没有帮助）'), 'retry includes feedback on the version being replaced');
     await act(async () => { chat.dispatch({ type: 'delete', id: sourceId }); });
-    await until(() => runtime.runningId === null);
+    await until(() => Object.keys(runtime.runs).length === 0);
     assert.equal(requestSignal.aborted, true);
     assert.deepEqual(chat.conversations, []);
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('background replies in separate conversations run together, stay unread and raise one card', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const gates = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) return response('completion', init.signal);
+    const gate = deferred();
+    gates.push(gate);
+    await gate.promise;
+    return response('completion', init.signal);
+  };
+  let chat, models, runtime;
+  function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
+  async function until(predicate) {
+    for (let i = 0; i < 200 && !predicate(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+    assert.ok(predicate(), 'expected runtime transition');
+  }
+  const conversation = (id) => chat.conversations.find((item) => item.id === id);
+  try {
+    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    await act(async () => { await models.save(config, 'key'); });
+
+    await act(async () => { assert.equal(runtime.send('first', null), true); });
+    const firstId = chat.activeId;
+    await act(async () => { chat.dispatch({ type: 'select', id: null }); });
+    await act(async () => { assert.equal(runtime.send('second', null), true); });
+    const secondId = chat.activeId;
+    await until(() => gates.length === 2);
+    assert.ok(runtime.isRunning(firstId) && runtime.isRunning(secondId), 'both conversations generate at once');
+    assert.equal(Object.keys(runtime.runs).length, 2);
+    assert.equal(runtime.isAnyRunning, true);
+
+    await act(async () => { gates[0].resolve(); });
+    await until(() => conversation(firstId)?.messages.at(-1)?.status === 'complete');
+    assert.equal(conversation(firstId).completedReadAt, null, 'a background completion stays unread');
+    assert.equal(runtime.notifications.length, 1);
+    assert.equal(runtime.notifications[0].conversationId, firstId);
+    assert.equal(runtime.notifications[0].preview, '你好，世界');
+    assert.ok(runtime.isRunning(secondId), 'the first completion does not disturb the other run');
+
+    await act(async () => { gates[1].resolve(); });
+    await until(() => conversation(secondId)?.messages.at(-1)?.status === 'complete');
+    assert.equal(conversation(secondId).completedReadAt, undefined, 'the visible conversation is already read');
+    assert.equal(runtime.notifications.length, 1, 'only the conversation away from the reader raises a card');
+
+    await act(async () => { chat.dispatch({ type: 'select', id: firstId }); });
+    assert.equal(conversation(firstId).completedReadAt, undefined, 'opening the conversation marks it read');
+    await until(() => runtime.notifications.length === 0);
+    assert.equal(runtime.notifications.length, 0, 'opening the conversation dismisses its card');
+
+    // Full-page routes keep activeId but unmount the chat screen; completion is still unread.
+    await act(async () => { chat.dispatch({ type: 'select', id: secondId }); });
+    await act(async () => { chat.dispatch({ type: 'visible', value: false }); });
+    await act(async () => { assert.equal(runtime.send('third', secondId), true); });
+    await until(() => gates.length === 3);
+    await act(async () => { gates[2].resolve(); });
+    await until(() => conversation(secondId)?.messages.at(-1)?.status === 'complete' && conversation(secondId).messages.length === 4);
+    assert.equal(conversation(secondId).completedReadAt, null, 'a completion while settings is open stays unread');
+    assert.equal(runtime.notifications.length, 1);
+    assert.equal(Object.keys(runtime.runs).length, 0);
+
+    // Coming back keeps activeId unchanged, but the reply is now on screen.
+    await act(async () => { chat.dispatch({ type: 'visible', value: true }); });
+    assert.equal(conversation(secondId).completedReadAt, undefined, 'returning to the open conversation marks it read');
+    await until(() => runtime.notifications.length === 0);
+    assert.equal(runtime.notifications.length, 0);
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('conversation titles are only auto-replaced while unattended, and renames stay manual', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  let chat;
+  function Harness() { chat = useChat(); return null; }
+  const conversation = () => chat.conversations.find((item) => item.id === 'c1');
+  try {
+    await act(async () => { root.render(createElement(ChatProvider, null, createElement(Harness))); });
+    await act(async () => { chat.dispatch({ type: 'send', conversationId: 'c1', message: { id: 'u1', role: 'user', content: '  如何配置  ' }, modelId: 'm' }); });
+    assert.equal(conversation().title, '如何配置', 'the first message is the fallback title');
+    assert.equal(conversation().titleSource, 'auto');
+    await act(async () => { chat.dispatch({ type: 'auto-title', conversationId: 'c1', title: '配置指南', from: '如何配置' }); });
+    assert.equal(conversation().title, '配置指南');
+    assert.equal(conversation().titleSource, 'ai');
+    await act(async () => { chat.dispatch({ type: 'auto-title', conversationId: 'c1', title: '迟到', from: '如何配置' }); });
+    assert.equal(conversation().title, '配置指南', 'a title computed from an older fallback is dropped');
+    await act(async () => { chat.dispatch({ type: 'rename', id: 'c1', title: '我的标题' }); });
+    assert.equal(conversation().titleSource, 'manual');
+    await act(async () => { chat.dispatch({ type: 'auto-title', conversationId: 'c1', title: '迟到的 AI 标题', from: '我的标题' }); });
+    assert.equal(conversation().title, '我的标题', 'manual renames always win');
+    await act(async () => { chat.dispatch({ type: 'send', conversationId: 'c1', message: { id: 'u2', role: 'user', content: '下一条' }, modelId: 'm' }); });
+    assert.equal(conversation().title, '我的标题', 'later messages never retitle an existing conversation');
+    await act(async () => { chat.dispatch({ type: 'reply', conversationId: 'c1', message: { id: 'a1', role: 'assistant', content: '答复', status: 'complete' } }); });
+    await act(async () => { chat.dispatch({ type: 'fork', conversationId: 'c1', messageId: 'a1', forkId: 'fork', updatedAt: 1 }); });
+    const fork = chat.conversations.find((item) => item.id === 'fork');
+    assert.equal(fork.titleSource, 'manual', 'a branch keeps its custom title');
+    await act(async () => { chat.dispatch({ type: 'auto-title', conversationId: 'fork', title: '替换', from: fork.title }); });
+    assert.equal(chat.conversations.find((item) => item.id === 'fork').title, fork.title);
+    await act(async () => { chat.dispatch({ type: 'auto-title', conversationId: 'c1', title: '   ', from: '我的标题' }); });
+    assert.equal(conversation().title, '我的标题', 'an empty generated title is ignored');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('AI titles run beside the first reply, retry after a failed turn, and never override a rename', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  let fail = true;
+  let holdTitle = false;
+  let releaseTitle = null;
+  const titleRequests = [];
+  const titleSignals = [];
+  const errorResponse = () => new Response(JSON.stringify({ error: { message: 'unavailable' } }), { status: 401, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) {
+      titleRequests.push(body);
+      titleSignals.push(init.signal);
+      if (fail) return errorResponse();
+      if (holdTitle) await new Promise((resolve) => { releaseTitle = resolve; });
+      return response('completion', init.signal);
+    }
+    if (fail) return errorResponse();
+    return response('completion', init.signal);
+  };
+  let chat, models, runtime;
+  function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
+  async function until(predicate, label) {
+    for (let i = 0; i < 200 && !predicate(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+    assert.ok(predicate(), label);
+  }
+  const conversation = (id) => chat.conversations.find((item) => item.id === id);
+  try {
+    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    await act(async () => { await models.save(config, 'key'); });
+
+    // The first turn and its title both fail: the truncated first message stays.
+    await act(async () => { assert.equal(runtime.send('first message', null), true); });
+    const firstId = chat.activeId;
+    await until(() => conversation(firstId)?.messages.at(-1)?.status === 'error' && titleRequests.length === 1, 'both requests settle');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    assert.equal(conversation(firstId).title, 'first message');
+    assert.equal(conversation(firstId).titleSource, 'auto');
+    assert.equal(titleRequests[0].model, 'test-model', 'without a title model the conversation model is used');
+    assert.ok(!conversation(firstId).messages.some((message) => message.role === 'assistant' && message.id === 'title'), 'a title never becomes a message');
+
+    // A later successful reply retries the title once and applies it.
+    fail = false;
+    await act(async () => { runtime.retry(firstId); });
+    await until(() => conversation(firstId)?.messages.at(-1)?.status === 'complete' && conversation(firstId).titleSource === 'ai', 'the retried reply produces a title');
+    assert.equal(conversation(firstId).title, '你好，世界');
+    assert.equal(titleRequests.length, 2);
+
+    // A rename made while a title request is in flight wins when the result lands.
+    holdTitle = true;
+    await act(async () => { assert.equal(runtime.send('second conversation', null), true); });
+    const secondId = chat.activeId;
+    await until(() => titleRequests.length === 3, 'the second conversation starts a title request');
+    await act(async () => { chat.dispatch({ type: 'rename', id: secondId, title: '手动标题' }); });
+    releaseTitle();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); });
+    assert.equal(conversation(secondId).title, '手动标题');
+    assert.equal(conversation(secondId).titleSource, 'manual');
+
+    // Deleting a conversation aborts only its own title request.
+    holdTitle = true;
+    releaseTitle = null;
+    await act(async () => { assert.equal(runtime.send('third conversation', null), true); });
+    const thirdId = chat.activeId;
+    await until(() => titleRequests.length === 4, 'the third conversation starts a title request');
+    await act(async () => { chat.dispatch({ type: 'delete', id: thirdId }); });
+    await until(() => titleSignals[3].aborted === true, 'deleting a conversation aborts its title request');
+    releaseTitle();
+
+    // An explicitly configured title model takes precedence over the conversation model.
+    holdTitle = false;
+    await act(async () => { await models.save({ ...config, id: 'title-model', modelId: 'title-model-id', name: 'Title model' }, 'title-key'); });
+    await act(async () => { await models.setTitleModelId('title-model'); });
+    await act(async () => { assert.equal(runtime.send('fourth conversation', null), true); });
+    const fourthId = chat.activeId;
+    await until(() => conversation(fourthId)?.titleSource === 'ai', 'the explicit title model generates a title');
+    assert.equal(titleRequests.at(-1).model, 'title-model-id');
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
@@ -528,6 +845,21 @@ test('common file extensions use dedicated local Material icons, including upper
     assert.equal(image.getAttribute('src'), `/vendor/file-icons/${icon}.svg`, name);
     assert.ok(existsSync(`public/vendor/file-icons/${icon}.svg`), `${name} resolves to a shipped asset`);
   }
+});
+
+test('model brand icons recognise spaced GPT names instead of falling back', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { ModelIcon } = await import('../src/features/chat/components/model-icon.web.tsx');
+  const Openai = (await import('@thesvg/react/openai')).default;
+  const brand = renderToStaticMarkup(createElement(Openai, { width: 16, height: 16, 'aria-hidden': true, focusable: false, variant: 'light' }));
+  const render = (props) => renderToStaticMarkup(createElement(ModelIcon, { ...props, size: 16 }));
+  assert.ok(render({ modelId: 'gpt astra' }).includes(brand), 'a space-separated GPT name uses the OpenAI mark');
+  assert.ok(render({ modelId: 'gpt4o' }).includes(brand), 'a bare gpt prefix with a digit is recognised');
+  assert.ok(render({ modelId: 'gpt-4o' }).includes(brand));
+  assert.ok(render({ name: 'GPT Astra', providerName: 'Some gateway' }).includes(brand));
+  assert.ok(render({ name: 'Astra', providerName: 'OpenAI' }).includes(brand), 'the provider name is a fallback');
+  assert.ok(!render({ modelId: 'unknown-model' }).includes(brand), 'unknown models keep the generic fallback');
 });
 
 test('composer reports validation in a compact chat notice without blocking input or losing drafts', async () => {
@@ -669,7 +1001,7 @@ test('reasoning stops animating before the answer starts and preserves its own d
     await act(async () => { assert.equal(runtime.send('问题', null), true); });
     await until(() => chat.conversations[0]?.messages[1]?.reasoningActive === false && !!chat.conversations[0]?.messages[1]?.reasoning);
     const thinkingFinished = chat.conversations[0].messages[1];
-    assert.notEqual(runtime.runningId, null, 'the request is still running after thinking_end');
+    assert.ok(Object.keys(runtime.runs).length > 0, 'the request is still running after thinking_end');
     assert.equal(thinkingFinished.status, 'streaming');
     assert.equal(thinkingFinished.content, '', 'thinking ends before the first answer token');
     const { getReasoningState, ReasoningBlock } = await import('../src/features/chat/components/reasoning-block.web.tsx');
@@ -682,7 +1014,7 @@ test('reasoning stops animating before the answer starts and preserves its own d
     assert.equal(getReasoningState({ status: 'streaming', content: '', reasoningActive: true }), 'running');
     assert.equal(getReasoningState({ status: 'stopped', content: '' }), 'stopped');
     assert.equal(getReasoningState({ status: 'error', content: '' }), 'error');
-    await until(() => runtime.runningId === null);
+    await until(() => Object.keys(runtime.runs).length === 0);
     const reply = chat.conversations[0].messages[1];
     assert.equal(reply.content, '答案');
     assert.equal(reply.reasoning, '先想一下');

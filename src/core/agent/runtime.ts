@@ -21,11 +21,12 @@ type RuntimeOptions = {
   loadRunner?: () => Promise<{ createReplyRun: typeof createReplyRun }>;
 };
 
-/** Platform-independent runtime: one active request per workspace, no React, storage or DOM. */
+/** Platform-independent runtime: one active request per conversation, no React, storage or DOM. */
 export function createAgentRuntime({ onReply, loadRunner = () => import('./runner') }: RuntimeOptions) {
-  let snapshot: RuntimeSnapshot = { runningId: null, startedAt: null, error: null };
+  let snapshot: RuntimeSnapshot = { runs: {}, error: null };
   const listeners = new Set<() => void>();
-  let active: { conversationId: string; abort: () => void } | null = null;
+  // Keyed by conversation: separate chats run concurrently, while a chat cannot start twice.
+  const active = new Map<string, { abort: () => void }>();
   let disposed = false;
 
   function update(patch: Partial<RuntimeSnapshot>) {
@@ -42,16 +43,20 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       return () => { listeners.delete(listener); };
     },
     clearError() { update({ error: null }); },
-    stop() { active?.abort(); },
+    /** Without an id, cancels every run (used when the workspace is torn down). */
+    stop(conversationId?: string) {
+      if (conversationId === undefined) { active.forEach((marker) => marker.abort()); return; }
+      active.get(conversationId)?.abort();
+    },
     dispose() {
       disposed = true;
-      active?.abort();
-      active = null;
-      snapshot = { runningId: null, startedAt: null, error: null };
+      active.forEach((marker) => marker.abort());
+      active.clear();
+      snapshot = { runs: {}, error: null };
       listeners.clear();
     },
     start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT }: AgentRequest): boolean {
-      if (disposed || active) return false;
+      if (disposed || active.has(conversationId)) return false;
       const error = config ? validateAgentRequest(config, apiKey, messages, systemPrompt) : '请先在设置 → 模型服务中添加并选择模型。';
       if (error || !config) { update({ error }); return false; }
       // Freeze the request so subsequent UI/model edits apply to the next run only.
@@ -69,9 +74,9 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
         timer = undefined;
         if (!disposed) onReply(conversationId, { ...latest });
       };
-      const marker = { conversationId, abort() { cancelled = true; run?.abort(); } };
-      active = marker;
-      update({ runningId: conversationId, startedAt, error: null });
+      const marker = { abort() { cancelled = true; run?.abort(); } };
+      active.set(conversationId, marker);
+      update({ runs: { ...snapshot.runs, [conversationId]: { conversationId, replyId, startedAt } }, error: null });
 
       // Defer all runner work until the caller has recorded the outgoing user message.
       void Promise.resolve().then(loadRunner).then(async ({ createReplyRun }) => {
@@ -90,9 +95,14 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
         latest = { ...latest, status: cancelled ? 'stopped' : 'error', error: cancelled ? undefined : '模型组件加载失败，请稍后重试。' };
       }).finally(() => {
         flush();
-        if (active === marker) {
-          active = null;
-          update({ runningId: null, startedAt: null, ...(latest.status === 'error' ? { error: latest.error ?? '模型回复失败，请稍后重试。' } : {}) });
+        // A concurrent run in another conversation must not clear this one's marker.
+        if (active.get(conversationId) === marker) {
+          active.delete(conversationId);
+          const runs = { ...snapshot.runs };
+          delete runs[conversationId];
+          // Failures stay on the reply message: a workspace-wide error would surface in
+          // whichever conversation happens to be open, not the one that failed.
+          update({ runs });
         }
       });
       return true;

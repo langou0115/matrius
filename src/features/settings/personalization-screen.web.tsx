@@ -1,5 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, type ComponentProps } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from 'react';
 
+import { Icon } from '@/components/web/icon';
+import { SelectField } from '@/components/web/select-field.web';
+import { ModelIcon } from '@/features/chat/components/model-icon.web';
+import { useModels } from '@/features/models/model-state';
 import { personalizationLimits } from './personalization';
 import { usePersonalization } from './personalization-state';
 import { SettingsPage } from './settings-page.web';
@@ -33,8 +37,34 @@ function AutoSizeTextarea(props: ComponentProps<'textarea'>) {
 
 export default function PersonalizationSettingsScreen() {
   const { preferences, update } = usePersonalization();
+  const models = useModels();
   const preview = useIsPreview();
+  const [modelError, setModelError] = useState<string | null>(null);
   return <SettingsPage title="个性化" description="告诉模型你希望它如何回答，以及需要了解的个人信息。">
+    <section className="settings-section" aria-labelledby="title-model-heading">
+      <h2 id="title-model-heading">对话标题</h2>
+      <div className="personalization-fields">
+        <SelectField
+          label="标题生成模型"
+          value={models.titleModelId ?? ''}
+          disabled={!models.ready}
+          options={[
+            { id: '', label: '跟随当前对话模型', icon: <Icon name="model" size={16} /> },
+            ...models.models.map((model) => ({
+              id: model.id,
+              label: `${model.name} · ${model.providerName}`,
+              icon: <ModelIcon modelId={model.modelId} name={model.name} providerName={model.providerName} size={16} />,
+            })),
+          ]}
+          onChange={(id) => {
+            setModelError(null);
+            void models.setTitleModelId(id || null).catch(() => setModelError('标题模型设置未能保存，请重试。'));
+          }}
+        />
+      </div>
+      {modelError && <p className="settings-footnote" role="alert">{modelError}</p>}
+      <p className="settings-footnote">AI 会在新对话发送首条消息后生成简短标题。请求失败时先保留消息开头的临时标题，并在之后的回复成功后再次尝试；手动重命名不会被覆盖。</p>
+    </section>
     <section className="settings-section" aria-labelledby="instructions-heading">
       <h2 id="instructions-heading">自定义指令</h2>
       <div className="personalization-fields">
