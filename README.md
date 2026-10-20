@@ -6,7 +6,9 @@
 
 当前优先开发 Web 端，已替换 Expo 示例页面和标签导航，完成聊天界面、侧栏、新建/搜索/置顶/重命名/删除对话，以及外观设置。旧版 10 套配色和本地字体已迁移。Web 消息已支持 Markdown/GFM、KaTeX 公式、多语言代码高亮，以及代码块复制和折叠。消息下方提供原文复制、赞/踩交互及创建分支对话。移动端暂留说明页，后续单独适配。
 
-Web 对话、消息、置顶状态、每个会话的 Thinking Effort 和最近选择，以及外观设置保存在当前浏览器的 IndexedDB 中，刷新后恢复；新会话沿用最近选择的强度，未发送草稿仍只保留在当前页面会话中。设置页为独立全页，返回后保留会话和草稿。Web 已接入本地 pi-agent-core Runtime，可按 Provider 分组选择模型并进行多轮流式对话，支持每会话默认/低/中/高思考强度、停止和错误重试，不生成模拟 AI 回复。App 手机本地存储、个人记忆、认证与同步尚未实现；后端技术栈待定。
+Web 对话、消息、置顶状态、每个会话的 Thinking Effort 和最近选择，以及外观设置保存在当前浏览器的 IndexedDB 中，刷新后恢复；新会话沿用最近选择的强度，未发送草稿仍只保留在当前页面会话中。设置页为独立全页，返回后保留会话和草稿。Web 已接入本地 pi-agent-core Runtime，可按 Provider 分组选择模型并进行多轮流式对话，支持每会话默认/低/中/高思考强度、停止和错误重试，不生成模拟 AI 回复。
+
+Python 后端已完成：Bearer 认证、会话与消息 REST CRUD、已读状态、记忆与画像、存量导入、文件上传/解析、OpenSERP 搜索与网页读取。生产部署由 Docker Compose 运行 Caddy、Web、API、PostgreSQL、Redis、RustFS 和 OpenSERP，GitHub Actions 可手动发布到自有服务器。客户端从本地模式切换到云端模式（登录、导入、在线读写）是下一阶段。
 
 产品文档仍包含待实现的目标设计；已完成与后续步骤见[迁移记录](doc/migration.md)。
 
@@ -17,11 +19,11 @@ Web 对话、消息、置顶状态、每个会话的 Thinking Effort 和最近�
 | Agent Runtime | 客户端本地运行 | 客户端本地运行，调度云端工具 |
 | 模型调用 | 用户自带 API key，客户端直连 | 本地 Runtime 发起请求，服务端单次代理并保管 key |
 | 对话、流式回复、个人记忆 | 支持 | 支持 |
-| 数据 | 仅本机 | 云端为事实源，本地保留离线缓存 |
+| 数据 | 仅本机 | 云端为唯一事实源，新数据不写本地；断网不可读历史 |
 | 资料库、文件上传与读取、联网搜索 | 入口整体隐藏 | 支持 |
-| 多用户管理、跨设备同步 | 入口整体隐藏 | 支持 |
+| 多用户管理、跨设备访问 | 入口整体隐藏 | 支持 |
 
-首次打开无需登录。登录后本地对话和记忆合并上传，保留本地副本；登出保留缓存。完整边界见[产品与开发顺序](doc/product.md)。
+首次打开无需登录。开启云端模式时，本地已有对话一次性上传并保留本地备份；此后只读写服务端。完整边界见[产品与开发顺序](doc/product.md)，接口见[后端架构](doc/backend.md)。
 
 ## 技术栈
 
@@ -31,8 +33,9 @@ Web 对话、消息、置顶状态、每个会话的 Thinking Effort 和最近�
 | 路由 | Expo Router，路由位于 `src/app/` |
 | 本地存储 | Web 使用浏览器 IndexedDB；App 后续接手机本地数据库 |
 | 主题与字体 | Web 已迁移 10 套配色与 Inter / Noto Sans SC / JetBrains Mono |
-| 后端 | 待定 |
-| 云端基础设施 | PostgreSQL、Redis、OpenSERP、RustFS；尚未接入 |
+| 后端 | Python 3.12、FastAPI、SQLAlchemy 2 + Alembic、uv |
+| 云端基础设施 | PostgreSQL 16、Redis 7、OpenSERP、RustFS；Caddy 统一入口 |
+| 发布 | Docker Compose + GitHub Actions（SSH，服务器构建） |
 
 依赖的精确版本以 [package.json](package.json) 和锁文件为准。
 
@@ -86,11 +89,17 @@ Linux 若启动时报 DevTools 缺少 `libatk-1.0.so.0`，属于桌面调试器�
 
 构建、开发客户端和完整环境说明见[开发与验证](doc/development.md)。
 
+## 后端与部署
+
+后端没有独立的 dev Compose，生产 Compose 是唯一环境；代码由 CI 验证后通过 CD 发布。本地调试可通过 `scripts/dev-tunnel.sh` 建立 SSH 隧道，直接连接服务器上的数据库、Redis、RustFS 和 OpenSERP，测试请使用专用账号。配置方式见[开发与验证](doc/development.md#后端与基础设施)。
+
+生产服务器初始化、GitHub Secrets、发布、HTTPS、备份与回滚见[部署与 CD](doc/deployment.md)；接口和数据契约见[后端架构](doc/backend.md)；后端检查与迁移命令见 [server/README.md](server/README.md)。
+
 ## 文档
 
 从 [doc/ 文档索引](doc/README.md) 开始阅读。[客户端结构](doc/client-structure.md) 区分当前实现与后续目录；[AGENTS.md](AGENTS.md) 保留协作约束。
 
-开发顺序是先完成本地模式，再接入后端、认证、工具与同步。
+开发顺序：本地模式与后端已完成；下一步是客户端云端模式适配（登录、存量导入、在线读写与工具接入）。
 
 ## 许可
 

@@ -1,0 +1,57 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matrius-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy main to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Require main branch
+        env:
+          SELECTED_REF: ${{ github.ref }}
+        run: |
+          if [[ "$SELECTED_REF" != refs/heads/main ]]; then
+            echo '::error::Production deployment only accepts main.'
+            exit 1
+          fi
+
+      - name: Check out the selected commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate deployment scripts
+        run: bash -n scripts/cd-deploy.sh scripts/cd-remote.sh scripts/deploy-health.sh
+
+      - name: Upload configuration and deploy
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+        run: bash scripts/cd-deploy.sh
+
+      - name: Record result
+        if: always()
+        env:
+          DEPLOY_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo '## Production deployment'
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo "Result: $DEPLOY_RESULT"
+          } >> "$GITHUB_STEP_SUMMARY"

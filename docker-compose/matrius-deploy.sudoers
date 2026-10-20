@@ -1,0 +1,8 @@
+# /etc/sudoers.d/matrius-deploy
+# Install as root:
+#   install -o root -g root -m 0440 matrius-deploy.sudoers /etc/sudoers.d/matrius-deploy
+#   visudo -cf /etc/sudoers.d/matrius-deploy
+#
+# Exact commands only: no wildcards, no arbitrary compose files, no shell access.
+matrius-deploy ALL=(root) NOPASSWD: /usr/local/sbin/matrius-deploy --check
+matrius-deploy ALL=(root) NOPASSWD: /usr/local/sbin/matrius-deploy

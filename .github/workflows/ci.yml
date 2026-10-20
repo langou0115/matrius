@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: matrius
+          POSTGRES_USER: matrius
+          POSTGRES_PASSWORD: matrius-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U matrius -d matrius"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.3"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: bash scripts/install-python-deps.sh --dev
+
+      - name: Lint
+        run: uv run --no-sync ruff check .
+
+      - name: Test
+        run: uv run --no-sync pytest
+
+      - name: Check migrations
+        run: uv run --no-sync alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+asyncpg://matrius:matrius-ci-password@127.0.0.1:5432/matrius
+
+  web:
+    name: Web checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run test:rendering
+      - run: npm run test:models
+      - run: npm run export:web

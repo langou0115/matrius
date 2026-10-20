@@ -40,7 +40,7 @@ Web 使用 `web.output: single` 输出单页应用，支持运行时创建的 `/
 
 中继只接受带 `x-matrius-target-origin` 的 GET/POST，并默认拒绝回环、私网和链路本地目标；生产环境建议设置 `MATRIUS_PROXY_ALLOW_HOSTS=api.example.com,another.example.com` 限定允许的服务商主机。确需访问私网端点时再设置 `MATRIUS_PROXY_ALLOW_PRIVATE=1`。若改用 Nginx 等托管服务，需要额外代理 `/api/model-proxy/`，保留请求头并关闭响应缓冲（`proxy_buffering off`）以支持流式输出。
 
-中继逻辑与服务器框架解耦，导出为 `handleModelProxy(req, res): boolean`。后续接入多端同步后端时，把它挂到同一个进程即可，不需要再部署第二个服务。例如 Express：
+中继逻辑与服务器框架解耦，导出为 `handleModelProxy(req, res): boolean`。生产部署中它保留在 Web 容器，由 Caddy 将 `/api/model-proxy/*` 路由过去；FastAPI 不处理模型请求。例如 Express：
 
 ```js
 import modelProxy from './scripts/model-proxy.cjs';
@@ -70,12 +70,45 @@ npx eas-cli@latest submit --platform ios
 
 ## 后端与基础设施
 
-后端技术栈未定，以下是沿用的目标约定，相关脚本、Compose 和 `.env.example` 尚未提供：
+后端使用 Python 3.12 + FastAPI，位于 `server/`，接口与数据契约见[后端架构](backend.md)。
 
-- 应用在宿主机运行，PostgreSQL、Redis、RustFS、OpenSERP 在 Docker 中运行。
-- 开发容器统一使用 `matrius-net` 网络；网络与生命周期由项目脚本封装。
-- 环境模板后续提供 `DATABASE_URL`、`REDIS_URL`、`RUSTFS_ENDPOINT`、`RUSTFS_ACCESS_KEY`、`RUSTFS_SECRET_KEY`、`RUSTFS_BUCKET` 和 `OPENSERP_URL`。
-- 这些服务端凭据不得放入客户端公开环境变量或提交进仓库；数据库结构变更使用迁移。
+**后端只有一套环境：服务器上的生产 Compose。** 不维护 dev Compose，也不复制第二份开发数据；本地调试通过 SSH 隧道连接服务器上的 PostgreSQL、Redis、RustFS 和 OpenSERP，读写的就是线上数据。测试请使用专用测试账号。生产拓扑、首次部署与回滚见[部署与 CD](deployment.md)。
+
+### 连接服务器数据
+
+数据服务在服务器上只绑定 `127.0.0.1`，不会暴露公网：
+
+| 服务 | 服务器回环端口 | 本地隧道端口 |
+| --- | --- | --- |
+| PostgreSQL | 15432 | 15432 |
+| Redis | 16379 | 16379 |
+| RustFS | 19000 | 19000 |
+| OpenSERP | 17000 | 17000 |
+
+端口可在服务器 `.env.production` 和本地 `.env.local` 中通过 `DB_TUNNEL_PORT`、`REDIS_TUNNEL_PORT`、`RUSTFS_TUNNEL_PORT`、`OPENSERP_TUNNEL_PORT` 调整，两边必须一致。
+
+1. 复制 `.env.local.example` 为 `.env.local`，填写 `SERVER_HOST`、`SERVER_USER` 和认证方式。优先使用 `SERVER_SSH_KEY`；`SERVER_PASSWORD` 需要本地安装 `sshpass`（如 `sudo apt install sshpass`），并确认服务器允许密码登录。密码会留在本地进程环境中，仅建议临时使用。
+2. 在一个单独的终端保持隧道：
+
+```bash
+bash scripts/dev-tunnel.sh
+```
+
+3. 复制 `server/.env.example` 为 `server/.env`，用服务器 `.env.production` 中的数据库、Redis、RustFS 凭据替换占位值。
+4. 安装依赖并启动 API：
+
+```bash
+cd server
+bash scripts/install-python-deps.sh --dev
+uv run --no-sync uvicorn app.main:app --reload
+```
+
+- 本地 API 直接读写生产库和 bucket；删除、上传与测试数据都会反映到线上。务必使用专用测试账号，并保持备份正常。
+- **不要在本地执行 `alembic upgrade head`。** 它会直接修改生产库；迁移随发布由 `migrate` 容器执行。需要生成迁移时使用 `alembic revision --autogenerate`，检查后再提交。
+- 测试使用内存 SQLite，不依赖隧道：`uv run --no-sync pytest`。
+- 后端改动由 CI（`.github/workflows/ci.yml`）执行 lint、pytest 和空库迁移；本地启动只用于调试。
+- 数据库结构变更使用 Alembic，提交前检查索引、约束与级联。
+- 服务端凭据不得放入客户端公开环境变量或提交进仓库；生产密钥只存在 GitHub Secrets 与服务器 `.env.production`，本地文件 `.env.local`、`server/.env` 均已被 gitignore。
 
 ## 验证与代码规则
 

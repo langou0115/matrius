@@ -97,7 +97,7 @@ src/
 | 本地 Agent Runtime、上下文与云端工具调度 | `src/core/agent/` |
 | 模型直连 / 代理传输、SSE、解码器 | `src/core/llm/` |
 | 安全存储、文件、剪贴板等平台适配 | `src/core/platform/` |
-| 增量同步与重试 | `src/core/sync/` |
+| 云端模式 REST 客户端、认证、409 冲突与错误映射 | `src/core/api/` |
 | 更多消息格式与原生富文本适配 | 聊天模块内的消息渲染组件 |
 | 记忆、文件、认证、管理员 | `src/features/<module>/` |
 | 原生界面 | 保持共享状态与契约，后续增加 React Native 页面与组件 |

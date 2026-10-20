@@ -32,6 +32,16 @@ yarn-error.*
 
 # local env files
 .env*.local
+server/.env
+docker-compose/.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+server/*.db
 
 # typescript
 *.tsbuildinfo

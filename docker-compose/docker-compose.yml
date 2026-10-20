@@ -1,0 +1,262 @@
+name: matrius-prod
+
+services:
+  caddy:
+    container_name: matrius-caddy
+    image: caddy:2-alpine
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8081}:80"
+      - "${APP_BIND:-0.0.0.0}:${APP_HTTPS_PORT:-8443}:443"
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8099/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - edge
+    restart: unless-stopped
+
+  web:
+    container_name: matrius-web
+    image: matrius-web:local
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+      args:
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}
+    environment:
+      PORT: "8081"
+      HOST: 0.0.0.0
+      MATRIUS_PROXY_ALLOW_HOSTS: ${MATRIUS_PROXY_ALLOW_HOSTS:-}
+      MATRIUS_PROXY_ALLOW_PRIVATE: ${MATRIUS_PROXY_ALLOW_PRIVATE:-0}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8081/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+    restart: unless-stopped
+
+  api:
+    container_name: matrius-api
+    image: matrius-api:local
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+      args:
+        PYPI_INDEX_CANDIDATES: ${PYPI_INDEX_CANDIDATES:-https://pypi.org/simple,https://pypi.tuna.tsinghua.edu.cn/simple}
+    environment:
+      APP_ENV: production
+      APP_URL: ${APP_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-matrius}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-matrius}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379/0
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-matrius}
+      OPENSERP_URL: http://openserp:7000
+      OPENSERP_PROXY_URL: ${OPENSERP_PROXY_URL:-}
+      OPENSERP_PROXY_TAG: ${OPENSERP_PROXY_TAG:-}
+      AUTH_SESSION_TTL_SECONDS: ${AUTH_SESSION_TTL_SECONDS:-604800}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
+      STORAGE_QUOTA_BYTES: ${STORAGE_QUOTA_BYTES:-536870912}
+      FETCH_MAX_CHARS: ${FETCH_MAX_CHARS:-50000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - edge
+      - data
+      - search
+    restart: unless-stopped
+
+  migrate:
+    container_name: matrius-migrate
+    image: matrius-api:local
+    pull_policy: never
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && python -m app.bootstrap
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-matrius}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-matrius}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data
+    restart: "no"
+
+  postgres:
+    container_name: matrius-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-matrius}
+      POSTGRES_USER: ${POSTGRES_USER:-matrius}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_TUNNEL_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - data
+    restart: unless-stopped
+
+  redis:
+    container_name: matrius-redis
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --requirepass
+      - ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:${REDIS_TUNNEL_PORT:-16379}:6379"
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - --no-auth-warning
+        - -a
+        - ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+        - ping
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - data
+    restart: unless-stopped
+
+  rustfs:
+    container_name: matrius-rustfs
+    image: rustfs/rustfs:1.0.0
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
+    command: ["/data"]
+    volumes:
+      - rustfs_data:/data
+    ports:
+      - "127.0.0.1:${RUSTFS_TUNNEL_PORT:-19000}:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/health/ready >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - data
+    restart: unless-stopped
+
+  openserp:
+    container_name: matrius-openserp
+    image: karust/openserp:0.8.12
+    init: true
+    command:
+      - serve
+      - -a
+      - 0.0.0.0
+      - -p
+      - "7000"
+    environment:
+      OPENSERP_SERVER_HOST: 0.0.0.0
+      OPENSERP_SERVER_PORT: "7000"
+      OPENSERP_APP_BROWSER_PATH: /headless-shell/headless-shell
+      OPENSERP_PROXIES_ALLOW_REQUEST_PROXY_URL: ${OPENSERP_PROXIES_ALLOW_REQUEST_PROXY_URL:-false}
+    shm_size: 2gb
+    ports:
+      - "127.0.0.1:${OPENSERP_TUNNEL_PORT:-17000}:7000"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:7000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - search
+    restart: unless-stopped
+
+networks:
+  edge:
+    name: matrius_prod_edge
+    driver: bridge
+  data:
+    name: matrius_prod_data
+    driver: bridge
+  search:
+    name: matrius_prod_search
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: matrius_prod_postgres_data
+  rustfs_data:
+    name: matrius_prod_rustfs_data
+  caddy_data:
+    name: matrius_prod_caddy_data
+  caddy_config:
+    name: matrius_prod_caddy_config

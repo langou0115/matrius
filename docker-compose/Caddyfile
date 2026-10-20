@@ -1,0 +1,22 @@
+{$CADDY_SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	# The existing same-origin model relay in the web container.
+	handle /api/model-proxy/* {
+		reverse_proxy web:8081
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:8081
+	}
+}
+
+# Loopback-only endpoint for the container healthcheck. It must not depend on
+# whether the public site is served over HTTP or automatic HTTPS.
+http://127.0.0.1:8099 {
+	respond /healthz 200
+}

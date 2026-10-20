@@ -43,28 +43,33 @@ Docs: https://docs.expo.dev/eas/index.md
 
 ## Matrius 项目约定与文档入口
 
-本工程由 `../matrius-old` 迁移，使用 React Native + Expo + TypeScript。当前优先开发 Web 端，已完成聊天界面与外观设置；移动端后续适配。`doc/migration.md` 记录已完成与待实现项。
+本工程由 `../matrius-old` 迁移，使用 React Native + Expo + TypeScript。当前优先开发 Web 端，已完成聊天界面、外观设置与 Python 后端；移动端与客户端云端模式适配后续完成。`doc/migration.md` 记录已完成与待实现项。
 
 | 任务 | 修改前阅读 |
 | --- | --- |
 | 产品边界、模式与开发顺序 | [产品约定](doc/product.md) |
 | 模块、页面与文件职责 | [架构](doc/architecture.md)、[客户端结构](doc/client-structure.md) |
 | UI、主题、字体、选区与模型直连 | [UI 风格](doc/ui-style.md)、[客户端约定](doc/client.md) |
-| 本地存储、离线缓存与同步 | [存储与同步](doc/data.md) |
+| 本地存储与云端数据访问 | [存储与数据](doc/data.md) |
 | 认证与管理员 | [认证](doc/auth.md) |
 | Runtime、协议与工具 | [Agent 与工具](doc/agent.md) |
 | 文件解析与记忆 | [文件与记忆](doc/files-and-memory.md) |
 | 命令、验证与交付 | [开发与验证](doc/development.md) |
+| 后端接口、数据契约与实现 | [后端架构](doc/backend.md)、[server/README.md](server/README.md) |
+| 服务器、CD 与运维 | [部署与 CD](doc/deployment.md) |
 
 - Agent Runtime 在两种模式下均运行于客户端本地，负责上下文、循环、运行状态、工具调度与取消。网络搜索、网页读取和文件处理通过云端工具 API 执行；服务端模型代理只处理单次请求，不运行 Agent Loop。
 - 本地与云端共用 UI 和数据模型。未登录可用本地模式；云端专属入口整体隐藏，登录引导集中在设置页。
-- 本地模型 key 通过安全存储适配层管理，不写日志、不上传同步；云端模型 key 仅服务端保管，不下发客户端。
-- 云端数据按认证得到的 `userId` 隔离，服务端独立验证资源归属。
-- PostgreSQL 保存云端持久数据，Redis 保存临时状态，RustFS 保存文件。所有数据库结构变更走迁移。
-- 本地存储按平台实现：Web 数据保存在浏览器 IndexedDB，App 后续保存在手机本地数据库，不沿用旧版 drift。云端是事实源，本机保留离线缓存，合并和重试不得丢数据。
+- 云端模式下服务端是唯一事实源：新会话不写本地，断网不能读历史。开启时一次性导入本地数据并保留本地备份，之后不再读写。
+- 模型 API key 始终由客户端安全存储管理，不写日志、不上传，也不保存在服务端。
+- 云端数据按认证得到的 `userId` 隔离，服务端独立验证资源归属；修改/删除使用 `baseRevision` 乐观并发。
+- PostgreSQL 保存云端持久数据，Redis 只保存限流与短期缓存，RustFS 保存文件内容。所有数据库结构变更走 Alembic，并保持 CI 空库迁移通过。
+- 本地存储按平台实现：Web 本地模式保存在浏览器 IndexedDB，App 后续保存在手机本地数据库，不沿用旧版 drift。云端模式不做本地缓存、outbox、墓碑或增量同步。
 - 当前阶段 Web 优先，移动端后续适配；共享状态和业务契约不依赖 DOM，平台差异集中在平台文件与适配层。
 - UI → 功能模块 → 仓储 → 数据源，保持单向依赖；功能可见性由统一能力集驱动。
 - 保留旧版主题只改变颜色的设计；布局、圆角、字体统一管理。按钮不显示悬停文字说明，但保留无障碍名称和焦点反馈。
 - 保持简单，不提前构建微服务、多 Agent 编排、工作流、RBAC、组织或租户系统。
 - 新增第三方状态管理、网络或代码生成库前先与维护者确认；路由统一使用 Expo Router。
+- 后端不维护 dev Compose，生产 Compose 是唯一环境。本地调试用 `scripts/dev-tunnel.sh` 连接服务器数据（测试使用专用账号），SSH 目标放 `.env.local`，服务凭据放 `server/.env`，两者均已 gitignore；不要在本地执行 `alembic upgrade head`。改动由 CI 执行 lint、pytest 与空库迁移；需要本地静态检查时先运行 `server/scripts/install-python-deps.sh --dev`，再用 `uv run --no-sync` 执行命令。Web 改动运行 lint 与 `npx tsc --noEmit`。
+- 生产密钥只放在 GitHub Secrets / 服务器 `.env.production`，不得提交；`docker compose down` 永远不加 `-v`。
 - 产品边界、持久化、目录职责或命令变化时同步更新 `doc/` 和根 `README.md`。

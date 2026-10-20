@@ -1,0 +1,36 @@
+FROM node:24-slim AS builder
+
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} \
+    CI=1
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+# postinstall regenerates KaTeX assets, so the script must exist before npm ci.
+COPY scripts/sync-katex.mjs ./scripts/sync-katex.mjs
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+
+COPY . .
+
+RUN npm run export:web
+
+FROM node:24-slim AS runner
+
+ENV NODE_ENV=production \
+    PORT=8081 \
+    HOST=0.0.0.0 \
+    MATRIUS_STATIC_DIR=/app/dist
+
+WORKDIR /app
+
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/scripts/server.mjs /app/scripts/model-proxy.cjs ./scripts/
+COPY --from=builder --chown=node:node /app/package.json ./package.json
+
+USER node
+
+EXPOSE 8081
+
+CMD ["node", "scripts/server.mjs"]
