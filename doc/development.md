@@ -68,47 +68,79 @@ npx eas-cli@latest submit --platform ios
 
 当前原生目录由 CNG 生成，原生行为通过 app config / config plugins 配置，不手工创建或修改 `ios/`、`android/`。
 
-## 后端与基础设施
+## 远程构建与部署：npm run remote
 
-后端使用 Python 3.12 + FastAPI，位于 `server/`，接口与数据契约见[后端架构](backend.md)。
+在本机编辑前端和后端代码，执行 `npm run remote` 把当前源码发送到服务器，并在服务器构建、启动生产镜像。本机无需启动 Web、Python、Docker 或数据库，不需要先提交 Git，也不依赖 GitHub Actions。`npm run web` 仅用于本机前端调试（Metro，可访问 `/mock`），部署产物不启用 Mock，也不参与远程部署。
 
-**后端只有一套环境：服务器上的生产 Compose。** 不维护 dev Compose，也不复制第二份开发数据；本地调试通过 SSH 隧道连接服务器上的 PostgreSQL、Redis、RustFS 和 OpenSERP，读写的就是线上数据。测试请使用专用测试账号。生产拓扑、首次部署与回滚见[部署与 CD](deployment.md)。
+### 首次配置
 
-### 连接服务器数据
+本机准备 Node.js 24、npm、Git、OpenSSH 客户端和支持 `--null -T` 的 tar（Windows 可用系统自带 OpenSSH/tar 与 Git for Windows）。克隆仓库后即可运行 remote 脚本，无需先安装应用依赖。脚本使用 Node 内置模块，不依赖 Bash、rsync 或本机 Python。
 
-数据服务在服务器上只绑定 `127.0.0.1`，不会暴露公网：
+1. 服务器先按[发布账号说明](deployment.md#发布账号)安装 Docker Engine + Compose v2，并准备 SSH 账号。已有服务器环境可直接使用。
+2. 配置 SSH 密钥或 ssh-agent，并手工连接一次、核对服务器指纹。可以在 SSH config 中建立 `matrius-remote` 别名。脚本使用严格主机密钥校验与非交互认证，不读取或上传密码。
+3. 按[发布账号](deployment.md#发布账号)准备 `matrius-deploy` SSH 账号、密钥和 Docker 权限。脚本不会自动提权或修改账号权限。
+4. 复制根目录 `.env.local.example` 为 `.env.local`，填写：
 
-| 服务 | 服务器回环端口 | 本地隧道端口 |
-| --- | --- | --- |
-| PostgreSQL | 15432 | 15432 |
-| Redis | 16379 | 16379 |
-| RustFS | 19000 | 19000 |
-| OpenSERP | 17000 | 17000 |
+```dotenv
+REMOTE_SSH=matrius-remote
+REMOTE_PUBLIC_URL=http://你的服务器IP:16666
 
-端口可在服务器 `.env.production` 和本地 `.env.local` 中通过 `DB_TUNNEL_PORT`、`REDIS_TUNNEL_PORT`、`RUSTFS_TUNNEL_PORT`、`OPENSERP_TUNNEL_PORT` 调整，两边必须一致。
+# 可选：覆盖服务器端口；不写则保留服务器现有值或使用默认值
+# APP_PORT=16666
+# API_PORT=16667
+# APP_HTTPS_PORT=8443
 
-1. 复制 `.env.local.example` 为 `.env.local`，填写 `SERVER_HOST`、`SERVER_USER` 和认证方式。优先使用 `SERVER_SSH_KEY`；`SERVER_PASSWORD` 需要本地安装 `sshpass`（如 `sudo apt install sshpass`），并确认服务器允许密码登录。密码会留在本地进程环境中，仅建议临时使用。
-2. 在一个单独的终端保持隧道：
-
-```bash
-bash scripts/dev-tunnel.sh
+# 可选：首次部署时创建的管理员；都不填则随机生成密码
+# INITIAL_ADMIN_USERNAME=admin
+# INITIAL_ADMIN_PASSWORD=你的密码
 ```
 
-3. 复制 `server/.env.example` 为 `server/.env`，用服务器 `.env.production` 中的数据库、Redis、RustFS 凭据替换占位值。
-4. 安装依赖并启动 API：
+默认不需要准备服务器配置文件：首次运行会在 `<REMOTE_WORKSPACE>/production.env` 生成随机服务密码、初始管理员和全部默认配置，并把管理员凭据保存到 `<REMOTE_WORKSPACE>/initial-admin.txt`（权限 600）。填了 `INITIAL_ADMIN_*` 就用你指定的账号密码；管理员只会在数据库没有用户时创建，之后修改本机配置不会改已有账号的密码。凭据文件不会下载到开发机。已有配置时再设置 `REMOTE_ENV_FILE=/etc/matrius/remote.env`；脚本只改写你显式设置的 `APP_PORT`、`API_PORT`、`APP_HTTPS_PORT`，其他内容保持不变。
+
+`REMOTE_WORKSPACE` 默认是该 SSH 账号的 `$HOME/.matrius-remote`，可设为绝对路径，必须使用专门的工作目录，不能设为其他用途的目录。多台开发机使用相同 SSH 账号和 workspace。
+
+### 日常使用
+
+```bash
+npm run remote -- --check   # 本地检查配置与同步文件范围，不连接服务器
+npm run remote              # 同步、构建并启动生产版，健康检查通过后退出
+npm run remote -- --init    # 可选：强制重新执行基础设施初始化和迁移
+npm run remote -- --publish # 部署，并在健康检查后更新已发布功能清单
+npm run remote -- --publish --migrate # 有已审查的数据库迁移时显式执行
+npm run test:remote        # 单次同步、部署、功能发布门控与并发锁回归
+npm run test:auth          # 会话切换、失效和账号功能显示回归
+```
+
+每次执行都会完成一次完整部署：全量同步当前源码 → 在服务器构建 Web（Expo 生产导出 + Node 中继）与 API 镜像 → 重建 Web/API/Caddy → 等待 `/api/health` 和首页通过 → 退出。通常需要 1–3 分钟；源码未变化时 Docker 构建缓存会让重复执行更快。命令不会持续监听文件，修改代码后重新执行即可。打开 `REMOTE_PUBLIC_URL` 查看服务器页面；脚本不会自动控制浏览器。
+
+同步包含新增、修改、删除以及尚未提交、未被 gitignore 的新文件；本机的 `.env` / 密钥、node_modules、Python 虚拟环境、构建产物和 Git 元数据不会上传，符号链接不跟随。依赖在服务器按锁文件安装。服务器始终运行生产 bundle，因此服务器上的 `/mock` 不可用；Mock 只在本机 `npm run web` 下可用。不同开发机的部署通过服务器文件锁互斥；命令退出后应用容器继续运行，SSH 中断后重新执行会重新全量对齐当前开发机的代码。
+
+默认部署只让新代码上线，**不更新已发布功能清单**：`admin_test` 仍按 preview 规则看到新功能，其他账号只能看到最近一次 `--publish` 发布的功能。`--publish` 在健康检查通过后才用本次构建的 API 镜像原子更新清单，是把测试账号验证过的功能同步给其他账号的唯一入口；也可由手动 GitHub CD 调用。两者使用同一份源码、同一套生产 Compose、容器和数据，没有开发/生产两套运行环境。
+
+首次运行会自动创建数据服务、执行迁移和初始管理员引导，然后正常部署；之后默认命令只启动缺失的基础服务，不再迁移。后续结构变化使用 `--migrate` 执行已审查的迁移。`--init` 可强制重跑初始化和迁移，已有数据时通常不需要。不要在本机执行指向服务器的迁移命令。
+
+没有自动源码回滚：回退时在本机切换到已验证的 Git 版本后重新执行命令；数据库结构回退需单独评估并备份。
+
+## 按账号开发新功能
+
+所有新增可见功能先登记到 `server/app/features/registry.py`（默认 preview），UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。用 `admin_test` 在同一网站验证，不新增测试地址。验证后只把指定条目改为 stable，再通过手动 CD 或 `npm run remote -- --publish` 发布。默认部署不更新已发布功能清单，因此即使同步了 stable 候选代码也不会提前向其他账号开放；只有 `--publish` 在健康检查通过后才更新清单。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
+
+账号登录当前仅用于功能权限，聊天仍保存在当前浏览器，不触发云端仓储切换或本地数据导入。会话仅保留在当前标签页，Mock 不使用真实账号。
+
+## 后端与基础设施
+
+后端只在服务器 Compose 运行，连接同机 PostgreSQL、Redis、RustFS 和 OpenSERP。开发机只保存 SSH 连接配置，不保存数据库或对象存储凭据，不需要本地数据隧道。服务只通过容器网络连接，数据服务不映射宿主机端口；联调使用专用测试账号。
+
+后端自动测试使用内存 SQLite，不依赖服务器。需要执行后端检查时安装 Python 开发依赖后运行：
 
 ```bash
 cd server
 bash scripts/install-python-deps.sh --dev
-uv run --no-sync uvicorn app.main:app --reload
+uv run --no-sync ruff check .
+uv run --no-sync pytest
 ```
 
-- 本地 API 直接读写生产库和 bucket；删除、上传与测试数据都会反映到线上。务必使用专用测试账号，并保持备份正常。
-- **不要在本地执行 `alembic upgrade head`。** 它会直接修改生产库；迁移随发布由 `migrate` 容器执行。需要生成迁移时使用 `alembic revision --autogenerate`，检查后再提交。
-- 测试使用内存 SQLite，不依赖隧道：`uv run --no-sync pytest`。
-- 后端改动由 CI（`.github/workflows/ci.yml`）执行 lint、pytest 和空库迁移；本地启动只用于调试。
-- 数据库结构变更使用 Alembic，提交前检查索引、约束与级联。
-- 服务端凭据不得放入客户端公开环境变量或提交进仓库；生产密钥只存在 GitHub Secrets 与服务器 `.env.production`，本地文件 `.env.local`、`server/.env` 均已被 gitignore。
+修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在专用空 PostgreSQL 上验证。仓库不配置自动 CI；日常部署用 `npm run remote`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
 
 ## 验证与代码规则
 
@@ -140,7 +172,7 @@ uv run --no-sync uvicorn app.main:app --reload
 - 点击侧栏切换样例，也可通过搜索标题或正文定位内容，支持置顶、重命名、删除与输入草稿；配置并选中模型后，发送会调用真实模型，沿用正式对话流程。
 - 示例模式不读取或写入浏览器真实工作区，变更仅保存在内存中。右下角提供重置和退出入口；刷新示例地址也会重置。
 - `src/app/mock/_layout.tsx` 通过 `__DEV__` 统一保护全部 mock 子路由；新增页面自动受保护。索引页、工具栏与示例数据仅在 `__DEV__` 分支动态加载，release 模式访问这些路径会跳回首页。
-- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。发布时部署导出产物，不部署 Metro 开发服务。`__DEV__` 取决于 bundle 的开发/生产模式，与域名、登录状态或 EAS profile 名称无关。
+- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。`npm run remote` 部署的是 Expo 生产导出产物，不部署 Metro 开发服务，因此服务器上的 `/mock` 不可用。`__DEV__` 取决于 bundle 的开发/生产模式，与域名、登录状态或 EAS profile 名称无关。
 - 发布前检查导出的 JS/HTML 不包含 Mock 索引文案、工具栏或示例数据；路由名称和重定向页面仍可能存在于静态产物中，不代表 Mock 页面可用。
 - 用户与助手消息共用 Markdown/GFM 与 KaTeX 渲染，支持标题、列表、引用、表格、脚注、公式和按需代码高亮；代码块可复制与折叠。Mermaid 等未知代码语言作为原文展示，已接入三种协议的实时流式模型输出。
 

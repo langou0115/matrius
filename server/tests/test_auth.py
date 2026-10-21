@@ -68,6 +68,16 @@ async def test_admin_can_create_and_disable_user(client, create_user):
     assert rejected.status_code == 403
 
 
+async def test_admin_session_requires_admin_scope(client, create_user):
+    _, user_headers = await create_user("alice")
+    assert (await client.get("/api/admin/auth/me", headers=user_headers)).status_code == 403
+
+    _, admin_headers = await create_user("admin", is_admin=True)
+    me = await client.get("/api/admin/auth/me", headers=admin_headers)
+    assert me.status_code == 200
+    assert me.json()["isAdmin"] is True
+
+
 async def test_admin_cannot_disable_self(client, create_user):
     user_id, headers = await create_user(username="admin", is_admin=True)
     response = await client.patch(

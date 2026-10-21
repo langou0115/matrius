@@ -4,7 +4,7 @@ Matrius 云端模式的后端：FastAPI + PostgreSQL + Redis + RustFS + OpenSERP
 
 服务端是云端模式的唯一事实源，保存会话、消息、已读状态、记忆、画像、偏好和文件元数据；Agent Runtime 仍运行在客户端，服务端不运行 Agent Loop，也不保存模型 API key。
 
-完整设计与接口契约见 [后端架构](../doc/backend.md)，服务器与 CD 见[部署指南](../doc/deployment.md)。
+完整设计与接口契约见 [后端架构](../doc/backend.md)，服务器准备与更新见[部署指南](../doc/deployment.md)。
 
 ## 目录
 
@@ -30,23 +30,16 @@ server/
 
 ## 运行与验证
 
-后端只有一套运行环境：服务器上的生产 Compose。本地调试不另起基础设施，而是通过 SSH 隧道直接连接服务器上的 PostgreSQL、Redis、RustFS 和 OpenSERP；完整说明见[开发与验证](../doc/development.md#后端与基础设施)。
+后端只在服务器 Compose 运行，本机使用仓库根目录的 `npm run remote` 同步前后端代码，并在服务器构建、启动生产镜像；每次命令完成一次部署和健康检查后退出。默认部署不更新功能发布清单，`npm run remote -- --publish` 在健康检查后发布 stable 功能。首次运行自动生成服务器配置、初始化服务并创建管理员；后续迁移使用显式 `--migrate`。本机只需 `.env.local` 中的 SSH 配置，不需要 `server/.env` 或数据隧道。完整说明见[远程构建与部署](../doc/development.md#远程构建与发布npm-run-remote)。
 
-### 本地调试（连接服务器）
+安装 Python 依赖仅用于需要在本机执行的测试和静态检查，不是远程运行的前置条件：
 
 ```bash
-# 终端 1：在仓库根目录保持隧道（先准备 .env.local）
-bash scripts/dev-tunnel.sh
-
-# 终端 2：准备 server/.env 后启动 API
 cd server
 bash scripts/install-python-deps.sh --dev
-uv run --no-sync uvicorn app.main:app --reload
 ```
 
-`.env.local`（SSH 目标）和 `server/.env`（服务凭据）都已被 gitignore，模板分别为 [`.env.local.example`](../.env.local.example) 和 [`.env.example`](.env.example)。本地 API 访问的是生产数据库与 bucket，测试请使用专用账号；**不要在本地执行 `alembic upgrade head`**，迁移随发布由 `migrate` 容器执行。
-
-`install-python-deps.sh` 从 `uv.lock` 导出带 sha256 的依赖清单，并行探测候选 PyPI 源，用最快且可达的源安装；安装失败或超时会自动尝试下一个源。可用 `PYPI_INDEX_CANDIDATES` 覆盖候选列表。依赖变化或修改锁文件后需要重新执行该脚本；`--no-sync` 避免 `uv run` 再按锁文件里的固定 URL 回源。
+`install-python-deps.sh` 从 `uv.lock` 导出带 sha256 的依赖清单，并探测候选 PyPI 源；依赖变化后重新执行安装，后续命令使用 `uv run --no-sync`。
 
 ### 测试与检查
 
@@ -55,7 +48,7 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest
 ```
 
-测试使用内存 SQLite（启用外键），速率限制与 Redis 缓存被替换为 no-op，不会连接外部服务。CI 在每次推送时执行同样的检查。
+测试使用内存 SQLite（启用外键），速率限制与 Redis 缓存被替换为 no-op，不会连接外部服务。仓库没有自动 CI，发布前需在本地执行这些检查。
 
 ### 新增迁移
 
@@ -63,7 +56,7 @@ uv run --no-sync pytest
 uv run --no-sync alembic revision --autogenerate -m "describe change"
 ```
 
-提交前检查生成的迁移：索引、约束、级联删除必须显式存在。CI 会在空 PostgreSQL 上执行全部迁移，生产部署时由 `migrate` 容器执行 `alembic upgrade head`。
+提交前检查生成的迁移：索引、约束、级联删除必须显式存在。涉及迁移时应在空 PostgreSQL 上验证全部迁移；生产部署时由 `migrate` 容器执行 `alembic upgrade head`。
 
 `app.bootstrap` 只在 `users` 表为空时创建初始管理员；用户名和密码来自 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`。创建后应从生产环境变量中移除密码。
 
@@ -88,7 +81,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `STORAGE_QUOTA_BYTES` | `536870912` | 每用户存储配额（512 MiB） |
 | `FETCH_MAX_CHARS` | `50000` | 单次网页读取最大字符数 |
 
-生产配置放在服务器的 `docker-compose/.env.production`，模板见 `.env.production.example`。不要把真实密钥提交到仓库。
+生产配置默认由首次 `npm run remote` 生成在服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`。不要把真实密钥提交到仓库，也不要放到开发机。
 
 ## API 概览
 
@@ -162,4 +155,8 @@ docker build -t matrius-api:local server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
 ```
 
-生产发布由 `scripts/cd-remote.sh` 在服务器上执行 `docker compose up -d --build`，迁移与初始管理员由 `migrate` 一次性容器完成。
+部署使用 `npm run remote`，功能发布使用 `npm run remote -- --publish`；首次运行或显式 `--migrate` 通过一次性容器执行迁移与管理员引导。
+
+## 测试账号与新功能开放
+
+服务配置 `PREVIEW_USERNAME=admin_test`，账号由已有管理员正常创建并完成首次改密；不自动创建测试账号或设置默认测试密码。新增功能在 `app/features/registry.py` 以 preview 登记，接口依赖 `require_feature(id)`；验证后只把指定条目标为 stable，再通过手动 CD 发布。`UserOut.features` 和 `/api/features` 返回当前账号能力，`/api/features/labs` 演示完整服务端校验。参考[认证规则](../doc/auth.md#同一地址的账号功能开关)。

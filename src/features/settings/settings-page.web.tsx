@@ -1,13 +1,14 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from 'expo-router';
-import { ArrowLeft, Cpu, Info, Palette, Search, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Cpu, FlaskConical, Info, Palette, Search, SlidersHorizontal, UserRound, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChat } from '@/features/chat/chat-state';
 import { conversationHref } from '@/features/chat/conversation-href';
+import { useAuth } from '@/features/auth/auth-state.web';
 
-import { searchSettings, searchSettingsContent, settingsItems } from './settings-catalog';
+import { searchSettings, searchSettingsContent, visibleSettings } from './settings-catalog';
 
 export function useSettingsRoot() {
   return useIsPreview() ? '/mock/chat/settings' : '/settings';
@@ -20,6 +21,8 @@ const categoryIcons: Record<string, LucideIcon> = {
   personalization: SlidersHorizontal,
   models: Cpu,
   about: Info,
+  account: UserRound,
+  labs: FlaskConical,
 };
 
 function CategoryIcon({ id, size = 18 }: { id: string; size?: number }) {
@@ -36,14 +39,17 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
   const preview = useIsPreview();
   const { activeId: conversationId } = useChat();
   const root = useSettingsRoot();
+  const { user } = useAuth();
+  const settingsItems = visibleSettings(user?.mustChangePassword ? [] : user?.features ?? [], preview);
   const pathname = usePathname().replace(/\/$/, '');
   const homeHref = conversationHref(conversationId, preview);
   const activeId = settingsItems.find((item) => pathname === `${root}/${item.id}`)?.id;
   const groups = settingsItems.reduce<string[]>((list, item) => (list.includes(item.group) ? list : [...list, item.group]), []);
   const searching = query.trim().length > 0;
-  const contentMatches = searching ? searchSettingsContent(query) : [];
+  const contentMatches = searching ? searchSettingsContent(query).filter((target) => settingsItems.some((item) => item.id === target.category)) : [];
   // A category row is redundant when its contents already match.
-  const categoryMatches = searching ? searchSettings(query).filter((item) => !contentMatches.some((target) => target.category === item.id)) : [];
+  const categoryMatches = searching ? searchSettings(query).filter((item) => settingsItems.some((visible) => visible.id === item.id)
+    && !contentMatches.some((target) => target.category === item.id)) : [];
   const noResults = searching && !contentMatches.length && !categoryMatches.length;
 
   // Results link to a category with `?focus=<heading id>`; scroll that heading into view once
@@ -94,7 +100,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
               </Link>;
             })}
             {categoryMatches.map((item) => {
-              const href: Href = `${root}/${item.id}`;
+              const href: Href = item.id === 'account' || item.id === 'labs' ? `/settings/${item.id}` : `${root}/${item.id}`;
               return <Link key={item.id} href={href} asChild>
                 <LinkAnchor className="settings-nav-item settings-search-result" onClick={() => setQuery('')}>
                   <CategoryIcon id={item.id} />
@@ -107,7 +113,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
           : groups.map((group) => <section className="settings-nav-group" key={group}>
             <h2>{group}</h2>
             {settingsItems.filter((item) => item.group === group).map((item) => {
-              const href: Href = `${root}/${item.id}`;
+              const href: Href = item.id === 'account' || item.id === 'labs' ? `/settings/${item.id}` : `${root}/${item.id}`;
               return <Link key={item.id} href={href} asChild>
                 <LinkAnchor className={`settings-nav-item ${activeId === item.id ? 'is-active' : ''}`} aria-current={activeId === item.id ? 'page' : undefined}>
                   <CategoryIcon id={item.id} />

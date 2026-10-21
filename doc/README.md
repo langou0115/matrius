@@ -6,8 +6,8 @@
 
 - 当前优先开发 Web 界面，移动端后续适配，原生路由暂留说明页。
 - Web 已完成聊天外壳、侧栏、会话管理、标题/正文搜索、外观设置和本地 Agent Runtime；旧版 10 套配色与字体已迁入。
-- Web 对话与外观偏好已通过 IndexedDB 保存在浏览器（本地模式）；草稿仍在页面内存中。Python 后端与部署流水线已完成，客户端云端模式适配是下一阶段。
-- 后端接口、数据契约与部署见 [后端架构](backend.md) 和 [部署与 CD](deployment.md)；客户端实现入口见 `client-structure.md`，迁移步骤见 `migration.md`。
+- Web 对话与外观偏好已通过 IndexedDB 保存在浏览器（本地模式）；草稿仍在页面内存中。Python 后端、账号登录、功能开关与手动 CD 已接入，客户端云端数据模式适配是下一阶段。
+- 后端接口、数据契约与部署见 [后端架构](backend.md) 和 [服务器部署](deployment.md)；客户端实现入口见 `client-structure.md`，迁移步骤见 `migration.md`。
 
 | 文档 | 内容 |
 | --- | --- |
@@ -23,7 +23,7 @@
 | [文件读取与个人记忆](files-and-memory.md) | 文档解析、记忆提炼与注入 |
 | [开发、验证与交付](development.md) | 环境、启动命令、代码规则和完成检查 |
 | [后端架构与云端数据契约](backend.md) | FastAPI 边界、认证、接口、并发、文件与工具 |
-| [部署与 CD](deployment.md) | 服务器初始化、GitHub Secrets、发布、HTTPS、备份与回滚 |
+| [服务器部署](deployment.md) | 独立 SSH 账号、remote 构建部署、按账号验证、手动 CD 正式发布与备份 |
 
 ## 文档维护
 

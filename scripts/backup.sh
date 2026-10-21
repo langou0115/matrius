@@ -5,8 +5,7 @@
 # environment file are the only irreplaceable state. Containers and images can
 # be rebuilt from the repository.
 #
-# Run on the server as root or a user with Docker access. Do not run as the
-# unprivileged matrius-deploy user. Install it root-owned so a compromised
+# Run on the server as root or a user with Docker access. Install it root-owned so a compromised
 # deploy user cannot change what root executes:
 #   sudo install -o root -g root -m 0755 scripts/backup.sh /usr/local/sbin/matrius-backup
 # Reinstall after changing this file.
@@ -19,8 +18,7 @@
 set -euo pipefail
 umask 077
 
-project_dir=${MATRIUS_PROJECT_DIR:-/home/matrius-deploy/matrius}
-env_file=${PRODUCTION_ENV_FILE:-$project_dir/docker-compose/.env.production}
+env_file=${PRODUCTION_ENV_FILE:-/etc/matrius/remote.env}
 backup_dir=${BACKUP_DIR:-/var/backups/matrius}
 keep_days=${BACKUP_KEEP_DAYS:-14}
 postgres_container=${POSTGRES_CONTAINER:-matrius-postgres}

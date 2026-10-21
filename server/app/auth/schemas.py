@@ -13,6 +13,7 @@ class UserOut(BaseModel):
     username: str
     isAdmin: bool
     mustChangePassword: bool
+    features: list[str] = Field(default_factory=list)
 
 
 class LoginResponse(BaseModel):

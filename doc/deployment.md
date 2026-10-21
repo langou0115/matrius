@@ -1,269 +1,247 @@
-# 部署与 CD
+# 服务器部署
 
 [文档索引](README.md)
 
-生产环境使用单台服务器：Caddy 作为唯一入口，同机运行 Web、API、PostgreSQL、Redis、RustFS 和 OpenSERP。发布流程沿用 openstudio 模式：GitHub Actions 校验通过后通过 SSH 上传源码，由服务器上的固定 helper 执行 `docker compose up -d --build`。
+日常用 `npm run remote` 从本机同步源码，并在服务器构建、启动生产镜像。服务器不需要 clone 仓库，本机也不需要 Python、Docker 或数据库。
 
 ## 拓扑
 
 ```text
-公网
-  │  APP_BIND:APP_PORT (默认 0.0.0.0:8081) / APP_HTTPS_PORT (默认 8443)
-  ▼
-Caddy
-  ├── /api/model-proxy/* → web:8081     现有同源模型中继
-  ├── /api/*             → api:8000     FastAPI
-  └── /*                 → web:8081     Expo 静态产物 + SPA 回退
+浏览器 → Caddy :16666（网页 + API）
+          ├─ /api/model-proxy/* → Web/Node：模型中继
+          ├─ /api/*             → Python API
+          └─ /*                 → Web：生产静态页面
 
-edge 网络：caddy, web, api
-data 网络：api, postgres, redis, rustfs
-search 网络：api, openserp
+客户端 → Caddy :16667（仅 API，可选）
+          └─ /api/*             → Python API
+
+API → PostgreSQL / Redis / RustFS / OpenSERP
 ```
 
-- 只有 Caddy 暴露公网端口。PostgreSQL、Redis、RustFS、OpenSERP 仅绑定宿主 `127.0.0.1` 的开发隧道端口（默认 15432、16379、19000、17000），供本地 SSH 转发，不对公网开放。
-- OpenSERP 不在 `data` 网络，无法直接访问数据库与对象存储。
-- 持久化卷：`matrius_prod_postgres_data`、`matrius_prod_rustfs_data`、`matrius_prod_caddy_data`、`matrius_prod_caddy_config`。
-- Redis 不持久化，只保存限流与缓存。
+公网只由 Caddy 暴露端口：网页默认 `16666`，API 可选 `16667`；不直接暴露 Uvicorn。数据服务只在容器网络内，不映射宿主机端口。
 
 ## 服务器准备
 
-要求：Linux、Docker Engine + Compose v2、`curl`、`tar`、`flock`（util-linux）、`openssh-server`。
+需要 Docker Engine、Compose v2、OpenSSH Server、Bash、tar、curl、flock 和 coreutils。国内网络可在服务配置中指定镜像源：
 
-### 1. 部署用户
-
-```bash
-sudo useradd --create-home --shell /bin/bash matrius-deploy
-sudo install -d -o matrius-deploy -g matrius-deploy -m 700 /home/matrius-deploy
-```
-
-`matrius-deploy` **不要**加入 `docker` 或 `sudo` 组。它只负责接收发布包和切换软链接，Docker 命令由 root helper 执行。
-
-### 2. root helper
-
-仓库中的 [`docker-compose/matrius-deploy-helper.sh`](../docker-compose/matrius-deploy-helper.sh) 只执行固定命令：读取 `matrius` 软链接下的 compose 文件与 `.env.production`，运行 `docker compose up -d --build --remove-orphans`。它不会执行 release 目录里的用户可写脚本，接受 `--check` 或无参数两种调用。
-
-```bash
-sudo install -o root -g root -m 0755 \
-  docker-compose/matrius-deploy-helper.sh \
-  /usr/local/sbin/matrius-deploy
-```
-
-### 3. sudoers
-
-从 [`matrius-deploy.sudoers`](../docker-compose/matrius-deploy.sudoers) 安装，仅允许两条精确命令：
-
-```sudoers
-matrius-deploy ALL=(root) NOPASSWD: /usr/local/sbin/matrius-deploy --check
-matrius-deploy ALL=(root) NOPASSWD: /usr/local/sbin/matrius-deploy
-```
-
-```bash
-sudo install -o root -g root -m 0440 \
-  docker-compose/matrius-deploy.sudoers \
-  /etc/sudoers.d/matrius-deploy
-sudo visudo -cf /etc/sudoers.d/matrius-deploy
-```
-
-不要使用通配符、`sudo` 全权限或允许传入自定义 compose 文件的规则。
-
-### 4. SSH 密钥
-
-在可信机器生成专用密钥（不要复用个人密钥）：
-
-```bash
-ssh-keygen -t ed25519 -C 'matrius-cd' -f matrius-cd -N ''
-```
-
-把公钥加入部署用户：
-
-```bash
-sudo -u matrius-deploy install -d -m 700 /home/matrius-deploy/.ssh
-sudo -u matrius-deploy sh -c 'cat >> /home/matrius-deploy/.ssh/authorized_keys' < matrius-cd.pub
-sudo -u matrius-deploy chmod 600 /home/matrius-deploy/.ssh/authorized_keys
-```
-
-记录服务器主机密钥（`DEPLOY_PORT` 非 22 时使用方括号格式）：
-
-```bash
-ssh-keyscan -p 22 -t ed25519 <DEPLOY_HOST> > known_hosts
-ssh-keygen -F <DEPLOY_HOST> -f known_hosts
-```
-
-请先人工核对 `ssh-keyscan` 输出的指纹，再写入 GitHub Secret。
-
-### 5. Docker
-
-以有 Docker 权限的管理员安装 Docker Engine 和 Compose v2，并确保服务器可访问镜像源。国内网络可在 `PRODUCTION_ENV` 中设置：
-
-```text
+```dotenv
 NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 PYPI_INDEX_CANDIDATES=https://pypi.org/simple,https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-Python 依赖安装前会并行探测上述候选源，选用最快且可达的一个；某源缺少包或临时失败时自动尝试下一个。依赖版本和 `sha256` 始终来自 `server/uv.lock`，切换源不会改变实际安装内容。
+## 发布账号
 
-`NPM_CONFIG_REGISTRY` 是固定值；npm 的锁文件已包含解析后的地址，不做运行时测速。
-
-## GitHub 配置
-
-Repository → Settings → Secrets and variables → Actions：
-
-Variables：
-
-| 名称 | 示例 |
-| --- | --- |
-| `DEPLOY_HOST` | `example.com` 或 IP |
-| `DEPLOY_PORT` | `22` |
-| `DEPLOY_USER` | `matrius-deploy` |
-
-Secrets：
-
-| 名称 | 内容 |
-| --- | --- |
-| `DEPLOY_SSH_PRIVATE_KEY` | 私钥全文（OpenSSH 格式） |
-| `DEPLOY_SSH_KNOWN_HOSTS` | 已核对的 `known_hosts` 行 |
-| `PRODUCTION_ENV` | 生产 `.env.production` 全文 |
-
-`PRODUCTION_ENV` 以 [`docker-compose/.env.production.example`](../docker-compose/.env.production.example) 为模板。至少替换：
-
-- `POSTGRES_PASSWORD`、`REDIS_PASSWORD`
-- `RUSTFS_ACCESS_KEY`、`RUSTFS_SECRET_KEY`
-- `INITIAL_ADMIN_USERNAME`、`INITIAL_ADMIN_PASSWORD`（首次部署后移除密码）
-
-密码会拼进 `DATABASE_URL` / `REDIS_URL`，请使用 URL 安全字符（字母、数字、`-_.~`）或做百分号编码。
-
-## 发布流程
-
-手动触发 **Deploy Production**（`workflow_dispatch`），只接受 `main`：
-
-1. GitHub Actions 校验分支与脚本语法。
-2. `scripts/cd-deploy.sh` 校验提交 SHA、主机、端口、用户和固定主机密钥。
-3. 用 `git archive` 打包源码，连同 `PRODUCTION_ENV` 和远端脚本通过 stdin 上传到 `/home/matrius-deploy/.matrius-upload.*`。
-4. `scripts/cd-remote.sh` 在服务器上：
-   - 加文件锁，避免并发发布；
-   - 解压到 `/home/matrius-deploy/.matrius-releases/<sha>-<run>-<attempt>`；
-   - 写入权限为 600 的 `.env.production`；
-   - **先校验环境变量**，再原子切换 `matrius` 软链接；
-   - 执行 root helper 构建并启动；
-   - 轮询健康检查。
-5. 健康检查通过后保留当前与上一版 release；其余旧 release 清理。数据在 Docker 卷中，不受源码清理影响。
-
-首次部署时 `migrate` 容器执行 `alembic upgrade head && python -m app.bootstrap`，在空库创建初始管理员。
-
-## 本地连接生产数据
-
-后端不维护 dev Compose。本地调试直接复用服务器上的容器与数据：数据服务已经绑定在服务器回环地址，本地通过 SSH 隧道访问。首次启用该能力需要重新发布一次，让 Compose 按新增的端口映射重建数据容器；数据卷不受影响。
+`matrius-deploy` 是服务器 SSH 账号，不是网站用户。加入 Docker 组等同于服务器管理权限，只授予可信密钥。
 
 ```bash
-# 仓库根目录：准备 .env.local（模板 .env.local.example）
-bash scripts/dev-tunnel.sh
-
-# 另一个终端：准备 server/.env（模板 server/.env.example）
-cd server
-bash scripts/install-python-deps.sh --dev
-uv run --no-sync uvicorn app.main:app --reload
+sudo useradd -m -U -s /bin/bash matrius-deploy
+sudo passwd -l matrius-deploy
+sudo chmod 700 /home/matrius-deploy
+sudo usermod -aG docker matrius-deploy
+sudo install -d -m 700 -o matrius-deploy -g matrius-deploy \
+  /home/matrius-deploy/.ssh /home/matrius-deploy/.matrius-remote
+sudo touch /home/matrius-deploy/.ssh/authorized_keys
+sudo chown matrius-deploy:matrius-deploy /home/matrius-deploy/.ssh/authorized_keys
+sudo chmod 600 /home/matrius-deploy/.ssh/authorized_keys
 ```
 
-- 隧道只监听本地 `127.0.0.1`；服务器端口也只绑定 `127.0.0.1`，不要改成为 `0.0.0.0`。服务器上的其他本地用户同样能访问这些回环端口；OpenSERP 本身没有认证，如存在不受信任的本地账号，需要额外限制。
-- 优先使用 SSH 密钥；`SERVER_PASSWORD` 需要本地安装 `sshpass`，仅建议临时使用。首次连接默认 `StrictHostKeyChecking=accept-new`，可通过 `SERVER_KNOWN_HOSTS` 固定主机密钥。
-- 本地 API 读写生产数据库和 bucket，请使用专用测试账号。**不要在本地执行 `alembic upgrade head`**：迁移会直接修改生产库，应随发布由 `migrate` 容器执行。
-- 服务器端口通过 `.env.production` 的 `DB_TUNNEL_PORT`、`REDIS_TUNNEL_PORT`、`RUSTFS_TUNNEL_PORT`、`OPENSERP_TUNNEL_PORT` 调整，并与本地 `.env.local` 保持一致。
+已有同名账号时跳过 `useradd`，先确认归属。
 
-## 健康检查
+### 开发机公钥
 
-`scripts/deploy-health.sh`：
+每台开发机生成专用密钥，私钥只留本机：
 
-- 校验必需密码存在且不是示例值、端口合法、`CADDY_SITE_ADDRESS` 合法；
-- HTTP 模式请求 `http://127.0.0.1:${APP_PORT}/api/health`；
-- 域名模式使用 `APP_HTTPS_PORT` 与 `--resolve` 访问本机，容忍自动证书尚未生效；
-- 校验 `"service":"matrius"`、`"status":"ok"`，再请求 `/` 确认 Web 可访问；
-- 每 5 秒重试，最多 60 次（约 5 分钟）。
+```bash
+ssh-keygen -t ed25519 -C matrius-remote
+```
+
+把公钥追加到服务器，`restrict` 禁用端口转发和 PTY：
+
+```bash
+sudo tee -a /home/matrius-deploy/.ssh/authorized_keys >/dev/null <<'KEY'
+restrict ssh-ed25519 在这里粘贴开发机公钥 matrius-remote
+KEY
+sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+最后一条是服务器主机指纹，供首次连接时核对。私钥有口令时先加载到 ssh-agent；remote 使用非交互认证。
+
+## 服务配置
+
+默认不需要手工创建。首次运行会自动生成 `<REMOTE_WORKSPACE>/production.env`（默认 `~/.matrius-remote/production.env`，权限 600），随机生成数据库、Redis、RustFS 密码和 `admin` 初始密码，并套用默认端口与公开地址。管理员凭据在首次输出中打印一次，同时保存在 `<REMOTE_WORKSPACE>/initial-admin.txt`。
+
+需要固定路径或沿用已有配置时，显式设置 `REMOTE_ENV_FILE` 并手工准备：
+
+```bash
+scp docker-compose/.env.production.example 管理员账号@服务器IP:/tmp/matrius-production.env.example
+
+sudo install -d -m 750 -o root -g matrius-deploy /etc/matrius
+sudo install -m 640 -o root -g matrius-deploy /tmp/matrius-production.env.example /etc/matrius/remote.env
+sudoedit /etc/matrius/remote.env
+```
+
+常见配置项：
+
+```dotenv
+APP_PORT=16666          # 网页 + API
+API_PORT=16667          # 仅 API，可选
+APP_URL=http://服务器IP:16666
+POSTGRES_PASSWORD=<随机>
+REDIS_PASSWORD=<随机>
+RUSTFS_ACCESS_KEY=<随机>
+RUSTFS_SECRET_KEY=<随机>
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=<强密码>
+```
+
+已有数据时密码必须与现有服务一致；已有数据库卷但配置文件丢失时，脚本会拒绝生成新密码，避免用错误凭据连接旧数据。
+
+防火墙放行 SSH 和 `APP_PORT`（默认 16666）；需要直连后端时再放行 `API_PORT`（默认 16667）。IP + 端口访问保持 `CADDY_SITE_ADDRESS=:80`。
+
+## 本机配置
+
+```bash
+cp .env.local.example .env.local
+```
+
+```dotenv
+REMOTE_SSH=matrius-deploy@服务器IP
+REMOTE_PUBLIC_URL=http://服务器IP:16666
+
+# 可选：首次部署时创建的管理员
+# INITIAL_ADMIN_USERNAME=admin
+# INITIAL_ADMIN_PASSWORD=你的密码
+```
+
+不填 `INITIAL_ADMIN_*` 时首次运行会随机生成管理员密码，并打印到终端、保存到服务器的 `<workspace>/initial-admin.txt`。管理员只在数据库为空时创建，之后修改这里不会改变已有账号。
+
+端口不是 22 时加 `REMOTE_SSH_PORT`；密钥不是默认文件名时加 `REMOTE_SSH_KEY`。首次连接前手工 `ssh` 一次并核对主机指纹，否则严格校验会失败。
+
+### 修改端口
+
+在本机 `.env.local` 中设置，`npm run remote` 每次都会把这三个值同步到服务器配置：
+
+```dotenv
+APP_PORT=16666       # 网页 + API
+API_PORT=16667       # 仅 API，可选
+APP_HTTPS_PORT=8443  # 映射容器 443，配置域名和 HTTPS 后使用
+```
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `APP_PORT` | `16666` | 网页 + API 的公网端口 |
+| `API_PORT` | `16667` | 仅 API 的公网端口，可选 |
+| `APP_HTTPS_PORT` | `8443` | 映射容器 443，配置域名和 HTTPS 后使用 |
+
+不写某个变量时，服务器配置里已有的值保持不变；首次运行则使用默认值。修改后：
+
+1. 同步把 `REMOTE_PUBLIC_URL` 改成 `http://服务器IP:<APP_PORT>`（用 HTTPS 时改为域名）。
+2. 在服务器防火墙或安全组放行新端口。
+3. 重新执行 `npm run remote`。
+
+配置保存在服务器的 `<workspace>/production.env`（默认 `~/.matrius-remote/production.env`），或显式设置 `REMOTE_ENV_FILE` 时指向的文件。也可以直接编辑该文件，但 `.env.local` 中设置的端口会在下次部署时覆盖它。
+
+已有数据库但 `production.env` 不存在时，脚本会拒绝生成新密码。先把旧配置迁移到 workspace，或显式设置 `REMOTE_ENV_FILE` 指向旧配置。
+
+## 首次部署
+
+```bash
+npm run remote -- --check   # 只校验本机配置
+npm run remote               # 自动生成配置、初始化服务、建管理员并部署
+```
+
+首次运行完成后直接重复 `npm run remote` 即可。
+
+## 日常部署
+
+```bash
+npm run remote                        # 同步、构建、启动，健康检查通过后退出
+npm run remote -- --publish           # 同上，并更新已发布功能清单
+npm run remote -- --publish --migrate # 有已审查的数据库迁移时
+```
+
+每次命令都是完整部署：全量同步源码 → 服务器构建 Web/API 镜像 → 重建容器 → 健康检查 → 退出。通常 1–3 分钟，Docker 缓存会加速未变化的构建。命令退出不会停止容器。
+
+默认部署只上线代码，不更新功能清单；`--publish` 在健康检查通过后原子更新清单，是把测试账号验证过的 stable 功能开放给其他账号的唯一入口。健康检查失败时不会更新清单。
+
+回退时在本机切换到已验证的 Git 版本后重新部署；数据库结构回退需单独评估。
+
+## 功能发布与 CD
+
+新功能在 `server/app/features/registry.py` 登记为 `preview`，只对 `admin_test` 开放。验证后改为 `stable`，再发布：
+
+- 手动：`npm run remote -- --publish`
+- GitHub Actions：Actions → Deploy Production → Run workflow
+
+CD 只接受手动触发的 main 提交，执行 `npm run remote -- --publish`。在仓库或 production Environment 配置：
+
+| 类型 | 名称 | 值 |
+| --- | --- | --- |
+| Variable | `REMOTE_SSH` | `matrius-deploy@服务器IP` |
+| Variable | `REMOTE_SSH_PORT` | SSH 端口，默认 22 |
+| Variable | `REMOTE_PUBLIC_URL` | 网站地址，端口 `16666` |
+| Variable | `APP_PORT` | 网页 + API 端口，可留空 |
+| Variable | `API_PORT` | 仅 API 端口，可留空 |
+| Variable | `APP_HTTPS_PORT` | HTTPS 端口，可留空 |
+| Variable | `REMOTE_ENV_FILE` | 可留空；默认使用 workspace 中自动生成的配置 |
+| Variable | `REMOTE_WORKSPACE` | 与本机相同的 workspace，可留空 |
+| Secret | `REMOTE_SSH_PRIVATE_KEY` | 专用 CD 私钥 |
+| Secret | `REMOTE_SSH_KNOWN_HOSTS` | 已核对的主机密钥 |
+
+本机与 CD 共用服务器会话锁：已有部署进行时，CD 会直接失败，等待后重试。
 
 ## HTTPS
 
-默认 `CADDY_SITE_ADDRESS` 为空或 `:80`，走纯 HTTP。
+有域名后修改服务配置并重新部署：
 
-使用域名时：
-
-```text
+```dotenv
 CADDY_SITE_ADDRESS=example.com
 APP_PORT=80
 APP_HTTPS_PORT=443
+APP_URL=https://example.com
 ```
 
-同时将域名 A/AAAA 记录指向服务器，并放行 80/443。Caddy 会自动申请和续期证书。HTTP 请求会被重定向到 HTTPS。
-
-如果前面还有云负载均衡或其它反向代理，需要把真实客户端 IP 传进来，否则登录限流会以代理 IP 计数。不要把 API 端口直接暴露到公网。
+域名解析到服务器并放行 80/443，Caddy 自动申请和续期证书。本机 `.env.local` 的 `REMOTE_PUBLIC_URL` 同步改为 HTTPS 地址。
 
 ## 运维
 
-### 查看状态与日志
+### 状态与日志
 
 ```bash
-sudo docker compose \
-  -f /home/matrius-deploy/matrius/docker-compose/docker-compose.yml \
-  --env-file /home/matrius-deploy/matrius/docker-compose/.env.production \
-  ps
-sudo docker logs matrius-api --tail 200
-sudo docker logs matrius-caddy --tail 200
+ssh matrius-deploy@服务器IP "docker ps --filter name=matrius-"
+ssh matrius-deploy@服务器IP "docker logs --tail 100 matrius-api"
+ssh matrius-deploy@服务器IP "docker logs --tail 100 matrius-web"
 ```
 
-### 手动重启
+`/api/health` 检查数据库；`/api/health/ready` 检查数据库、Redis、对象存储和搜索。
 
-```bash
-sudo -u matrius-deploy sudo -n /usr/local/sbin/matrius-deploy
-```
+### 备份
 
-该命令会重新构建并启动，不会删除卷。
-
-### 回滚
-
-保留上一版源码目录，但不自动回滚。确认新版本异常时：
-
-```bash
-ls /home/matrius-deploy/.matrius-releases
-sudo -u matrius-deploy ln -sfnT \
-  /home/matrius-deploy/.matrius-releases/<上一版> \
-  /home/matrius-deploy/matrius.next
-sudo -u matrius-deploy mv -Tf \
-  /home/matrius-deploy/matrius.next \
-  /home/matrius-deploy/matrius
-sudo -u matrius-deploy sudo -n /usr/local/sbin/matrius-deploy
-```
-
-如果回滚涉及数据库结构，需要先在数据库中执行对应的 downgrade 或从备份恢复。生产迁移以向前兼容为原则，避免发布即需要降级。
-
-### 数据备份
-
-备份数据，而不是容器：容器和镜像可由仓库重建，真正不可替代的是 PostgreSQL、RustFS 对象和 `.env.production`。
-
-服务器上的 [`scripts/backup.sh`](../scripts/backup.sh) 会执行 `pg_dump`、只读打包 RustFS 卷并复制环境文件。以 root 安装为固定路径后再运行，避免 root 直接执行发布用户可写的脚本：
+真正不可替代的是 PostgreSQL、RustFS 对象和服务配置文件。服务器上的 `scripts/backup.sh` 会导出数据库、打包 RustFS 卷并复制配置：
 
 ```bash
 sudo install -o root -g root -m 0755 \
-  /home/matrius-deploy/matrius/scripts/backup.sh \
+  /home/matrius-deploy/.matrius-remote/source/scripts/backup.sh \
   /usr/local/sbin/matrius-backup
 sudo /usr/local/sbin/matrius-backup
 ```
 
-默认写入 `/var/backups/matrius`，保留 14 天；可用 `BACKUP_DIR`、`BACKUP_KEEP_DAYS` 覆盖。脚本更新后需要重新安装。建议加入 cron：
+默认写入 `/var/backups/matrius`，保留 14 天；可用 `BACKUP_DIR`、`BACKUP_KEEP_DAYS` 覆盖。建议加入 cron：
 
 ```text
 17 3 * * * /usr/local/sbin/matrius-backup >> /var/log/matrius-backup.log 2>&1
 ```
 
-同机备份无法应对磁盘或服务器损坏。设置 `BACKUP_REMOTE`（`rsync` 目标，如挂载的备份盘或另一台机器）把副本送出去；环境文件包含密钥，异地副本应加密保存。
+同机备份无法应对磁盘或服务器损坏。用 `BACKUP_REMOTE`（rsync 目标）把副本送到另一台机器或备份盘；环境文件包含密钥，异地副本应加密。
 
-RustFS 归档是对运行中卷的只读打包，写入并发时可能不是严格的时间点一致；需要严格一致时先短暂停止写入。恢复时先停止 API 写入：
+恢复时先停止 API 写入：
 
 ```bash
 sudo docker stop matrius-api
 
-# PostgreSQL：覆盖现有对象
 sudo docker exec -i matrius-postgres \
   pg_restore -U matrius -d matrius --clean --if-exists < postgres-<时间戳>.dump
 
-# RustFS：先停止，再清空卷并解包
 sudo docker stop matrius-rustfs
 sudo docker run --rm \
   -v matrius_prod_rustfs_data:/data \
@@ -273,41 +251,20 @@ sudo docker run --rm \
 sudo docker start matrius-rustfs matrius-api
 ```
 
-恢复前务必确认备份文件完整，并优先在临时数据库验证。用户名和库名以 `.env.production` 为准。
+恢复前确认备份完整，并优先在临时数据库验证。
 
-`Caddy` 卷保存证书与配置；丢失后会自动重新签发，但建议一并备份。
+### 停止与密钥
 
-### 停止服务
+停止服务时执行 `docker compose down`，永远不加 `-v`（会删除数据卷）。服务密钥默认在 `<workspace>/production.env`（权限 600）；显式设置 `REMOTE_ENV_FILE` 时以该文件为准，不要提交或下载到开发机。轮换密码后重新部署；数据库密码还需同步修改 PostgreSQL 用户。
+
+从旧部署迁移：保留数据卷，把原配置迁到新的 `REMOTE_ENV_FILE`，再改用本流程；不要删除数据卷。
+
+## 验证
 
 ```bash
-sudo docker compose ... down
+npx expo lint
+npx tsc --noEmit
+npm run test:remote
 ```
 
-**不要执行 `docker compose down -v`。** `-v` 会删除 PostgreSQL、RustFS 和证书卷，造成不可恢复的数据丢失。
-
-### 日志与密钥
-
-- 应用日志为 JSON，不包含 token、消息正文或文件内容。
-- `.env.production` 只在服务器保存一份（权限 600），同时放在 GitHub Secret 中；不要写入 release 的公开文件。
-- 轮换密钥后重新触发部署，使容器使用新值。PostgreSQL 密码轮换需要同时修改数据库用户密码，不能只改环境变量。
-
-## 排查
-
-| 现象 | 检查 |
-| --- | --- |
-| 健康检查超时 | 查看 `matrius-api`、`matrius-migrate` 日志；确认 `.env.production` 密码非示例值 |
-| migrate 失败 | 数据库迁移错误或初始管理员缺失；修复后重新发布 |
-| 无法登录 | Redis 不可用时登录会被拒绝；检查 `matrius-redis` 健康状态 |
-| 搜索/网页读取 503 | `matrius-openserp` 未就绪；会话读写不受影响 |
-| 上传失败 | 检查 RustFS 健康、bucket、磁盘空间与配额 |
-| SSH 校验失败 | `DEPLOY_SSH_KNOWN_HOSTS` 与主机/端口不匹配；重新核对指纹 |
-| 发布提示 release 清理失败 | 按提示修复 release 目录所有权；发布本身已通过健康检查 |
-
-## CI
-
-`.github/workflows/ci.yml` 在 push 到 `main` 和 PR 时运行：
-
-- 后端：`scripts/install-python-deps.sh --dev`（测速选源并按哈希安装）、`ruff`、`pytest`、在空 PostgreSQL 上执行迁移；
-- Web：`npm ci`、lint、`tsc --noEmit`、渲染与模型测试、`expo export --platform web`。
-
-发布前请确保 CI 通过。部署工作流不重复构建镜像，镜像由服务器上的 Docker 构建。
+仓库不配置自动 CI；发布前在本地完成检查，迁移在专用空 PostgreSQL 上验证。

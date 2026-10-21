@@ -2,7 +2,7 @@
 
 [文档索引](README.md)
 
-后端位于 [`server/`](../server/)，使用 Python 3.12 + FastAPI，部署说明见[部署与 CD](deployment.md)。
+后端位于 [`server/`](../server/)，使用 Python 3.12 + FastAPI，部署说明见[服务器部署](deployment.md)。
 
 ## 边界
 
@@ -65,7 +65,7 @@ POST /api/auth/login  { username, password }
 ### 初始化与管理员
 
 - `python -m app.bootstrap` 在 `users` 为空时创建初始管理员；已有用户则跳过。生产环境缺少 `INITIAL_ADMIN_*` 且用户表为空时直接失败，避免部署出无法登录的实例。
-- 管理员接口：用户列表、创建、重置密码、启停用。
+- 管理员接口：`GET /api/admin/auth/me`（校验 admin scope）、用户列表、创建、重置密码、启停用。
 - 创建/重置后的默认密码为 `<username>@123`，`must_change_password=true`，密码只在本次响应返回。
 - 不允许停用自己或最后一个启用中的管理员。
 
@@ -250,7 +250,7 @@ Redis 不可用时除登录外 fail-open 并记录告警。
 
 ## 健康检查与日志
 
-- `GET /api/health`：数据库探活；成功 `{"service":"matrius","status":"ok"}`。CD 与容器健康检查使用此接口。
+- `GET /api/health`：数据库探活；成功 `{"service":"matrius","status":"ok"}`。远程发布与容器健康检查使用此接口。
 - `GET /api/health/ready`：并行检查数据库、Redis、RustFS、OpenSERP；任一失败返回 503 与 `checks`。
 - 日志为 JSON，包含 request id、user id、方法、路径、状态、耗时；不记录 Authorization、token、消息正文或文件内容。
 - 响应头 `X-Request-ID` 可用于和服务端日志对照。
@@ -275,4 +275,14 @@ files
 - 角色、状态、反馈、标题来源、已读状态均有 CHECK。
 - 用户删除级联业务数据；会话删除级联消息；文件随会话删除仅置空关联。
 
-结构变更必须走 Alembic，并由 CI 在空 PostgreSQL 上执行全部迁移。
+结构变更必须走 Alembic，并在空 PostgreSQL 上验证全部迁移可执行。
+
+## 账号功能开关
+
+认证返回的 `UserOut` 增加 `features: string[]`，登录响应与 `/api/auth/me` 动态计算。清单位于 `app/features/registry.py`，preview 仅 `PREVIEW_USERNAME`（默认 admin_test）开放；stable 且已记录到最近成功发布清单的功能对所有已认证且完成首次改密的用户开放。部署时 FEATURE_RELEASES_FILE 固定指向只读卷中的 `/app/releases/features.json`，清单缺失或非法时不向普通账号开放。`require_feature(id)` 必须用于新增受控接口，账号停用或会话撤销后不能继续调用。
+
+- `GET /api/features`：返回当前账号可用的功能元数据。
+- `GET /api/features/labs`：受 labs 功能校验的实验页数据；匿名 401、无功能权限 403。
+- 认证与功能响应禁止缓存；权限不接受客户端 username、header 或 query 覆盖。
+
+功能发布仅改变代码中的 stage，不修改用户数据或表结构；数据库迁移另行审查与执行。

@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.conversations.router import router as conversations_router
 from app.db import dispose_engine
 from app.errors import AppError, app_error_handler, validation_error_handler
+from app.features.router import router as features_router
 from app.files.router import router as files_router
 from app.health import router as health_router
 from app.logging import configure_logging
@@ -89,6 +90,8 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
+        if request.url.path.startswith(("/api/auth/", "/api/admin/auth/", "/api/features")):
+            response.headers["Cache-Control"] = "no-store"
         logger.info(
             "request",
             extra={
@@ -109,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(account_router)
     app.include_router(files_router)
     app.include_router(tools_router)
+    app.include_router(features_router)
     return app
 
 

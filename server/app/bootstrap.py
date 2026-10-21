@@ -30,10 +30,6 @@ async def bootstrap() -> None:
                 raise SystemExit(1)
             logger.warning("%s; no administrator created", message)
             return
-        if len(password) < 8:
-            logger.error("INITIAL_ADMIN_PASSWORD must be at least 8 characters")
-            raise SystemExit(1)
-
         db.add(
             User(
                 username=username,

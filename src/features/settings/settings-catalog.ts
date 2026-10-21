@@ -10,8 +10,17 @@ export const settingsItems = [
   { id: 'appearance', title: '外观', description: '调整显示模式与配色主题。', group: '偏好', keywords: `显示 浅色 深色 暗色 夜间 跟随系统 亮度 颜色 皮肤 light dark system theme ${themePresets.map((item) => `${item.id} ${item.name}`).join(' ')}` },
   { id: 'personalization', title: '个性化', description: '自定义指令、称呼、个人信息与对话标题。', group: '偏好', keywords: '个性化 自定义 指令 提示词 回复 风格 偏好 称呼 职业 关于你 标题 命名 生成 personalization instructions prompt profile title' },
   { id: 'models', title: '模型服务', description: '添加服务商、API key 与模型，开始对话。', group: '偏好', keywords: '模型 服务商 接入 密钥 地址 协议 base url api key openai anthropic responses' },
+  { id: 'account', title: '账号', description: '登录账号、修改密码与管理登录状态。', group: '应用', keywords: '账号 登录 登出 密码 account login password' },
+  { id: 'labs', title: '实验功能', description: '提前体验当前账号已开放的新功能。', group: '应用', keywords: '实验 测试 新功能 labs preview', feature: 'labs' },
   { id: 'about', title: '关于 Matrius', description: '查看应用版本、运行模式与本地数据说明。', group: '应用', keywords: '版本 本地 存储 数据 浏览器 隐私 about version' },
-] as const satisfies readonly { id: string; title: string; description: string; group: string; keywords: string }[];
+] as const satisfies readonly { id: string; title: string; description: string; group: string; keywords: string; feature?: string }[];
+
+export function visibleSettings(features: readonly string[], preview = false) {
+  return settingsItems.filter((item) => {
+    if (preview && (item.id === 'account' || 'feature' in item)) return false;
+    return !('feature' in item) || features.includes(item.feature);
+  });
+}
 
 export function searchSettings(query: string) {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);

@@ -84,7 +84,7 @@ user_profiles, user_profile_fields, user_preferences
 file metadata
 ```
 
-结构变更使用 Alembic 迁移，CI 会在空 PostgreSQL 上执行全部迁移。
+结构变更使用 Alembic 迁移，并应在空 PostgreSQL 上验证全部迁移可执行。
 
 不要把上传文件的二进制内容存进 PostgreSQL。
 

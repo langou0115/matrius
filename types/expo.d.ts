@@ -1,4 +1,4 @@
 // `expo start` generates expo-env.d.ts (gitignored) containing this reference.
-// CI only installs dependencies and runs tsc, so keep a committed copy of the
-// Expo ambient declarations (CSS imports, image modules, __DEV__, etc.).
+// Keep a committed copy so a fresh clone can run `npx tsc --noEmit` before
+// starting the dev server. This also provides the CSS import declarations.
 /// <reference types="expo/types" />

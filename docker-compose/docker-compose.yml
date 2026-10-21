@@ -11,8 +11,9 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     ports:
-      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8081}:80"
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-16666}:80"
       - "${APP_BIND:-0.0.0.0}:${APP_HTTPS_PORT:-8443}:443"
+      - "${APP_BIND:-0.0.0.0}:${API_PORT:-16667}:8082"
     depends_on:
       api:
         condition: service_healthy
@@ -82,6 +83,8 @@ services:
       OPENSERP_PROXY_URL: ${OPENSERP_PROXY_URL:-}
       OPENSERP_PROXY_TAG: ${OPENSERP_PROXY_TAG:-}
       AUTH_SESSION_TTL_SECONDS: ${AUTH_SESSION_TTL_SECONDS:-604800}
+      PREVIEW_USERNAME: ${PREVIEW_USERNAME:-admin_test}
+      FEATURE_RELEASES_FILE: /app/releases/features.json
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
       STORAGE_QUOTA_BYTES: ${STORAGE_QUOTA_BYTES:-536870912}
       FETCH_MAX_CHARS: ${FETCH_MAX_CHARS:-50000}
@@ -110,6 +113,8 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:size=64m,mode=1777
+    volumes:
+      - feature_releases:/app/releases:ro
     networks:
       - edge
       - data
@@ -145,8 +150,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:${DB_TUNNEL_PORT:-15432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
@@ -170,8 +173,6 @@ services:
       - "no"
       - --requirepass
       - ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
-    ports:
-      - "127.0.0.1:${REDIS_TUNNEL_PORT:-16379}:6379"
     healthcheck:
       test:
         - CMD
@@ -200,8 +201,6 @@ services:
     command: ["/data"]
     volumes:
       - rustfs_data:/data
-    ports:
-      - "127.0.0.1:${RUSTFS_TUNNEL_PORT:-19000}:9000"
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/health/ready >/dev/null"]
       interval: 10s
@@ -228,8 +227,6 @@ services:
       OPENSERP_APP_BROWSER_PATH: /headless-shell/headless-shell
       OPENSERP_PROXIES_ALLOW_REQUEST_PROXY_URL: ${OPENSERP_PROXIES_ALLOW_REQUEST_PROXY_URL:-false}
     shm_size: 2gb
-    ports:
-      - "127.0.0.1:${OPENSERP_TUNNEL_PORT:-17000}:7000"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:7000/health"]
       interval: 10s
@@ -252,6 +249,8 @@ networks:
     driver: bridge
 
 volumes:
+  feature_releases:
+    name: matrius_feature_releases
   postgres_data:
     name: matrius_prod_postgres_data
   rustfs_data:

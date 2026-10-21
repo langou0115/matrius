@@ -39,13 +39,15 @@ validate_config() {
   local env_file=$1
   load_env "$env_file"
 
-  APP_PORT=${APP_PORT:-8081}
+  APP_PORT=${APP_PORT:-16666}
   APP_BIND=${APP_BIND:-0.0.0.0}
   APP_HTTPS_PORT=${APP_HTTPS_PORT:-8443}
+  API_PORT=${API_PORT:-16667}
   CADDY_SITE_ADDRESS=${CADDY_SITE_ADDRESS:-:80}
 
   validate_port APP_PORT "$APP_PORT"
   validate_port APP_HTTPS_PORT "$APP_HTTPS_PORT"
+  validate_port API_PORT "$API_PORT"
   [[ $APP_BIND == 0.0.0.0 || $APP_BIND == 127.0.0.1 ]] \
     || fail 'APP_BIND must be 0.0.0.0 or 127.0.0.1.'
   [[ $CADDY_SITE_ADDRESS =~ ^(:80|([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(:[0-9]+)?)?$ ]] \
@@ -70,12 +72,12 @@ health_urls() {
       https_port=${CADDY_SITE_ADDRESS##*:}
     fi
     HEALTH_CURL=(
-      curl -k -fsS --max-time 10
+      curl -fsS --max-time 5
       --resolve "$host:$https_port:127.0.0.1"
     )
     BASE_URL="https://$host:$https_port"
   else
-    HEALTH_CURL=(curl -fsS --max-time 10)
+    HEALTH_CURL=(curl -fsS --max-time 5)
     BASE_URL="http://127.0.0.1:$APP_PORT"
   fi
 }
@@ -83,7 +85,7 @@ health_urls() {
 wait_for_health() {
   local attempt body
   health_urls
-  for attempt in $(seq 1 60); do
+  for attempt in $(seq 1 40); do
     body=$("${HEALTH_CURL[@]}" "$BASE_URL/api/health" 2>/dev/null || true)
     if grep -Eq '"service"[[:space:]]*:[[:space:]]*"matrius"' <<<"$body" \
       && grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$body"; then
@@ -92,8 +94,8 @@ wait_for_health() {
       printf 'Matrius health checks passed at %s.\n' "$BASE_URL"
       return 0
     fi
-    if (( attempt < 60 )); then
-      sleep 5
+    if (( attempt < 40 )); then
+      sleep 3
     fi
   done
   fail 'Production health checks did not pass. Check the server container logs.'

@@ -26,7 +26,7 @@
 
 ### 创建用户
 
-管理员在管理页创建用户：
+管理员打开 Web 端 `/admin`，使用管理员账号单独登录后创建用户：
 
 ```text
 填写用户名
@@ -38,7 +38,7 @@
 仅本次返回初始密码
 ```
 
-禁止保存明文密码。初始密码只展示一次。
+管理页使用 `/api/admin/auth/login` 签发的 admin scope 会话，与「设置 → 账号」的普通登录互不影响；管理员也可在该页面退出管理会话。禁止保存明文密码。初始密码只展示一次。
 
 ### 首次登录
 
@@ -101,3 +101,48 @@ RBAC
 ```
 
 ---
+
+## 同一地址的账号功能开关
+
+Web 设置中增加「账号」页，使用现有 `/api/auth/login`、`/me`、`/change-password`、`/logout`。首次密码修改完成后才获得功能能力。登录会话 token 仅保存在当前标签页的 sessionStorage，刷新时先向服务器验证；不缓存用户名、功能权限或密码。其他页面重新获得可见性时重新验证，网络失败时隐藏受控功能，过期或撤销会话清除本机 token。Mock 不读取真实登录状态。
+
+当前账号登录只用于功能权限，聊天仍使用现有浏览器本地存储；尚未实现本地数据导入与云端仓储切换，登录不自动启用云端数据模式，界面明确提示这一点。云端存储目标不变。
+
+功能清单唯一事实源为 `server/app/features/registry.py`：新增功能必须登记，默认 `stage="preview"`。默认仅已认证的 `admin_test` 可使用 preview 功能，服务器可通过 `PREVIEW_USERNAME` 改账号名；不依赖 `isAdmin`，也不接受客户端传入的用户名、header 或 query 授权。账号必须由已有管理员正常创建，不存在默认测试密码或登录后门。全新空库若以该账号作为初始管理员，可设置 `INITIAL_ADMIN_USERNAME=admin_test` 和独立强密码；已有服务器通过管理员 API 创建账号并首次改密。
+
+登录响应和 `/api/auth/me` 的 `user.features` / `features` 是当前账号可用的功能 ID。`GET /api/features` 返回该账号可用的功能说明；`GET /api/features/labs` 使用 `require_feature("labs")` 校验，未登录返回 401，无权返回 403。认证和功能响应设置 `Cache-Control: no-store`，每次请求独立校验当前用户、账号停用状态和功能阶段。
+
+客户端使用统一 `useFeature(id)` / `<FeatureGate name="...">` 控制入口，不在页面判断用户名；设置分类和搜索同步过滤，受控路由直达也重新验证权限。首个接入项为「实验功能」设置页：`admin_test` 可以看到，普通账号和未登录用户完全隐藏。
+
+### 从测试到正式开放
+
+1. 新功能以 preview 登记，UI 入口、设置搜索、路由及服务端接口都接入同一功能 ID 的控制。已有行为替换应保留正式分支，不能仅隐藏新增按钮。
+2. `npm run remote` 部署生产代码，在同一地址用 `admin_test` 验证；默认部署不更新功能清单，其他账号仍使用正式功能分支。
+3. 验证通过后，只将要开放的条目改为 `stage="stable"`，提交到 main，由手动 CD 发布该提交。stable 功能在发布成功记录到正式清单后，对所有已登录且已改初始密码的账号开放；不会复制测试账号的数据。
+4. 如需撤回，改回 preview 并重新发布；服务端下一次请求立即按当前清单校验，客户端在刷新或重新可见后更新入口。
+
+服务器通过只读卷 `matrius_feature_releases` 保存最近一次成功发布的稳定功能 ID 集。默认部署即使上线了 stage=stable 的候选代码，也不会更新该清单；`--publish` 在健康检查通过后，才从构建好的 API 镜像生成新清单并原子替换。因此代码标记和成功发布必须同时满足。缺失或损坏的清单拒绝向普通账号开放，新功能仍可由测试账号验证。构建正式包或执行 `--publish` 不会把 preview 条目自动改成 stable。所有账号共用同一套运行代码、进程和数据库：功能开关不隔离公共代码错误、性能影响或数据库结构迁移；结构变更需要向前兼容并显式迁移。
+
+### 新功能接入示例
+
+功能清单的 key 与 Feature.id 必须一致，省略 stage 时默认为 preview：
+
+```python
+FEATURES["new-feature"] = Feature("new-feature", "新功能名称", "用户可理解的功能说明。")
+```
+
+新增入口使用统一门控；替换旧行为时根据 `useFeature("new-feature")` 选择新旧分支，保留普通账号原有行为：
+
+```tsx
+<FeatureGate name="new-feature"><NewFeaturePanel /></FeatureGate>
+```
+
+对应接口必须独立校验，不要把显示隐藏当成权限：
+
+```python
+@router.post("/new-feature")
+async def new_feature(ctx: AuthContext = Depends(require_feature("new-feature"))):
+    ...
+```
+
+测试账号名称只由服务端集中判断，业务组件和接口不各自判断用户名。未登记或未授权的功能默认拒绝；已有正式功能的大改动应使用新的功能 ID 做新旧分支，不能直接改变所有用户共用的实现并期望开关自动隔离。

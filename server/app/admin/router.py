@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthContext, client_ip, require_admin
 from app.auth.router import _authenticate, _issue_session, user_out
-from app.auth.schemas import LoginRequest, LoginResponse
+from app.auth.schemas import LoginRequest, LoginResponse, UserOut
 from app.auth.security import hash_password
 from app.db import get_db
 from app.errors import AppError, not_found
@@ -80,6 +80,11 @@ async def admin_login(
     user = await _authenticate(payload.username, payload.password, admin_only=True, db=db)
     token = await _issue_session(user, scope="admin", db=db)
     return LoginResponse(token=token, user=user_out(user))
+
+
+@router.get("/auth/me", response_model=UserOut)
+async def admin_me(ctx: AuthContext = Depends(require_admin)) -> UserOut:
+    return user_out(ctx.user)
 
 
 @router.get("/users", response_model=AdminUserList)

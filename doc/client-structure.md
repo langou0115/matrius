@@ -131,3 +131,15 @@ src/
 - `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。未来原生页面复用同一 Agent 核心，凭据、存储和流式传输环境单独适配。
 
 - 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部本地用户行；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读 check（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。
+
+## 账号与功能开关
+
+- `core/api/auth-session.ts`：无 DOM / React 的会话状态、同源 API 请求与过期处理；拒绝迟到请求覆盖新账号。
+- `core/platform/auth-session.web.ts`：当前标签页 token 存储适配，不持久化账号权限。
+- `core/features/capabilities.ts`：统一判断服务端授予的功能。
+- `features/auth/auth-state.web.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。
+- `features/auth/account-screen.web.tsx`：设置账号页、登录、改密、退出；不切换本地聊天仓储。
+- `features/admin/admin-screen.web.tsx`：`/admin` 管理页，管理员独立登录后按用户名创建用户，展示一次初始密码。
+- `features/settings/labs-screen.web.tsx`：受控实验页，路由和数据调用均需权限。
+- `settings-catalog.ts` / `settings-page.web.tsx`：分类与搜索按功能能力统一过滤。
+- `src/app/settings/account.*`、`labs.*`：Web 路由组装；原生仍使用待适配说明页。

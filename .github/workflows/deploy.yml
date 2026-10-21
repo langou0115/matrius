@@ -2,6 +2,11 @@ name: Deploy Production
 
 on:
   workflow_dispatch:
+    inputs:
+      migrate:
+        description: Apply reviewed database migrations
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,46 +17,46 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy main to production
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
+    environment: production
     steps:
-      - name: Require main branch
+      - name: Require main
         env:
           SELECTED_REF: ${{ github.ref }}
-        run: |
-          if [[ "$SELECTED_REF" != refs/heads/main ]]; then
-            echo '::error::Production deployment only accepts main.'
-            exit 1
-          fi
-
-      - name: Check out the selected commit
-        uses: actions/checkout@v7
+        run: test "$SELECTED_REF" = refs/heads/main
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Validate deployment scripts
-        run: bash -n scripts/cd-deploy.sh scripts/cd-remote.sh scripts/deploy-health.sh
-
-      - name: Upload configuration and deploy
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Publish reviewed main commit
         env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
-          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
-        run: bash scripts/cd-deploy.sh
-
-      - name: Record result
-        if: always()
-        env:
-          DEPLOY_RESULT: ${{ job.status }}
+          REMOTE_SSH: ${{ vars.REMOTE_SSH }}
+          REMOTE_SSH_PORT: ${{ vars.REMOTE_SSH_PORT }}
+          REMOTE_PUBLIC_URL: ${{ vars.REMOTE_PUBLIC_URL }}
+          APP_PORT: ${{ vars.APP_PORT }}
+          API_PORT: ${{ vars.API_PORT }}
+          APP_HTTPS_PORT: ${{ vars.APP_HTTPS_PORT }}
+          REMOTE_ENV_FILE: ${{ vars.REMOTE_ENV_FILE }}
+          REMOTE_WORKSPACE: ${{ vars.REMOTE_WORKSPACE }}
+          SSH_PRIVATE_KEY: ${{ secrets.REMOTE_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.REMOTE_SSH_KNOWN_HOSTS }}
+          APPLY_MIGRATIONS: ${{ inputs.migrate }}
+        shell: bash
         run: |
-          {
-            echo '## Production deployment'
-            echo "Commit: \`$GITHUB_SHA\`"
-            echo "Result: $DEPLOY_RESULT"
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          umask 077
+          work_dir=$(mktemp -d)
+          trap 'rm -rf -- "$work_dir"' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$work_dir/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$work_dir/known_hosts"
+          unset SSH_PRIVATE_KEY SSH_KNOWN_HOSTS
+          export REMOTE_SSH_KEY="$work_dir/key"
+          export REMOTE_SSH_KNOWN_HOSTS="$work_dir/known_hosts"
+          args=(--publish)
+          if [[ "$APPLY_MIGRATIONS" == true ]]; then args+=(--migrate); fi
+          npm run remote -- "${args[@]}"

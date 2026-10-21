@@ -16,6 +16,7 @@ from app.auth.security import (
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError, unauthorized
+from app.features.registry import enabled_features
 from app.models import AuthSession, User
 from app.redis import (
     assert_login_not_locked,
@@ -34,6 +35,7 @@ def user_out(user: User) -> UserOut:
         username=user.username,
         isAdmin=user.is_admin,
         mustChangePassword=user.must_change_password,
+        features=enabled_features(user),
     )
 
 

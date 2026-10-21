@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     auth_session_ttl_seconds: int = 604800
     initial_admin_username: str = ""
     initial_admin_password: str = ""
+    preview_username: str = "admin_test"
+    feature_releases_file: str = "/app/releases/features.json"
 
     max_upload_bytes: int = 20 * 1024 * 1024
     storage_quota_bytes: int = 512 * 1024 * 1024

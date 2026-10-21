@@ -1,75 +1,82 @@
-This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
+# AGENTS.md
 
-## Expo has changed — do not trust your training data
+Matrius 是 Expo + React Native（Web 优先）前端与 FastAPI 后端的自部署 AI 对话应用。
 
-Expo ships breaking changes every SDK release. APIs you remember are likely renamed, moved, or removed. Before writing any code that touches an Expo, EAS, or React Native API:
+## 开始前
 
-1. Read the major version of the `expo` package in `package.json`.
-2. Fetch the matching versioned docs: `https://docs.expo.dev/versions/v<major>.0.0/`
-3. For anything else, fetch https://docs.expo.dev/llms.txt — an index of all Expo docs with corrections to common LLM misconceptions. Follow its links to the specific page you need; never answer from memory.
+- Expo 每个 SDK 都有破坏性变更，不要凭记忆写 API。先看 `package.json` 中的 `expo` 版本，再查 `https://docs.expo.dev/versions/v<major>.0.0/`。
+- 按任务阅读对应文档：
 
-## Commands
+| 任务 | 文档 |
+| --- | --- |
+| 产品边界与开发顺序 | [产品](doc/product.md) |
+| 页面、模块与文件职责 | [客户端结构](doc/client-structure.md) |
+| 存储与数据访问 | [存储与数据](doc/data.md) |
+| 认证与功能开关 | [认证](doc/auth.md) |
+| 后端接口与数据模型 | [后端架构](doc/backend.md)、[server/README.md](server/README.md) |
+| 命令、测试与交付 | [开发与验证](doc/development.md) |
+| 服务器与运维 | [服务器部署](doc/deployment.md) |
 
-Use `bunx` instead of `npx` if the project uses bun (`bun.lock` present).
+## 常用命令
 
 ```bash
-npx expo install <package>  # ALWAYS use instead of npm/yarn/pnpm/bun add — resolves SDK-compatible versions
-npx expo start              # start the dev server
-npx expo lint               # lint
-npx tsc --noEmit            # typecheck
-npx expo-doctor             # diagnose dependency and config issues
-npx expo install --fix      # fix incompatible package versions
+npm ci
+npm run web                 # Web 开发（Metro，可访问 /mock）
+npx expo start              # Metro 开发服务
+npx expo lint
+npx tsc --noEmit
+npm run test:rendering
+npm run test:models
+npm run test:auth
+npm run test:remote
+npx expo install <package>  # 安装 SDK 兼容版本，不要用 npm install 装 Expo 相关包
 ```
 
-Run lint and typecheck before declaring any task done.
+后端检查：
 
-## Navigation & Routing
+```bash
+cd server
+bash scripts/install-python-deps.sh --dev
+uv run --no-sync ruff check .
+uv run --no-sync pytest
+```
 
-- Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
-- Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
-- Docs: https://docs.expo.dev/router/introduction.md
+## Expo 约定
 
-## Building with EAS
+- 路由只用 Expo Router，页面在 `src/app/`，组件和 hooks 放在路由目录外。
+- 不手改 `ios/`、`android/`；原生配置写在 app config 或 config plugin。
+- 新增原生库后需要 development build；Expo Go 不包含第三方原生模块。
 
-Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
-Docs: https://docs.expo.dev/eas/index.md
+## 架构与边界
 
-## Rules
+- 依赖方向：UI → features → storage → data source。
+- Agent Runtime 在客户端运行；服务端只提供工具 API 和单次模型代理。
+- 本地模式数据在 IndexedDB；云端模式服务端是唯一事实源，不做本地缓存或增量同步。
+- 模型密钥只存客户端，不写日志、不上传。
+- 云端资源按认证得到的 `userId` 隔离，写操作使用 `baseRevision` 乐观并发。
+- PostgreSQL 存持久数据，Redis 只做限流与缓存，RustFS 存文件；结构变更走 Alembic，并确保能在空库执行。
+- 保持简单：不引入微服务、多 Agent 编排、RBAC、组织或租户。
+- 新增状态管理、网络或代码生成库前先与维护者确认。
 
-- If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
-- Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
-- Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
+## 功能开关
 
+- 新功能先在 `server/app/features/registry.py` 登记，默认 `preview`。
+- `preview` 仅认证后的 `admin_test` 可用（`PREVIEW_USERNAME` 可配），与 `isAdmin` 无关。
+- 前端统一用 `useFeature` / `FeatureGate`，后端用 `require_feature`，禁止按客户端用户名授权。
+- 验证通过后改为 `stable`；只有 `--publish` 在健康检查后更新发布清单。
 
-## Matrius 项目约定与文档入口
+## 部署
 
-本工程由 `../matrius-old` 迁移，使用 React Native + Expo + TypeScript。当前优先开发 Web 端，已完成聊天界面、外观设置与 Python 后端；移动端与客户端云端模式适配后续完成。`doc/migration.md` 记录已完成与待实现项。
+- 唯一入口是 `npm run remote`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
+- 默认部署不更新功能清单；`--publish` 才把 stable 功能开放给其他账号。
+- 首次运行自动生成服务器配置、初始化服务并创建管理员；后续显式迁移用 `--migrate`。
+- 本机 `.env.local` 只放连接信息、可选的端口覆盖（`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`）和 `INITIAL_ADMIN_*`；服务密钥只在服务器 workspace 的 `production.env`（或显式配置的 `REMOTE_ENV_FILE`）。
+- 不在本机对服务器执行迁移；`docker compose down` 永远不加 `-v`。
+- 不配置自动 CI；CD 手动触发并复用 `--publish`。
 
-| 任务 | 修改前阅读 |
-| --- | --- |
-| 产品边界、模式与开发顺序 | [产品约定](doc/product.md) |
-| 模块、页面与文件职责 | [架构](doc/architecture.md)、[客户端结构](doc/client-structure.md) |
-| UI、主题、字体、选区与模型直连 | [UI 风格](doc/ui-style.md)、[客户端约定](doc/client.md) |
-| 本地存储与云端数据访问 | [存储与数据](doc/data.md) |
-| 认证与管理员 | [认证](doc/auth.md) |
-| Runtime、协议与工具 | [Agent 与工具](doc/agent.md) |
-| 文件解析与记忆 | [文件与记忆](doc/files-and-memory.md) |
-| 命令、验证与交付 | [开发与验证](doc/development.md) |
-| 后端接口、数据契约与实现 | [后端架构](doc/backend.md)、[server/README.md](server/README.md) |
-| 服务器、CD 与运维 | [部署与 CD](doc/deployment.md) |
+## 完成前
 
-- Agent Runtime 在两种模式下均运行于客户端本地，负责上下文、循环、运行状态、工具调度与取消。网络搜索、网页读取和文件处理通过云端工具 API 执行；服务端模型代理只处理单次请求，不运行 Agent Loop。
-- 本地与云端共用 UI 和数据模型。未登录可用本地模式；云端专属入口整体隐藏，登录引导集中在设置页。
-- 云端模式下服务端是唯一事实源：新会话不写本地，断网不能读历史。开启时一次性导入本地数据并保留本地备份，之后不再读写。
-- 模型 API key 始终由客户端安全存储管理，不写日志、不上传，也不保存在服务端。
-- 云端数据按认证得到的 `userId` 隔离，服务端独立验证资源归属；修改/删除使用 `baseRevision` 乐观并发。
-- PostgreSQL 保存云端持久数据，Redis 只保存限流与短期缓存，RustFS 保存文件内容。所有数据库结构变更走 Alembic，并保持 CI 空库迁移通过。
-- 本地存储按平台实现：Web 本地模式保存在浏览器 IndexedDB，App 后续保存在手机本地数据库，不沿用旧版 drift。云端模式不做本地缓存、outbox、墓碑或增量同步。
-- 当前阶段 Web 优先，移动端后续适配；共享状态和业务契约不依赖 DOM，平台差异集中在平台文件与适配层。
-- UI → 功能模块 → 仓储 → 数据源，保持单向依赖；功能可见性由统一能力集驱动。
-- 保留旧版主题只改变颜色的设计；布局、圆角、字体统一管理。按钮不显示悬停文字说明，但保留无障碍名称和焦点反馈。
-- 保持简单，不提前构建微服务、多 Agent 编排、工作流、RBAC、组织或租户系统。
-- 新增第三方状态管理、网络或代码生成库前先与维护者确认；路由统一使用 Expo Router。
-- 后端不维护 dev Compose，生产 Compose 是唯一环境。本地调试用 `scripts/dev-tunnel.sh` 连接服务器数据（测试使用专用账号），SSH 目标放 `.env.local`，服务凭据放 `server/.env`，两者均已 gitignore；不要在本地执行 `alembic upgrade head`。改动由 CI 执行 lint、pytest 与空库迁移；需要本地静态检查时先运行 `server/scripts/install-python-deps.sh --dev`，再用 `uv run --no-sync` 执行命令。Web 改动运行 lint 与 `npx tsc --noEmit`。
-- 生产密钥只放在 GitHub Secrets / 服务器 `.env.production`，不得提交；`docker compose down` 永远不加 `-v`。
-- 产品边界、持久化、目录职责或命令变化时同步更新 `doc/` 和根 `README.md`。
+- 运行 `npx expo lint`、`npx tsc --noEmit` 和受影响测试，如实报告结果。
+- 未实测的平台行为要说明范围，不把推断写成已验证。
+- 产品边界、持久化、目录职责或命令变化时同步更新 `doc/` 和 README。
+- 不提交密钥、令牌或真实用户数据。

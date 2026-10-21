@@ -15,6 +15,16 @@
 	}
 }
 
+# API-only listener. Host API_PORT maps here for direct backend access.
+:8082 {
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
+
 # Loopback-only endpoint for the container healthcheck. It must not depend on
 # whether the public site is served over HTTP or automatic HTTPS.
 http://127.0.0.1:8099 {
