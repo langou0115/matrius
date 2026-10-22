@@ -85,7 +85,7 @@ health_urls() {
 wait_for_health() {
   local attempt body
   health_urls
-  for attempt in $(seq 1 40); do
+  for attempt in $(seq 1 60); do
     body=$("${HEALTH_CURL[@]}" "$BASE_URL/api/health" 2>/dev/null || true)
     if grep -Eq '"service"[[:space:]]*:[[:space:]]*"matrius"' <<<"$body" \
       && grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$body"; then
@@ -94,7 +94,7 @@ wait_for_health() {
       printf 'Matrius health checks passed at %s.\n' "$BASE_URL"
       return 0
     fi
-    if (( attempt < 40 )); then
+    if (( attempt < 60 )); then
       sleep 3
     fi
   done

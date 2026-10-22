@@ -59,7 +59,7 @@ export default function ChatScreen() {
   const hasMessages = !!conversation?.messages.length;
   const latestContent = conversation?.messages.at(-1)?.content;
   const latestReasoning = conversation?.messages.at(-1)?.reasoning;
-  const { scrollToBottom, scrollToMessage, visible: scrollToBottomVisible } = useChatAutoScroll({
+  const { scrollToBottom, scrollToMessage, followLatest, visible: scrollToBottomVisible } = useChatAutoScroll({
     containerRef: messageScroller,
     containerKey: activeId ?? 'new',
     followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}`,
@@ -95,6 +95,9 @@ export default function ChatScreen() {
     if (sent) {
       setDraft(draftKey, '');
       setQuote(draftKey, '');
+      // Sending is an explicit request to see the conversation continue, so bring
+      // the reader back even when they had scrolled up to read older messages.
+      followLatest();
       if (!activeId) router.replace(conversationHref(conversationId, preview));
     }
     return sent;

@@ -2,7 +2,8 @@
 """Print reachable PyPI indexes, fastest first.
 
 Candidates come from PYPI_INDEX_CANDIDATES (comma- or space-separated) and
-default to the official index plus the Tsinghua mirror.
+default to the official index plus the Tsinghua mirror. Pass --all to print
+the configured candidates without probing.
 """
 
 from __future__ import annotations
@@ -96,15 +97,15 @@ def probe(url: str) -> float | None:
         timeout = 6.0
 
     # A single fast sample can be a burst on an otherwise slow route, so
-    # compare the slowest of three. Abort on the first timeout: a route that
-    # cannot deliver a page within the timeout should not win.
+    # compare the slowest successful sample of three. A dropped sample does
+    # not disqualify the index: mirror edges occasionally reset a connection,
+    # and aborting the whole build for one blip is worse than one slow request.
     samples: list[float] = []
     for _ in range(3):
         sample = probe_once(url, timeout)
-        if sample is None:
-            return None
-        samples.append(sample)
-    return max(samples)
+        if sample is not None:
+            samples.append(sample)
+    return max(samples) if samples else None
 
 
 def main() -> int:
@@ -112,6 +113,14 @@ def main() -> int:
     if not urls:
         print("No PyPI indexes configured.", file=sys.stderr)
         return 1
+
+    # --all prints the configured candidates without probing. The install
+    # script uses it to retry an install when a transient failure makes every
+    # probe look unreachable.
+    if "--all" in sys.argv[1:]:
+        for url in urls:
+            print(url)
+        return 0
 
     with ThreadPoolExecutor(max_workers=len(urls)) as executor:
         latencies = list(executor.map(probe, urls))

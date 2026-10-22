@@ -35,9 +35,9 @@ jobs:
           package-manager-cache: false
       - name: Publish reviewed main commit
         env:
-          REMOTE_SSH: ${{ vars.REMOTE_SSH }}
+          REMOTE_USER: ${{ vars.REMOTE_USER }}
+          REMOTE_HOST: ${{ vars.REMOTE_HOST }}
           REMOTE_SSH_PORT: ${{ vars.REMOTE_SSH_PORT }}
-          REMOTE_PUBLIC_URL: ${{ vars.REMOTE_PUBLIC_URL }}
           APP_PORT: ${{ vars.APP_PORT }}
           API_PORT: ${{ vars.API_PORT }}
           APP_HTTPS_PORT: ${{ vars.APP_HTTPS_PORT }}

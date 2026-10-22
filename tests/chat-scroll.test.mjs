@@ -93,6 +93,62 @@ test('the jump button waits until the newest message is well out of view', async
   }
 });
 
+/**
+ * Sending while reading older messages has to bring the reader back, and it has to
+ * read as a move rather than the list teleporting under their eyes. The request is
+ * made before the new message exists, so the jump must wait for layout; scrolling
+ * immediately would only reach the previous end and pin would snap over it anyway.
+ */
+test('sending from an earlier position animates to the newest message', async () => {
+  const previous = {
+    window: globalThis.window,
+    document: globalThis.document,
+    act: globalThis.IS_REACT_ACT_ENVIRONMENT,
+  };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  let scrollApi;
+
+  function Harness({ followKey }) {
+    const ref = useRef(null);
+    scrollApi = useChatAutoScroll({ containerRef: ref, containerKey: 'chat', followKey });
+    return createElement('div', { ref, id: 'scroller' });
+  }
+
+  try {
+    await act(async () => { root.render(createElement(Harness, { followKey: '1' })); });
+    const scroller = document.getElementById('scroller');
+    let behavior;
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, writable: true, value: 4000 },
+      scrollTop: { configurable: true, writable: true, value: 3200 },
+      scrollTo: { configurable: true, value: ({ top, behavior: requested }) => { behavior = requested; scroller.scrollTop = top; } },
+    });
+
+    // Scroll back to read, so the next content change would normally leave the view alone.
+    await act(async () => {
+      scroller.scrollTop = 600;
+      scroller.dispatchEvent(new window.Event('scroll'));
+    });
+    await act(async () => { scrollApi.followLatest(); });
+    // The sent message is laid out before the follow runs: this is the new end.
+    scroller.scrollHeight = 4600;
+    await act(async () => { root.render(createElement(Harness, { followKey: '2' })); });
+
+    assert.equal(behavior, 'smooth', 'the jump is an animation, not a snap');
+    assert.equal(scroller.scrollTop, 4600, 'the animation targets the end of the new content');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
 test('quoting accepts one assistant body, rejects controls, reasoning and cross-message ranges', async () => {
   const { readSelectionQuote } = await import('../src/features/chat/components/selection-quote.web.tsx');
   const { getCopyText } = await import('../src/features/chat/message-text.ts');

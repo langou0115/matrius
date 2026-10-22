@@ -13,7 +13,7 @@ import { canSync, createArchive, main, shellQuote, snapshot, validateConfig } fr
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const execute = promisify(execFile);
 const config = {
-  REMOTE_SSH: 'dev@server', REMOTE_PUBLIC_URL: 'http://203.0.113.10:16666',
+  REMOTE_USER: 'dev', REMOTE_HOST: 'server', APP_PORT: '16666',
   REMOTE_ENV_FILE: '/srv/matrius/production.env',
 };
 
@@ -29,11 +29,14 @@ test('source selection rejects secrets, traversal, generated files and unsafe fi
 });
 
 test('SSH configuration rejects command injection and invalid origins / paths', async () => {
-  assert.equal(validateConfig(config).url, config.REMOTE_PUBLIC_URL);
-  assert.equal(validateConfig({ REMOTE_SSH: config.REMOTE_SSH,
-    REMOTE_PUBLIC_URL: config.REMOTE_PUBLIC_URL }).envFile, '');
-  for (const patch of [{ REMOTE_SSH: '-oProxyCommand=bad' }, { REMOTE_SSH: 'host;bad' },
-    { REMOTE_PUBLIC_URL: 'http://user:password@host' }, { REMOTE_PUBLIC_URL: 'http://host/path' },
+  assert.equal(validateConfig(config).url, 'http://server:16666');
+  assert.equal(validateConfig(config).remoteSsh, 'dev@server');
+  assert.equal(validateConfig({ REMOTE_USER: config.REMOTE_USER,
+    REMOTE_HOST: config.REMOTE_HOST }).envFile, '');
+  assert.equal(validateConfig({ REMOTE_USER: config.REMOTE_USER,
+    REMOTE_HOST: config.REMOTE_HOST }).url, 'http://server:16666');
+  for (const patch of [{ REMOTE_USER: '-oProxyCommand=bad' }, { REMOTE_HOST: 'host;bad' },
+    { REMOTE_HOST: 'host/path' }, { REMOTE_USER: 'user:password' }, { REMOTE_HOST: '' },
     { REMOTE_ENV_FILE: 'relative.env' }, { REMOTE_WORKSPACE: '/' }, { REMOTE_SSH_PORT: '65536' },
     { APP_PORT: '0' }, { APP_PORT: '65536' }, { API_PORT: 'abc' }, { APP_HTTPS_PORT: '99999' },
     { INITIAL_ADMIN_USERNAME: 'admin' }, { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'a\nb' }]) {
@@ -109,7 +112,7 @@ test('remote deploys production once per invocation, gates releases and locks co
     };
     const sessionScript = join(repo, 'scripts/remote/session.sh');
     const start = (flags = [], extraEnv = {}) => spawn('bash', [sessionScript, workspace, envFile,
-      config.REMOTE_PUBLIC_URL, ...flags], { env: { ...env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
+      'http://server:16666', ...flags], { env: { ...env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
     const collect = (child) => {
       let text = '';
       let errors = '';
@@ -156,9 +159,14 @@ test('remote deploys production once per invocation, gates releases and locks co
       return { code, output };
     };
 
+    // These are the only inputs that trigger an image rebuild.
     const initial = {
-      'package.json': '{}', 'package-lock.json': '{}', 'server/app/main.py': 'first',
-      'old file.txt': 'stale', 'docker-compose/docker-compose.yml': 'services: {}',
+      'package.json': '{}', 'package-lock.json': '{}', 'Dockerfile.web.dev': 'FROM node',
+      'scripts/sync-katex.mjs': '// katex', 'server/pyproject.toml': '[project]',
+      'server/uv.lock': 'lock', 'server/Dockerfile': 'FROM python',
+      'server/scripts/select-index.py': '# indexes', 'server/scripts/install-python-deps.sh': '# deps',
+      'server/app/main.py': 'first', 'old file.txt': 'stale',
+      'docker-compose/docker-compose.yml': 'services: {}',
       'scripts/remote/health.sh': await readFile(join(repo, 'scripts/remote/health.sh'), 'utf8'),
     };
     await writeSource(initial);
@@ -182,7 +190,9 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert.equal((await stat(join(workspace, 'source/server/app'))).mode & 0o777, 0o755);
     assert.equal((await stat(join(workspace, 'source/server/app/main.py'))).mode & 0o777, 0o644);
     let commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, /up -d --build --no-deps --force-recreate web api\n/);
+    assert.match(commands, / build web api\n/);
+    assert.match(commands, /up -d --no-deps web api\n/);
+    assert.doesNotMatch(commands, /--build/);
     assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
     assert(!commands.includes('app.features.release'));
     assert(!commands.includes('remote.override.yml'));
@@ -196,9 +206,38 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert.equal(await readFile(join(workspace, 'source/src/new file.ts'), 'utf8'), 'hello');
     await assert.rejects(readFile(join(workspace, 'source/old file.txt')), { code: 'ENOENT' });
     commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, /up -d --build --no-deps --force-recreate web api\n/);
+    // Mounted source is picked up by the watchers; no image build or restart.
+    assert(!commands.includes(' build '));
+    assert.match(commands, /up -d --no-deps web api\n/);
     assert(!commands.includes('app.features.release'));
     assert.equal(await readFile(envFile, 'utf8'), serviceEnv);
+
+    // Frontend-only changes take the same mounted path: no rebuild at all.
+    const frontend = { ...changed, 'src/new file.ts': 'updated' };
+    await writeFile(dockerLog, '');
+    const frontendDeploy = await deploy(frontend);
+    assert.equal(frontendDeploy.code, 0, frontendDeploy.output.errors);
+    commands = await readFile(dockerLog, 'utf8');
+    assert(!commands.includes(' build '));
+    assert.match(commands, /up -d --no-deps web api\n/);
+
+    // Dependency changes rebuild only the affected image.
+    await writeFile(dockerLog, '');
+    const dependency = { ...frontend, 'package-lock.json': '{"changed":true}' };
+    const dependencyDeploy = await deploy(dependency);
+    assert.equal(dependencyDeploy.code, 0, dependencyDeploy.output.errors);
+    commands = await readFile(dockerLog, 'utf8');
+    assert.match(commands, / build web\n/);
+    assert.doesNotMatch(commands, / build api\n/);
+    assert.match(commands, /up -d --no-deps web api\n/);
+
+    // Nothing changed: no image build at all, but both containers stay running.
+    await writeFile(dockerLog, '');
+    const repeated = await deploy(dependency);
+    assert.equal(repeated.code, 0, repeated.output.errors);
+    commands = await readFile(dockerLog, 'utf8');
+    assert(!commands.includes(' build '));
+    assert.match(commands, /up -d --no-deps web api\n/);
 
     await writeFile(dockerLog, '');
     const published = await deploy(changed, ['0', '1', '0']);
@@ -227,14 +266,15 @@ test('remote deploys production once per invocation, gates releases and locks co
       await readFile(join(repo, 'server/app/main.py'), 'utf8'));
     await assert.rejects(readFile(join(workspace, 'source/src/new file.ts')), { code: 'ENOENT' });
     commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, /up -d --build --no-deps --force-recreate web api\n/);
+    assert.match(commands, / build web api\n/);
+    assert.match(commands, /up -d --no-deps web api\n/);
     assert(!commands.includes('app.features.release'));
     assert(!commands.includes('remote.override.yml'));
 
     await writeFile(dockerLog, '');
     await main({ args: ['--init'], env: cliEnv });
     commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, / build api\n/);
+    assert(!commands.includes(' build '));
     assert.match(commands, /--wait --wait-timeout 180 postgres redis rustfs openserp\n/);
     assert.match(commands, /run -T --rm --no-deps migrate\n/);
     assert(!commands.includes('app.features.release'));
@@ -242,14 +282,14 @@ test('remote deploys production once per invocation, gates releases and locks co
     await writeFile(dockerLog, '');
     await main({ args: ['--publish'], env: cliEnv });
     commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, /--force-recreate web api/);
+    assert.match(commands, /up -d --no-deps web api\n/);
     assert.match(commands, /-m app.features.release/);
 
     await writeFile(dockerLog, '');
     await main({ args: ['--publish', '--migrate'], env: cliEnv });
     commands = await readFile(dockerLog, 'utf8');
     const migrateIndex = commands.indexOf('run -T --rm --no-deps migrate');
-    const deployIndex = commands.indexOf('--force-recreate web api');
+    const deployIndex = commands.indexOf('up -d --no-deps web api');
     assert(migrateIndex >= 0 && deployIndex > migrateIndex);
 
     await writeFile(dockerLog, '');
@@ -284,7 +324,7 @@ test('first run generates server secrets and initializes without --init',
     const env = {
       ...process.env, PATH: `${bin}:${process.env.PATH}`,
       DOCKER_TEST_LOG: dockerLog, CURL_TEST_LOG: curlLog, DOCKER_TEST_FRESH: '1',
-      REMOTE_SSH: config.REMOTE_SSH, REMOTE_PUBLIC_URL: config.REMOTE_PUBLIC_URL,
+      REMOTE_USER: config.REMOTE_USER, REMOTE_HOST: config.REMOTE_HOST,
       REMOTE_WORKSPACE: workspace, REMOTE_ENV_FILE: '',
       INITIAL_ADMIN_USERNAME: 'root', INITIAL_ADMIN_PASSWORD: 'custom-admin-password',
       APP_PORT: '3000', API_PORT: '3001', APP_HTTPS_PORT: '3443',
@@ -302,19 +342,19 @@ test('first run generates server secrets and initializes without --init',
     assert.match(await readFile(join(workspace, 'initial-admin.txt'), 'utf8'),
       /username=root\npassword=custom-admin-password/);
     const commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, / build api\n/);
+    assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
     assert.match(commands, /run -T --rm --no-deps migrate\n/);
     assert.match(commands, /run-admin=root\/custom-admin-password\n/);
     assert(!commands.includes('INITIAL_ADMIN_PASSWORD=custom-admin-password'));
-    assert.match(commands, /up -d --build --no-deps --force-recreate web api\n/);
+    assert.match(commands, /up -d --no-deps web api\n/);
 
     // Later runs keep the generated file and skip initialization.
     await writeFile(dockerLog, '');
     await main({ args: [], env: { ...env, DOCKER_TEST_FRESH: '0' } });
     assert.equal(await readFile(join(workspace, 'production.env'), 'utf8'), generated);
     const later = await readFile(dockerLog, 'utf8');
-    assert(!later.includes(' build api\n'));
+    assert(!later.includes(' build '));
     assert(!later.includes('run -T --rm --no-deps migrate'));
 
     // A local port change rewrites only that key and survives the next deploy.

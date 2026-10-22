@@ -39,9 +39,10 @@ test('account switching and logout reject stale login results', async () => {
     return username === 'admin_test' ? preview.promise : response({ token: 'regular-token', user: account('regular') });
   });
   const first = auth.login('admin_test', 'password');
-  await auth.login('regular', 'password');
+  const regular = await auth.login('regular', 'password');
   preview.resolve(response({ token: 'preview-token', user: account('admin_test', ['labs']) }));
-  await first;
+  assert.equal(await first, undefined, 'a superseded login must not hand the caller a stale account');
+  assert.equal(regular.id, 'regular', 'a successful login returns the authenticated account');
   assert.equal(auth.getSnapshot().user.id, 'regular');
   assert.equal(store.read(), 'regular-token');
   await auth.logout();
@@ -88,6 +89,17 @@ test('catalogue and capability checks hide preview features for ordinary/anonymo
   assert.equal(hasFeature({ ...account('admin_test', ['labs']), mustChangePassword: true }, 'labs'), false);
   assert.equal(hasFeature(account('admin_test'), 'labs'), false, 'a client-side username grants nothing');
   assert.equal(hasFeature({ ...account('admin'), isAdmin: true }, 'labs'), false);
+});
+
+test('account and sync categories belong to their own group and need a signed-in account', () => {
+  const anonymous = visibleSettings([], false, false);
+  const authenticated = visibleSettings([], false, true);
+  assert(!anonymous.some((item) => item.id === 'sync'), 'sync is hidden until the account is verified');
+  assert(authenticated.some((item) => item.id === 'sync'));
+  assert.equal(authenticated.find((item) => item.id === 'account')?.group, '账号');
+  assert.equal(authenticated.find((item) => item.id === 'sync')?.group, '账号');
+  assert(!authenticated.some((item) => item.group === '应用' && ['account', 'sync'].includes(item.id)));
+  assert(!visibleSettings([], true, true).some((item) => ['account', 'sync'].includes(item.id)));
 });
 
 test('admin sessions use admin-scoped endpoints and never touch the user session', async () => {

@@ -53,6 +53,10 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey, scrol
   const pinned = useRef(false);
   const jumping = useRef(false);
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set when the reader sends a message. The pin below runs after the new content
+  // has been laid out, which is the only point where the end of the list is known,
+  // and this flag asks it to animate there instead of holding the current position.
+  const followRequested = useRef(false);
 
   const stopJump = useCallback(() => {
     jumping.current = false;
@@ -73,14 +77,31 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey, scrol
 
   const pin = useCallback(() => {
     const element = containerRef.current;
-    if (!element || !following.current) return;
+    if (!element) return;
+    const requested = followRequested.current;
+    followRequested.current = false;
+    if (!following.current && !requested) return;
+    following.current = true;
     setVisible(false);
     // Already at the end: no scroll event will follow, so do not arm the flag
     // that marks the next scroll event as ours.
-    if (element.scrollTop >= element.scrollHeight - element.clientHeight - 0.5) return;
+    if (distanceFromBottom(element) <= BOTTOM_EPSILON) return;
+    // A requested jump is visible on purpose; let it run instead of snapping the
+    // end of the list under the reader's eyes on the next streamed chunk.
+    if (requested && !jumping.current) {
+      jumping.current = true;
+      jumpTimer.current = setTimeout(() => {
+        jumpTimer.current = null;
+        jumping.current = false;
+        sync(true);
+      }, JUMP_TIMEOUT);
+      element.scrollTo({ behavior: 'smooth', top: element.scrollHeight });
+      return;
+    }
+    if (jumping.current) return;
     pinned.current = true;
     element.scrollTop = element.scrollHeight;
-  }, [containerRef]);
+  }, [containerRef, sync]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -196,6 +217,15 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey, scrol
     element.scrollTo({ behavior: 'smooth', top: element.scrollHeight });
   }, [containerRef, stopJump, sync]);
 
+  /**
+   * Asks the next content change to bring the newest message back into view, with
+   * the same animation as the button. Called on send, where the new message is not
+   * in the DOM yet; scrolling right away would only reach the previous end.
+   */
+  const followLatest = useCallback(() => {
+    followRequested.current = true;
+  }, []);
+
   const scrollToMessage = useCallback((target: HTMLElement) => {
     const element = containerRef.current;
     if (!element || !element.contains(target)) return;
@@ -207,7 +237,7 @@ export function useChatAutoScroll({ containerRef, containerKey, followKey, scrol
     sync(true);
   }, [containerRef, stopJump, sync]);
 
-  return { scrollToBottom, scrollToMessage, visible };
+  return { scrollToBottom, scrollToMessage, followLatest, visible };
 }
 
 type ScrollToBottomButtonProps = {

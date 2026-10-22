@@ -75,13 +75,13 @@ export async function createArchive(directory, files, current, destination) {
 }
 
 export function validateConfig(env) {
-  if (!env.REMOTE_SSH || !/^[\w][\w.@:[\]-]*$/u.test(env.REMOTE_SSH)) {
-    throw new Error('Set REMOTE_SSH to an SSH alias or user@host in .env.local.');
+  const user = (env.REMOTE_USER || '').trim();
+  const host = (env.REMOTE_HOST || '').trim();
+  if (!/^[A-Za-z0-9._-]+$/u.test(user)) {
+    throw new Error('Set REMOTE_USER to the SSH account in .env.local.');
   }
-  const url = new URL(env.REMOTE_PUBLIC_URL);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
-      || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('REMOTE_PUBLIC_URL must be an http(s) origin, including the public port.');
+  if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/u.test(host)) {
+    throw new Error('Set REMOTE_HOST to the server IP address in .env.local.');
   }
   const envFile = env.REMOTE_ENV_FILE || '';
   if (envFile && (!envFile.startsWith('/') || /[\r\n]/u.test(envFile))) {
@@ -118,7 +118,8 @@ export function validateConfig(env) {
   const appPort = readPort('APP_PORT');
   const apiPort = readPort('API_PORT');
   const httpsPort = readPort('APP_HTTPS_PORT');
-  return { ...env, envFile, workspace, url: url.origin, adminUser, adminPassword,
+  return { ...env, envFile, workspace, remoteSsh: `${user}@${host}`,
+    url: `http://${host}:${appPort || '16666'}`, adminUser, adminPassword,
     appPort, apiPort, httpsPort };
 }
 
@@ -127,7 +128,8 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
   if (flags.has('--help')) {
     console.log('npm run remote [-- --check | --init | --publish | --migrate]\n'
       + 'Copy .env.local.example to .env.local and configure SSH / public URL.\n'
-      + 'Default: sync source, build production Web + API on the server, health-check, then exit.\n'
+      + 'Default: sync source into bind-mounted Web/API containers, health-check, then exit.\n'
+      + 'Edited files reload in place; images rebuild only when dependencies change.\n'
       + 'The first run also creates missing server secrets and initializes the database.\n'
       + 'The default deployment does not change the released feature manifest.\n'
       + '--check: validate local configuration and list source counts without SSH.\n'
@@ -144,8 +146,8 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const config = validateConfig({ ...fileEnv, ...env });
   const current = await snapshot(root);
-  for (const required of ['package.json', 'package-lock.json', 'docker-compose/docker-compose.yml',
-    'server/app/main.py']) {
+  for (const required of ['package.json', 'package-lock.json', 'Dockerfile.web.dev',
+    'docker-compose/docker-compose.yml', 'server/app/main.py']) {
     if (!current.has(required)) throw new Error(`Missing sync source: ${required}`);
   }
   if (flags.has('--check')) {
@@ -153,7 +155,7 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
       ['APP_HTTPS_PORT', config.httpsPort]]
       .filter(([, value]) => value).map(([name, value]) => `${name}=${value}`);
     console.log(`Configuration valid. ${current.size} source files; credentials and dependencies excluded.\n`
-      + `SSH: ${config.REMOTE_SSH}\nRemote site: ${config.url}\n`
+      + `SSH: ${config.remoteSsh}\nRemote site: ${config.url}\n`
       + `Ports: ${ports.length ? ports.join(', ') : 'server configuration defaults'}\n`
       + `Initial admin: ${config.adminUser || 'generated on first run'}\nNo server connection was made.`);
     return;
@@ -170,8 +172,8 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
     + [config.workspace, config.envFile, config.url, flags.has('--init') ? '1' : '0',
       flags.has('--publish') ? '1' : '0', flags.has('--migrate') ? '1' : '0',
       config.appPort, config.apiPort, config.httpsPort].map(shellQuote).join(' ');
-  console.log(`Connecting to ${config.REMOTE_SSH}. Web/API will use the server's live data.`);
-  const ssh = spawn('ssh', [...args, '--', config.REMOTE_SSH, command], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  console.log(`Connecting to ${config.remoteSsh}. Web/API will use the server's live data.`);
+  const ssh = spawn('ssh', [...args, '--', config.remoteSsh, command], { env, stdio: ['pipe', 'pipe', 'inherit'] });
   let aborted = false;
   let frameSent = false;
   let stopRequested = false;

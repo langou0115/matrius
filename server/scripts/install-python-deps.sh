@@ -64,12 +64,28 @@ if [[ ! -x $venv/bin/python ]]; then
 fi
 
 indexes=()
-while IFS= read -r index; do
-  [[ -n $index ]] && indexes+=("$index")
-done < <(python3 "$script_dir/select-index.py")
+read_indexes() {
+  indexes=()
+  local index
+  while IFS= read -r index; do
+    if [[ -n $index ]]; then indexes+=("$index"); fi
+  done < <(python3 "$script_dir/select-index.py" "$@")
+}
 
+read_indexes
 if ((${#indexes[@]} == 0)); then
-  echo 'No reachable PyPI index.' >&2
+  echo 'No PyPI index answered the probe; retrying once.' >&2
+  sleep 2
+  read_indexes
+fi
+if ((${#indexes[@]} == 0)); then
+  # Probing is a latency optimization, not a gate. A transient DNS or TLS
+  # failure should not block a build that pip can still complete.
+  echo 'Index probe failed; attempting the configured indexes directly.' >&2
+  read_indexes --all
+fi
+if ((${#indexes[@]} == 0)); then
+  echo 'No PyPI index is configured.' >&2
   exit 1
 fi
 

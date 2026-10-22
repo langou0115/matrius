@@ -1,10 +1,11 @@
 import { Link, router } from 'expo-router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useState } from 'react';
-import { SquarePen } from 'lucide-react';
+import { ChevronRight, SquarePen } from 'lucide-react';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
+import { useAuth } from '@/features/auth/auth-state.web';
 import { useChat, type Conversation } from '../chat-state';
 import { ConversationMenu } from './conversation-menu.web';
 import { ConversationSelect } from './conversation-select.web';
@@ -19,6 +20,7 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
   const { conversations, activeId, dispatch } = useChat();
   const runtime = useChatRuntime();
   const preview = useIsPreview();
+  const auth = useAuth();
   const homeHref = preview ? '/mock/chat' : '/';
   const [editing, setEditing] = useState<Conversation | null>(null);
   const [title, setTitle] = useState('');
@@ -71,10 +73,26 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
           </section>
         ))}
       </nav>
-      <Link href={preview ? '/mock/chat/settings' : '/settings'} asChild><LinkAnchor className="user-entry" aria-label="打开设置">
-        <span className="user-avatar"><Icon name="user" size={18} /></span>
-        <span className="user-entry-text"><strong>本地模式</strong><span>数据保存在此浏览器</span></span>
-      </LinkAnchor></Link>
+      {preview
+        ? <Link href="/mock/chat/settings" asChild><LinkAnchor className="user-entry" aria-label="打开设置">
+          <span className="user-avatar"><Icon name="user" size={18} /></span>
+          <span className="user-entry-text"><strong>本地模式</strong><span>数据保存在此浏览器</span></span>
+        </LinkAnchor></Link>
+        : <Link href="/settings/account" asChild><LinkAnchor className="user-entry"
+          aria-label={auth.user ? '打开账号设置' : '打开账号设置并登录'}>
+          {auth.user
+            ? <span className="user-avatar is-authenticated">{auth.user.username.slice(0, 1).toUpperCase()}</span>
+            : <span className="user-avatar"><Icon name="user" size={18} /></span>}
+          <span className="user-entry-text">
+            <strong>{auth.user ? auth.user.username : '未登录'}</strong>
+            <span>{auth.user
+              ? auth.user.mustChangePassword ? '需要修改密码' : '已登录 · 账号设置'
+              : auth.status === 'checking' ? '正在验证登录…'
+                : auth.status === 'unavailable' ? '无法验证登录状态'
+                  : '在设置中登录账号'}</span>
+          </span>
+          <ChevronRight className="user-entry-chevron" size={16} strokeWidth={1.75} aria-hidden="true" />
+        </LinkAnchor></Link>}
       {menu && <ConversationMenu conversation={menu.conversation} anchor={menu.anchor} onClose={closeMenu}
         onPin={() => { dispatch({ type: 'pin', id: menu.conversation.id }); closeMenu(); }}
         onRename={() => { menu.anchor.focus(); setEditing(menu.conversation); setTitle(menu.conversation.title); setConfirmDelete(false); closeMenu(); }}

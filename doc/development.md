@@ -70,20 +70,20 @@ npx eas-cli@latest submit --platform ios
 
 ## 远程构建与部署：npm run remote
 
-在本机编辑前端和后端代码，执行 `npm run remote` 把当前源码发送到服务器，并在服务器构建、启动生产镜像。本机无需启动 Web、Python、Docker 或数据库，不需要先提交 Git，也不依赖 GitHub Actions。`npm run web` 仅用于本机前端调试（Metro，可访问 `/mock`），部署产物不启用 Mock，也不参与远程部署。
+在本机编辑前端和后端代码，执行 `npm run remote` 把当前源码发送到服务器。源码目录以只读方式挂载进容器：Web 由 Metro 热更新，API 由 `uvicorn --reload` 重载，只有依赖或 Dockerfile 变化才重建镜像。本机无需启动 Python、Docker 或数据库，不需要先提交 Git，也不依赖 GitHub Actions。`npm run web` 仅用于本机前端调试；服务器上的 `/mock` 由 Caddy 拒绝。
 
 ### 首次配置
 
 本机准备 Node.js 24、npm、Git、OpenSSH 客户端和支持 `--null -T` 的 tar（Windows 可用系统自带 OpenSSH/tar 与 Git for Windows）。克隆仓库后即可运行 remote 脚本，无需先安装应用依赖。脚本使用 Node 内置模块，不依赖 Bash、rsync 或本机 Python。
 
 1. 服务器先按[发布账号说明](deployment.md#发布账号)安装 Docker Engine + Compose v2，并准备 SSH 账号。已有服务器环境可直接使用。
-2. 配置 SSH 密钥或 ssh-agent，并手工连接一次、核对服务器指纹。可以在 SSH config 中建立 `matrius-remote` 别名。脚本使用严格主机密钥校验与非交互认证，不读取或上传密码。
+2. 配置 SSH 密钥或 ssh-agent，并手工连接一次、核对服务器指纹。脚本使用严格主机密钥校验与非交互认证，不读取或上传密码。
 3. 按[发布账号](deployment.md#发布账号)准备 `matrius-deploy` SSH 账号、密钥和 Docker 权限。脚本不会自动提权或修改账号权限。
 4. 复制根目录 `.env.local.example` 为 `.env.local`，填写：
 
 ```dotenv
-REMOTE_SSH=matrius-remote
-REMOTE_PUBLIC_URL=http://你的服务器IP:16666
+REMOTE_USER=matrius-deploy
+REMOTE_HOST=你的服务器IP
 
 # 可选：覆盖服务器端口；不写则保留服务器现有值或使用默认值
 # APP_PORT=16666
@@ -103,7 +103,7 @@ REMOTE_PUBLIC_URL=http://你的服务器IP:16666
 
 ```bash
 npm run remote -- --check   # 本地检查配置与同步文件范围，不连接服务器
-npm run remote              # 同步、构建并启动生产版，健康检查通过后退出
+npm run remote              # 同步源码并让容器热更新，健康检查通过后退出
 npm run remote -- --init    # 可选：强制重新执行基础设施初始化和迁移
 npm run remote -- --publish # 部署，并在健康检查后更新已发布功能清单
 npm run remote -- --publish --migrate # 有已审查的数据库迁移时显式执行
@@ -111,9 +111,9 @@ npm run test:remote        # 单次同步、部署、功能发布门控与并发
 npm run test:auth          # 会话切换、失效和账号功能显示回归
 ```
 
-每次执行都会完成一次完整部署：全量同步当前源码 → 在服务器构建 Web（Expo 生产导出 + Node 中继）与 API 镜像 → 重建 Web/API/Caddy → 等待 `/api/health` 和首页通过 → 退出。通常需要 1–3 分钟；源码未变化时 Docker 构建缓存会让重复执行更快。命令不会持续监听文件，修改代码后重新执行即可。打开 `REMOTE_PUBLIC_URL` 查看服务器页面；脚本不会自动控制浏览器。
+每次执行都会把当前源码同步到服务器。源码目录以只读方式挂载进容器：Web 由 Metro 热更新，API 由 `uvicorn --reload` 重载，所以改代码通常几秒内生效，不会重建镜像或重启容器；只有依赖或 Dockerfile 变化才重建对应镜像。命令退出后应用容器继续运行，修改代码后重新执行即可重新对齐源码。打开 `http://<REMOTE_HOST>:<APP_PORT>` 查看服务器页面；脚本不会自动控制浏览器。
 
-同步包含新增、修改、删除以及尚未提交、未被 gitignore 的新文件；本机的 `.env` / 密钥、node_modules、Python 虚拟环境、构建产物和 Git 元数据不会上传，符号链接不跟随。依赖在服务器按锁文件安装。服务器始终运行生产 bundle，因此服务器上的 `/mock` 不可用；Mock 只在本机 `npm run web` 下可用。不同开发机的部署通过服务器文件锁互斥；命令退出后应用容器继续运行，SSH 中断后重新执行会重新全量对齐当前开发机的代码。
+同步包含新增、修改、删除以及尚未提交、未被 gitignore 的新文件；本机的 `.env` / 密钥、node_modules、Python 虚拟环境、构建产物和 Git 元数据不会上传，符号链接不跟随。依赖在服务器按锁文件安装。服务器上的 `/mock` 由 Caddy 拒绝；Mock 只在本机 `npm run web` 下可用。不同开发机的部署通过服务器文件锁互斥；命令退出后应用容器继续运行，SSH 中断后重新执行会重新全量对齐当前开发机的代码。
 
 默认部署只让新代码上线，**不更新已发布功能清单**：`admin_test` 仍按 preview 规则看到新功能，其他账号只能看到最近一次 `--publish` 发布的功能。`--publish` 在健康检查通过后才用本次构建的 API 镜像原子更新清单，是把测试账号验证过的功能同步给其他账号的唯一入口；也可由手动 GitHub CD 调用。两者使用同一份源码、同一套生产 Compose、容器和数据，没有开发/生产两套运行环境。
 
@@ -172,7 +172,7 @@ uv run --no-sync pytest
 - 点击侧栏切换样例，也可通过搜索标题或正文定位内容，支持置顶、重命名、删除与输入草稿；配置并选中模型后，发送会调用真实模型，沿用正式对话流程。
 - 示例模式不读取或写入浏览器真实工作区，变更仅保存在内存中。右下角提供重置和退出入口；刷新示例地址也会重置。
 - `src/app/mock/_layout.tsx` 通过 `__DEV__` 统一保护全部 mock 子路由；新增页面自动受保护。索引页、工具栏与示例数据仅在 `__DEV__` 分支动态加载，release 模式访问这些路径会跳回首页。
-- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。`npm run remote` 部署的是 Expo 生产导出产物，不部署 Metro 开发服务，因此服务器上的 `/mock` 不可用。`__DEV__` 取决于 bundle 的开发/生产模式，与域名、登录状态或 EAS profile 名称无关。
+- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。`npm run remote` 也运行 Metro 开发 bundle（源码挂载热更新），但服务器上的 `/mock` 由 Caddy 拒绝，因此示例地址只在本机可用。`__DEV__` 取决于 bundle 的开发/生产模式，与域名、登录状态或 EAS profile 名称无关。
 - 发布前检查导出的 JS/HTML 不包含 Mock 索引文案、工具栏或示例数据；路由名称和重定向页面仍可能存在于静态产物中，不代表 Mock 页面可用。
 - 用户与助手消息共用 Markdown/GFM 与 KaTeX 渲染，支持标题、列表、引用、表格、脚注、公式和按需代码高亮；代码块可复制与折叠。Mermaid 等未知代码语言作为原文展示，已接入三种协议的实时流式模型输出。
 

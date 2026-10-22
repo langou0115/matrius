@@ -10,6 +10,12 @@
 		reverse_proxy api:8000
 	}
 
+	# Mock previews stay local to `npm run web`.
+	@mock path /mock /mock/*
+	handle @mock {
+		respond "Not found" 404
+	}
+
 	handle {
 		reverse_proxy web:8081
 	}

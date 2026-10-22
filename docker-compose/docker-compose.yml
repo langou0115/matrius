@@ -31,28 +31,34 @@ services:
 
   web:
     container_name: matrius-web
-    image: matrius-web:local
+    image: matrius-web-live:local
     build:
       context: ..
-      dockerfile: Dockerfile.web
+      dockerfile: Dockerfile.web.dev
       args:
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}
     environment:
-      PORT: "8081"
-      HOST: 0.0.0.0
       MATRIUS_PROXY_ALLOW_HOSTS: ${MATRIUS_PROXY_ALLOW_HOSTS:-}
       MATRIUS_PROXY_ALLOW_PRIVATE: ${MATRIUS_PROXY_ALLOW_PRIVATE:-0}
+    # The whole source tree is mounted read-only, so Metro sees every edit
+    # (including new files) without a rebuild. Only the writable state Metro
+    # needs is kept in volumes on top of it.
+    volumes:
+      - ../:/app:ro
+      - web_node_modules:/app/node_modules
+      - web_expo:/app/.expo
+      - web_katex:/app/public/vendor/katex
     healthcheck:
       test:
         - CMD
         - node
         - -e
         - >-
-          fetch('http://127.0.0.1:8081/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+          fetch('http://127.0.0.1:8081/status').then((r) => r.text()).then((t) => process.exit(t.includes('packager-status:running') ? 0 : 1)).catch(() => process.exit(1))
       interval: 30s
       timeout: 5s
-      retries: 3
-      start_period: 15s
+      retries: 10
+      start_period: 120s
     init: true
     security_opt:
       - no-new-privileges:true
@@ -113,8 +119,26 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:size=64m,mode=1777
+    # The whole server tree is mounted; running from /srv uses the mounted app.
+    # Only dependency changes (uv.lock / Dockerfile) need a new image.
+    working_dir: /srv
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --reload
+      - --reload-dir
+      - /srv/app
+      - --reload-dir
+      - /srv/alembic
     volumes:
       - feature_releases:/app/releases:ro
+      - ../server:/srv:ro
     networks:
       - edge
       - data
@@ -134,6 +158,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-matrius}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-matrius}
       INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+    working_dir: /srv
+    volumes:
+      - ../server:/srv:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -251,6 +278,12 @@ networks:
 volumes:
   feature_releases:
     name: matrius_feature_releases
+  web_node_modules:
+    name: matrius_web_node_modules
+  web_expo:
+    name: matrius_web_expo
+  web_katex:
+    name: matrius_web_katex
   postgres_data:
     name: matrius_prod_postgres_data
   rustfs_data:

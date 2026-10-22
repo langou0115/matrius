@@ -18,6 +18,7 @@
 - 保存按操作顺序排队，以数据库事务完成作为成功。读取和写入均检查版本；其他标签页改写后，本页后续保存会提示冲突，不静默覆盖。当前不提供多标签页自动合并。
 - v2 升级迁移在 `core/database/browser-store.web.ts` 的 `onupgradeneeded` 中创建 `messages` store；旧版快照保留可读，在下一次保存事务中原子转换。流式正文按独立消息增量写入，元数据和消息共享 workspace revision 校验。这些记录只服务本地模式与一次性导入，不是同步协议。
 - App 的手机本地数据库尚未接入，后续优先评估 [Expo SQLite（SDK 57）](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/)。平台适配与 Web 实现分离，页面不直接访问数据库。
+- 账号的同步范围选择保存在 `state.account-sync-preferences`，以 `users[userId]` 区分账号，记录聊天记录、已读和未读、个人设置、界面外观、图片和文件五类的布尔值；与工作区一样走 revision 校验和写队列，冲突时重读后重试一次。该记录只是云端同步上线前的本地偏好，不是同步协议，也不包含任何业务数据。登录令牌仍按标签页隔离，不同步。
 - 模型 API key 与认证令牌通过安全存储适配层管理，不存入普通业务表或同步载荷。Web 把它们单独写入 `state.model-credentials` 记录（未加密，与 `model-preferences` 分离）；App 后续交给手机本地数据库。浏览器端限制见[客户端约定](client.md)。
 - 不自动导入旧工程设备数据库或历史用户数据；后续如需导入，单独定义导出格式、版本映射与回滚流程。
 

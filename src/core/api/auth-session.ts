@@ -95,6 +95,7 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
       if (version !== generation) return;
       saveToken(result.token);
       update({ status: 'authenticated', user, error: null });
+      return user;
     } catch (error) {
       if (version === generation) update({ status: 'anonymous', user: null,
         error: error instanceof Error ? error.message : '登录失败，请重试。' });
