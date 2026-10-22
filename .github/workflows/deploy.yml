@@ -59,4 +59,4 @@ jobs:
           export REMOTE_SSH_KNOWN_HOSTS="$work_dir/known_hosts"
           args=(--publish)
           if [[ "$APPLY_MIGRATIONS" == true ]]; then args+=(--migrate); fi
-          npm run remote -- "${args[@]}"
+          npm run deploy -- "${args[@]}"

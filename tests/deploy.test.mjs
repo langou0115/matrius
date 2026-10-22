@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
 
-import { canSync, createArchive, main, shellQuote, snapshot, validateConfig } from '../scripts/remote.mjs';
+import { canSync, createArchive, main, shellQuote, snapshot, validateConfig } from '../scripts/deploy.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const execute = promisify(execFile);
@@ -80,7 +80,7 @@ test('snapshot includes uncommitted files, excludes ignored secrets and symlinks
 });
 
 test('remote deploys production once per invocation, gates releases and locks concurrent sessions',
-  { skip: process.platform === 'win32', timeout: 60000 }, async (t) => {
+  { skip: process.platform === 'win32', timeout: 90000 }, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), 'matrius-session-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const source = join(dir, 'local');
@@ -96,7 +96,8 @@ test('remote deploys production once per invocation, gates releases and locks co
     await writeFile(join(bin, 'docker'), '#!/usr/bin/env bash\n'
       + 'printf "%s\\n" "$*" >> "$DOCKER_TEST_LOG"\n'
       + 'if [[ ${DOCKER_TEST_FRESH:-0} == 1 && " $* " == *" volume inspect "* ]]; then exit 1; fi\n'
-      + 'case " $* " in *" ps "*) printf "caddy\\npostgres\\nredis\\nrustfs\\nopenserp\\n" ;;'
+      + 'case " $* " in *" ps "*) for service in caddy postgres redis rustfs openserp; do '
+      + '[[ $service == "${DOCKER_TEST_STOPPED:-}" ]] || printf "%s\\n" "$service"; done ;;'
       + ' *" logs "*) printf "fake logs\\n" ;; esac\n');
     await chmod(join(bin, 'docker'), 0o755);
     await writeFile(join(bin, 'curl'), '#!/usr/bin/env bash\n'
@@ -159,14 +160,15 @@ test('remote deploys production once per invocation, gates releases and locks co
       return { code, output };
     };
 
-    // These are the only inputs that trigger an image rebuild.
+    // Representative production image build inputs.
     const initial = {
-      'package.json': '{}', 'package-lock.json': '{}', 'Dockerfile.web.dev': 'FROM node',
+      'package.json': '{}', 'package-lock.json': '{}', 'Dockerfile.web': 'FROM node',
       'scripts/sync-katex.mjs': '// katex', 'server/pyproject.toml': '[project]',
       'server/uv.lock': 'lock', 'server/Dockerfile': 'FROM python',
       'server/scripts/select-index.py': '# indexes', 'server/scripts/install-python-deps.sh': '# deps',
       'server/app/main.py': 'first', 'old file.txt': 'stale',
       'docker-compose/docker-compose.yml': 'services: {}',
+      'docker-compose/Caddyfile': ':80 {}',
       'scripts/remote/health.sh': await readFile(join(repo, 'scripts/remote/health.sh'), 'utf8'),
     };
     await writeSource(initial);
@@ -180,7 +182,7 @@ test('remote deploys production once per invocation, gates releases and locks co
     const otherOutput = collect(other);
     other.stdin.end();
     assert.equal((await otherClosed)[0], 1);
-    assert.match(otherOutput.errors, /Another npm run remote session/);
+    assert.match(otherOutput.errors, /Another npm run deploy session/);
 
     await sendFrame(first, await archiveFor(initial, 'first.tar.gz'));
     await waitForText(firstOutput, '@@MATRIUS_REMOTE_SYNCED');
@@ -194,6 +196,8 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert.match(commands, /up -d --no-deps web api\n/);
     assert.doesNotMatch(commands, /--build/);
     assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
+    assert.match(commands, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
+    assert.doesNotMatch(commands, /run .*migrate/);
     assert(!commands.includes('app.features.release'));
     assert(!commands.includes('remote.override.yml'));
     assert.match(await readFile(curlLog, 'utf8'), /\/api\/health/);
@@ -206,38 +210,47 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert.equal(await readFile(join(workspace, 'source/src/new file.ts'), 'utf8'), 'hello');
     await assert.rejects(readFile(join(workspace, 'source/old file.txt')), { code: 'ENOENT' });
     commands = await readFile(dockerLog, 'utf8');
-    // Mounted source is picked up by the watchers; no image build or restart.
-    assert(!commands.includes(' build '));
+    // Source changes must be included in rebuilt production images.
+    assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --no-deps web api\n/);
     assert(!commands.includes('app.features.release'));
     assert.equal(await readFile(envFile, 'utf8'), serviceEnv);
+    assert.match(commands, /up -d --no-deps caddy\n/);
+    assert.doesNotMatch(commands, /--force-recreate caddy/);
 
-    // Frontend-only changes take the same mounted path: no rebuild at all.
+    // Frontend source changes also reach the production image build.
     const frontend = { ...changed, 'src/new file.ts': 'updated' };
     await writeFile(dockerLog, '');
     const frontendDeploy = await deploy(frontend);
     assert.equal(frontendDeploy.code, 0, frontendDeploy.output.errors);
     commands = await readFile(dockerLog, 'utf8');
-    assert(!commands.includes(' build '));
+    assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --no-deps web api\n/);
 
-    // Dependency changes rebuild only the affected image.
+    // Docker handles dependency layer caching during builds.
     await writeFile(dockerLog, '');
     const dependency = { ...frontend, 'package-lock.json': '{"changed":true}' };
     const dependencyDeploy = await deploy(dependency);
     assert.equal(dependencyDeploy.code, 0, dependencyDeploy.output.errors);
     commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, / build web\n/);
-    assert.doesNotMatch(commands, / build api\n/);
+    assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --no-deps web api\n/);
 
-    // Nothing changed: no image build at all, but both containers stay running.
+    // Repeated deploys still invoke cached builds and keep the services running.
     await writeFile(dockerLog, '');
     const repeated = await deploy(dependency);
     assert.equal(repeated.code, 0, repeated.output.errors);
     commands = await readFile(dockerLog, 'utf8');
-    assert(!commands.includes(' build '));
+    assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --no-deps web api\n/);
+
+    // Bind-mounted Caddyfile edits require recreation even when Compose's service hash is unchanged.
+    await writeFile(dockerLog, '');
+    const caddyDeploy = await deploy({ ...dependency, 'docker-compose/Caddyfile': ':80 { respond 200 }' });
+    assert.equal(caddyDeploy.code, 0, caddyDeploy.output.errors);
+    commands = await readFile(dockerLog, 'utf8');
+    assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
+    assert.doesNotMatch(commands, /run .*migrate/);
 
     await writeFile(dockerLog, '');
     const published = await deploy(changed, ['0', '1', '0']);
@@ -245,15 +258,18 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert.match(await readFile(dockerLog, 'utf8'), /-m app.features.release/);
 
     await writeFile(dockerLog, '');
-    await writeSource(changed);
+    const successfulCaddy = await readFile(join(workspace, 'caddy-config.sha256'), 'utf8');
+    const failingFiles = { ...changed, 'docker-compose/Caddyfile': ':80 { respond 503 }' };
+    await writeSource(failingFiles);
     const failing = start(['0', '1', '0'], { CURL_TEST_FAIL: '1' });
     const failingOutput = collect(failing);
     const failingClosed = once(failing, 'close');
     await waitForText(failingOutput, '@@MATRIUS_REMOTE_READY');
-    await sendFrame(failing, await archiveFor(changed, 'failing.tar.gz'));
+    await sendFrame(failing, await archiveFor(failingFiles, 'failing.tar.gz'));
     failing.stdin.end();
     assert.equal((await failingClosed)[0], 1);
     assert(!(await readFile(dockerLog, 'utf8')).includes('app.features.release'));
+    assert.equal(await readFile(join(workspace, 'caddy-config.sha256'), 'utf8'), successfulCaddy);
 
     // Exercise the real npm entrypoint and SSH command quoting without a network connection.
     await writeFile(join(bin, 'ssh'), '#!/usr/bin/env bash\nfor arg do command=$arg; done\nexec bash -c "$command"\n');
@@ -272,9 +288,15 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert(!commands.includes('remote.override.yml'));
 
     await writeFile(dockerLog, '');
+    await main({ args: [], env: cliEnv });
+    commands = await readFile(dockerLog, 'utf8');
+    assert.match(commands, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
+    assert.doesNotMatch(commands, /--force-recreate (postgres|redis|rustfs|openserp)|run .*migrate/);
+
+    await writeFile(dockerLog, '');
     await main({ args: ['--init'], env: cliEnv });
     commands = await readFile(dockerLog, 'utf8');
-    assert(!commands.includes(' build '));
+    assert.match(commands, / build web api\n/);
     assert.match(commands, /--wait --wait-timeout 180 postgres redis rustfs openserp\n/);
     assert.match(commands, /run -T --rm --no-deps migrate\n/);
     assert(!commands.includes('app.features.release'));
@@ -299,8 +321,8 @@ test('remote deploys production once per invocation, gates releases and locks co
     await assert.rejects(main({ args: ['--once'], env: cliEnv }), /Unknown option/);
   });
 
-test('first run generates server secrets and initializes without --init',
-  { skip: process.platform === 'win32', timeout: 60000 }, async (t) => {
+test('new servers require --init; subsequent deploys reconcile services and public ports without migration',
+  { skip: process.platform === 'win32', timeout: 90000 }, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), 'matrius-fresh-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const bin = join(dir, 'bin');
@@ -313,7 +335,8 @@ test('first run generates server secrets and initializes without --init',
       + 'if [[ " $* " == *" run "* ]]; then\n'
       + '  printf "run-admin=%s/%s\\n" "${INITIAL_ADMIN_USERNAME:-}" "${INITIAL_ADMIN_PASSWORD:-}" >> "$DOCKER_TEST_LOG"\n'
       + 'fi\n'
-      + 'if [[ ${DOCKER_TEST_FRESH:-0} == 1 && " $* " == *" volume inspect "* ]]; then exit 1; fi\n');
+      + 'if [[ ${DOCKER_TEST_FRESH:-0} == 1 && " $* " == *" volume inspect "* ]]; then exit 1; fi\n'
+      + 'if [[ " $* " == *" ps "* ]]; then printf "caddy\\npostgres\\nredis\\nrustfs\\nopenserp\\n"; fi\n');
     await chmod(join(bin, 'docker'), 0o755);
     await writeFile(join(bin, 'curl'), '#!/usr/bin/env bash\n'
       + 'printf "%s\\n" "$*" >> "$CURL_TEST_LOG"\n'
@@ -330,7 +353,11 @@ test('first run generates server secrets and initializes without --init',
       APP_PORT: '3000', API_PORT: '3001', APP_HTTPS_PORT: '3443',
     };
 
-    await main({ args: [], env });
+    await assert.rejects(main({ args: [], env }), /SSH session closed \(1\)/);
+    await assert.rejects(readFile(join(workspace, 'production.env')), { code: 'ENOENT' });
+    assert.doesNotMatch(await readFile(dockerLog, 'utf8'), / (build|up|run) /);
+    await writeFile(dockerLog, '');
+    await main({ args: ['--init'], env });
     const generated = await readFile(join(workspace, 'production.env'), 'utf8');
     assert.match(generated, /^POSTGRES_PASSWORD=[0-9a-f]{64}$/m);
     assert.match(generated, /^INITIAL_ADMIN_USERNAME=root$/m);
@@ -348,16 +375,20 @@ test('first run generates server secrets and initializes without --init',
     assert.match(commands, /run-admin=root\/custom-admin-password\n/);
     assert(!commands.includes('INITIAL_ADMIN_PASSWORD=custom-admin-password'));
     assert.match(commands, /up -d --no-deps web api\n/);
+    assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
 
     // Later runs keep the generated file and skip initialization.
     await writeFile(dockerLog, '');
     await main({ args: [], env: { ...env, DOCKER_TEST_FRESH: '0' } });
     assert.equal(await readFile(join(workspace, 'production.env'), 'utf8'), generated);
     const later = await readFile(dockerLog, 'utf8');
-    assert(!later.includes(' build '));
+    assert.match(later, / build web api\n/);
     assert(!later.includes('run -T --rm --no-deps migrate'));
+    assert.match(later, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
+    assert.match(later, /up -d --no-deps caddy\n/);
+    assert.doesNotMatch(later, /--force-recreate caddy/);
 
-    // A local port change rewrites only that key and survives the next deploy.
+    // Ordinary deploy applies local port changes without initializing infrastructure.
     await writeFile(dockerLog, '');
     await writeFile(curlLog, '');
     await main({ args: [], env: { ...env, DOCKER_TEST_FRESH: '0', APP_PORT: '4000' } });
@@ -368,4 +399,7 @@ test('first run generates server secrets and initializes without --init',
     assert.match(updated, /^INITIAL_ADMIN_PASSWORD=custom-admin-password$/m);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
     assert.match(await readFile(curlLog, 'utf8'), /:4000\/api\/health/);
+    const portUpdate = await readFile(dockerLog, 'utf8');
+    assert.match(portUpdate, /up -d --no-deps caddy\n/);
+    assert.doesNotMatch(portUpdate, /run .*migrate|--force-recreate (postgres|redis|rustfs|openserp)/);
   });

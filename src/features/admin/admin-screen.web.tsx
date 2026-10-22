@@ -1,10 +1,11 @@
 import {
-  AlertCircle, Ban, CheckCircle2, Copy, Eye, EyeOff, KeyRound, LoaderCircle,
+  AlertCircle, Ban, CheckCircle2, Copy, KeyRound, LoaderCircle,
   LogOut, RefreshCw, Search, ShieldCheck, UserPlus, Users, type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
+import { PasswordInput } from '@/components/web/password-input';
 import { createAdminSession } from '@/core/api/auth-session';
 import { copyText } from '@/core/platform/clipboard.web';
 import { browserAdminSessionStore } from '@/core/platform/auth-session.web';
@@ -73,7 +74,6 @@ export default function AdminScreen() {
   );
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -229,16 +229,8 @@ export default function AdminScreen() {
               </label>
               <label className="login-field">
                 <span className="login-label">密码</span>
-                <span className="login-input-wrap">
-                  <KeyRound size={17} strokeWidth={1.75} aria-hidden="true" />
-                  <input className="text-field" type={showPassword ? 'text' : 'password'} required maxLength={256}
-                    autoComplete="current-password" value={password}
-                    onChange={(event) => setPassword(event.target.value)} />
-                  <button type="button" className="login-password-toggle" aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                    onClick={() => setShowPassword((value) => !value)}>
-                    {showPassword ? <EyeOff size={17} strokeWidth={1.75} aria-hidden="true" /> : <Eye size={17} strokeWidth={1.75} aria-hidden="true" />}
-                  </button>
-                </span>
+                <PasswordInput label="密码" required maxLength={256}
+                  autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
               </label>
               {(error || sessionError) && <p className="login-error" role="alert"><AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />{error ?? sessionError}</p>}
               <button className="primary-button login-submit" type="submit" disabled={loginBusy || !username.trim() || !password}>

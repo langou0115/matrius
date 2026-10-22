@@ -1,6 +1,7 @@
 const path = require('node:path');
 const { getDefaultConfig } = require('expo/metro-config');
 const { handleModelProxy } = require('./scripts/model-proxy.cjs');
+const { handleDevApi } = require('./scripts/dev-api-proxy.cjs');
 
 const config = getDefaultConfig(__dirname);
 
@@ -13,6 +14,7 @@ config.server = {
     const enhanced = previousEnhanceMiddleware ? previousEnhanceMiddleware(middleware, server) : middleware;
     return function modelProxyMiddleware(req, res, next) {
       if (handleModelProxy(req, res)) return;
+      if (handleDevApi(req, res)) return;
       return enhanced(req, res, next);
     };
   },

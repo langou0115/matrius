@@ -10,7 +10,7 @@
 2. **登录账号能用 Docker**（直接执行 `docker ps` 不报权限错误）。
 3. **放行 16666 端口**（网页 + API）。
 
-其他全部由本机的 `npm run remote` 自动完成：同步源码、挂载源码并热更新、按需安装依赖、生成密码、建数据库、跑迁移、启动服务、健康检查。
+新服务器先执行 `npm run deploy -- --init`：同步源码、构建包含源码的生产镜像、生成密码、建数据库、按需迁移、启动服务、健康检查。
 
 服务器不用 clone 仓库，不用装 Node、Python、数据库，也不用手工写配置。
 
@@ -69,11 +69,13 @@ sudo chmod 700 /home/matrius-deploy
 sudo usermod -aG docker matrius-deploy
 sudo install -d -m 700 -o matrius-deploy -g matrius-deploy /home/matrius-deploy/.ssh
 sudo tee -a /home/matrius-deploy/.ssh/authorized_keys >/dev/null <<'KEY'
-restrict ssh-ed25519 在这里粘贴你的公钥
+restrict,port-forwarding ssh-ed25519 在这里粘贴你的公钥
 KEY
 sudo chown -R matrius-deploy:matrius-deploy /home/matrius-deploy/.ssh
 sudo chmod 600 /home/matrius-deploy/.ssh/authorized_keys
 ```
+
+开发隧道需要本地 TCP 转发；公钥中的 `port-forwarding` 为 `restrict` 显式开放此项。还需 sshd 允许 `AllowTcpForwarding local`（或 yes），且 `PermitOpen` 允许连接 Docker bridge 地址。只部署的密钥可继续只用 `restrict`。
 
 公钥用 `ssh-keygen -t ed25519` 生成。首次连接先手动 `ssh matrius-deploy@服务器IP` 核对主机指纹。
 
@@ -102,15 +104,14 @@ REMOTE_HOST=服务器IP
 ## 部署
 
 ```bash
-npm run remote -- --check   # 只检查本机配置，不连服务器
-npm run remote               # 正式部署
+npm run deploy -- --check   # 只检查本机配置，不连服务器
+npm run deploy -- --init      # 初始化全部容器、数据库和管理员
+npm run deploy               # 后续更新 Web/API，按配置更新 Caddy
 ```
 
-首次部署会自动生成服务器配置、创建数据库、创建初始管理员、执行迁移，并构建 Web / API 依赖镜像。之后每次都是「同步源码 → 挂载目录里的新文件立即生效 → 健康检查」，通常几秒钟完成，不重建镜像，也不重启容器。
+`--init` 生成缺失配置，启动四项基础服务、执行迁移和空库管理员引导，再启动 Web/API 与 Caddy。普通部署不会自动初始化数据库；它构建 Web/API，再由 Compose 按需更新整套服务。配置未变的容器保持运行，停止的服务会恢复；服务器配置变化时仅重建受影响的容器并保留数据卷。每次发布执行「同步源码 → 构建 Web/API 生产镜像 → 替换变化的应用容器 → 健康检查」，Docker 缓存复用未变化的依赖与构建层。Web 使用静态生产构建；API 使用普通 Uvicorn。两者源码直接放进镜像，不挂载源码，也不运行 Metro 或热重载。数据库、文件卷及功能发布清单沿用现有名称。
 
-源码以只读方式挂载进容器：Web 运行 Expo 开发服务器（Metro），保存后 HMR 自动刷新；API 使用 `uvicorn --reload` 监听 `server/app` 和 `server/alembic`。因此普通改代码不需要任何构建。只有依赖或镜像定义变化时才重建对应镜像：`package.json`、`package-lock.json`、`Dockerfile.web.dev` 影响 web，`server/pyproject.toml`、`server/uv.lock`、`server/Dockerfile` 影响 api；`docker compose up -d` 会自动替换使用新镜像的容器。需要强制重建依赖镜像时，删除服务器上的 `~/.matrius-remote/build-state` 后重新部署。
-
-这种模式以迭代速度优先：Web 由 Metro 提供开发 bundle，首次打开会现场编译，不适合大量公网用户。日常单人或小范围使用没有问题。
+日常开发使用本机 `npm run dev`，通过 SSH 借用四项基础服务，不影响正式 Web/API；详见[开发与验证](development.md#本机全栈开发npm-run-dev)。
 
 看到这两行就成功了：
 
@@ -131,7 +132,7 @@ curl http://服务器IP:16666/api/health
 
 ### 修改端口
 
-在本机 `.env.local` 里改，下次部署自动同步到服务器：
+在本机 `.env.local` 里修改端口，再执行 `npm run deploy`。新端口会写入服务器配置，Compose 自动重建 Caddy 以应用映射；没有变化则保留原容器：
 
 ```dotenv
 APP_PORT=16666       # 网页 + API
@@ -139,22 +140,25 @@ API_PORT=16667       # 仅 API，可选
 APP_HTTPS_PORT=8443  # 预留 HTTPS
 ```
 
-改完记得在安全组放行新端口。
+改完记得在安全组放行新的网页/API 入口端口。
+
+四项基础服务使用容器内部端口，默认不映射到宿主机。服务器 `production.env`（或 `REMOTE_ENV_FILE` 指定的文件）可选 `POSTGRES_PORT=5432`、`REDIS_PORT=6379`、`RUSTFS_PORT=9000`、`OPENSERP_PORT=7000`；模板中默认注释，通常保持默认值。若确需修改，普通 `npm run deploy` 会同步更新服务监听、API/迁移连接地址和健康检查，Compose 按需重建相关容器。`npm run dev` 重新启动后从容器标签读取新端口；旧容器没有标签时仍使用默认端口。只修改 `.env.production.example` 不会修改正在使用的服务器配置。
 
 ---
 
 ## 日常命令
 
 ```bash
-npm run remote                          # 日常部署
-npm run remote -- --publish             # 部署并把 stable 功能开放给所有账号
-npm run remote -- --publish --migrate   # 有已审查的数据库迁移时
-npm run remote -- --check               # 只检查本机配置
+npm run deploy -- --init                # 新服务器或基础设施配置更新
+npm run deploy                          # 日常更新 Web/API，并应用端口及 Caddy 配置
+npm run deploy -- --publish             # 部署并把 stable 功能开放给所有账号
+npm run deploy -- --publish --migrate   # 有已审查的数据库迁移时
+npm run deploy -- --check               # 只检查本机配置
 ```
 
 默认部署只上线代码，不改变已发布的功能清单。`--publish` 会在健康检查通过后，把 `stable` 功能开放给所有账号。
 
-部署中断或失败时，直接重新执行 `npm run remote`。
+部署中断或失败时，直接重新执行 `npm run deploy`。
 
 ---
 
@@ -250,7 +254,7 @@ GitHub Actions → **Deploy Production** → **Run workflow**，只接受手动�
 - Variables：`REMOTE_USER`、`REMOTE_HOST`，其他端口变量可留空。
 - Secrets：`REMOTE_SSH_PRIVATE_KEY`、`REMOTE_SSH_KNOWN_HOSTS`。
 
-它执行的就是 `npm run remote -- --publish`。本机和 CD 共用服务器会话锁，同时部署会直接失败。
+它执行的就是 `npm run deploy -- --publish`。本机和 CD 共用服务器会话锁，同时部署会直接失败。
 
 ---
 
@@ -265,4 +269,4 @@ GitHub Actions → **Deploy Production** → **Run workflow**，只接受手动�
 - **`Existing database volume found but ... is missing`**：已有数据但配置文件丢了。先恢复 `production.env`，不要删除数据卷。
 - **健康检查失败**：看 `docker logs matrius-api` 和 `docker logs matrius-web`。
 - **构建失败**：多半是服务器访问 npm / PyPI / Docker Hub 有问题，见「国内网络」。
-- **回退**：本机切回上一个已验证的 Git 版本，重新执行 `npm run remote`。数据库结构回退需单独评估。
+- **回退**：本机切回上一个已验证的 Git 版本，重新执行 `npm run deploy`。数据库结构回退需单独评估。

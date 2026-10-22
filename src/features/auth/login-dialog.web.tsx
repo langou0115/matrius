@@ -1,7 +1,8 @@
-import { AlertCircle, Eye, EyeOff, LoaderCircle, LockKeyhole, ShieldCheck, UserRound } from 'lucide-react';
+import { AlertCircle, LoaderCircle, ShieldCheck, UserRound } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
+import { PasswordInput } from '@/components/web/password-input';
 import type { Account } from '@/core/api/auth-session';
 import { useAuth } from './auth-state.web';
 
@@ -23,7 +24,6 @@ export function LoginDialog({ onClose }: Props) {
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,27 +83,17 @@ export function LoginDialog({ onClose }: Props) {
       <form className="login-form" onSubmit={(event) => void changePassword(event)}>
         <label className="login-field">
           <span className="login-label">新密码</span>
-          <span className="login-input-wrap">
-            <LockKeyhole size={17} strokeWidth={1.75} aria-hidden="true" />
-            <input className="text-field" type={showPassword ? 'text' : 'password'} autoFocus required minLength={8} maxLength={256}
-              autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-            <button type="button" className="login-password-toggle" aria-label={showPassword ? '隐藏密码' : '显示密码'}
-              onClick={() => setShowPassword((value) => !value)}>
-              {showPassword ? <EyeOff size={17} strokeWidth={1.75} aria-hidden="true" /> : <Eye size={17} strokeWidth={1.75} aria-hidden="true" />}
-            </button>
-          </span>
+          <PasswordInput label="新密码" autoFocus required maxLength={256}
+            autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
         </label>
         <label className="login-field">
           <span className="login-label">确认新密码</span>
-          <span className="login-input-wrap">
-            <LockKeyhole size={17} strokeWidth={1.75} aria-hidden="true" />
-            <input className="text-field" type={showPassword ? 'text' : 'password'} required minLength={8} maxLength={256}
-              autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
-          </span>
+          <PasswordInput label="确认新密码" required maxLength={256}
+            autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
         </label>
-        <p className="login-hint">至少 8 个字符，不能与初始密码相同。</p>
+        <p className="login-hint">新密码不能与初始密码相同。</p>
         {error && <p className="login-error" role="alert"><AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />{error}</p>}
-        <button className="primary-button login-submit" type="submit" disabled={busy || newPassword.length < 8 || !confirmPassword}>
+        <button className="primary-button login-submit" type="submit" disabled={busy || !newPassword || !confirmPassword}>
           {busy && <LoaderCircle className="login-spinner" size={17} strokeWidth={2} aria-hidden="true" />}
           {busy ? '正在保存…' : '保存并继续'}
         </button>
@@ -123,16 +113,8 @@ export function LoginDialog({ onClose }: Props) {
       </label>
       <label className="login-field">
         <span className="login-label">密码</span>
-        <span className="login-input-wrap">
-          <LockKeyhole size={17} strokeWidth={1.75} aria-hidden="true" />
-          <input className="text-field" type={showPassword ? 'text' : 'password'} required maxLength={256}
-            autoComplete="current-password" value={password}
-            onChange={(event) => setPassword(event.target.value)} />
-          <button type="button" className="login-password-toggle" aria-label={showPassword ? '隐藏密码' : '显示密码'}
-            onClick={() => setShowPassword((value) => !value)}>
-            {showPassword ? <EyeOff size={17} strokeWidth={1.75} aria-hidden="true" /> : <Eye size={17} strokeWidth={1.75} aria-hidden="true" />}
-          </button>
-        </span>
+        <PasswordInput label="密码" required maxLength={256}
+          autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
       </label>
       {(error || auth.error) && <p className="login-error" role="alert"><AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />{error ?? auth.error}</p>}
       <button className="primary-button login-submit" type="submit" disabled={busy || !username.trim() || !password}>

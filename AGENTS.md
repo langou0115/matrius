@@ -21,6 +21,7 @@ Matrius 是 Expo + React Native（Web 优先）前端与 FastAPI 后端的自部
 
 ```bash
 npm ci
+npm run dev                 # 本机 Expo + FastAPI 热更新，通过 SSH 借用云端四项基础服务
 npm run web                 # Web 开发（Metro，可访问 /mock）
 npx expo start              # Metro 开发服务
 npx expo lint
@@ -28,7 +29,8 @@ npx tsc --noEmit
 npm run test:rendering
 npm run test:models
 npm run test:auth
-npm run test:remote
+npm run test:deploy
+npm run test:dev
 npx expo install <package>  # 安装 SDK 兼容版本，不要用 npm install 装 Expo 相关包
 ```
 
@@ -67,10 +69,11 @@ uv run --no-sync pytest
 
 ## 部署
 
-- 唯一入口是 `npm run remote`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
+- 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
+- `npm run dev` 常驻运行本机 Expo、FastAPI 和 SSH 隧道，开发 API 共用云端数据；Ctrl+C 仅停止本机进程。不自动执行迁移。
 - 默认部署不更新功能清单；`--publish` 才把 stable 功能开放给其他账号。
-- 首次运行自动生成服务器配置、初始化服务并创建管理员；后续显式迁移用 `--migrate`。
-- 本机 `.env.local` 只放连接信息、可选的端口覆盖（`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`）和 `INITIAL_ADMIN_*`；服务密钥只在服务器 workspace 的 `production.env`（或显式配置的 `REMOTE_ENV_FILE`）。
+- 新服务器必须先执行 `npm run deploy -- --init`，生成配置、初始化数据库和管理员并启动全部容器；普通 `deploy` 更新 Web/API，并应用端口和 Caddy 配置变更；四项基础服务按 Compose 配置按需更新，未变化不重建；可选内部端口在服务端模板中默认注释。后续显式迁移用 `--migrate`。
+- 本机 `.env.local` 只放连接信息、可选的端口覆盖（`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`DEV_WEB_PORT` / `DEV_API_PORT`）和 `INITIAL_ADMIN_*`；服务密钥持久化仅在服务器。`dev` 经 SSH 读取运行中容器凭据，仅在内存中传给本机 API，不写文件或日志。
 - 不在本机对服务器执行迁移；`docker compose down` 永远不加 `-v`。
 - 不配置自动 CI；CD 手动触发并复用 `--publish`。
 

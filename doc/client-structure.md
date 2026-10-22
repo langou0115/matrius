@@ -143,3 +143,10 @@ src/
 - `features/settings/labs-screen.web.tsx`：受控实验页，路由和数据调用均需权限。
 - `settings-catalog.ts` / `settings-page.web.tsx`：分类与搜索按功能能力统一过滤。
 - `src/app/settings/account.*`、`labs.*`：Web 路由组装；原生仍使用待适配说明页。
+
+## 开发与发布脚本
+
+- `scripts/dev.mjs`：跨平台本机开发启动器，管理 SSH 隧道、uv/FastAPI 和 Expo 进程及退出清理；`scripts/dev/discover.sh` 经单次 SSH 读取云端连接信息和功能发布清单。
+- `scripts/dev-api-proxy.cjs`：Metro 同源 `/api/*` 转发，模型中继优先处理。
+- `scripts/deploy.mjs`：单次上传源码和生产镜像发布；服务端协议、初始化及健康检查位于 `scripts/remote/`。
+- `Dockerfile.web`、`server/Dockerfile`：生产 Web/API 镜像，直接包含代码；Compose 不挂载源码。

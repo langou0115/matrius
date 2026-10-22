@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
+import { PasswordInput } from '@/components/web/password-input';
 import { SettingsPage } from '@/features/settings/settings-page.web';
 import { useAuth } from './auth-state.web';
 import { LoginDialog } from './login-dialog.web';
@@ -100,21 +101,21 @@ export default function AccountScreen() {
       </div>}
       <form className="account-form account-form-card" onSubmit={(event) => void changePassword(event)}>
         <label className="model-form-field">当前密码
-          <input className="text-field" type="password" autoComplete="current-password" required maxLength={256}
+          <PasswordInput label="当前密码" autoComplete="current-password" required maxLength={256}
             value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
         </label>
         <div className="account-password-grid">
           <label className="model-form-field">新密码
-            <input className="text-field" type="password" autoComplete="new-password" required minLength={8} maxLength={256}
+            <PasswordInput label="新密码" autoComplete="new-password" required maxLength={256}
               value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
           </label>
           <label className="model-form-field">确认新密码
-            <input className="text-field" type="password" autoComplete="new-password" required minLength={8} maxLength={256}
+            <PasswordInput label="确认新密码" autoComplete="new-password" required maxLength={256}
               value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
           </label>
         </div>
         <div className="account-actions">
-          <button className="primary-button" type="submit" disabled={busy || !currentPassword || newPassword.length < 8 || !confirmPassword}>
+          <button className="primary-button" type="submit" disabled={busy || !currentPassword || !newPassword || !confirmPassword}>
             {busy && <LoaderCircle className="login-spinner" size={16} strokeWidth={2} aria-hidden="true" />}
             {busy ? '正在更新…' : '更新密码'}
           </button>

@@ -19,7 +19,7 @@ async def test_logout_revokes_token(client, create_user):
     assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
 
 
-async def test_must_change_password_blocks_data_endpoints(client, create_user):
+async def test_must_change_password_accepts_short_password_and_unblocks_data(client, create_user):
     _, headers = await create_user(must_change_password=True)
     blocked = await client.get("/api/conversations", headers=headers)
     assert blocked.status_code == 403
@@ -28,10 +28,27 @@ async def test_must_change_password_blocks_data_endpoints(client, create_user):
     changed = await client.post(
         "/api/auth/change-password",
         headers=headers,
-        json={"currentPassword": "password123", "newPassword": "new-password123"},
+        json={"currentPassword": "password123", "newPassword": "x"},
     )
     assert changed.status_code == 200
     assert (await client.get("/api/conversations", headers=headers)).status_code == 200
+    login = await client.post("/api/auth/login", json={"username": "alice", "password": "x"})
+    assert login.status_code == 200
+    assert login.json()["user"]["mustChangePassword"] is False
+
+
+async def test_password_change_rejects_empty_and_unchanged_passwords(client, create_user):
+    _, headers = await create_user(password="x")
+    for new_password in ("", "x"):
+        response = await client.post(
+            "/api/auth/change-password",
+            headers=headers,
+            json={"currentPassword": "x", "newPassword": new_password},
+        )
+        assert response.status_code == 422
+    assert (
+        await client.post("/api/auth/login", json={"username": "alice", "password": "x"})
+    ).status_code == 200
 
 
 async def test_admin_can_create_and_disable_user(client, create_user):

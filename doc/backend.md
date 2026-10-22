@@ -59,7 +59,7 @@ POST /api/auth/login  { username, password }
 - `auth_sessions` 保存 `scope`（`user` / `admin`）、过期时间、最后访问时间、撤销时间。
 - 管理员使用独立入口 `POST /api/admin/auth/login`，只能签发 admin scope；普通接口同时接受 user 与 admin token，管理员接口要求 admin scope。
 - `must_change_password=true` 时只有 `me`、改密和登出可用，其余接口返回 403。
-- 密码使用 Argon2id，至少 8 位。
+- 密码使用 Argon2id，允许 1–256 个字符；新密码不能与当前密码相同。
 - 登录按 IP（10/分钟）和用户名（5/分钟）限流；连续失败 15 次锁定 15 分钟。Redis 不可用时登录 fail-closed（503）。
 
 ### 初始化与管理员

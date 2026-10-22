@@ -23,4 +23,4 @@ class LoginResponse(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     currentPassword: str = Field(min_length=1, max_length=256)
-    newPassword: str = Field(min_length=8, max_length=256)
+    newPassword: str = Field(min_length=1, max_length=256)

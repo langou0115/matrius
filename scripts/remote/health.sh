@@ -48,6 +48,10 @@ validate_config() {
   validate_port APP_PORT "$APP_PORT"
   validate_port APP_HTTPS_PORT "$APP_HTTPS_PORT"
   validate_port API_PORT "$API_PORT"
+  validate_port POSTGRES_PORT "${POSTGRES_PORT:-5432}"
+  validate_port REDIS_PORT "${REDIS_PORT:-6379}"
+  validate_port RUSTFS_PORT "${RUSTFS_PORT:-9000}"
+  validate_port OPENSERP_PORT "${OPENSERP_PORT:-7000}"
   [[ $APP_BIND == 0.0.0.0 || $APP_BIND == 127.0.0.1 ]] \
     || fail 'APP_BIND must be 0.0.0.0 or 127.0.0.1.'
   [[ $CADDY_SITE_ADDRESS =~ ^(:80|([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(:[0-9]+)?)?$ ]] \

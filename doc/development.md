@@ -68,79 +68,82 @@ npx eas-cli@latest submit --platform ios
 
 当前原生目录由 CNG 生成，原生行为通过 app config / config plugins 配置，不手工创建或修改 `ios/`、`android/`。
 
-## 远程构建与部署：npm run remote
+## 本机全栈开发：npm run dev
 
-在本机编辑前端和后端代码，执行 `npm run remote` 把当前源码发送到服务器。源码目录以只读方式挂载进容器：Web 由 Metro 热更新，API 由 `uvicorn --reload` 重载，只有依赖或 Dockerfile 变化才重建镜像。本机无需启动 Python、Docker 或数据库，不需要先提交 Git，也不依赖 GitHub Actions。`npm run web` 仅用于本机前端调试；服务器上的 `/mock` 由 Caddy 拒绝。
+Windows、macOS、Linux 均使用同一入口。本机安装 Node.js 24、npm、[uv](https://docs.astral.sh/uv/getting-started/installation/) 和 OpenSSH，执行一次 npm ci；uv 按 server/pyproject.toml 和 uv.lock 准备 Python 及依赖，不要求本机安装 Docker。
 
-### 首次配置
-
-本机准备 Node.js 24、npm、Git、OpenSSH 客户端和支持 `--null -T` 的 tar（Windows 可用系统自带 OpenSSH/tar 与 Git for Windows）。克隆仓库后即可运行 remote 脚本，无需先安装应用依赖。脚本使用 Node 内置模块，不依赖 Bash、rsync 或本机 Python。
-
-1. 服务器先按[发布账号说明](deployment.md#发布账号)安装 Docker Engine + Compose v2，并准备 SSH 账号。已有服务器环境可直接使用。
-2. 配置 SSH 密钥或 ssh-agent，并手工连接一次、核对服务器指纹。脚本使用严格主机密钥校验与非交互认证，不读取或上传密码。
-3. 按[发布账号](deployment.md#发布账号)准备 `matrius-deploy` SSH 账号、密钥和 Docker 权限。脚本不会自动提权或修改账号权限。
-4. 复制根目录 `.env.local.example` 为 `.env.local`，填写：
-
-```dotenv
-REMOTE_USER=matrius-deploy
-REMOTE_HOST=你的服务器IP
-
-# 可选：覆盖服务器端口；不写则保留服务器现有值或使用默认值
-# APP_PORT=16666
-# API_PORT=16667
-# APP_HTTPS_PORT=8443
-
-# 可选：首次部署时创建的管理员；都不填则随机生成密码
-# INITIAL_ADMIN_USERNAME=admin
-# INITIAL_ADMIN_PASSWORD=你的密码
-```
-
-默认不需要准备服务器配置文件：首次运行会在 `<REMOTE_WORKSPACE>/production.env` 生成随机服务密码、初始管理员和全部默认配置，并把管理员凭据保存到 `<REMOTE_WORKSPACE>/initial-admin.txt`（权限 600）。填了 `INITIAL_ADMIN_*` 就用你指定的账号密码；管理员只会在数据库没有用户时创建，之后修改本机配置不会改已有账号的密码。凭据文件不会下载到开发机。已有配置时再设置 `REMOTE_ENV_FILE=/etc/matrius/remote.env`；脚本只改写你显式设置的 `APP_PORT`、`API_PORT`、`APP_HTTPS_PORT`，其他内容保持不变。
-
-`REMOTE_WORKSPACE` 默认是该 SSH 账号的 `$HOME/.matrius-remote`，可设为绝对路径，必须使用专门的工作目录，不能设为其他用途的目录。多台开发机使用相同 SSH 账号和 workspace。
-
-### 日常使用
+复制根目录 .env.local.example 为 .env.local，填写 REMOTE_USER、REMOTE_HOST；非默认密钥、SSH 端口和 known_hosts 文件可通过 REMOTE_SSH_KEY、REMOTE_SSH_PORT、REMOTE_SSH_KNOWN_HOSTS 指定。首次手工连接并核对服务器指纹。
 
 ```bash
-npm run remote -- --check   # 本地检查配置与同步文件范围，不连接服务器
-npm run remote              # 同步源码并让容器热更新，健康检查通过后退出
-npm run remote -- --init    # 可选：强制重新执行基础设施初始化和迁移
-npm run remote -- --publish # 部署，并在健康检查后更新已发布功能清单
-npm run remote -- --publish --migrate # 有已审查的数据库迁移时显式执行
-npm run test:remote        # 单次同步、部署、功能发布门控与并发锁回归
-npm run test:auth          # 会话切换、失效和账号功能显示回归
+npm ci
+npm run dev -- --check       # 校验本机配置和工具，不连接服务器
+npm run dev                 # 常驻：SSH 隧道 + FastAPI reload + Expo Web
+npm run web                 # 仅本机前端与模型中继，不启动 API/隧道
 ```
 
-每次执行都会把当前源码同步到服务器。源码目录以只读方式挂载进容器：Web 由 Metro 热更新，API 由 `uvicorn --reload` 重载，所以改代码通常几秒内生效，不会重建镜像或重启容器；只有依赖或 Dockerfile 变化才重建对应镜像。命令退出后应用容器继续运行，修改代码后重新执行即可重新对齐源码。打开 `http://<REMOTE_HOST>:<APP_PORT>` 查看服务器页面；脚本不会自动控制浏览器。
+dev 读取已运行的 matrius-postgres、matrius-redis、matrius-rustfs、matrius-openserp 容器地址和凭据，为四项服务建立仅监听本机 127.0.0.1 的 SSH 转发，不开放服务器数据端口。服务凭据仅保存在启动器内存并通过环境传给本机 API，不写入文件或日志。服务器首次初始化用 `npm run deploy -- --init`；dev 不创建容器、不迁移、不创建管理员。
 
-同步包含新增、修改、删除以及尚未提交、未被 gitignore 的新文件；本机的 `.env` / 密钥、node_modules、Python 虚拟环境、构建产物和 Git 元数据不会上传，符号链接不跟随。依赖在服务器按锁文件安装。服务器上的 `/mock` 由 Caddy 拒绝；Mock 只在本机 `npm run web` 下可用。不同开发机的部署通过服务器文件锁互斥；命令退出后应用容器继续运行，SSH 中断后重新执行会重新全量对齐当前开发机的代码。
+默认 Web 8081、API 8000，可在 .env.local 设置 DEV_WEB_PORT、DEV_API_PORT；四项服务的本机隧道端口自动选择。端口被占用时失败退出，不自动切到其他 Web/API 端口。Metro 先处理 /api/model-proxy，再把其余 /api/* 代理给本机 FastAPI，浏览器无需跨域配置。API 四项依赖的就绪检查通过后才启动 Expo；脚本不自动打开浏览器。
 
-默认部署只让新代码上线，**不更新已发布功能清单**：`admin_test` 仍按 preview 规则看到新功能，其他账号只能看到最近一次 `--publish` 发布的功能。`--publish` 在健康检查通过后才用本次构建的 API 镜像原子更新清单，是把测试账号验证过的功能同步给其他账号的唯一入口；也可由手动 GitHub CD 调用。两者使用同一份源码、同一套生产 Compose、容器和数据，没有开发/生产两套运行环境。
+命令持续挂起，前后端保存即热更新。Ctrl+C 清理本机进程树、隧道及临时功能清单；任何常驻子进程退出也会结束整个开发会话。云端基础服务和正式 Web/API 不受关闭动作影响。SSH 连接失效会结束会话，恢复网络后重新运行。
 
-首次运行会自动创建数据服务、执行迁移和初始管理员引导，然后正常部署；之后默认命令只启动缺失的基础服务，不再迁移。后续结构变化使用 `--migrate` 执行已审查的迁移。`--init` 可强制重跑初始化和迁移，已有数据时通常不需要。不要在本机执行指向服务器的迁移命令。
+启动阶段遇到 SSH 短暂断开时最多尝试三次；认证失败或主机密钥校验失败立即退出。隧道收到远端就绪确认、且 PostgreSQL 转发协议检查通过后才启动本机 API。运行期间断开会清理本机服务并显示具体退出原因。
 
-没有自动源码回滚：回退时在本机切换到已验证的 Git 版本后重新执行命令；数据库结构回退需单独评估并备份。
+### 多台电脑共用云端环境
+
+每台开发机安装 Node.js、uv、Git、OpenSSH 并运行 `npm ci`，各自复制 `.env.local.example` 为 `.env.local`，填写相同的 `REMOTE_USER`、`REMOTE_HOST`。在服务器部署账号的 `authorized_keys` 添加各台电脑自己的 SSH 公钥，并允许端口转发（例如 `restrict,port-forwarding`）；私钥保留在各自电脑。核对主机指纹后运行 `npm run dev`。开发电脑不运行 Docker Compose，四项基础服务仍由当前服务器的同一套 Compose 管理。
+
+`INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 只在首次部署到空库时创建管理员，不是 SSH 密码，也不是本机开发启动参数；已有账号直接在页面登录。不同电脑的浏览器本地对话和登录 token 仍按站点与浏览器隔离，当前未实现的对话云端存储不会因共用数据库自动生效。
+
+SSH 账号需要 Docker 权限以及本地 TCP 转发权限。若公钥含 restrict，维护者需显式增加 port-forwarding；服务端 sshd 也必须允许 AllowTcpForwarding local/yes，并且 PermitOpen 允许访问 Docker bridge 地址。脚本不会自动修改 SSH 权限。
+
+本机 API 与正式 API 共用云端 PostgreSQL、Redis、RustFS、OpenSERP，写操作直接影响同一份服务端数据；开发代码和数据库迁移须兼容仍在运行的正式版本。浏览器 IndexedDB 按站点来源隔离，本机页面不会自动获得正式网页的本地对话或 token，当前尚未实现的对话云端存储仍保持原有产品边界。开发使用测试账号。若基础服务被重建、容器 IP 改变，重新运行 dev 即可发现新地址。
+
+运行中的正式 API 不作为本机 API 的调用目标。启动时读取其容器配置中的运行参数和已发布功能清单（停止的容器也可读取）；本机后端仍用自己代码里的功能 registry 执行权限校验。功能清单为启动时快照，发布后重启 dev 刷新。不复制服务端配置文件或管理员密码；正式 API 容器不存在时使用后端默认参数和空发布清单。
+
+## 远程构建与部署：npm run deploy
+
+发布命令从原 npm run remote 更名为 npm run deploy。开发不再需要上传源码；只有正式发布才执行此命令。本机发布只需 Node.js、Git、OpenSSH、tar，不需要 Python 或 Docker。
+
+```bash
+npm run deploy -- --check             # 本机检查配置与同步范围
+npm run deploy                       # 上传源码、构建生产镜像、健康检查后退出
+npm run deploy -- --publish           # 健康检查后发布 stable 功能
+npm run deploy -- --publish --migrate # 显式执行已审查的数据库迁移
+npm run deploy -- --init              # 显式初始化全部容器、数据库和空库管理员
+npm run test:dev                      # 隧道配置、进程清理、API 代理回归
+npm run test:deploy                   # 源码上传、生产构建、发布门控、并发锁回归
+npm run test:auth
+```
+
+服务器运行完整 Compose：Caddy、Web、API 和四项基础服务。Web 用 Dockerfile.web 构建静态生产产物并运行 Node 模型中继，API 用 server/Dockerfile 内置的 Uvicorn 命令运行。源码直接复制进镜像，不挂载开发目录、不启动 Metro 或 reload；保留数据、功能发布清单和 Caddy 配置所需卷。每次发布都调用两个镜像的 build，由 Docker 复用未变化的层，应用镜像变化后替换对应容器。
+
+新服务器必须先执行 `npm run deploy -- --init`，生成缺失的服务器 production.env，启动四项基础服务、执行迁移和空库管理员引导，再启动 Web/API 与 Caddy。普通 `deploy` 要求服务器配置及数据库卷已初始化，构建 Web/API 并由 Compose 应用整套服务的配置变化；未变化的容器保持运行，停止的服务会恢复，不自动执行迁移或创建管理员。REMOTE_WORKSPACE 默认仍为服务器 $HOME/.matrius-remote，以复用已有配置和数据；更名命令不会创建新数据卷。APP_PORT、API_PORT、APP_HTTPS_PORT 在每次部署时应用，未填写的端口保留服务器原值。Compose 根据端口、镜像及环境配置变化按需重建 Caddy；Caddyfile 内容变化时强制重建，健康检查通过后才记录已应用的文件摘要。配置未变化时保留原 Caddy 容器。INITIAL_ADMIN_* 只在空库初始化生效。不在本机对云端库执行迁移。
+
+同步包含未提交的新文件、修改和删除；排除密钥、.env、依赖、虚拟环境、构建产物、Git 元数据及符号链接。服务器会话锁防止两个发布同时覆盖源码。健康检查通过后才执行可选 --publish，并从本次构建的 API 镜像生成发布清单。默认不更改已发布功能。回退为切换到已验证提交后重新 deploy；数据库结构回退须另行评估。
+
+手动 CD 同样使用 npm run deploy -- --publish，不配置自动 CI。服务器准备、SSH 权限、备份见[服务器部署](deployment.md)。
 
 ## 按账号开发新功能
 
-所有新增可见功能先登记到 `server/app/features/registry.py`（默认 preview），UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。用 `admin_test` 在同一网站验证，不新增测试地址。验证后只把指定条目改为 stable，再通过手动 CD 或 `npm run remote -- --publish` 发布。默认部署不更新已发布功能清单，因此即使同步了 stable 候选代码也不会提前向其他账号开放；只有 `--publish` 在健康检查通过后才更新清单。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
+所有新增可见功能先登记到 `server/app/features/registry.py`（默认 preview），UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。用 `admin_test` 在本机页面验证，也可部署候选包到正式地址继续验证。验证后只把指定条目改为 stable，再通过手动 CD 或 `npm run deploy -- --publish` 发布。默认部署不更新已发布功能清单，因此即使同步了 stable 候选代码也不会提前向其他账号开放；只有 `--publish` 在健康检查通过后才更新清单。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
 
 账号登录当前仅用于功能权限，聊天仍保存在当前浏览器，不触发云端仓储切换或本地数据导入。会话仅保留在当前标签页，Mock 不使用真实账号。
 
 ## 后端与基础设施
 
-后端只在服务器 Compose 运行，连接同机 PostgreSQL、Redis、RustFS 和 OpenSERP。开发机只保存 SSH 连接配置，不保存数据库或对象存储凭据，不需要本地数据隧道。服务只通过容器网络连接，数据服务不映射宿主机端口；联调使用专用测试账号。
+开发后端在本机运行并通过 SSH 借用云端四项基础服务；正式后端由 Compose 运行生产镜像。两者共用服务端数据，联调使用测试账号。
 
 后端自动测试使用内存 SQLite，不依赖服务器。需要执行后端检查时安装 Python 开发依赖后运行：
 
 ```bash
 cd server
-bash scripts/install-python-deps.sh --dev
+uv sync --python 3.12 --frozen --extra dev
 uv run --no-sync ruff check .
 uv run --no-sync pytest
 ```
 
-修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在专用空 PostgreSQL 上验证。仓库不配置自动 CI；日常部署用 `npm run remote`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
+修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在专用空 PostgreSQL 上验证。仓库不配置自动 CI；日常部署用 `npm run deploy`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
 
 ## 验证与代码规则
 
@@ -172,7 +175,7 @@ uv run --no-sync pytest
 - 点击侧栏切换样例，也可通过搜索标题或正文定位内容，支持置顶、重命名、删除与输入草稿；配置并选中模型后，发送会调用真实模型，沿用正式对话流程。
 - 示例模式不读取或写入浏览器真实工作区，变更仅保存在内存中。右下角提供重置和退出入口；刷新示例地址也会重置。
 - `src/app/mock/_layout.tsx` 通过 `__DEV__` 统一保护全部 mock 子路由；新增页面自动受保护。索引页、工具栏与示例数据仅在 `__DEV__` 分支动态加载，release 模式访问这些路径会跳回首页。
-- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。`npm run remote` 也运行 Metro 开发 bundle（源码挂载热更新），但服务器上的 `/mock` 由 Caddy 拒绝，因此示例地址只在本机可用。`__DEV__` 取决于 bundle 的开发/生产模式，与域名、登录状态或 EAS profile 名称无关。
+- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。`npm run dev` 也使用开发 bundle；`npm run deploy` 构建生产 bundle，服务器上的 `/mock` 同时由 Caddy 拒绝。`__DEV__` 取决于 bundle 的开发/生产模式，与域名、登录状态或 EAS profile 名称无关。
 - 发布前检查导出的 JS/HTML 不包含 Mock 索引文案、工具栏或示例数据；路由名称和重定向页面仍可能存在于静态产物中，不代表 Mock 页面可用。
 - 用户与助手消息共用 Markdown/GFM 与 KaTeX 渲染，支持标题、列表、引用、表格、脚注、公式和按需代码高亮；代码块可复制与折叠。Mermaid 等未知代码语言作为原文展示，已接入三种协议的实时流式模型输出。
 

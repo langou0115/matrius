@@ -22,20 +22,23 @@
 | 路由 | Expo Router（`src/app/`） |
 | 后端 | Python 3.12、FastAPI、SQLAlchemy、Alembic |
 | 基础设施 | PostgreSQL、Redis、RustFS、OpenSERP、Caddy |
-| 部署 | Docker Compose、SSH、`npm run remote` |
+| 部署 | Docker Compose、SSH、`npm run deploy` |
 
 ## 本地开发
 
-要求 Node.js 24 和 npm。
+要求 Node.js 24、npm、uv（管理 Python 3.12+）和 OpenSSH；支持 Windows、macOS、Linux。
 
 ```bash
 npm ci
-npm run web
+cp .env.local.example .env.local   # 填 SSH 连接信息
+npm run dev
 ```
 
 打开 `http://localhost:8081`，在「设置 → 模型服务」添加服务商和模型后即可对话。
 
-`npm run web` 是开发模式，可访问 `/mock` 查看聊天界面样例；部署产物不包含 Mock。
+`npm run dev` 常驻运行本机 Expo、FastAPI 和 SSH 隧道，借用云端 PostgreSQL、Redis、OpenSERP、RustFS。前后端保存后热更新，Ctrl+C 一并停止本机进程，云端服务继续运行。首次需要先用 `npm run deploy -- --init` 初始化云端环境。开发 API 与正式 API 使用相同云端数据，当前浏览器对话仍按产品进度保存在本机。
+
+只调试前端也可用 `npm run web`。两种开发方式都可访问 `/mock`；正式 Web 使用静态生产构建。
 
 ```bash
 npm run export:web && npm run serve   # 本地验证生产构建
@@ -47,13 +50,16 @@ npm run export:web && npm run serve   # 本地验证生产构建
 
 ```bash
 cp .env.local.example .env.local   # 填 SSH 目标和网页地址
-npm run remote -- --check          # 本地校验，不连接服务器
-npm run remote                      # 首次自动初始化，之后日常部署
+npm run deploy -- --check          # 本地校验，不连接服务器
+npm run deploy -- --init             # 新服务器：初始化全部容器、数据库和管理员
+npm run deploy                       # 后续：更新 Web/API，按配置更新 Caddy
 ```
 
-首次运行会在服务器生成随机服务密钥、初始化数据库并创建管理员。管理员账号密码可在 `.env.local` 中通过 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 指定；不填则随机生成并在首次输出中打印。
+`--init` 会在服务器生成缺失配置、初始化数据库和管理员，并启动全部容器；普通 `deploy` 构建和更新 Web/API，并按端口及入口配置更新 Caddy，四项基础服务配置未变时保持运行，服务器配置变化时由 Compose 按需重建，保留数据卷。管理员账号密码可在 `.env.local` 中通过 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 指定；不填则随机生成并在首次输出中打印。
 
 默认端口：`16666` 为网页 + API，`16667` 仅 API（可选）；在 `.env.local` 用 `APP_PORT` / `API_PORT` 覆盖，详见[修改端口](doc/deployment.md#修改端口)。每次命令完成同步、构建、健康检查后退出；默认部署不更新功能清单，`--publish` 才把 stable 功能开放给其他账号。
+
+Web/API 源码直接打入各自镜像，不挂载源码、不运行开发服务器；基础服务和数据卷长期保留。
 
 服务器初始化、账号、HTTPS、备份与 CD 见[服务器部署](doc/deployment.md)。
 
@@ -76,7 +82,8 @@ npx tsc --noEmit
 npm run test:rendering
 npm run test:models
 npm run test:auth
-npm run test:remote
+npm run test:deploy
+npm run test:dev
 ```
 
 后端测试见[后端 README](server/README.md)。

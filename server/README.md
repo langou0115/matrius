@@ -30,16 +30,16 @@ server/
 
 ## 运行与验证
 
-后端只在服务器 Compose 运行，本机使用仓库根目录的 `npm run remote` 同步前后端代码，并在服务器构建、启动生产镜像；每次命令完成一次部署和健康检查后退出。默认部署不更新功能发布清单，`npm run remote -- --publish` 在健康检查后发布 stable 功能。首次运行自动生成服务器配置、初始化服务并创建管理员；后续迁移使用显式 `--migrate`。本机只需 `.env.local` 中的 SSH 配置，不需要 `server/.env` 或数据隧道。完整说明见[远程构建与部署](../doc/development.md#远程构建与发布npm-run-remote)。
+开发在仓库根目录执行 `npm run dev`：本机 uv 按锁文件安装依赖、启动 FastAPI 热重载，通过 SSH 隧道连接云端 PostgreSQL、Redis、RustFS、OpenSERP。连接凭据仅在进程内存，不需要 `server/.env`，不自动执行迁移。开发 API 与正式 API 共用云端数据。
 
-安装 Python 依赖仅用于需要在本机执行的测试和静态检查，不是远程运行的前置条件：
+正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，健康检查后退出；不挂载源码、不热重载。`--publish` 才发布 stable 功能，后续迁移显式使用 `--migrate`。完整说明见[开发与验证](../doc/development.md)。
+
+本机单独安装后端测试依赖：
 
 ```bash
 cd server
-bash scripts/install-python-deps.sh --dev
+uv sync --frozen --extra dev
 ```
-
-`install-python-deps.sh` 从 `uv.lock` 导出带 sha256 的依赖清单，并探测候选 PyPI 源；依赖变化后重新执行安装，后续命令使用 `uv run --no-sync`。
 
 ### 测试与检查
 
@@ -81,7 +81,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `STORAGE_QUOTA_BYTES` | `536870912` | 每用户存储配额（512 MiB） |
 | `FETCH_MAX_CHARS` | `50000` | 单次网页读取最大字符数 |
 
-生产配置默认由首次 `npm run remote` 生成在服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`。不要把真实密钥提交到仓库，也不要放到开发机。
+生产配置由显式 `npm run deploy -- --init` 生成在服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`。不要把真实密钥提交到仓库，也不要放到开发机。
 
 ## API 概览
 
@@ -155,7 +155,7 @@ docker build -t matrius-api:local server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
 ```
 
-部署使用 `npm run remote`，功能发布使用 `npm run remote -- --publish`；首次运行或显式 `--migrate` 通过一次性容器执行迁移与管理员引导。
+部署使用 `npm run deploy`，功能发布使用 `npm run deploy -- --publish`；`--init` 初始化全部容器、迁移与空库管理员；后续普通部署更新 Web/API 并按配置更新 Caddy，显式 `--migrate` 才执行迁移。
 
 ## 测试账号与新功能开放
 
