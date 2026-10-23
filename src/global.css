@@ -132,8 +132,6 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .user-entry-text strong { font-size: var(--text-caption); font-family: var(--font-medium); font-weight: 400; }
 .user-entry-text > span { color: var(--sidebar-text-muted); font-size: var(--text-caption); }
 .user-avatar.is-authenticated { border-color: color-mix(in srgb, var(--primary) 30%, var(--sidebar)); background: color-mix(in srgb, var(--primary) 16%, var(--sidebar)); color: var(--sidebar-foreground); font-family: var(--font-medium); font-size: var(--text-caption); }
-.user-entry-chevron { flex: none; color: var(--sidebar-text-muted); opacity: .7; transition: opacity 140ms, transform 140ms; }
-.user-entry:hover .user-entry-chevron { opacity: 1; transform: translateX(1px); }
 
 /* Chat */
 .chat-main, .settings-main, .mock-main { display: flex; flex-direction: column; height: 100%; min-height: 0; outline: none; }
@@ -355,6 +353,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .text-field:focus { border-color: var(--primary); }
 .text-field:focus-visible { outline: none; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.dialog-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .primary-button, .secondary-button, .danger-button { padding: 9px 17px; border-radius: 12px; font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
 .primary-button { background: var(--primary); color: var(--primary-foreground); }
 .secondary-button { background: var(--soft); border: 1px solid var(--border); }
@@ -475,15 +474,12 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .is-selected .theme-check { background: var(--primary); }
 .settings-footnote { font-size: var(--text-caption); color: var(--muted-text); margin-top: 16px; line-height: 1.8; }
 .account-form { display: flex; flex-direction: column; gap: 18px; max-width: 420px; margin-top: 24px; }
-.account-actions { display: flex; gap: 12px; flex-wrap: wrap; }
-.account-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; }
-.account-profile { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 22px; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--soft); }
-.account-profile.is-authenticated { border-color: color-mix(in srgb, var(--primary) 22%, var(--border)); background: color-mix(in srgb, var(--primary) 5%, var(--soft)); }
-.account-avatar { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); color: var(--muted-text); font-family: var(--font-semibold); font-size: 19px; }
-.is-authenticated .account-avatar { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); background: color-mix(in srgb, var(--primary) 12%, var(--background)); color: var(--primary); }
-.account-profile-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
-.account-profile-copy h2 { font-size: 18px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.3px; }
-.account-profile-copy p { color: var(--muted-text); font-size: var(--text-small); }
+.account-profile { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; margin-top: 22px; padding: 22px 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--soft); }
+.account-profile.is-authenticated { border-color: color-mix(in srgb, var(--primary) 24%, var(--border)); background: radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 52%), var(--soft); }
+.account-avatar { display: grid; place-items: center; flex: none; width: 56px; height: 56px; border: 1px solid var(--border); border-radius: 50%; background: var(--background); color: var(--muted-text); font-family: var(--font-semibold); font-size: 22px; }
+.is-authenticated .account-avatar { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); background: color-mix(in srgb, var(--primary) 13%, var(--background)); color: var(--primary); }
+.account-profile-copy { display: flex; flex: 1; min-width: 180px; flex-direction: column; gap: 4px; }
+.account-profile-copy h2 { font-size: 20px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.4px; }
 .account-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .account-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--background); color: var(--muted-text); font-size: var(--text-caption); }
 .account-badge.is-success { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); background: color-mix(in srgb, var(--primary) 8%, var(--background)); color: var(--primary); }
@@ -499,13 +495,28 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .account-benefit-icon { display: grid; grid-row: span 2; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: var(--soft); color: var(--primary); }
 .account-benefit strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
 .account-benefit p { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.7; }
-.account-callout { display: flex; gap: 12px; margin-top: 18px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--primary) 6%, var(--background)); }
+.account-callout { display: flex; align-items: flex-start; gap: 12px; margin-top: 18px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--primary) 6%, var(--background)); }
 .account-callout > svg { flex: none; margin-top: 2px; color: var(--primary); }
+.account-callout > div { flex: 1; min-width: 160px; }
+.account-callout > button { flex: none; align-self: center; min-height: 38px; }
 .account-callout strong { display: block; font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
 .account-callout p { margin-top: 2px; color: var(--muted-text); font-size: var(--text-caption); line-height: 1.7; }
-.account-form-card { max-width: none; margin-top: 22px; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--soft); }
-.account-form-card .account-actions { margin-top: 2px; }
-.account-password-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.account-message { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: var(--text-caption); line-height: 1.6; }
+.account-message > svg { flex: none; margin-top: 1px; }
+.account-message.is-error { border-color: color-mix(in srgb, var(--destructive) 30%, var(--border)); color: var(--destructive); background: color-mix(in srgb, var(--destructive) 6%, var(--background)); }
+.account-message.is-success { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, var(--background)); }
+/* Account actions sit in one quiet list, mirroring the sync preferences list. */
+.account-list { display: flex; flex-direction: column; margin-top: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.account-row { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 15px 18px; }
+.account-row + .account-row { border-top: 1px solid var(--border); }
+.account-row-icon { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 11px; background: var(--soft); color: var(--muted-text); }
+.account-row-copy { display: flex; flex: 1; min-width: 180px; flex-direction: column; gap: 2px; }
+.account-row-copy strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
+.account-row-description { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
+.account-toggle-row { cursor: pointer; }
+.account-toggle-row:has(.model-checkbox-input:disabled) { cursor: default; }
+.account-row-spinner { flex: none; color: var(--muted-text); }
+.account-row-action { flex: none; min-height: 38px; }
 .account-link-row { display: flex; align-items: center; gap: 14px; margin-top: 18px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); transition: border-color 140ms, background 140ms; }
 .account-link-row:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); background: var(--soft); }
 .account-link-icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--soft); color: var(--primary); }
@@ -515,23 +526,40 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .account-link-copy > span { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
 .account-link-action { display: inline-flex; align-items: center; gap: 2px; flex: none; color: var(--muted-text); font-size: var(--text-caption); }
 
-/* Sync preferences: the same quiet list as the account page, with the checkbox on the far
-   right so the whole row stays one large hit target. */
-.sync-notice { display: flex; gap: 12px; margin-top: 18px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--soft); }
-.sync-notice > svg { flex: none; margin-top: 2px; color: var(--muted-text); }
-.sync-notice strong { display: block; font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
-.sync-notice p { margin-top: 3px; color: var(--muted-text); font-size: var(--text-caption); line-height: 1.75; }
-.sync-list { display: flex; flex-direction: column; margin-top: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); }
-.sync-option { display: flex; align-items: center; gap: 14px; padding: 15px 18px; cursor: pointer; transition: background 140ms; }
-.sync-option + .sync-option { border-top: 1px solid var(--border); }
-.sync-option:hover { background: var(--soft); }
-.sync-option-icon { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 11px; background: var(--soft); color: var(--muted-text); }
-.sync-option:hover .sync-option-icon { background: var(--background); color: var(--foreground); }
-.sync-option-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
-.sync-option-copy strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
-.sync-option-copy > span { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
-.sync-status { display: flex; align-items: center; gap: 6px; min-height: 20px; margin-top: 12px; color: var(--muted-text); font-size: var(--text-caption); }
-.sync-status .model-form-error { margin-top: 0; }
+/* Data sync is an accordion on the account page: the trigger keeps the last result visible
+   while the options stay out of the way. The option list scrolls on its own so a long list
+   never pushes the sync button off-screen. */
+.account-sync { margin-top: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.account-sync-toggle { display: flex; align-items: center; gap: 14px; width: 100%; padding: 15px 18px; text-align: left; transition: background 140ms; }
+.account-sync-toggle:hover { background: var(--soft); }
+.account-sync-toggle-icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--soft); color: var(--primary); }
+.account-sync-toggle:hover .account-sync-toggle-icon { background: var(--background); }
+.account-sync-toggle-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.account-sync-toggle-copy strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
+.account-sync-toggle-copy > span { color: var(--muted-text); font-size: var(--text-caption); }
+.account-sync-chevron { flex: none; color: var(--muted-text); transition: transform 140ms; }
+.account-sync-toggle[aria-expanded='true'] .account-sync-chevron { transform: rotate(180deg); }
+.account-sync-panel { border-top: 1px solid var(--border); }
+.account-sync-options { display: flex; max-height: 224px; flex-direction: column; gap: 2px; padding: 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.account-sync-option { display: flex; align-items: center; gap: 14px; padding: 11px 12px; border-radius: 8px; cursor: pointer; transition: background 140ms; }
+.account-sync-option:hover { background: color-mix(in srgb, var(--foreground) 8%, var(--background)); }
+.account-sync-option-icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 11px; background: var(--soft); color: var(--muted-text); }
+.account-sync-option:hover .account-sync-option-icon { background: var(--background); color: var(--foreground); }
+.account-sync-option-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.account-sync-option-copy strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
+.account-sync-option-copy > span { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
+.account-sync-loading { padding: 18px; color: var(--muted-text); font-size: var(--text-caption); }
+.account-sync-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 13px 18px; border-top: 1px solid var(--border); background: var(--soft); }
+@supports selector(::-webkit-scrollbar) {
+  .matrius-app .account-sync-options { scrollbar-width: auto; }
+  .matrius-app .account-sync-options::-webkit-scrollbar { width: 8px; }
+  .matrius-app .account-sync-options::-webkit-scrollbar-thumb { border-width: 1px; }
+  .matrius-app .account-sync-options::-webkit-scrollbar-button { display: none !important; }
+}
+.account-sync-status { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted-text); font-size: var(--text-caption); }
+.account-sync-status > span { min-width: 0; overflow-wrap: anywhere; }
+.account-sync-status.is-error { color: var(--destructive); }
+.account-sync-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex: none; min-height: 38px; margin-left: auto; }
 
 /* Admin console: a full-width workspace rather than a centred card. The topbar keeps the
    identity and the exit visible while the user table scrolls underneath. */
@@ -543,6 +571,8 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .admin-brand > div strong { font-size: var(--text-small); font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.2px; }
 .admin-brand > div > span { color: var(--muted-text); font-size: var(--text-caption); }
 .admin-topbar-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.admin-theme-toggle { width: 38px; height: 38px; border: 1px solid var(--border); background: var(--soft); color: var(--muted-text); }
+.admin-theme-toggle:hover { border-color: color-mix(in srgb, var(--foreground) 24%, var(--background)); color: var(--foreground); }
 .admin-current-user { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px 4px 4px; border: 1px solid var(--border); border-radius: 999px; font-size: var(--text-caption); }
 .admin-avatar { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 10px; background: var(--soft); color: var(--foreground); font-family: var(--font-medium); font-size: var(--text-caption); }
 .admin-avatar.is-small { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
@@ -600,6 +630,30 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .admin-empty strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
 .admin-empty p { max-width: 360px; margin-top: 4px; color: var(--muted-text); font-size: var(--text-caption); line-height: 1.7; }
 .admin-empty .primary-button { display: inline-flex; align-items: center; gap: 6px; margin-top: 16px; }
+.admin-view-tabs { display: flex; gap: 4px; width: fit-content; margin-bottom: 24px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--soft); }
+.admin-view-tab { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 13px; border: 0; border-radius: 9px; color: var(--muted-text); font-size: var(--text-small); }
+.admin-view-tab:hover { color: var(--foreground); }
+.admin-view-tab.is-active { background: var(--background); color: var(--foreground); box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 9%, transparent); }
+.admin-tool-test .admin-page-heading { margin-bottom: 18px; }
+.admin-tool-form { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 18px 16px; }
+.admin-tool-input { flex: 1 1 260px; width: auto; }
+.admin-tool-mode { flex: none; width: auto; min-width: 92px; padding-block: 8px; }
+.admin-tool-form .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; }
+.admin-tool-output { display: flex; flex-direction: column; gap: 12px; padding: 0 18px 18px; }
+.admin-tool-error { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--destructive) 30%, var(--border)); border-radius: 10px; color: var(--destructive); background: color-mix(in srgb, var(--destructive) 6%, var(--background)); font-size: var(--text-caption); line-height: 1.6; }
+.admin-tool-error > svg { flex: none; margin-top: 1px; }
+.admin-tool-result-header { display: flex; align-items: center; gap: 8px; color: var(--primary); font-size: var(--text-caption); }
+.admin-tool-duration { color: var(--muted-text); }
+.admin-tool-results { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.admin-tool-result { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; }
+.admin-tool-result-title { color: var(--foreground); font-size: var(--text-small); font-family: var(--font-medium); line-height: 1.5; }
+.admin-tool-result-title:hover { text-decoration: underline; }
+.admin-tool-result-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted-text); font-size: var(--text-caption); }
+.admin-tool-result-url { overflow-wrap: anywhere; color: var(--muted-text); font-size: var(--text-caption); }
+.admin-tool-result-snippet { color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; }
+.admin-tool-notice { color: var(--muted-text); font-size: var(--text-small); line-height: 1.7; }
+.admin-tool-fetch-result { display: flex; flex-direction: column; gap: 6px; }
+.admin-tool-text { max-height: 360px; margin: 6px 0 0; padding: 14px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--soft); color: var(--foreground); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--text-caption); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .admin-skeleton { padding: 8px 18px 18px; }
 .admin-skeleton-row { display: grid; grid-template-columns: minmax(160px, 2fr) 1fr 1fr 1fr; gap: 16px; padding: 15px 0; }
 .admin-skeleton-row > span { height: 11px; border-radius: 6px; background: var(--soft); animation: admin-pulse 1.4s ease-in-out infinite; }
@@ -620,6 +674,7 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
    viewport is shorter than the form, so the brand never scrolls under the top edge. */
 .admin-login-main { display: flex; flex-direction: column; align-items: center; min-height: 100%; padding: 40px 20px; }
 .admin-login-shell { width: 100%; max-width: 420px; margin: auto 0; }
+.admin-login-toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .admin-login-card { padding: 32px; border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--popover); color: var(--popover-foreground); box-shadow: 0 18px 50px color-mix(in srgb, var(--foreground) 8%, transparent); }
 .admin-login-card h1 { margin-top: 24px; font-size: 24px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.6px; }
 .admin-login-status { display: flex; align-items: center; gap: 8px; letter-spacing: 0; color: var(--muted-text); font-size: var(--text-small); }
@@ -688,7 +743,6 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 }
 @media (prefers-reduced-motion: reduce) {
   .admin-skeleton-row > span { animation: none; }
-  .user-entry-chevron { transition: none; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
 
@@ -827,9 +881,9 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .provider-meta { flex-basis: 100%; min-width: 0; font-size: var(--text-caption); color: var(--muted-text); overflow-wrap: anywhere; }
 /* .provider-body already draws the line above them. */
 .provider-empty { padding: 14px 18px; font-size: var(--text-caption); color: var(--muted-text); }
-.provider-model-list { min-width: 0; }
-.provider-model-item { display: flex; align-items: center; gap: 16px; padding: 14px 18px; }
-.provider-model-item + .provider-model-item { border-top: 1px solid var(--border); }
+.provider-model-list { display: flex; min-width: 0; flex-direction: column; gap: 2px; padding: 8px; }
+.provider-model-item { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border-radius: 8px; transition: background 140ms; }
+.provider-model-item:hover { background: color-mix(in srgb, var(--foreground) 8%, var(--background)); }
 .model-config-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 /* Edit and delete appear in two rows — the provider heading and the model rows inside it — so
    they carry a single rule instead of one size per row; sized apart, the two drifted. Same
@@ -943,6 +997,36 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .model-checkbox-input:focus-visible + .model-checkbox { outline: 2px solid var(--primary); outline-offset: 2px; }
 .model-checkbox-input:disabled + .model-checkbox { opacity: .45; }
 .model-key-toggle:has(.model-checkbox-input:disabled) { cursor: default; }
+/* Pill switch for the network tools row. The hidden native checkbox keeps keyboard and
+   screen-reader semantics; only this row uses the switch shape. */
+.account-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 14%, var(--background));
+  transition: background 160ms;
+}
+.account-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+  transition: transform 160ms cubic-bezier(.2, .8, .2, 1);
+}
+.account-toggle-row:hover .model-checkbox-input:not(:checked):not(:disabled) + .account-switch {
+  background: color-mix(in srgb, var(--foreground) 22%, var(--background));
+}
+.model-checkbox-input:checked + .account-switch { background: var(--primary); }
+.model-checkbox-input:checked + .account-switch::before { transform: translateX(18px); }
+.model-checkbox-input:focus-visible + .account-switch { outline: 2px solid var(--primary); outline-offset: 2px; }
+.model-checkbox-input:disabled + .account-switch { opacity: .45; }
 .model-toggle-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .model-toggle-copy strong { font-weight: 400; }
 .model-toggle-copy small { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
@@ -988,6 +1072,29 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 /* Opened before the first thinking token arrived: a caret holds the line so the stream
    visibly starts writing into the space the user already revealed. */
 .reasoning-cursor { display: inline-block; width: 2px; height: 14px; vertical-align: -2px; border-radius: 1px; background: currentColor; animation: reasoning-breathe 1s ease-in-out infinite; }
+/* Web tool calls are process detail, not the answer: compact rows with the query or page
+   first, and a scanning line only while the request is actually in flight. */
+.web-activities { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.web-activity { position: relative; display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 9px 11px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--soft) 55%, transparent); }
+.web-activity-icon { display: flex; flex: none; align-items: center; justify-content: center; width: 18px; height: 20px; color: var(--muted-text); }
+.web-activity.is-error .web-activity-icon { color: var(--destructive); }
+.web-activity-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.web-activity-kind { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--text-caption); }
+.web-activity-label { color: var(--foreground); font-family: var(--font-medium); }
+.web-activity-label.is-running { background: linear-gradient(100deg, var(--muted-text) 30%, var(--foreground) 48%, var(--muted-text) 65%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: reasoning-shimmer 2.6s linear infinite; }
+.web-activity-time { color: var(--muted-text); font-variant-numeric: tabular-nums; }
+.web-activity-subject { min-width: 0; overflow-wrap: anywhere; color: var(--muted-text); font-size: var(--text-small); line-height: 1.5; }
+.web-activity-link { min-width: 0; overflow-wrap: anywhere; color: var(--muted-text); font-size: var(--text-small); line-height: 1.5; text-decoration: none; }
+.web-activity-link:hover { color: var(--foreground); text-decoration: underline; }
+.web-activity-results { display: flex; min-width: 0; flex-direction: column; gap: 1px; margin-top: 1px; }
+.web-activity-result { display: flex; align-items: baseline; gap: 7px; min-width: 0; padding: 2px 0; color: var(--muted-text); font-size: var(--text-caption); text-decoration: none; }
+.web-activity-result:hover .web-activity-result-title { color: var(--foreground); text-decoration: underline; }
+.web-activity-result-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.web-activity-result-domain { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .65; }
+.web-activity-error { color: var(--destructive); font-size: var(--text-caption); line-height: 1.5; overflow-wrap: anywhere; }
+.web-activity.is-running .web-activity-icon { animation: reasoning-breathe 1.6s ease-in-out infinite; }
+.web-activity.is-running::after { content: ''; position: absolute; inset-inline: 0; bottom: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--foreground), transparent); background-repeat: no-repeat; background-size: 45% 100%; opacity: .3; animation: web-activity-scan 1.5s ease-in-out infinite; }
+@keyframes web-activity-scan { from { background-position: -45% 0; } to { background-position: 145% 0; } }
 /* Reasoning is supporting detail: the answer's typography demoted one step and tightened,
    so headings inside it never compete with the headings of the answer itself. */
 .reasoning-body .message-markdown { color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; }
@@ -1014,8 +1121,11 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
   .reasoning-icon.is-running { animation: none; }
   .reasoning-cursor { animation: none; }
   .reasoning-label.is-running { background: none; animation: none; -webkit-text-fill-color: currentColor; }
+  .web-activity.is-running .web-activity-icon { animation: none; }
+  .web-activity.is-running::after { animation: none; opacity: .2; }
+  .web-activity-label.is-running { background: none; animation: none; -webkit-text-fill-color: currentColor; }
   .reasoning-chevron { transition: none; }
-  .model-checkbox, .model-checkbox::before { transition: none; }
+  .model-checkbox, .model-checkbox::before, .account-switch, .account-switch::before { transition: none; }
 }
 @media (max-width: 600px) {
   .model-section-heading { align-items: flex-start; }

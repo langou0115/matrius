@@ -37,6 +37,7 @@ type Action =
   | { type: 'pin'; id: string }
   | { type: 'fork'; conversationId: string; messageId: string; forkId: string; updatedAt: number }
   | { type: 'delete'; id: string }
+  | { type: 'merge-sync'; conversations: Conversation[] }
   | { type: 'visible'; value: boolean }
   | { type: 'sidebar' };
 
@@ -115,6 +116,22 @@ function reducer(state: ChatState, action: Action): ChatState {
         conversations: state.conversations.filter((item) => item.id !== action.id),
         activeId: state.activeId === action.id ? null : state.activeId,
       };
+    case 'merge-sync': {
+      if (!action.conversations.length) return state;
+      const incoming = new Map(action.conversations.map((conversation) => [conversation.id, conversation]));
+      let changed = false;
+      const conversations = state.conversations.map((conversation) => {
+        const next = incoming.get(conversation.id);
+        if (!next) return conversation;
+        incoming.delete(conversation.id);
+        if (JSON.stringify(next) === JSON.stringify(conversation)) return conversation;
+        changed = true;
+        return next;
+      });
+      const additions = [...incoming.values()];
+      if (additions.length) changed = true;
+      return changed ? { ...state, conversations: [...additions, ...conversations] } : state;
+    }
     case 'rename':
       if (!action.title.trim()) return state;
       return { ...state, conversations: state.conversations.map((item) =>

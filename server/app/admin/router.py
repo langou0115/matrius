@@ -1,6 +1,9 @@
+import logging
 import re
+import time
 import uuid
 from datetime import datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -12,11 +15,16 @@ from app.auth.dependencies import AuthContext, client_ip, require_admin
 from app.auth.router import _authenticate, _issue_session, user_out
 from app.auth.schemas import LoginRequest, LoginResponse, UserOut
 from app.auth.security import hash_password
-from app.cache import enforce_rate_limit
+from app.cache import concurrency_limit, enforce_rate_limit
+from app.config import get_settings
 from app.db import get_db
-from app.errors import AppError, not_found
+from app.errors import AppError, invalid, not_found
 from app.models import User
+from app.tools.search import web_search
+from app.tools.web_fetch import web_fetch
 from app.utils import utcnow
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -48,6 +56,13 @@ class ResetPasswordResponse(BaseModel):
 
 class UpdateUserRequest(BaseModel):
     disabled: bool
+
+
+class ToolTestRequest(BaseModel):
+    kind: Literal["search", "fetch"]
+    query: str | None = Field(default=None, max_length=500)
+    url: str | None = Field(default=None, max_length=2000)
+    mode: Literal["fast", "full"] = "fast"
 
 
 def admin_user_out(user: User) -> AdminUserOut:
@@ -169,6 +184,56 @@ async def update_user(
     user.updated_at = utcnow()
     await db.commit()
     return admin_user_out(user)
+
+
+@router.post("/tools/test")
+async def test_web_tool(
+    payload: ToolTestRequest,
+    ctx: AuthContext = Depends(require_admin),
+) -> dict[str, Any]:
+    """Run one real web tool call from the admin console.
+
+    The same provider, cache and single-flight path as chat is used, so a passing test means
+    the deployed API can actually search and extract pages. The admin session is rate-limited
+    separately from user chat traffic.
+    """
+    await enforce_rate_limit("admin_tool_test", str(ctx.user.id), 20)
+    started = time.perf_counter()
+    using_proxy = bool(get_settings().web_tool_proxy_url)
+    try:
+        async with concurrency_limit("admin_tool_test", str(ctx.user.id), 2):
+            if payload.kind == "search":
+                query = (payload.query or "").strip()
+                if not query:
+                    raise invalid("请输入搜索内容。")
+                results = await web_search(query, 8)
+                return {
+                    "result": {
+                        "kind": "search",
+                        "query": query,
+                        "tookMs": round((time.perf_counter() - started) * 1000),
+                        "proxy": using_proxy,
+                        "results": results,
+                    }
+                }
+
+            url = (payload.url or "").strip()
+            if not url:
+                raise invalid("请输入网页地址。")
+            page = await web_fetch(url, payload.mode)
+            return {
+                "result": {
+                    "kind": "fetch",
+                    "tookMs": round((time.perf_counter() - started) * 1000),
+                    "proxy": using_proxy,
+                    **page,
+                }
+            }
+    except AppError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - keep the admin UI on the normal error contract
+        logger.exception("Admin web tool test failed")
+        raise AppError(502, "upstream_error", "联网工具测试失败，请稍后重试。") from exc
 
 
 @router.get("/users/{user_id}", response_model=AdminUserOut)

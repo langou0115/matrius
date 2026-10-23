@@ -59,10 +59,11 @@ export default function ChatScreen() {
   const hasMessages = !!conversation?.messages.length;
   const latestContent = conversation?.messages.at(-1)?.content;
   const latestReasoning = conversation?.messages.at(-1)?.reasoning;
+  const latestActivities = conversation?.messages.at(-1)?.activities?.length ?? 0;
   const { scrollToBottom, scrollToMessage, followLatest, visible: scrollToBottomVisible } = useChatAutoScroll({
     containerRef: messageScroller,
     containerKey: activeId ?? 'new',
-    followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}`,
+    followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}:${latestActivities}`,
     scrollKey: activeId,
   });
   function changeDraft(value: string) { setDraft(draftKey, value); }
@@ -128,7 +129,7 @@ export default function ChatScreen() {
             // A live reply shows the disclosure before reasoning arrives, so it can be opened
             // while the response is still warming up. Once prose starts without reasoning the
             // line has nothing to reveal and disappears.
-            const showReasoning = !!message.reasoning?.trim()
+            const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length
               || (live && message.status === 'streaming' && !message.content.trim());
             return message.role === 'user'
               ? <article className="user-message" key={message.id} data-user-message-id={message.id} aria-label="你的消息">
@@ -140,7 +141,7 @@ export default function ChatScreen() {
                 <MessageActions message={message} />
               </article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
-              {showReasoning && <ReasoningBlock reasoning={message.reasoning} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
+              {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
               <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
               {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
               {message.status === 'error' && <p className="reply-status" role="alert">{message.error ?? '模型回复失败，请稍后重试。'}</p>}

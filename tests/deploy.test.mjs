@@ -48,8 +48,8 @@ test('deployment settings come from .env.production with .env.local as an overri
 
 test('shared application settings are framed for the server and empty values skipped', () => {
   const encoded = Buffer.from('http://proxy.local:7890', 'utf8').toString('base64');
-  assert.equal(appEnvOverrides({ SEARCH_PROXY_URL: 'http://proxy.local:7890', LOG_LEVEL: '',
-    UNRELATED: 'ignored' }), `SEARCH_PROXY_URL ${encoded}`);
+  assert.equal(appEnvOverrides({ WEBTOOL_PROXY_URL: 'http://proxy.local:7890', LOG_LEVEL: '',
+    UNRELATED: 'ignored' }), `WEBTOOL_PROXY_URL ${encoded}`);
   assert.throws(() => appEnvOverrides({ LOG_LEVEL: 'a\nb' }), /LOG_LEVEL must be on one line/);
 });
 
@@ -354,7 +354,7 @@ test('one deploy initializes new servers and reconciles services, ports and admi
       REMOTE_WORKSPACE: workspace, REMOTE_ENV_FILE: '',
       INITIAL_ADMIN_USERNAME: 'root', INITIAL_ADMIN_PASSWORD: 'custom-admin-password',
       APP_PORT: '3000', API_PORT: '3001', APP_HTTPS_PORT: '3443',
-      SEARCH_PROXY_URL: 'http://proxy.local:7890',
+      WEBTOOL_PROXY_URL: 'http://proxy.local:7890',
     };
 
     // The first deploy initializes a new server without a separate command.
@@ -367,7 +367,7 @@ test('one deploy initializes new servers and reconciles services, ports and admi
     assert.match(generated, /^APP_PORT=3000$/m);
     assert.match(generated, /^API_PORT=3001$/m);
     assert.match(generated, /^APP_HTTPS_PORT=3443$/m);
-    assert.match(generated, /^SEARCH_PROXY_URL=http:\/\/proxy\.local:7890$/m);
+    assert.match(generated, /^WEBTOOL_PROXY_URL=http:\/\/proxy\.local:7890$/m);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
     assert.match(await readFile(join(workspace, 'initial-admin.txt'), 'utf8'),
       /username=root\npassword=custom-admin-password/);

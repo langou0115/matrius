@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 
 import pytest
@@ -194,6 +195,59 @@ async def test_search_fails_with_502_only_when_every_provider_fails(monkeypatch)
         await search.web_search("anything", 3)
     assert raised.value.status_code == 502
     assert raised.value.code == "upstream_error"
+
+
+async def test_identical_searches_share_one_inflight_task(monkeypatch):
+    calls = 0
+    gate = asyncio.Event()
+
+    async def uncached(query, _limit, _cache_key):
+        nonlocal calls
+        calls += 1
+        await gate.wait()
+        return [{"title": query, "url": "https://example.com/a"}]
+
+    monkeypatch.setattr(search, "_search_uncached", uncached)
+    first = asyncio.create_task(search.web_search("shared query", 3))
+    second = asyncio.create_task(search.web_search("shared query", 3))
+    for _ in range(10):
+        if calls == 1 and len(search._search_flights) == 1:
+            break
+        await asyncio.sleep(0)
+    gate.set()
+
+    assert await asyncio.gather(first, second) == [
+        [{"title": "shared query", "url": "https://example.com/a"}],
+        [{"title": "shared query", "url": "https://example.com/a"}],
+    ]
+    assert calls == 1
+    assert search._search_flights == {}
+
+
+async def test_cancelling_one_waiter_does_not_cancel_the_shared_search(monkeypatch):
+    calls = 0
+    gate = asyncio.Event()
+
+    async def uncached(query, _limit, _cache_key):
+        nonlocal calls
+        calls += 1
+        await gate.wait()
+        return [{"title": query, "url": "https://example.com/a"}]
+
+    monkeypatch.setattr(search, "_search_uncached", uncached)
+    cancelled = asyncio.create_task(search.web_search("shielded query", 3))
+    survivor = asyncio.create_task(search.web_search("shielded query", 3))
+    for _ in range(10):
+        if calls == 1 and len(search._search_flights) == 1:
+            break
+        await asyncio.sleep(0)
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled
+    gate.set()
+
+    assert await survivor == [{"title": "shielded query", "url": "https://example.com/a"}]
+    assert calls == 1
 
 
 async def test_search_with_no_usable_results_is_empty_not_an_error(monkeypatch):

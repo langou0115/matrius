@@ -12,6 +12,8 @@ rate-limit counters are expected to reset.
 import logging
 import time
 from collections import deque
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from app.config import get_settings
 from app.errors import AppError
@@ -31,6 +33,8 @@ _cache_bytes = 0
 _rate_windows: dict[str, deque[float]] = {}
 # username -> (failures, window_expires_at)
 _login_failures: dict[str, tuple[int, float]] = {}
+# name:identity -> number of calls currently holding a slot
+_concurrency: dict[str, int] = {}
 _operations = 0
 
 
@@ -119,6 +123,34 @@ async def enforce_rate_limit(
     _sweep(now)
 
 
+@asynccontextmanager
+async def concurrency_limit(name: str, identity: str, limit: int) -> AsyncIterator[None]:
+    """Per-user in-flight cap, checked before queuing on the global upstream semaphore.
+
+    Without it one account can occupy every provider slot and make everyone else wait. The
+    limit rejects immediately instead of queueing, so a runaway agent loop is visible to that
+    user rather than silently consuming the shared capacity.
+    """
+    key = f"{name}:{identity}"
+    current = _concurrency.get(key, 0)
+    if current >= limit:
+        raise AppError(
+            429,
+            "rate_limited",
+            "同时进行的联网请求过多，请稍后重试。",
+            headers={"Retry-After": "5"},
+        )
+    _concurrency[key] = current + 1
+    try:
+        yield
+    finally:
+        remaining = _concurrency.get(key, 1) - 1
+        if remaining > 0:
+            _concurrency[key] = remaining
+        else:
+            _concurrency.pop(key, None)
+
+
 async def record_login_failure(username: str) -> None:
     key = username.lower()
     now = _now()
@@ -160,5 +192,6 @@ def reset_cache() -> None:
     _cache.clear()
     _rate_windows.clear()
     _login_failures.clear()
+    _concurrency.clear()
     _cache_bytes = 0
     _operations = 0

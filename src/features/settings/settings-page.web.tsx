@@ -50,8 +50,10 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
   const homeHref = conversationHref(conversationId, preview);
   // Account, sync and labs are full app pages rather than preview chat settings, so they
   // always live under /settings even when the rest of the catalogue is scoped to /mock.
-  const directRoutes = new Set(['account', 'labs', 'sync']);
-  const itemHref = (id: string): Href => directRoutes.has(id) ? `/settings/${id}` : `${root}/${id}`;
+  const directRoutes = new Set(['account', 'labs']);
+  // Routes are built from the catalogue IDs above; typed routes cannot express that a runtime
+  // string is one of the generated static paths, so narrow at this single boundary.
+  const itemHref = (id: string): Href => (directRoutes.has(id) ? `/settings/${id}` : `${root}/${id}`) as Href;
   const activeId = settingsItems.find((item) => pathname === itemHref(item.id))?.id;
   const groups = settingsItems.reduce<string[]>((list, item) => (list.includes(item.group) ? list : [...list, item.group]), []);
   const searching = query.trim().length > 0;
@@ -99,7 +101,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
             <h2>搜索结果</h2>
             {contentMatches.map((target) => {
               const category = categoryOf(target.category);
-              const href: Href = `${itemHref(target.category)}?focus=${target.sectionId}`;
+              const href = `${itemHref(target.category)}?focus=${target.sectionId}` as Href;
               return <Link key={target.id} href={href} asChild>
                 <LinkAnchor className="settings-nav-item settings-search-result" onClick={() => setQuery('')}>
                   <CategoryIcon id={target.category} />

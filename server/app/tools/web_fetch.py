@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any
@@ -9,6 +10,7 @@ import trafilatura
 from charset_normalizer import from_bytes
 from lxml import html as lxml_html
 
+from app.cache import cache_get, cache_set
 from app.config import get_settings
 from app.errors import AppError, invalid
 from app.tools.urls import FETCH_TIMEOUT_SECONDS, validate_fetch_url
@@ -16,6 +18,9 @@ from app.tools.urls import FETCH_TIMEOUT_SECONDS, validate_fetch_url
 logger = logging.getLogger(__name__)
 
 FETCH_SEMAPHORE = asyncio.Semaphore(4)
+# Research replies frequently read the same page more than once. Share one in-flight fetch
+# per URL and keep the extracted result briefly, instead of hitting the origin each time.
+_fetch_flights: dict[str, asyncio.Task[dict[str, Any]]] = {}
 MAX_TITLE_CHARS = 280
 MAX_REDIRECTS = 5
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
@@ -58,6 +63,9 @@ async def _download(url: str) -> tuple[str, str, bool]:
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=False,
+        # Page fetching shares the configured upstream proxy with web search. URL validation
+        # still happens locally before the request and on every redirect hop.
+        proxy=getattr(settings, "web_tool_proxy_url", "") or None,
         headers={
             "User-Agent": _user_agent(),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -145,25 +153,54 @@ def _extract(body: str, url: str, mode: str) -> tuple[str, str]:
         return url, " ".join(body.split())
 
 
+def _forget_flight(key: str, task: asyncio.Task) -> None:
+    if _fetch_flights.get(key) is task:
+        _fetch_flights.pop(key, None)
+    if not task.cancelled():
+        task.exception()
+
+
 async def web_fetch(url: str, mode: str = "fast") -> dict[str, Any]:
     ensure_mode(mode)
+    cache_key = "matrius:fetch:" + hashlib.sha256(f"{url}|{mode}".encode()).hexdigest()
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        try:
+            return json.loads(cached)
+        except ValueError:
+            pass
+
+    flight = _fetch_flights.get(cache_key)
+    if flight is None:
+        flight = asyncio.create_task(_fetch_uncached(url, mode, cache_key))
+        _fetch_flights[cache_key] = flight
+        flight.add_done_callback(lambda task, key=cache_key: _forget_flight(key, task))
+    return await asyncio.shield(flight)
+
+
+async def _fetch_uncached(url: str, mode: str, cache_key: str) -> dict[str, Any]:
+    settings = get_settings()
+    # Extraction is CPU-bound too, so it stays inside the slot: four concurrent pages are
+    # already the limit for both downloading and parsing.
     async with FETCH_SEMAPHORE:
         final_url, body, truncated = await _download(url)
-
-    title, text = await asyncio.to_thread(_extract, body, final_url, mode)
+        title, text = await asyncio.to_thread(_extract, body, final_url, mode)
     if not text.strip():
         raise AppError(502, "fetch_empty", "未能提取到网页正文。")
 
-    limit = get_settings().fetch_max_chars
+    limit = settings.fetch_max_chars
     truncated = truncated or len(text) > limit
     text = text[:limit]
-    return {
+    result = {
         "title": (title.strip() or final_url)[:MAX_TITLE_CHARS],
         "url": final_url,
         "text": text,
         "truncated": truncated,
         "chars": len(text),
     }
+    ttl = getattr(settings, "fetch_cache_ttl_seconds", 300)
+    await cache_set(cache_key, json.dumps(result, ensure_ascii=False), ttl)
+    return result
 
 
 def ensure_mode(mode: str) -> str:

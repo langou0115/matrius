@@ -77,7 +77,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `CACHE_MAX_ENTRIES` / `CACHE_MAX_BYTES` | `10000` / 64 MiB | 进程内缓存上限，超出后淘汰最旧条目 |
 | `SEARCH_TIMEOUT_SECONDS` | `15` | 单个搜索来源超时 |
 | `SEARCH_MAX_BYTES` | `2097152` | 单个搜索响应体上限 |
-| `SEARCH_PROXY_URL` | 空 | 可选搜索上游代理 |
+| `WEBTOOL_PROXY_URL` | 空 | 可选上游代理，搜索与网页读取共用 |
 | `SEARCH_USER_AGENT` | 内置 UA | 搜索引擎请求头 |
 | `FETCH_MAX_BYTES` | `5242880` | 网页读取响应体上限（5 MiB） |
 | `AUTH_SESSION_TTL_SECONDS` | `604800` | 登录会话有效期 |
@@ -86,7 +86,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `STORAGE_QUOTA_BYTES` | `536870912` | 每用户存储配额（512 MiB） |
 | `FETCH_MAX_CHARS` | `50000` | 单次网页读取最大字符数 |
 
-生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；其中登录有效期、限额、`SEARCH_PROXY_URL` 等通用项会在部署时写入服务器的 `production.env`。不要把真实密钥提交到仓库。
+生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；其中登录有效期、限额、`WEBTOOL_PROXY_URL` 等通用项会在部署时写入服务器的 `production.env`。不要把真实密钥提交到仓库。
 
 ## API 概览
 
@@ -124,6 +124,7 @@ POST   /api/tools/search
 POST   /api/tools/fetch
 POST   /api/tools/files/read
 POST   /api/tools/files/grep
+POST   /api/admin/tools/test              # admin scope
 
 GET    /api/health
 GET    /api/health/ready
@@ -142,7 +143,7 @@ GET    /api/health/ready
 - 上传类型白名单：纯文本/代码/Markdown/CSV、图片、PDF、DOCX/XLSX/PPTX。不支持旧版 DOC/XLS/PPT，也不做 OCR。
 - 文件读取与 grep 只对已上传文件生效；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
 - 搜索并行请求 DuckDuckGo HTML（失败回退 lite 端点）与 Bing RSS，结果去重并限制每域 2 条；单来源失败时降级，全部失败返回 502。
-- 网页读取前校验 URL：仅 http/https、禁止凭据、localhost、私网/链路本地/云元数据地址，并解析 DNS 检查全部地址；最多手动跟随 5 次重定向，每一跳重新校验。生产环境仍建议在主机/云防火墙限制 API 容器的出站网段。
+- 网页读取前校验 URL：仅 http/https、禁止凭据、localhost、私网/链路本地/云元数据地址，并解析 DNS 检查全部地址；最多手动跟随 5 次重定向，每一跳重新校验。`WEBTOOL_PROXY_URL` 同时用于搜索与抓取。生产环境仍建议在主机/云防火墙限制 API 容器的出站网段。
 - 限流与登录锁定使用进程内滑动窗口：登录按 IP 与用户名，登录失败 15 次锁定 15 分钟；其余接口按用户。重启后清零，因此 API 必须单 worker 运行。
 
 ## 容器

@@ -116,7 +116,7 @@ npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再
 
 发布命令从原 npm run remote 更名为 npm run deploy。开发不再需要上传源码；只有正式发布才执行此命令。本机发布只需 Node.js、Git、OpenSSH、tar，不需要 Python 或 Docker。
 
-部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`SEARCH_PROXY_URL`、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改管理员密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
+部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`WEBTOOL_PROXY_URL`、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改管理员密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
 
 ```bash
 npm run deploy                       # 同步、构建、迁移、刷新管理员密码、健康检查后退出
@@ -139,7 +139,7 @@ npm run test:auth
 
 所有新增可见功能先登记到 `server/app/features/registry.py`（默认 preview），UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。用 `admin_test` 在本机页面验证，也可部署候选包到正式地址继续验证。验证后只把指定条目改为 stable，再通过手动 CD 或 `npm run deploy` 发布；部署成功后这些功能即对所有账号开放。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
 
-账号登录当前仅用于功能权限，聊天仍保存在当前浏览器，不触发云端仓储切换或本地数据导入。会话仅保留在当前标签页，Mock 不使用真实账号。
+账号登录后聊天仍以当前浏览器的 IndexedDB 为实时数据源；后台会把本地工作区与账号数据双向合并（可见时约 5 分钟一次、本地变化 60 秒防抖、账号页可手动触发），不做云端仓储切换。登录会话仅保留在当前标签页，Mock 不使用真实账号。
 
 ## 后端与基础设施
 

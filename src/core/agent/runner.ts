@@ -1,12 +1,13 @@
-import { Agent, type StreamFn } from '@mariozechner/pi-agent-core';
+import { Agent, type AgentTool, type StreamFn } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage } from '@mariozechner/pi-ai';
 
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, ReplyUpdate, ReplyResult } from './types';
+import type { Message, ReplyUpdate, ReplyResult, WebActivity } from './types';
 import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
 import { buildContext } from './context';
+import { getWebActivityEnd, getWebActivityStart } from './web-tools';
 
 function getErrorSignal(value: unknown, seen = new Set<object>(), depth = 0): string {
   if (depth > 3 || value == null) return '';
@@ -57,16 +58,18 @@ export function describeModelError(reason: unknown) {
   return '模型回复失败，请检查模型配置和服务商状态后重试。';
 }
 
-export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, onUpdate, streamFn = directStream, timeoutMs = 120_000 }: {
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000 }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
+  /** Registered cloud tools. Empty means a local text-only run, where a tool call is an error. */
+  tools?: AgentTool[];
   onUpdate: (value: ReplyUpdate) => void; streamFn?: StreamFn; timeoutMs?: number;
 }) {
   const model = createAgentModel(config);
   if (thinkingEffort !== 'default') model.reasoning = true;
   const agent = new Agent({
-    initialState: { model, messages: buildContext(messages, config), systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools: [] },
+    initialState: { model, messages: buildContext(messages, config), systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
     getApiKey: () => apiKey || 'no-key', streamFn,
     transport: 'sse', maxRetryDelayMs: 5000,
   });
@@ -75,18 +78,66 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   let finalMessage: AssistantMessage | undefined;
   let unsupportedTool = false;
   let reasoningActive = false;
+  // A tool-using run produces several assistant messages. Keep the visible answer cumulative
+  // instead of letting each new message erase the text that introduced its tool call.
+  const contentTurns: string[] = [];
+  const reasoningTurns: string[] = [];
+  let activities: WebActivity[] = [];
+
+  function setLast(target: string[], value: string) {
+    if (target.length) target[target.length - 1] = value;
+    else target.push(value);
+  }
+  function emit() {
+    onUpdate({
+      reasoningActive,
+      content: contentTurns.filter(Boolean).join('\n\n'),
+      reasoning: reasoningTurns.filter(Boolean).join('\n\n'),
+      activities,
+    });
+  }
+
+  function startTool(event: { toolCallId: string; toolName: string; args: unknown }) {
+    const activity = getWebActivityStart(event.toolName, event.toolCallId, event.args);
+    if (!activity) return;
+    activities = [...activities, { ...activity, startedAt: Date.now() }];
+    emit();
+  }
+
+  function endTool(event: { toolCallId: string; toolName: string; result: unknown; isError: boolean }) {
+    const previous = activities.find((activity) => activity.id === event.toolCallId);
+    const ended = getWebActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous);
+    const endedAt = Date.now();
+    activities = activities.map((activity) => {
+      if (activity.id !== event.toolCallId) return activity;
+      if (!ended) return { ...activity, status: event.isError ? 'error' as const : 'complete' as const, endedAt };
+      return { ...ended, startedAt: activity.startedAt, endedAt };
+    });
+    emit();
+  }
+
   const unsubscribe = agent.subscribe((event) => {
+    if (event.type === 'tool_execution_start') { startTool(event); return; }
+    if (event.type === 'tool_execution_end') { endTool(event); return; }
     if ((event.type === 'message_start' || event.type === 'message_update' || event.type === 'message_end') && event.message.role === 'assistant') {
       const message = event.message;
+      if (event.type === 'message_start') {
+        contentTurns.push('');
+        reasoningTurns.push('');
+      }
       if (event.type === 'message_update') {
         const type = event.assistantMessageEvent.type;
         if (type === 'thinking_start' || type === 'thinking_delta') reasoningActive = true;
         else if (type === 'thinking_end' || type === 'text_start' || type === 'text_delta') reasoningActive = false;
       } else if (event.type === 'message_end') reasoningActive = false;
-      onUpdate({ reasoningActive, content: message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''), reasoning: message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join('') });
+      setLast(contentTurns, message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''));
+      setLast(reasoningTurns, message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join(''));
+      emit();
       if (event.type === 'message_end') {
         finalMessage = message;
-        if (message.content.some((block) => block.type === 'toolCall')) { unsupportedTool = true; agent.abort(); }
+        // With tools registered, tool calls are the expected loop. Without them, the local
+        // mode cannot execute anything, so surface the request as an error instead of hanging.
+        if (!tools.length && message.content.some((block) => block.type === 'toolCall')) { unsupportedTool = true; agent.abort(); }
       }
     }
   });

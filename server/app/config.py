@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,12 +25,18 @@ class Settings(BaseSettings):
 
     search_timeout_seconds: int = 15
     search_max_bytes: int = 2 * 1024 * 1024
-    search_proxy_url: str = ""
+    # Shared by web search and page fetching. Leave empty to connect directly.
+    # The env name has no separator between WEB and TOOL, so it needs an explicit alias.
+    web_tool_proxy_url: str = Field(default="", validation_alias="WEBTOOL_PROXY_URL")
     search_user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 Matrius/0.1"
     )
     fetch_max_bytes: int = 5 * 1024 * 1024
+    # Short-lived fetch cache: research agents often re-read the same source within one reply.
+    fetch_cache_ttl_seconds: int = 600
+    # Per-account in-flight cap for each web tool, on top of the global provider semaphore.
+    tool_user_concurrency: int = 4
 
     auth_session_ttl_seconds: int = 604800
     initial_admin_username: str = ""

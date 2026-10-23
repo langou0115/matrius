@@ -1,7 +1,7 @@
 import { Link, router } from 'expo-router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useState } from 'react';
-import { ChevronRight, SquarePen } from 'lucide-react';
+import { SquarePen } from 'lucide-react';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
@@ -91,7 +91,6 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
                 : auth.status === 'unavailable' ? '无法验证登录状态'
                   : '在设置中登录账号'}</span>
           </span>
-          <ChevronRight className="user-entry-chevron" size={16} strokeWidth={1.75} aria-hidden="true" />
         </LinkAnchor></Link>}
       {menu && <ConversationMenu conversation={menu.conversation} anchor={menu.anchor} onClose={closeMenu}
         onPin={() => { dispatch({ type: 'pin', id: menu.conversation.id }); closeMenu(); }}

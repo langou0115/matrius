@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthContext, read_rate_limit
-from app.cache import enforce_rate_limit
+from app.cache import concurrency_limit, enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
 from app.errors import invalid
@@ -26,7 +26,8 @@ async def search_web(
     query = payload.query.strip()
     if not query:
         raise invalid("搜索关键词不能为空。")
-    results = await web_search(query, payload.limit)
+    async with concurrency_limit("tool_search", str(ctx.user.id), get_settings().tool_user_concurrency):
+        results = await web_search(query, payload.limit)
     return {"query": query, "results": results}
 
 
@@ -36,7 +37,8 @@ async def fetch_web(
     ctx: AuthContext = Depends(read_rate_limit),
 ) -> dict[str, Any]:
     await enforce_rate_limit("tool_fetch", str(ctx.user.id), 30)
-    return await web_fetch(payload.url, payload.mode)
+    async with concurrency_limit("tool_fetch", str(ctx.user.id), get_settings().tool_user_concurrency):
+        return await web_fetch(payload.url, payload.mode)
 
 
 @router.post("/files/read")

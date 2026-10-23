@@ -9,6 +9,8 @@ import { PreviewContext } from '@/features/workspace/preview-context';
 import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
+import { AccountSyncProvider } from '@/features/auth/account-sync-state.web';
+import { NetworkToolsProvider } from '@/features/auth/network-tools-state.web';
 
 function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean }>) {
   const { conversations, activeId, sidebarOpen } = useChat();
@@ -80,7 +82,7 @@ export function LocalWorkspace({ children, preview }: PropsWithChildren<{ previe
 
   return <AppearanceProvider initialPreferences={loaded.data.appearance}>
     <PersonalizationProvider initialPreferences={loaded.data.personalization}><ChatProvider initialState={loaded.data.chat}><DraftProvider>
-      <PreviewContext value={loaded.preview}><ModelProvider preview={loaded.preview}><ChatRuntimeProvider><WorkspacePersistence initial={loaded} preview={loaded.preview}>{children}</WorkspacePersistence></ChatRuntimeProvider></ModelProvider></PreviewContext>
+      <PreviewContext value={loaded.preview}><ModelProvider preview={loaded.preview}><NetworkToolsProvider><ChatRuntimeProvider><AccountSyncProvider preview={loaded.preview}><WorkspacePersistence initial={loaded} preview={loaded.preview}>{children}</WorkspacePersistence></AccountSyncProvider></ChatRuntimeProvider></NetworkToolsProvider></ModelProvider></PreviewContext>
     </DraftProvider></ChatProvider></PersonalizationProvider>
   </AppearanceProvider>;
 }

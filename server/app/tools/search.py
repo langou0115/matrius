@@ -24,6 +24,9 @@ MAX_TITLE_CHARS = 280
 MAX_SNIPPET_CHARS = 640
 CACHE_TTL_SECONDS = 300
 SEARCH_SEMAPHORE = asyncio.Semaphore(4)
+# One in-flight task per query: a burst of identical searches (or a cache stampede when an
+# entry expires) hits the providers once instead of once per caller.
+_search_flights: dict[str, asyncio.Task[list[dict[str, Any]]]] = {}
 
 DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/"
 DUCKDUCKGO_LITE = "https://lite.duckduckgo.com/lite/"
@@ -34,8 +37,10 @@ def _client() -> httpx.AsyncClient:
     settings = get_settings()
     return httpx.AsyncClient(
         timeout=httpx.Timeout(settings.search_timeout_seconds, connect=5),
-        follow_redirects=False,
-        proxy=settings.search_proxy_url or None,
+        # Bing redirects www.bing.com to the regional host (for example cn.bing.com) with a 302;
+        # without following it every direct Bing request looks like an upstream failure.
+        follow_redirects=True,
+        proxy=settings.web_tool_proxy_url or None,
         headers={
             "User-Agent": settings.search_user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -158,13 +163,15 @@ def _parse_bing_rss(xml: str) -> list[dict[str, Any]]:
 async def _duckduckgo(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
     try:
         page = await _request_text(client, "POST", DUCKDUCKGO_HTML, data={"q": query})
-        results = _parse_duckduckgo(page)
+        # Parsing large HTML is CPU work; keep it off the event loop so other searches and
+        # chat requests keep flowing while this one is being decoded.
+        results = await asyncio.to_thread(_parse_duckduckgo, page)
         if results:
             return results
     except Exception as exc:  # noqa: BLE001 - fall through to the lite endpoint
         logger.warning("DuckDuckGo HTML search failed: %s", exc)
     page = await _request_text(client, "POST", DUCKDUCKGO_LITE, data={"q": query})
-    return _parse_duckduckgo_lite(page)
+    return await asyncio.to_thread(_parse_duckduckgo_lite, page)
 
 
 async def _bing(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
@@ -174,7 +181,7 @@ async def _bing(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
         BING_RSS,
         params={"format": "rss", "count": CANDIDATE_LIMIT, "q": query},
     )
-    return _parse_bing_rss(page)
+    return await asyncio.to_thread(_parse_bing_rss, page)
 
 
 def _clean_text(value: str) -> str:
@@ -260,8 +267,16 @@ async def _run_provider(coro, seconds: float):
         return await coro
 
 
+def _forget_flight(key: str, task: asyncio.Task) -> None:
+    if _search_flights.get(key) is task:
+        _search_flights.pop(key, None)
+    # A cancelled caller can leave the shared task unawaited; retrieve its exception so the
+    # event loop does not log an unhandled failure for work that already has other waiters.
+    if not task.cancelled():
+        task.exception()
+
+
 async def web_search(query: str, limit: int) -> list[dict[str, Any]]:
-    settings = get_settings()
     cache_key = "matrius:search:" + hashlib.sha256(f"{query}|{limit}".encode()).hexdigest()
     cached = await cache_get(cache_key)
     if cached is not None:
@@ -270,6 +285,18 @@ async def web_search(query: str, limit: int) -> list[dict[str, Any]]:
         except ValueError:
             pass
 
+    flight = _search_flights.get(cache_key)
+    if flight is None:
+        flight = asyncio.create_task(_search_uncached(query, limit, cache_key))
+        _search_flights[cache_key] = flight
+        flight.add_done_callback(lambda task, key=cache_key: _forget_flight(key, task))
+    # Shield the shared task: one cancelled request must not cancel the search everyone else
+    # is waiting on. The task still populates the cache in that case.
+    return await asyncio.shield(flight)
+
+
+async def _search_uncached(query: str, limit: int, cache_key: str) -> list[dict[str, Any]]:
+    settings = get_settings()
     async with SEARCH_SEMAPHORE:
         async with _client() as client:
             outcomes = await asyncio.gather(

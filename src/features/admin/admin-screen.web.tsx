@@ -1,6 +1,6 @@
 import {
   AlertCircle, Ban, CheckCircle2, Copy, KeyRound, LoaderCircle,
-  LogOut, RefreshCw, Search, ShieldCheck, UserPlus, Users, type LucideIcon,
+  LogOut, Moon, RefreshCw, Search, ShieldCheck, Sun, UserPlus, Users, Wrench, type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from 'react';
 
@@ -9,6 +9,8 @@ import { PasswordInput } from '@/components/web/password-input';
 import { createAdminSession } from '@/core/api/auth-session';
 import { copyText } from '@/core/platform/clipboard.web';
 import { browserAdminSessionStore } from '@/core/platform/auth-session.web';
+import { useAdminColorMode } from './admin-theme.web';
+import { AdminToolTest } from './admin-tool-test.web';
 
 type AdminUser = {
   id: string;
@@ -35,6 +37,15 @@ function StatCard({ icon: Glyph, label, value }: { icon: LucideIcon; label: stri
     <span className="admin-stat-icon"><Glyph size={19} strokeWidth={1.75} aria-hidden="true" /></span>
     <div><span>{label}</span><strong>{value}</strong></div>
   </div>;
+}
+
+function ThemeToggle({ mode, onToggle }: { mode: 'light' | 'dark'; onToggle: () => void }) {
+  return <button className="icon-button admin-theme-toggle" type="button"
+    aria-label={mode === 'dark' ? '切换到浅色模式' : '切换到深色模式'} onClick={onToggle}>
+    {mode === 'dark'
+      ? <Sun size={17} strokeWidth={1.75} aria-hidden="true" />
+      : <Moon size={17} strokeWidth={1.75} aria-hidden="true" />}
+  </button>;
 }
 
 function CredentialPanel({ credential, onClose }: { credential: Credential; onClose: () => void }) {
@@ -72,6 +83,7 @@ export default function AdminScreen() {
   const { status, user, error: sessionError } = useSyncExternalStore(
     session.subscribe, session.getSnapshot, session.getSnapshot,
   );
+  const adminTheme = useAdminColorMode();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
@@ -83,6 +95,7 @@ export default function AdminScreen() {
   const [reloadKey, setReloadKey] = useState(0);
   const [query, setQuery] = useState('');
   const [logoutBusy, setLogoutBusy] = useState(false);
+  const [view, setView] = useState<'users' | 'tools'>('users');
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
@@ -137,7 +150,7 @@ export default function AdminScreen() {
     setLogoutBusy(true); setError(null);
     try {
       await session.logout();
-      setUsers(null); setQuery(''); setListBusy(false); setListError(null);
+      setUsers(null); setQuery(''); setListBusy(false); setListError(null); setView('users');
     } catch {
       setError('本机已退出管理，但服务器会话未能撤销，请稍后重试。');
     } finally {
@@ -211,6 +224,7 @@ export default function AdminScreen() {
   if (!user) {
     return <main className="admin-main admin-login-main" id="main-content" tabIndex={-1}>
       <div className="admin-login-shell">
+        <div className="admin-login-toolbar"><ThemeToggle mode={adminTheme.mode} onToggle={adminTheme.toggle} /></div>
         <div className="admin-login-card">
           <div className="admin-brand"><span className="admin-brand-mark"><ShieldCheck size={21} strokeWidth={1.75} aria-hidden="true" /></span>
             <div><strong>Matrius</strong><span>管理控制台</span></div>
@@ -250,6 +264,7 @@ export default function AdminScreen() {
         <div><strong>Matrius</strong><span>管理控制台</span></div>
       </div>
       <div className="admin-topbar-actions">
+        <ThemeToggle mode={adminTheme.mode} onToggle={adminTheme.toggle} />
         <span className="admin-current-user"><span className="admin-avatar is-small">{initialOf(user.username)}</span>{user.username}</span>
         <button className="secondary-button" type="button" disabled={logoutBusy} onClick={() => void logout()}>
           <LogOut size={15} strokeWidth={1.75} aria-hidden="true" />退出管理
@@ -258,6 +273,18 @@ export default function AdminScreen() {
     </header>
 
     <div className="admin-content">
+      <nav className="admin-view-tabs" aria-label="管理功能">
+        <button className={`admin-view-tab ${view === 'users' ? 'is-active' : ''}`} type="button"
+          aria-current={view === 'users' ? 'page' : undefined} onClick={() => setView('users')}>
+          <Users size={16} strokeWidth={1.75} aria-hidden="true" />用户管理
+        </button>
+        <button className={`admin-view-tab ${view === 'tools' ? 'is-active' : ''}`} type="button"
+          aria-current={view === 'tools' ? 'page' : undefined} onClick={() => setView('tools')}>
+          <Wrench size={16} strokeWidth={1.75} aria-hidden="true" />工具测试
+        </button>
+      </nav>
+
+      {view === 'users' ? <>
       <div className="admin-page-heading">
         <div>
           <span className="eyebrow">ADMINISTRATION</span>
@@ -340,6 +367,7 @@ export default function AdminScreen() {
           })}
         </div>}
       </section>
+      </> : <AdminToolTest request={session.request} />}
     </div>
 
     {createOpen && <Dialog title="创建用户" className="compact-dialog" onClose={() => setCreateOpen(false)}>

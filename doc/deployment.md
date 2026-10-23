@@ -100,7 +100,7 @@ REMOTE_HOST=服务器IP
 - 密钥不是默认文件名：加 `REMOTE_SSH_KEY=~/.ssh/你的密钥`。
 - `APP_PORT` / `API_PORT` / `APP_HTTPS_PORT` 和 `REMOTE_WORKSPACE` 也在同一个文件里调整。
 
-`.env.local`（从 `.env.local.example` 复制）只放本地开发与通用应用设置；登录有效期、限额、`SEARCH_PROXY_URL` 等通用项设置后会写入服务器的 `production.env`。管理员账号在 `.env.local` 里用 `INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 指定；密码仍是示例占位值 `change-me` 时部署会直接失败。首次初始化时两个值都留空则不创建固定密码，而是随机生成并打印一次。
+`.env.local`（从 `.env.local.example` 复制）只放本地开发与通用应用设置；登录有效期、限额、`WEBTOOL_PROXY_URL` 等通用项设置后会写入服务器的 `production.env`。管理员账号在 `.env.local` 里用 `INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 指定；密码仍是示例占位值 `change-me` 时部署会直接失败。首次初始化时两个值都留空则不创建固定密码，而是随机生成并打印一次。
 
 管理员密码**以最近一次部署为准**：每次 `npm run deploy` 都会把 `.env.local` 中的 `INITIAL_ADMIN_*` 写入服务器 `production.env`，API 启动时的 bootstrap 会把该账号密码更新为这份值。A、B 两台机器分别部署不同密码时，后部署的生效。两个值都留空时不会改动现有密码；首次初始化且留空则随机生成并打印一次。
 
@@ -117,6 +117,19 @@ npm run deploy
 `docker compose up` 带 `--remove-orphans`，会自动停止并删除旧拓扑遗留的 `migrate` / `postgres` / `redis` / `rustfs` / `openserp` 容器；旧数据卷不会被自动删除，可按需手动清理。
 
 API 容器入口会在 uvicorn 启动前执行 `alembic upgrade head`、`alembic check` 和 `bootstrap`，因此每次部署都会应用最新迁移。运行时 `/api/health` 与 `/api/health/ready` 也会校验版本，不一致返回 503。
+
+### 前端如何找到 Web 工具接口
+
+前端不保存 API 地址，也不读取部署域名。`web_search` / `web_fetch` 与其它云端接口一样，用相对路径请求同源的 `/api/tools/search`、`/api/tools/fetch`：
+
+```text
+浏览器（打开 http://服务器:16666）
+    ├── /api/model-proxy/*  → Caddy → web:8081（模型中继）
+    ├── /api/*              → Caddy → api:8000（FastAPI，含 /api/tools/*、/api/admin/tools/test）
+    └── 其它路径            → Caddy → web:8081（静态前端）
+```
+
+因此浏览器访问哪个地址，工具请求就发到同一个地址，由 Caddy 分流到 API 容器；换服务器、换端口或换域名都不需要改前端配置。API 容器再按 `WEBTOOL_PROXY_URL` 决定直连还是经上游代理访问搜索与网页。只有原生端或其他跨源调用才需要显式 API 地址与 `CORS_ORIGINS`。
 
 日常开发使用本机 `npm run dev`，完全在本机运行，不影响服务器；详见[开发与验证](development.md#本机全栈开发npm-run-dev)。
 

@@ -21,8 +21,8 @@
 
 - 服务端**不运行 Agent Loop**，不保存流式中间态，也不保管模型 API key。
 - API 必须以**单个 uvicorn worker** 运行：缓存和限流是进程内状态，多 worker 会各自计数。单进程不妨碍并发，模型代理、搜索与抓取都是 async I/O。
-- 云端模式下服务端是唯一事实源；客户端不再把新会话写入本地持久化，断网时不能读取历史。
-- 本地模式仍使用浏览器 IndexedDB，与后端无关。
+- 服务端保存账号数据，供登录后的后台双向同步；客户端 IndexedDB 仍是实时数据源，断网时可继续使用。
+- 云端模式（服务端唯一事实源、客户端不再写本地）尚未实现。
 - 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；原生端使用 Bearer token。
 
 ## 目录职责
@@ -36,7 +36,7 @@ app/storage.py          本地文件存储（DATA_DIR/files）
 app/auth/               密码哈希、Bearer 会话、鉴权依赖、普通登录
 app/admin/              管理员登录与用户管理
 app/conversations/      会话、消息、已读状态、keyset 分页
-app/account/            偏好、画像、画像字段、记忆、存量导入
+app/account/            偏好、画像、画像字段、记忆、账号导入与合并
 app/files/              上传、下载、删除、配额、文本提取
 app/tools/              搜索、URL 校验、网页读取、文件读/grep
 app/models/             SQLAlchemy 表
@@ -165,25 +165,31 @@ PATCH/DELETE /api/memories/{id}
 - 删除记忆为归档（`status=archived`），不是硬删除。
 - 记忆与画像的分页均为 keyset（`updated_at + id`）。
 
-### 存量导入
+### 账号导入与增量合并
 
 ```text
 POST /api/account/import
 {
   "schemaVersion": 1,
-  "chat": { "conversations": [ { id, title, pinned, updatedAt, modelId, titleSource, messages: [...] } ] },
+  "chat": { "conversations": [ {
+    id, title, pinned, updatedAt, modelId, titleSource,
+    readState: { completed: { state, readAt? }, error: { state, readAt? } },
+    messages: [...]
+  } ] },
   "appearance": { "themeId", "mode" },
   "personalization": { "customInstructions", "aboutName", "occupation", "aboutMore" }
 }
-→ { imported: { conversations, messages }, skipped, failed: [{ clientId, reason }] }
+→ { imported: { conversations, messages }, updated, skipped, failed: [{ clientId, reason }] }
 ```
 
 - 单批最多 20 个会话、2000 条消息、8 MiB；客户端分批调用。
-- 以 `clientId` 幂等；重复导入计入 `skipped`。
+- 以 `clientId` 幂等。新会话计入 `imported`；已有会话按消息 `clientId` 追加新消息、更新变化的消息，有变化计入 `updated`，完全重复计入 `skipped`。
+- 没有 `clientId` 的消息无法去重，只会在新建会话时写入；已有会话忽略这类消息。
+- 会话元数据只在 `updatedAt` 不早于已保存的客户端时间时覆盖；已读状态按三态（`absent`/`unread`/`read`）更新。外观/个性化有值即增量更新，未传的字段保持不变。
 - 每个会话使用 savepoint，单个会话失败不影响其他会话。
 - 消息按数组顺序分配 `position`；本地 id 写入 `client_id`，服务端生成 UUID。
-- 外观/个性化只在账号尚无数据时写入，避免覆盖已有设置。
-- 导入成功后客户端保留 IndexedDB 备份，但云端模式不再读写它。
+- 服务端在单进程内用 `asyncio.Lock` 串行执行导入，避免多个标签页并发同步时同时读到"不存在"并触发唯一约束；锁按事件循环绑定，仅对单 worker 有效。
+- 删除不传播：接口没有墓碑或删除列表，不会移除服务端已有记录。
 
 ## 文件
 
@@ -213,7 +219,9 @@ POST /api/tools/search { query, limit? (1-20, 默认 10) }
 
 - 并行请求 DuckDuckGo HTML（失败回退 lite 端点）与 Bing RSS；单个来源失败时降级，全部失败返回 502。
 - 服务端规范化 URL、移除跟踪参数、去重、每域最多 2 条；标题截断 280 字符，摘要 640 字符。
-- 结果缓存在进程内 5 分钟，并发 4，单来源超时 `SEARCH_TIMEOUT_SECONDS`（默认 15 秒），响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。可选 `SEARCH_PROXY_URL` 走上游代理。
+- 结果缓存在进程内 5 分钟，并发 4，单来源超时 `SEARCH_TIMEOUT_SECONDS`（默认 15 秒），响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。
+- 相同查询使用 single-flight 合并并发请求；每个账号最多 4 个在途搜索，超出立即返回 429。
+- `WEBTOOL_PROXY_URL` 同时用于搜索和网页读取的上游连接；留空时直连。
 
 ### 网页读取
 
@@ -224,7 +232,20 @@ POST /api/tools/fetch { url, mode? (fast|full) }
 - 先做 SSRF 校验：仅 http/https、禁止 URL 凭据、禁止 localhost/私网/链路本地/ULA/组播，DNS 解析后要求所有地址 `is_global`。
 - 手动跟随最多 5 次重定向，每一跳都用 `urljoin` 后重新校验，防止重定向到内网；非文本类型返回 422。
 - 流式读取并按 `FETCH_MAX_BYTES`（默认 5 MiB）截断；`trafilatura` 提取正文（`fast` 偏 precision，`full` 偏 recall 并包含表格），失败时回退 lxml 纯文本。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`。
+- 相同 URL + 模式使用 single-flight 合并并发请求，结果缓存 10 分钟（`FETCH_CACHE_TTL_SECONDS`）；全局抓取并发 4，每个账号最多 4 个在途读取。
+- `WEBTOOL_PROXY_URL` 同样作用于抓取请求；URL 与每一跳重定向仍在本地校验，代理不会跳过 SSRF 检查。
 - 生产环境仍建议在主机或云防火墙限制 API 容器的出站网段，缩小 SSRF 与 DNS 重绑定的残余风险。
+
+### 管理端测试
+
+```text
+POST /api/admin/tools/test
+  { "kind": "search", "query": "..." }
+  { "kind": "fetch", "url": "https://...", "mode": "fast|full" }
+```
+
+- 仅接受 admin scope 会话，与聊天流量分开限流（每账号 20 次/分钟），并复用真实搜索、抓取、缓存与代理路径。
+- 返回结果包含 `tookMs` 与 `proxy`（是否配置了 `WEBTOOL_PROXY_URL`）；搜索返回规范化结果，读取返回 title/url/text/truncated/chars。失败沿用统一 `{"error":{"code","message"}}` 响应。
 
 ### 文件读取
 

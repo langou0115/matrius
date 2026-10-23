@@ -4,10 +4,13 @@ import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
 import { withoutFailedTurn } from '@/core/agent/history';
 import { generateConversationTitle } from '@/core/agent/title';
+import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
+import { useAuth } from '@/features/auth/auth-state.web';
+import { useNetworkTools } from '@/features/auth/network-tools-state.web';
 import { deriveConversationTitle, useChat, type Message, type MessageImage } from './chat-state';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -31,6 +34,8 @@ function useRuntime() {
   const { conversations, activeId, chatVisible, dispatch } = useChat();
   const models = useModels();
   const { preferences } = usePersonalization();
+  const auth = useAuth();
+  const networkTools = useNetworkTools();
   const [notifications, setNotifications] = useState<BackgroundNotification[]>([]);
   // The reply callback is created once, so it reads the latest view from refs instead of
   // closing over the first render's values.
@@ -146,11 +151,19 @@ function useRuntime() {
 
   function start(conversationId: string, history: Message[], replyId: string, modelId?: string) {
     const config = resolveModel(modelId);
+    // Cloud tools require a usable account. The server enforces the same rule; this keeps an
+    // anonymous or not-yet-ready session from advertising tools the model cannot call.
+    const useWebTools = Boolean(auth.user && !auth.user.mustChangePassword
+      && networkTools.ready && networkTools.enabled);
     const started = agent.start({
       conversationId, replyId, messages: history, config,
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
       // Thinking depth belongs to the model, so the bound model carries its own depth.
-      thinkingEffort: config?.thinkingEffort ?? 'default', systemPrompt: buildSystemPrompt(preferences),
+      thinkingEffort: config?.thinkingEffort ?? 'default',
+      systemPrompt: useWebTools
+        ? `${buildSystemPrompt(preferences)}\n\n${webToolsSystemPrompt()}`
+        : buildSystemPrompt(preferences),
+      ...(useWebTools ? { tools: createWebTools(auth.request) } : {}),
     });
     return started ? config : undefined;
   }

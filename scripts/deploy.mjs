@@ -79,7 +79,7 @@ export async function createArchive(directory, files, current, destination) {
 export const APP_ENV_KEYS = [
   'AUTH_SESSION_TTL_SECONDS', 'MAX_UPLOAD_BYTES', 'STORAGE_QUOTA_BYTES',
   'FETCH_MAX_CHARS', 'SQLITE_BUSY_TIMEOUT_MS', 'CACHE_MAX_ENTRIES', 'CACHE_MAX_BYTES',
-  'SEARCH_TIMEOUT_SECONDS', 'SEARCH_MAX_BYTES', 'FETCH_MAX_BYTES', 'SEARCH_PROXY_URL', 'LOG_LEVEL',
+  'SEARCH_TIMEOUT_SECONDS', 'SEARCH_MAX_BYTES', 'FETCH_MAX_BYTES', 'WEBTOOL_PROXY_URL', 'LOG_LEVEL',
 ];
 
 export async function readEnvFile(path) {

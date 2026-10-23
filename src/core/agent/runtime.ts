@@ -1,8 +1,10 @@
+import type { AgentTool } from '@mariozechner/pi-agent-core';
+
 import type { ModelConfig } from '@/core/llm/model-config';
 import { validateAgentRequest } from './context';
 import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, RuntimeSnapshot } from './types';
+import type { Message, RuntimeSnapshot, WebActivity } from './types';
 import type { createReplyRun } from './runner';
 
 export type AgentRequest = {
@@ -13,7 +15,18 @@ export type AgentRequest = {
   apiKey: string;
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
+  /** Cloud tools available to this run; omitted or empty keeps the text-only local mode. */
+  tools?: AgentTool[];
 };
+
+/** A run that ends early leaves its last tool call unmarked. Render it as failed, not as
+    still running, because nothing will ever complete it. */
+function settleActivities(activities: WebActivity[] | undefined): WebActivity[] | undefined {
+  if (!activities?.some((activity) => activity.status === 'running')) return activities;
+  return activities.map((activity) => activity.status === 'running'
+    ? { ...activity, status: 'error' as const, error: activity.error ?? '已中断。', endedAt: Date.now() }
+    : activity);
+}
 
 type RuntimeOptions = {
   onReply: (conversationId: string, message: Message) => void;
@@ -55,7 +68,7 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       snapshot = { runs: {}, error: null };
       listeners.clear();
     },
-    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT }: AgentRequest): boolean {
+    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, tools }: AgentRequest): boolean {
       if (disposed || active.has(conversationId)) return false;
       const error = config ? validateAgentRequest(config, apiKey, messages, systemPrompt) : '请先在设置 → 模型服务中添加并选择模型。';
       if (error || !config) { update({ error }); return false; }
@@ -68,6 +81,7 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       let cancelled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let lastReasoning = '';
+      let lastActivities: WebActivity[] | undefined;
       let thinkingMs: number | undefined;
       const flush = () => {
         if (timer) clearTimeout(timer);
@@ -81,18 +95,38 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       // Defer all runner work until the caller has recorded the outgoing user message.
       void Promise.resolve().then(loadRunner).then(async ({ createReplyRun }) => {
         if (cancelled) return { status: 'stopped' as const };
-        run = createReplyRun({ config: requestConfig, apiKey, messages: history, thinkingEffort, systemPrompt, onUpdate(value) {
+        run = createReplyRun({ config: requestConfig, apiKey, messages: history, thinkingEffort, systemPrompt, tools, onUpdate(value) {
           if (disposed || cancelled) return;
-          if (value.reasoning !== lastReasoning) { lastReasoning = value.reasoning; thinkingMs = Date.now() - startedAt; }
+          // Reasoning tokens and tool calls both belong to the "thinking" time. Once the answer
+          // starts streaming neither changes, so the measured duration freezes there. A reply
+          // with neither keeps thinkingMs unset instead of displaying 0 ms.
+          const thinking = Boolean(value.reasoning) || Boolean(value.activities?.length);
+          if (thinking && (value.reasoning !== lastReasoning || value.activities !== lastActivities)) {
+            lastReasoning = value.reasoning;
+            lastActivities = value.activities;
+            thinkingMs = Date.now() - startedAt;
+          }
           const next = { ...latest, ...value };
           latest = thinkingMs === undefined ? next : { ...next, thinkingMs };
           if (!timer) timer = setTimeout(flush, 50);
         } });
         return run.start();
       }).then((result) => {
-        latest = { ...latest, status: cancelled ? 'stopped' : result.status, error: cancelled ? undefined : result.error };
+        const activities = settleActivities(latest.activities);
+        latest = {
+          ...latest,
+          status: cancelled ? 'stopped' : result.status,
+          error: cancelled ? undefined : result.error,
+          ...(activities ? { activities } : {}),
+        };
       }).catch(() => {
-        latest = { ...latest, status: cancelled ? 'stopped' : 'error', error: cancelled ? undefined : '模型组件加载失败，请稍后重试。' };
+        const activities = settleActivities(latest.activities);
+        latest = {
+          ...latest,
+          status: cancelled ? 'stopped' : 'error',
+          error: cancelled ? undefined : '模型组件加载失败，请稍后重试。',
+          ...(activities ? { activities } : {}),
+        };
       }).finally(() => {
         flush();
         // A concurrent run in another conversation must not clear this one's marker.

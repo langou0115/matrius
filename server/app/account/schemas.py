@@ -64,6 +64,16 @@ class ImportMessage(BaseModel):
     error: str | None = Field(default=None, max_length=10_000)
 
 
+class ImportReadMarker(BaseModel):
+    state: Literal["absent", "unread", "read"]
+    readAt: int | None = None
+
+
+class ImportReadState(BaseModel):
+    completed: ImportReadMarker | None = None
+    error: ImportReadMarker | None = None
+
+
 class ImportConversation(BaseModel):
     id: str = Field(min_length=1, max_length=128)
     title: str = Field(default="", max_length=500)
@@ -71,6 +81,7 @@ class ImportConversation(BaseModel):
     updatedAt: int | None = None
     modelId: str | None = Field(default=None, max_length=200)
     titleSource: Literal["auto", "ai", "manual"] | None = None
+    readState: ImportReadState | None = None
     messages: list[ImportMessage] = Field(default_factory=list)
 
 

@@ -1,3 +1,5 @@
+import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -68,6 +70,54 @@ def patch_download(monkeypatch, responses, validate=None):
 
     monkeypatch.setattr(web_fetch, "validate_fetch_url", validate or allow)
     return client
+
+
+async def test_download_uses_the_configured_proxy(fetched, monkeypatch):
+    fetched.web_tool_proxy_url = "http://proxy.internal:3128"
+    seen = {}
+
+    class ProxyClient(FakeClient):
+        def __init__(self, **kwargs):
+            super().__init__({"https://example.com/page": FakeResponse(chunks=[b"hello"], charset="utf-8")})
+            seen.update(kwargs)
+
+    monkeypatch.setattr(web_fetch, "httpx", SimpleNamespace(
+        AsyncClient=lambda **kwargs: ProxyClient(**kwargs),
+        Timeout=lambda *args, **kwargs: (args, kwargs),
+    ))
+
+    async def allow(url):
+        return url
+
+    monkeypatch.setattr(web_fetch, "validate_fetch_url", allow)
+    assert await web_fetch._download("https://example.com/page") == (
+        "https://example.com/page", "hello", False
+    )
+    assert seen["proxy"] == "http://proxy.internal:3128"
+
+
+async def test_download_connects_directly_without_a_proxy(fetched, monkeypatch):
+    fetched.web_tool_proxy_url = ""
+    seen = {}
+
+    class ProxyClient(FakeClient):
+        def __init__(self, **kwargs):
+            super().__init__({"https://example.com/page": FakeResponse(chunks=[b"hello"], charset="utf-8")})
+            seen.update(kwargs)
+
+    monkeypatch.setattr(web_fetch, "httpx", SimpleNamespace(
+        AsyncClient=lambda **kwargs: ProxyClient(**kwargs),
+        Timeout=lambda *args, **kwargs: (args, kwargs),
+    ))
+
+    async def allow(url):
+        return url
+
+    monkeypatch.setattr(web_fetch, "validate_fetch_url", allow)
+    assert await web_fetch._download("https://example.com/page") == (
+        "https://example.com/page", "hello", False
+    )
+    assert seen["proxy"] is None
 
 
 async def test_download_returns_decoded_text(fetched, monkeypatch):
@@ -170,6 +220,36 @@ async def test_web_fetch_applies_the_character_limit(fetched, monkeypatch):
     result = await web_fetch.web_fetch("https://example.com/page")
     assert len(result["text"]) == 12
     assert result["truncated"] is True
+
+
+async def test_identical_fetches_share_one_inflight_task_and_cache(fetched, monkeypatch):
+    calls = 0
+    gate = asyncio.Event()
+
+    async def uncached(url, _mode, cache_key):
+        nonlocal calls
+        calls += 1
+        await gate.wait()
+        result = {"title": "Shared", "url": url, "text": "body", "truncated": False, "chars": 4}
+        await web_fetch.cache_set(cache_key, json.dumps(result), 60)
+        return result
+
+    monkeypatch.setattr(web_fetch, "_fetch_uncached", uncached)
+    first = asyncio.create_task(web_fetch.web_fetch("https://example.com/page"))
+    second = asyncio.create_task(web_fetch.web_fetch("https://example.com/page"))
+    for _ in range(10):
+        if calls == 1 and len(web_fetch._fetch_flights) == 1:
+            break
+        await asyncio.sleep(0)
+    gate.set()
+
+    expected = {"title": "Shared", "url": "https://example.com/page", "text": "body", "truncated": False, "chars": 4}
+    assert await asyncio.gather(first, second) == [expected, expected]
+    assert calls == 1
+    assert web_fetch._fetch_flights == {}
+    # The completed result is also reused by the next caller without another upstream fetch.
+    assert await web_fetch.web_fetch("https://example.com/page") == expected
+    assert calls == 1
 
 
 async def test_web_fetch_rejects_an_empty_extraction(fetched, monkeypatch):

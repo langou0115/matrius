@@ -97,6 +97,31 @@ async def test_clear_login_failures_unlocks_the_account(clock):
     await cache.assert_login_not_locked("alice")
 
 
+async def test_concurrency_limit_rejects_extra_inflight_calls_per_identity():
+    async with cache.concurrency_limit("tool_search", "alice", 1):
+        with pytest.raises(AppError) as raised:
+            async with cache.concurrency_limit("tool_search", "alice", 1):
+                pass
+        assert raised.value.status_code == 429
+        assert raised.value.code == "rate_limited"
+        assert raised.value.headers == {"Retry-After": "5"}
+        # Another account still has its own slot.
+        async with cache.concurrency_limit("tool_search", "bob", 1):
+            pass
+
+    # The slot is released even after a rejected nested acquisition.
+    async with cache.concurrency_limit("tool_search", "alice", 1):
+        pass
+    assert cache._concurrency == {}
+
+
+async def test_concurrency_limit_releases_the_slot_when_the_body_raises():
+    with pytest.raises(RuntimeError):
+        async with cache.concurrency_limit("tool_fetch", "alice", 2):
+            raise RuntimeError("boom")
+    assert cache._concurrency == {}
+
+
 async def test_close_cache_clears_all_state():
     await cache.cache_set("key", "value", ttl_seconds=60)
     await cache.record_login_failure("alice")

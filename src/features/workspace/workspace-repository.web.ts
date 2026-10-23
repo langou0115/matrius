@@ -1,4 +1,5 @@
 import { readWorkspace } from '@/core/database/browser-store.web';
+import type { WebActivity, WebSearchResult } from '@/core/agent/types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
@@ -20,13 +21,55 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 function isThemeId(value: unknown): value is ThemeId { return themePresets.some((preset) => preset.id === value); }
+function readSearchResult(value: unknown): WebSearchResult[] {
+  if (!isRecord(value) || typeof value.title !== 'string' || typeof value.url !== 'string') return [];
+  return [{
+    title: value.title,
+    url: value.url,
+    snippet: typeof value.snippet === 'string' ? value.snippet : '',
+    domain: typeof value.domain === 'string' ? value.domain : '',
+    engine: typeof value.engine === 'string' ? value.engine : '',
+    rank: typeof value.rank === 'number' && Number.isFinite(value.rank) ? value.rank : 0,
+  }];
+}
+/** Tool activity is optional decoration for an already-saved reply. A malformed entry is
+    dropped rather than failing the whole workspace load. */
+function readActivities(value: unknown): WebActivity[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const activities: WebActivity[] = [];
+  for (const item of value.slice(-50)) {
+    if (!isRecord(item) || typeof item.id !== 'string' || !item.id) continue;
+    if (item.kind !== 'search' && item.kind !== 'fetch') continue;
+    if (item.status !== 'running' && item.status !== 'complete' && item.status !== 'error') continue;
+    const results = Array.isArray(item.results)
+      ? item.results.slice(0, 20).flatMap(readSearchResult)
+      : undefined;
+    activities.push({
+      id: item.id,
+      kind: item.kind,
+      status: item.status,
+      ...(typeof item.query === 'string' ? { query: item.query } : {}),
+      ...(results?.length ? { results } : {}),
+      ...(typeof item.url === 'string' ? { url: item.url } : {}),
+      ...(Array.isArray(item.urls) && item.urls.every((url) => typeof url === 'string') ? { urls: item.urls.slice(0, 3) } : {}),
+      ...(typeof item.title === 'string' ? { title: item.title } : {}),
+      ...(typeof item.tookMs === 'number' && Number.isFinite(item.tookMs) ? { tookMs: item.tookMs } : {}),
+      ...(typeof item.error === 'string' ? { error: item.error } : {}),
+      ...(typeof item.startedAt === 'number' && Number.isFinite(item.startedAt) ? { startedAt: item.startedAt } : {}),
+      ...(typeof item.endedAt === 'number' && Number.isFinite(item.endedAt) ? { endedAt: item.endedAt } : {}),
+    });
+  }
+  return activities.length ? activities : undefined;
+}
 function readMessage(value: unknown): Message {
   if (!isRecord(value) || typeof value.id !== 'string' || (value.role !== 'user' && value.role !== 'assistant') || typeof value.content !== 'string') throw new Error('Invalid stored message');
   const status = value.status === 'streaming' ? 'stopped' : ['complete', 'stopped', 'error'].includes(String(value.status)) ? value.status as Message['status'] : undefined;
+  const activities = value.role === 'assistant' ? readActivities(value.activities) : undefined;
   return { id: value.id, role: value.role, content: value.content,
     ...(typeof value.quote === 'string' ? { quote: value.quote } : {}),
     ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
+    ...(activities ? { activities } : {}),
     ...(typeof value.thinkingMs === 'number' && Number.isFinite(value.thinkingMs) ? { thinkingMs: value.thinkingMs } : {}),
     ...(status ? { status } : {}),
     ...(typeof value.error === 'string' ? { error: value.error } : {}),

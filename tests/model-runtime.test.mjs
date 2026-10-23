@@ -10,6 +10,8 @@ import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.web.ts';
 import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
 import { searchSettings } from '../src/features/settings/settings-catalog.ts';
 import { PersonalizationProvider, usePersonalization } from '../src/features/settings/personalization-state.tsx';
+import { AuthProvider } from '../src/features/auth/auth-state.web.tsx';
+import { NetworkToolsProvider } from '../src/features/auth/network-tools-state.web.tsx';
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from '../src/core/agent/system-prompt.ts';
 import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
@@ -530,7 +532,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(ChatRuntimeProvider, null, createElement(Harness)))))))); });
     await act(async () => { assert.equal(runtime.send('keep this draft', null), false); });
     assert.equal(chat.conversations.length, 0);
     await act(async () => { await models.save(config, 'key'); });
@@ -599,7 +601,7 @@ test('background replies in separate conversations run together, stay unread and
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(ChatRuntimeProvider, null, createElement(Harness)))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     await act(async () => { assert.equal(runtime.send('first', null), true); });
@@ -731,7 +733,7 @@ test('AI titles run beside the first reply, retry after a failed turn, and never
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(ChatRuntimeProvider, null, createElement(Harness)))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     // The first turn and its title both fail: the truncated first message stays.
@@ -908,7 +910,7 @@ test('composer reports validation in a compact chat notice without blocking inpu
     await act(async () => { (document.querySelector('[aria-label="关闭提示"]') ?? document.querySelector('[aria-label="关闭弹窗"]')).click(); });
   }
   try {
-    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(ChatRuntimeProvider, null, createElement(Harness)))))))); });
     assert.equal(document.querySelector('.composer-attach').disabled, false);
     assert.equal(document.querySelector('input[type="file"]').hasAttribute('accept'), false);
     await choose(new File(['document'], 'notes.pdf', { type: 'application/pdf' }));
@@ -996,7 +998,7 @@ test('reasoning stops animating before the answer starts and preserves its own d
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(ChatRuntimeProvider, null, createElement(Harness)))))); });
+    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(ChatRuntimeProvider, null, createElement(Harness)))))))); });
     await act(async () => { await models.save({ ...config, protocol: 'message', baseUrl: 'https://test.invalid' }, 'key'); });
     await act(async () => { assert.equal(runtime.send('问题', null), true); });
     await until(() => chat.conversations[0]?.messages[1]?.reasoningActive === false && !!chat.conversations[0]?.messages[1]?.reasoning);

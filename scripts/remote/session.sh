@@ -66,7 +66,7 @@ set_env_value() {
   mv -f -- "$temp" "$env_file"
 }
 
-# Application settings from .env.local (session lifetime, limits, search proxy)
+# Application settings from .env.local (session lifetime, limits, web tool proxy)
 # override the generated server defaults. Empty values are never sent.
 apply_app_env() {
   local key encoded value
@@ -75,7 +75,7 @@ apply_app_env() {
     [[ -n $key && -n $encoded ]] || {
       echo 'Invalid application setting frame.' >&2; return 1; }
     case $key in
-      AUTH_SESSION_TTL_SECONDS|MAX_UPLOAD_BYTES|STORAGE_QUOTA_BYTES|FETCH_MAX_CHARS|SQLITE_BUSY_TIMEOUT_MS|CACHE_MAX_ENTRIES|CACHE_MAX_BYTES|SEARCH_TIMEOUT_SECONDS|SEARCH_MAX_BYTES|FETCH_MAX_BYTES|SEARCH_PROXY_URL|LOG_LEVEL) ;;
+      AUTH_SESSION_TTL_SECONDS|MAX_UPLOAD_BYTES|STORAGE_QUOTA_BYTES|FETCH_MAX_CHARS|SQLITE_BUSY_TIMEOUT_MS|CACHE_MAX_ENTRIES|CACHE_MAX_BYTES|SEARCH_TIMEOUT_SECONDS|SEARCH_MAX_BYTES|FETCH_MAX_BYTES|WEBTOOL_PROXY_URL|LOG_LEVEL) ;;
       *) echo "Unsupported application setting: $key" >&2; return 1 ;;
     esac
     value=$(printf '%s' "$encoded" | base64 -d) || {
@@ -186,7 +186,7 @@ if [[ ! -f $env_file ]]; then
     printf 'MAX_UPLOAD_BYTES=20971520\nSTORAGE_QUOTA_BYTES=536870912\nFETCH_MAX_CHARS=50000\n'
     printf 'SQLITE_BUSY_TIMEOUT_MS=30000\nCACHE_MAX_ENTRIES=10000\nCACHE_MAX_BYTES=67108864\n'
     printf 'SEARCH_TIMEOUT_SECONDS=15\nSEARCH_MAX_BYTES=2097152\nFETCH_MAX_BYTES=5242880\n'
-    printf 'SEARCH_PROXY_URL=\n'
+    printf 'WEBTOOL_PROXY_URL=\n'
     printf 'LOG_LEVEL=INFO\n'
   } >"$env_file" || {
     echo "Cannot create $env_file. Use a writable server path for REMOTE_ENV_FILE." >&2

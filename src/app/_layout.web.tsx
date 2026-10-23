@@ -25,7 +25,7 @@ export default function WebLayout() {
   });
   return <>
     <Head><title>Matrius · 自由对话</title><meta name="description" content="一个安静、自由的 AI 对话空间。" /><link rel="stylesheet" href={`/vendor/katex/${katexVersion}/katex.min.css`} /></Head>
-    <AuthProvider key={preview ? 'mock' : 'local'} preview={preview}><LocalWorkspace preview={preview}><AppFrame>
+    <AuthProvider key={preview ? 'mock' : 'local'} preview={preview}><LocalWorkspace preview={preview}><AppFrame admin={pathname === '/admin'}>
       {fullPage ? <Slot /> : <Workspace><Slot /></Workspace>}
       {/* Inside the themed shell and above every route, including full-page settings. */}
       <BackgroundNotifications />
