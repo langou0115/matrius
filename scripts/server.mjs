@@ -12,8 +12,6 @@ import modelProxy from './model-proxy.cjs';
  * Environment:
  *   PORT | HOST                      listen address (default 8081 / 0.0.0.0)
  *   MATRIUS_STATIC_DIR               static root (default ./dist)
- *   MATRIUS_PROXY_ALLOW_HOSTS        comma-separated provider host allowlist
- *   MATRIUS_PROXY_ALLOW_PRIVATE=1    allow relay targets on private networks
  */
 
 const { handleModelProxy } = modelProxy;

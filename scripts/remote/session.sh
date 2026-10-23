@@ -6,13 +6,9 @@ umask 077
 workspace=${1:-$HOME/.matrius-remote}
 env_file=${2:-}
 export PUBLIC_URL=${3:?Missing public URL}
-initialize=${4:-0}
-publish=${5:-0}
-migrate=${6:-0}
-app_port=${7:-}
-api_port=${8:-}
-https_port=${9:-}
-for flag in "$initialize" "$publish" "$migrate"; do [[ $flag == 0 || $flag == 1 ]] || exit 1; done
+app_port=${4:-}
+api_port=${5:-}
+https_port=${6:-}
 for entry in "APP_PORT:$app_port" "API_PORT:$api_port" "APP_HTTPS_PORT:$https_port"; do
   name=${entry%%:*}; value=${entry#*:}
   [[ -z $value ]] && continue
@@ -70,6 +66,26 @@ set_env_value() {
   mv -f -- "$temp" "$env_file"
 }
 
+# Application settings from .env.local (session lifetime, limits, search proxy)
+# override the generated server defaults. Empty values are never sent.
+apply_app_env() {
+  local key encoded value
+  [[ -n $app_env_payload ]] || return 0
+  while IFS=' ' read -r key encoded || [[ -n $key ]]; do
+    [[ -n $key && -n $encoded ]] || {
+      echo 'Invalid application setting frame.' >&2; return 1; }
+    case $key in
+      AUTH_SESSION_TTL_SECONDS|MAX_UPLOAD_BYTES|STORAGE_QUOTA_BYTES|FETCH_MAX_CHARS|SQLITE_BUSY_TIMEOUT_MS|CACHE_MAX_ENTRIES|CACHE_MAX_BYTES|SEARCH_TIMEOUT_SECONDS|SEARCH_MAX_BYTES|FETCH_MAX_BYTES|SEARCH_PROXY_URL|LOG_LEVEL) ;;
+      *) echo "Unsupported application setting: $key" >&2; return 1 ;;
+    esac
+    value=$(printf '%s' "$encoded" | base64 -d) || {
+      echo "Cannot decode $key." >&2; return 1; }
+    [[ $value != *$'\n'* && $value != *$'\r'* ]] || {
+      echo "$key must be on one line." >&2; return 1; }
+    set_env_value "$key" "$value"
+  done <<<"$app_env_payload"
+}
+
 apply_ports() {
   local key value
   for key in APP_PORT API_PORT APP_HTTPS_PORT; do
@@ -89,14 +105,8 @@ apply_ports() {
 [[ -n $env_file ]] || env_file=$workspace/production.env
 admin_file=$workspace/initial-admin.txt
 fresh=0
-docker volume inspect matrius_prod_postgres_data >/dev/null 2>&1 || fresh=1
+docker volume inspect matrius_prod_api_data >/dev/null 2>&1 || fresh=1
 
-if [[ $initialize == 0 && (! -f $env_file || $fresh == 1) ]]; then
-  echo 'Server is not initialized. Run npm run deploy -- --init first.' >&2
-  exit 1
-fi
-
-announced_admin=0
 export REMOTE_SOURCE_DIR=$workspace/source
 mkdir -p "$REMOTE_SOURCE_DIR"
 cd "$REMOTE_SOURCE_DIR"
@@ -109,6 +119,7 @@ printf '@@MATRIUS_REMOTE_READY\n'
 IFS=' ' read -r action first second || { echo 'Missing sync frame.' >&2; exit 1; }
 admin_user=''
 admin_password=''
+app_env_payload=''
 if [[ $action == CRED ]]; then
   [[ $first == - ]] || admin_user=$(printf '%s' "$first" | base64 -d)
   [[ $second == - ]] || admin_password=$(printf '%s' "$second" | base64 -d)
@@ -120,6 +131,11 @@ if [[ $action == CRED ]]; then
       echo 'Initial admin credentials are invalid.' >&2; exit 1;
     }
   fi
+  IFS=' ' read -r action first second || { echo 'Missing sync frame.' >&2; exit 1; }
+fi
+if [[ $action == ENV ]]; then
+  [[ $first == - ]] || app_env_payload=$(printf '%s' "$first" | base64 -d) || {
+    echo 'Invalid application setting frame.' >&2; exit 1; }
   IFS=' ' read -r action size || { echo 'Missing sync frame.' >&2; exit 1; }
 else
   size=$first
@@ -165,14 +181,12 @@ if [[ ! -f $env_file ]]; then
     printf 'CADDY_SITE_ADDRESS=\nAPP_BIND=0.0.0.0\nAPP_PORT=%s\nAPP_HTTPS_PORT=%s\nAPI_PORT=%s\n' \
       "${app_port:-16666}" "${https_port:-8443}" "${api_port:-16667}"
     printf 'APP_URL=%s\n' "$PUBLIC_URL"
-    printf 'POSTGRES_DB=matrius\nPOSTGRES_USER=matrius\nPOSTGRES_PASSWORD=%s\n' "$(random_secret)"
-    printf 'REDIS_PASSWORD=%s\n' "$(random_secret)"
-    printf 'RUSTFS_ACCESS_KEY=%s\n' "$(random_secret)"
-    printf 'RUSTFS_SECRET_KEY=%s\n' "$(random_secret)"
-    printf 'RUSTFS_BUCKET=matrius\n'
     printf 'INITIAL_ADMIN_USERNAME=%s\nINITIAL_ADMIN_PASSWORD=%s\n' "$admin_user" "$admin_password"
-    printf 'AUTH_SESSION_TTL_SECONDS=604800\nPREVIEW_USERNAME=admin_test\n'
+    printf 'AUTH_SESSION_TTL_SECONDS=604800\n'
     printf 'MAX_UPLOAD_BYTES=20971520\nSTORAGE_QUOTA_BYTES=536870912\nFETCH_MAX_CHARS=50000\n'
+    printf 'SQLITE_BUSY_TIMEOUT_MS=30000\nCACHE_MAX_ENTRIES=10000\nCACHE_MAX_BYTES=67108864\n'
+    printf 'SEARCH_TIMEOUT_SECONDS=15\nSEARCH_MAX_BYTES=2097152\nFETCH_MAX_BYTES=5242880\n'
+    printf 'SEARCH_PROXY_URL=\n'
     printf 'LOG_LEVEL=INFO\n'
   } >"$env_file" || {
     echo "Cannot create $env_file. Use a writable server path for REMOTE_ENV_FILE." >&2
@@ -188,58 +202,96 @@ if [[ ! -f $env_file ]]; then
   else
     printf 'Initial admin: %s (password from .env.local)\n' "$admin_user" >&2
   fi
-  announced_admin=1
   fresh=1
 fi
 
-# Explicit local port overrides apply on every deployment; omitted ports retain server values.
+# Explicit local application settings and port overrides apply on every
+# deployment; omitted values retain the server configuration.
+apply_app_env
 apply_ports
+
+# The latest deployment owns the administrator password. Bootstrap reapplies
+# these values to the existing account on every start.
+if [[ -n $admin_user || -n $admin_password ]]; then
+  [[ -n $admin_user && -n $admin_password ]] || {
+    echo 'INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD must be set together.' >&2; exit 1;
+  }
+  set_env_value INITIAL_ADMIN_USERNAME "$admin_user"
+  set_env_value INITIAL_ADMIN_PASSWORD "$admin_password"
+fi
 
 base=(docker compose --project-name matrius-prod --project-directory "$REMOTE_SOURCE_DIR/docker-compose"
   --env-file "$env_file" -f "$REMOTE_SOURCE_DIR/docker-compose/docker-compose.yml")
+
+# A snapshot taken immediately before a migration is the rollback path: Alembic
+# can roll back code changes but not dropped or rewritten data. sqlite3's backup
+# API works on a live database and includes commits that are still in the WAL.
+# One-off containers work even if the API is down after a failed deployment.
+backup_database() {
+  local dir file
+  dir=$workspace/backups
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  file=$dir/matrius-$(date -u +%Y%m%dT%H%M%SZ).db
+  echo 'Backing up SQLite before migrating.' >&2
+  "${base[@]}" run -T --rm --no-deps --entrypoint rm api -f /data/backup-snapshot.db >/dev/null 2>&1 || true
+  if ! "${base[@]}" run -T --rm --no-deps --entrypoint python api -c '
+import os, sqlite3, sys
+path = "/data/matrius.db"
+if not os.path.exists(path):
+    sys.exit("database not found")
+source = sqlite3.connect(path)
+target = sqlite3.connect("/data/backup-snapshot.db")
+with target:
+    source.backup(target)
+source.close()
+target.close()
+' >&2; then
+    "${base[@]}" run -T --rm --no-deps --entrypoint rm api -f /data/backup-snapshot.db >/dev/null 2>&1 || true
+    echo 'Database backup failed; refusing to deploy.' >&2
+    return 1
+  fi
+  if ! "${base[@]}" run -T --rm --no-deps --entrypoint cat api /data/backup-snapshot.db >"$file" 2>/dev/null; then
+    "${base[@]}" run -T --rm --no-deps --entrypoint rm api -f /data/backup-snapshot.db >/dev/null 2>&1 || true
+    rm -f -- "$file"
+    echo 'Database backup could not be copied; refusing to deploy.' >&2
+    return 1
+  fi
+  "${base[@]}" run -T --rm --no-deps --entrypoint rm api -f /data/backup-snapshot.db >/dev/null 2>&1 || true
+  if [[ ! -s $file ]]; then
+    rm -f -- "$file"
+    echo 'Database backup is empty; refusing to deploy.' >&2
+    return 1
+  fi
+  # Keep the ten most recent snapshots.
+  { ls -1t "$dir"/matrius-*.db 2>/dev/null || true; } | tail -n +11 \
+    | while IFS= read -r old; do rm -f -- "$old"; done
+  printf 'Database backup: %s\n' "$file" >&2
+  printf 'Restore: stop the API container, replace matrius.db inside the api_data volume\n' >&2
+  printf 'with %s, then start the API again.\n' "$file" >&2
+}
 
 bash scripts/remote/health.sh --validate "$env_file" >&2
 
 # Build from the complete uploaded source; Docker caches unchanged layers.
 "${base[@]}" build web api >&2
-if [[ $initialize == 1 ]]; then
-  echo 'Initializing server infrastructure.' >&2
-fi
-# Compose preserves unchanged containers and applies server-side configuration changes.
-"${base[@]}" up -d --wait --wait-timeout 180 postgres redis rustfs openserp >&2
 
-if [[ $initialize == 1 || $migrate == 1 ]]; then
-  echo 'Applying reviewed database migrations.' >&2
-  if [[ $fresh == 1 ]]; then
-    # Credentials from .env.local win over an auto-generated file. Pass them
-    # through the environment so they never appear in the server process list.
-    bootstrap_user=${admin_user:-$(env_value INITIAL_ADMIN_USERNAME)}; bootstrap_user=${bootstrap_user:-admin}
-    bootstrap_password=${admin_password:-$(env_value INITIAL_ADMIN_PASSWORD)}
-    if [[ -z $bootstrap_password ]]; then
-      bootstrap_password=$(random_secret)
-      printf 'username=%s\npassword=%s\n' "$bootstrap_user" "$bootstrap_password" >"$admin_file"
-      chmod 600 "$admin_file"
-      if [[ $announced_admin == 0 ]]; then
-        printf 'Initial admin: %s / %s\n' "$bootstrap_user" "$bootstrap_password" >&2
-        printf 'Saved to %s (mode 600). Change the password after first login.\n' "$admin_file" >&2
-      fi
-    elif [[ $announced_admin == 0 ]]; then
-      printf 'Initial admin: %s (existing password kept)\n' "$bootstrap_user" >&2
-      printf 'username=%s\npassword=%s\n' "$bootstrap_user" "$bootstrap_password" >"$admin_file"
-      chmod 600 "$admin_file"
-    fi
-    env INITIAL_ADMIN_USERNAME="$bootstrap_user" INITIAL_ADMIN_PASSWORD="$bootstrap_password" \
-      "${base[@]}" run -T --rm --no-deps migrate </dev/null >&2
-  else
-    "${base[@]}" run -T --rm --no-deps migrate </dev/null >&2
-  fi
+# Every deployment migrates, so keep a snapshot of existing data first.
+if [[ $fresh == 0 ]]; then
+  backup_database
 fi
+
+# The API entrypoint runs Alembic, the schema check and bootstrap before uvicorn.
+# Force recreation so an unchanged image still applies migrations and refreshes
+# the administrator password from the latest deployment. --remove-orphans retires
+# containers from the previous multi-service topology.
+"${base[@]}" up -d --wait --wait-timeout 180 --remove-orphans --force-recreate api >&2
 
 # Replace application containers when their baked image changes.
 "${base[@]}" up -d --no-deps web api >&2
 caddy_digest=$(sha256sum docker-compose/Caddyfile | cut -d' ' -f1)
 applied_caddy_digest=$(cat "$workspace/caddy-config.sha256" 2>/dev/null || true)
-if [[ $initialize == 1 || $caddy_digest != "$applied_caddy_digest" ]]; then
+if [[ $caddy_digest != "$applied_caddy_digest" ]]; then
   # Compose detects port/image/environment changes, but cannot detect changed bind-mounted contents.
   "${base[@]}" up -d --no-deps --force-recreate caddy >&2
 else
@@ -254,12 +306,5 @@ fi
 
 printf '%s\n' "$caddy_digest" >"$workspace/caddy-config.sha256.tmp"
 mv -f -- "$workspace/caddy-config.sha256.tmp" "$workspace/caddy-config.sha256"
-
-if [[ $publish == 1 ]]; then
-  # Publish only the registry baked into the verified API image.
-  docker run --rm --network none --user 0:0 --entrypoint python \
-    -v matrius_feature_releases:/releases \
-    matrius-api:local -m app.features.release >&2
-fi
 
 printf '@@MATRIUS_REMOTE_SYNCED\n'

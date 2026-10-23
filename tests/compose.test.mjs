@@ -12,33 +12,33 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let dockerAvailable = true;
 try { await execute('docker', ['compose', 'version']); } catch { dockerAvailable = false; }
 
-for (const custom of [false, true]) {
-  test(`Compose ${custom ? 'custom' : 'default'} service ports agree across commands, clients, health checks and discovery`, { skip: !dockerAvailable }, async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), 'matrius-compose-'));
-    t.after(() => rm(directory, { recursive: true, force: true }));
-    const envFile = join(directory, 'test.env');
-    await writeFile(envFile, '');
-    const ports = custom ? [15432, 16379, 19000, 17000] : [5432, 6379, 9000, 7000];
-    const names = ['POSTGRES_PORT', 'REDIS_PORT', 'RUSTFS_PORT', 'OPENSERP_PORT'];
-    const env = { ...process.env, POSTGRES_PASSWORD: 'fixture', REDIS_PASSWORD: 'fixture',
-      RUSTFS_ACCESS_KEY: 'fixture', RUSTFS_SECRET_KEY: 'fixture',
-      ...Object.fromEntries(names.map((name, index) => [name, custom ? String(ports[index]) : ''])) };
-    const { stdout } = await execute('docker', ['compose', '--project-directory', join(root, 'docker-compose'),
-      '--env-file', envFile, '-f', join(root, 'docker-compose/docker-compose.yml'), 'config', '--format', 'json'], { env });
-    const { services } = JSON.parse(stdout);
-    for (const [index, name] of ['postgres', 'redis', 'rustfs', 'openserp'].entries()) {
-      assert.equal(services[name].labels['io.matrius.dev.port'], String(ports[index]));
-      assert(!services[name].ports?.length, `${name} must not publish host ports`);
-      assert(services[name].healthcheck.test.join(' ').includes(String(ports[index])), `${name} health check port`);
-    }
-    assert.deepEqual(services.postgres.command, ['postgres', '-p', String(ports[0])]);
-    assert.equal(services.redis.command[services.redis.command.indexOf('--port') + 1], String(ports[1]));
-    assert.equal(services.rustfs.environment.RUSTFS_ADDRESS, `0.0.0.0:${ports[2]}`);
-    assert.equal(services.openserp.command.at(-1), String(ports[3]));
-    assert(services.api.environment.DATABASE_URL.includes(`@postgres:${ports[0]}/`));
-    assert.equal(services.migrate.environment.DATABASE_URL, services.api.environment.DATABASE_URL);
-    assert(services.api.environment.REDIS_URL.includes(`@redis:${ports[1]}/`));
-    assert.equal(services.api.environment.RUSTFS_ENDPOINT, `http://rustfs:${ports[2]}`);
-    assert.equal(services.api.environment.OPENSERP_URL, `http://openserp:${ports[3]}`);
-  });
-}
+test('Compose runs exactly caddy, web and api on one network with one data volume', { skip: !dockerAvailable }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'matrius-compose-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const envFile = join(directory, 'test.env');
+  await writeFile(envFile, 'APP_PORT=16666\nAPI_PORT=16667\nAPP_HTTPS_PORT=8443\n'
+    + 'CADDY_SITE_ADDRESS=\nINITIAL_ADMIN_USERNAME=admin\nINITIAL_ADMIN_PASSWORD=fixture\n');
+  const { stdout } = await execute('docker', ['compose', '--project-directory', join(root, 'docker-compose'),
+    '--env-file', envFile, '-f', join(root, 'docker-compose/docker-compose.yml'), 'config', '--format', 'json']);
+  const config = JSON.parse(stdout);
+  assert.deepEqual(Object.keys(config.services).sort(), ['api', 'caddy', 'web']);
+  for (const removed of ['migrate', 'postgres', 'redis', 'rustfs', 'openserp']) {
+    assert.equal(config.services[removed], undefined, `${removed} must be removed`);
+  }
+  assert.deepEqual(Object.keys(config.networks), ['edge']);
+  assert.equal(config.networks.edge.name, 'matrius_prod_edge');
+  assert.deepEqual(Object.keys(config.volumes).sort(), ['api_data', 'caddy_config', 'caddy_data']);
+  assert.equal(config.volumes.api_data.name, 'matrius_prod_api_data');
+
+  const api = config.services.api;
+  assert.equal(api.environment.DATABASE_URL, 'sqlite+aiosqlite:////data/matrius.db');
+  assert.equal(api.environment.DATA_DIR, '/data');
+  assert.deepEqual(api.volumes, [{ type: 'volume', source: 'api_data', target: '/data', volume: {} }]);
+  assert.equal(api.depends_on, undefined);
+  assert(api.healthcheck.start_period.endsWith('s'));
+  for (const removed of ['POSTGRES_PASSWORD', 'REDIS_URL', 'RUSTFS_ENDPOINT', 'OPENSERP_URL']) {
+    assert.equal(api.environment[removed], undefined, `${removed} must be gone`);
+  }
+  assert.equal(config.services.caddy.depends_on.api.condition, 'service_healthy');
+  assert.equal(config.services.caddy.depends_on.web.condition, 'service_healthy');
+});

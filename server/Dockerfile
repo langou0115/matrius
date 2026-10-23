@@ -23,12 +23,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
+COPY scripts/entrypoint.sh ./scripts/entrypoint.sh
 
-RUN useradd --create-home --uid 10001 matrius \
-    && chown -R matrius:matrius /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 matrius \
+    && mkdir -p /data/files \
+    && chmod +x /app/scripts/entrypoint.sh \
+    && chown -R matrius:matrius /app /data
 
-USER matrius
-
+# The entrypoint starts as root to fix volume ownership, then drops to matrius.
 EXPOSE 8000
+
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]

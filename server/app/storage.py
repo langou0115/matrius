@@ -1,73 +1,76 @@
-import logging
-import threading
+"""Filesystem-backed object storage rooted at ``DATA_DIR/files``.
 
-import boto3
-from botocore.client import Config
-from botocore.exceptions import ClientError
+Replaces the previous S3/RustFS client. Object keys are relative POSIX paths,
+validated so they can never escape the storage root.
+"""
+
+import logging
+import os
+import tempfile
+from pathlib import Path, PurePosixPath
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_client = None
-_bucket_ready = False
-_lock = threading.Lock()
+
+def storage_root() -> Path:
+    return Path(get_settings().data_dir).expanduser().resolve() / "files"
 
 
-def get_s3_client():
-    global _client
-    if _client is None:
-        settings = get_settings()
-        _client = boto3.client(
-            "s3",
-            endpoint_url=settings.rustfs_endpoint,
-            aws_access_key_id=settings.rustfs_access_key,
-            aws_secret_access_key=settings.rustfs_secret_key,
-            region_name=settings.rustfs_region,
-            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
-        )
-    return _client
+def ensure_storage() -> Path:
+    root = storage_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
-def ensure_bucket() -> None:
-    global _bucket_ready
-    if _bucket_ready:
-        return
-    with _lock:
-        if _bucket_ready:
-            return
-        bucket = get_settings().rustfs_bucket
-        client = get_s3_client()
-        try:
-            client.head_bucket(Bucket=bucket)
-        except ClientError:
-            client.create_bucket(Bucket=bucket)
-        _bucket_ready = True
+def _target(key: str) -> Path:
+    if not isinstance(key, str) or not key or "\x00" in key or "\\" in key:
+        raise ValueError("Invalid storage key")
+    relative = PurePosixPath(key)
+    if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
+        raise ValueError("Invalid storage key")
+    root = storage_root()
+    target = (root / relative).resolve()
+    if target != root and root not in target.parents:
+        raise ValueError("Storage key escapes the data directory")
+    return target
 
 
 def check_storage() -> None:
-    ensure_bucket()
+    root = ensure_storage()
+    descriptor, probe = tempfile.mkstemp(prefix=".probe-", dir=root)
+    os.close(descriptor)
+    os.unlink(probe)
 
 
 def put_object(key: str, data: bytes, content_type: str) -> None:
-    ensure_bucket()
-    get_s3_client().put_object(
-        Bucket=get_settings().rustfs_bucket,
-        Key=key,
-        Body=data,
-        ContentType=content_type,
-        ContentLength=len(data),
-    )
+    """Write atomically so readers never observe a partial file."""
+    target = _target(key)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".upload-", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
 
 
-def get_object(key: str):
-    ensure_bucket()
-    return get_s3_client().get_object(Bucket=get_settings().rustfs_bucket, Key=key)
+def get_object(key: str) -> bytes:
+    return _target(key).read_bytes()
 
 
 def delete_object(key: str) -> None:
-    ensure_bucket()
     try:
-        get_s3_client().delete_object(Bucket=get_settings().rustfs_bucket, Key=key)
-    except ClientError:
-        logger.warning("Unable to delete storage object %s", key, exc_info=True)
+        _target(key).unlink()
+    except FileNotFoundError:
+        pass
+    except ValueError:
+        logger.warning("Refusing to delete invalid storage key %r", key)

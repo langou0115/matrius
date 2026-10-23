@@ -17,11 +17,11 @@ Matrius 是一个轻量、多用户、可自行部署的 AI 对话应用。
 * **客户端：** React Native + Expo / TypeScript（Android、iOS、Web）
 * **客户端存储：** Web 使用浏览器 IndexedDB；App 后续使用手机本地数据库，优先评估 Expo SQLite
 * **后端：** Python 3.12 + FastAPI + SQLAlchemy 2 / Alembic
-* **数据库：** PostgreSQL 16
+* **数据库：** SQLite（WAL 模式，单服务器单实例）
 * **Agent Runtime：** 客户端本地运行，负责上下文、循环、工具调度与取消
-* **限流与短期缓存：** Redis 7
-* **联网搜索 / 网页提取：** OpenSERP
-* **文件存储：** RustFS（S3 兼容）
+* **限流与短期缓存：** API 进程内存（单 worker）
+* **联网搜索 / 网页提取：** DuckDuckGo + Bing、trafilatura
+* **文件存储：** 服务器本地文件系统（`DATA_DIR/files`）
 * **文档处理：** pypdf、python-docx、openpyxl、python-pptx；其他文件按纯文本读取
 
 产品定位是通用的 AI 对话应用，不是编码 Agent 产品。
@@ -107,7 +107,7 @@ Matrius 是一个轻量、多用户、可自行部署的 AI 对话应用。
 4. 本地模式：BYOK 配置与安全存储
 5. 客户端本地 Agent Runtime：对话循环、状态、取消与消息持久化
 6. 后端：认证、管理员、会话/消息、账号数据、文件、搜索与网页读取
-7. 后端：Redis 限流/缓存、Docker Compose、SSH 远程更新与健康检查
+7. 后端：进程内限流/缓存、SQLite 与本地文件存储、Caddy / Web / API 三容器 Compose、远程发布与健康检查
 ```
 
 下一步：
@@ -137,4 +137,4 @@ Matrius 是一个轻量、多用户、可自行部署的 AI 对话应用。
 
 ## 账号功能逐步开放
 
-同一地址、同一套前后端，按已认证账号开放功能。新功能默认 preview，仅 `admin_test` 可以看见和调用；通过验证后逐项标为 stable，由手动 CD 发布给其他已登录账号。权限集中在功能清单，前端隐藏入口、后端独立校验，不引入角色权限系统。当前登录只用于功能权限，云端数据启用与一次性导入仍待实现。规则见[认证文档](auth.md#同一地址的账号功能开关)。
+同一地址、同一套前后端，按已认证账号开放功能。新功能默认 preview，仅 `admin_test` 可以看见和调用；通过验证后逐项标为 stable，下次部署时对已登录账号生效。权限集中在功能清单，前端隐藏入口、后端独立校验，不引入角色权限系统。当前登录只用于功能权限，云端数据启用与一次性导入仍待实现。规则见[认证文档](auth.md#同一地址的账号功能开关)。

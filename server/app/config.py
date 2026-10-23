@@ -11,24 +11,30 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     log_level: str = "INFO"
 
-    database_url: str = "postgresql+asyncpg://matrius:matrius@localhost:5432/matrius"
-    redis_url: str = "redis://localhost:6379/0"
+    # Everything persistent lives in DATA_DIR. The default is repo-local so a
+    # plain `uv run` works without Docker; production mounts /data.
+    database_url: str = "sqlite+aiosqlite:///./.data/dev.db"
+    data_dir: str = "./.data"
+    sqlite_busy_timeout_ms: int = 30000
 
-    rustfs_endpoint: str = "http://localhost:9000"
-    rustfs_access_key: str = ""
-    rustfs_secret_key: str = ""
-    rustfs_bucket: str = "matrius"
-    rustfs_region: str = "us-east-1"
+    # In-process cache and rate limiting. Exactly one uvicorn worker may run,
+    # because this state is not shared between processes.
+    cache_max_entries: int = 10000
+    cache_max_bytes: int = 64 * 1024 * 1024
 
-    openserp_url: str = "http://localhost:7000"
-    openserp_proxy_url: str = ""
-    openserp_proxy_tag: str = ""
+    search_timeout_seconds: int = 15
+    search_max_bytes: int = 2 * 1024 * 1024
+    search_proxy_url: str = ""
+    search_user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 Matrius/0.1"
+    )
+    fetch_max_bytes: int = 5 * 1024 * 1024
 
     auth_session_ttl_seconds: int = 604800
     initial_admin_username: str = ""
     initial_admin_password: str = ""
     preview_username: str = "admin_test"
-    feature_releases_file: str = "/app/releases/features.json"
 
     max_upload_bytes: int = 20 * 1024 * 1024
     storage_quota_bytes: int = 512 * 1024 * 1024

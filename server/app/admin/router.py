@@ -12,10 +12,10 @@ from app.auth.dependencies import AuthContext, client_ip, require_admin
 from app.auth.router import _authenticate, _issue_session, user_out
 from app.auth.schemas import LoginRequest, LoginResponse, UserOut
 from app.auth.security import hash_password
+from app.cache import enforce_rate_limit
 from app.db import get_db
 from app.errors import AppError, not_found
 from app.models import User
-from app.redis import enforce_rate_limit
 from app.utils import utcnow
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])

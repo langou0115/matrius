@@ -1,6 +1,4 @@
-import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from app.config import get_settings
@@ -15,8 +13,8 @@ class Feature:
     stage: Literal["preview", "stable"] = "preview"
 
 
-# Register new functionality here as preview. Promote individual entries to stable
-# in the reviewed commit deployed by CD; publishing does not promote everything.
+# Register new functionality here as preview. Promoting an entry to stable ships it
+# to every account with the next deployment.
 FEATURES = {
     "labs": Feature("labs", "实验功能", "提前体验正在验证的新功能。"),
 }
@@ -27,12 +25,7 @@ def enabled_features(user: User) -> list[str]:
         return []
     settings = get_settings()
     preview_user = user.username.casefold() == settings.preview_username.casefold()
-    try:
-        value = json.loads(Path(settings.feature_releases_file).read_text())
-        released = {key for key in value if isinstance(key, str)} if isinstance(value, list) else set()
-    except (OSError, ValueError):
-        released = set()
     return [
         key for key, feature in FEATURES.items()
-        if preview_user or (feature.stage == "stable" and key in released)
+        if preview_user or feature.stage == "stable"
     ]

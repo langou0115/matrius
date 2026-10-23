@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Back up the data behind the production Compose stack.
 #
-# Back up data, not containers: PostgreSQL, RustFS objects and the
-# environment file are the only irreplaceable state. Containers and images can
-# be rebuilt from the repository.
+# Back up data, not containers: the SQLite database, uploaded files inside the
+# api_data volume and the environment file are the only irreplaceable state.
+# Containers and images can be rebuilt from the repository.
 #
 # Run on the server as root or a user with Docker access. Install it root-owned so a compromised
 # deploy user cannot change what root executes:
@@ -15,14 +15,17 @@
 #
 # Store a copy off the server. BACKUP_REMOTE is passed to rsync; set it to a
 # mounted backup disk or a remote rsync target.
+#
+# Restore: stop the stack, restore sqlite-<time>.db to /data/matrius.db in the
+# api_data volume, extract files-<time>.tar.gz into /data, then start the stack.
 set -euo pipefail
 umask 077
 
 env_file=${PRODUCTION_ENV_FILE:-/etc/matrius/remote.env}
 backup_dir=${BACKUP_DIR:-/var/backups/matrius}
 keep_days=${BACKUP_KEEP_DAYS:-14}
-postgres_container=${POSTGRES_CONTAINER:-matrius-postgres}
-rustfs_volume=${RUSTFS_VOLUME:-matrius_prod_rustfs_data}
+api_image=${API_IMAGE:-matrius-api:local}
+api_volume=${API_VOLUME:-matrius_prod_api_data}
 backup_remote=${BACKUP_REMOTE:-}
 
 fail() {
@@ -33,64 +36,60 @@ fail() {
 command -v docker >/dev/null 2>&1 || fail 'docker is not installed'
 docker info >/dev/null 2>&1 || fail 'cannot access the Docker daemon; run as root or join the docker group'
 [[ -f $env_file ]] || fail "missing environment file: $env_file"
-
-env_value() {
-  local key=$1 line value
-  while IFS= read -r line; do
-    line=${line%$'\r'}
-    [[ $line =~ ^[[:space:]]*# ]] && continue
-    [[ $line =~ ^[[:space:]]*$ ]] && continue
-    if [[ $line == "$key="* ]]; then
-      value=${line#*=}
-      if [[ $value == \"*\" && $value == *\" ]]; then
-        value=${value:1:${#value}-2}
-      elif [[ $value == \'*\' && $value == *\' ]]; then
-        value=${value:1:${#value}-2}
-      fi
-      printf '%s' "$value"
-      return 0
-    fi
-  done <"$env_file"
-  return 1
-}
-
-postgres_db=$(env_value POSTGRES_DB || true)
-postgres_user=$(env_value POSTGRES_USER || true)
-postgres_db=${postgres_db:-matrius}
-postgres_user=${postgres_user:-matrius}
+docker image inspect "$api_image" >/dev/null 2>&1 \
+  || fail "missing API image: $api_image (deploy once with npm run deploy)"
+docker volume inspect "$api_volume" >/dev/null 2>&1 \
+  || fail "missing API volume: $api_volume"
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 
-printf 'Backing up PostgreSQL (%s/%s) ...\n' "$postgres_user" "$postgres_db"
-postgres_dump=$backup_dir/postgres-$timestamp.dump
-if ! docker exec "$postgres_container" \
-  pg_dump -U "$postgres_user" -d "$postgres_db" -Fc >"$postgres_dump"; then
-  rm -f "$postgres_dump"
-  fail 'pg_dump failed'
-fi
-[[ -s $postgres_dump ]] || {
-  rm -f "$postgres_dump"
-  fail 'pg_dump produced an empty file'
-}
-printf '  %s\n' "$postgres_dump"
+# sqlite3.Connection.backup takes a consistent snapshot even while the API is
+# writing, and includes rows still sitting in the WAL. The volume stays
+# read-write because opening a WAL database may need to create -shm/-wal files.
+printf 'Backing up SQLite (%s) ...\n' "$api_volume"
+sqlite_backup=$backup_dir/sqlite-$timestamp.db
+if ! docker run --rm --entrypoint python \
+  -v "$api_volume:/data" \
+  -v "$backup_dir:/backup" \
+  -e SNAPSHOT="/backup/$(basename "$sqlite_backup")" \
+  "$api_image" -c '
+import os
+import sqlite3
 
-printf 'Backing up RustFS volume %s ...\n' "$rustfs_volume"
-rustfs_archive=$backup_dir/rustfs-$timestamp.tar.gz
+source = sqlite3.connect("/data/matrius.db")
+target = sqlite3.connect(os.environ["SNAPSHOT"])
+with target:
+    source.backup(target)
+source.close()
+target.close()
+'; then
+  rm -f "$sqlite_backup"
+  fail 'SQLite snapshot failed'
+fi
+[[ -s $sqlite_backup ]] || {
+  rm -f "$sqlite_backup"
+  fail 'SQLite snapshot is empty'
+}
+printf '  %s\n' "$sqlite_backup"
+
+printf 'Backing up uploaded files in %s ...\n' "$api_volume"
+files_archive=$backup_dir/files-$timestamp.tar.gz
 if ! docker run --rm \
-  -v "$rustfs_volume:/data:ro" \
+  -v "$api_volume:/data:ro" \
   -v "$backup_dir:/backup" \
   alpine:3.20 \
-  tar -czf "/backup/$(basename "$rustfs_archive")" -C /data .; then
-  rm -f "$rustfs_archive"
-  fail 'RustFS archive failed'
+  sh -c 'if [ -d /data/files ]; then tar -czf "/backup/$1" -C /data files; else tar -czf "/backup/$1" --files-from /dev/null; fi' \
+  _ "$(basename "$files_archive")"; then
+  rm -f "$files_archive"
+  fail 'File archive failed'
 fi
-[[ -s $rustfs_archive ]] || {
-  rm -f "$rustfs_archive"
-  fail 'RustFS archive is empty'
+[[ -s $files_archive ]] || {
+  rm -f "$files_archive"
+  fail 'File archive is empty'
 }
-printf '  %s\n' "$rustfs_archive"
+printf '  %s\n' "$files_archive"
 
 production_env=$backup_dir/production-env-$timestamp
 install -m 600 "$env_file" "$production_env"
@@ -98,7 +97,7 @@ printf '  %s\n' "$production_env"
 
 printf 'Removing backups older than %s days ...\n' "$keep_days"
 find "$backup_dir" -maxdepth 1 -type f \
-  \( -name 'postgres-*.dump' -o -name 'rustfs-*.tar.gz' -o -name 'production-env-*' \) \
+  \( -name 'sqlite-*.db' -o -name 'files-*.tar.gz' -o -name 'production-env-*' \) \
   -mtime +"$keep_days" -delete
 
 if [[ -n $backup_remote ]]; then

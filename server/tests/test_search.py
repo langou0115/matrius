@@ -1,0 +1,210 @@
+import hashlib
+
+import pytest
+
+from app import cache
+from app.errors import AppError
+from app.tools import search
+
+DUCKDUCKGO_HTML = """
+<html><body>
+  <div class="result results_links">
+    <a class="result__a"
+       href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.python.org%2F3%2F&amp;rut=abc">Python Docs</a>
+    <a class="result__snippet"> The official <b>Python</b> documentation. </a>
+  </div>
+  <div class="result results_links">
+    <a class="result__a" href="https://example.com/direct">Direct result</a>
+    <div class="result__snippet">A direct link.</div>
+  </div>
+</body></html>
+"""
+
+DUCKDUCKGO_LITE = """
+<html><body><table>
+  <tr><td><a rel="nofollow" class="result-link" href="https://example.com/a">Example A</a></td></tr>
+  <tr><td class="result-snippet">Snippet for A.</td></tr>
+  <tr><td><a rel="nofollow" class="result-link" href="https://example.com/b">Example B</a></td></tr>
+  <tr><td class="result-snippet">Snippet for B.</td></tr>
+</table></body></html>
+"""
+
+BING_RSS = """
+<rss><channel>
+  <item><title>Bing Result</title><link>https://example.org/page</link>
+    <description>Some   spaced description</description></item>
+  <item><title>Second</title><link>https://example.net/other</link><description>Other</description></item>
+</channel></rss>
+"""
+
+
+class FakeClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+def test_duckduckgo_html_parser_unwraps_redirects_and_reads_snippets():
+    results = search._parse_duckduckgo(DUCKDUCKGO_HTML)
+    assert [item["url"] for item in results] == ["https://docs.python.org/3/", "https://example.com/direct"]
+    assert results[0]["title"] == "Python Docs"
+    assert results[0]["snippet"] == "The official Python documentation."
+    assert results[0]["engine"] == "duckduckgo"
+    assert [item["rank"] for item in results] == [1, 2]
+
+
+def test_duckduckgo_lite_parser_reads_the_snippet_row():
+    results = search._parse_duckduckgo_lite(DUCKDUCKGO_LITE)
+    assert [(item["title"], item["url"], item["snippet"]) for item in results] == [
+        ("Example A", "https://example.com/a", "Snippet for A."),
+        ("Example B", "https://example.com/b", "Snippet for B."),
+    ]
+
+
+def test_bing_rss_parser_collapses_whitespace():
+    results = search._parse_bing_rss(BING_RSS)
+    assert [(item["title"], item["url"], item["snippet"]) for item in results] == [
+        ("Bing Result", "https://example.org/page", "Some spaced description"),
+        ("Second", "https://example.net/other", "Other"),
+    ]
+    assert all(item["engine"] == "bing" for item in results)
+
+
+def test_duckduckgo_unwrapping_only_touches_redirect_paths():
+    assert search._unwrap_duckduckgo(
+        "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F%3Fq%3D1"
+    ) == "https://example.com/?q=1"
+    assert search._unwrap_duckduckgo("https://example.com/keep") == "https://example.com/keep"
+
+
+def test_normalization_rejects_non_web_results_and_strips_tracking():
+    result = search._normalize_result({
+        "type": "organic",
+        "url": "https://www.example.com/page?utm_source=feed&id=1",
+        "title": "  Title   with space ",
+        "snippet": "Snippet",
+        "engine": "duckduckgo",
+        "rank": 4,
+    }, 0)
+    assert result == {
+        "title": "Title with space",
+        "url": "https://www.example.com/page?id=1",
+        "snippet": "Snippet",
+        "domain": "example.com",
+        "engine": "duckduckgo",
+        "rank": 4,
+    }
+    assert search._normalize_result({"type": "ads", "url": "https://example.com"}, 0) is None
+    assert search._normalize_result({"url": "ftp://example.com/file"}, 0) is None
+
+
+def test_dedupe_merges_engines_and_prefers_https():
+    merged = search._dedupe([
+        {"title": "Short", "url": "http://example.com/a", "snippet": "", "domain": "example.com",
+         "engine": "duckduckgo", "rank": 3},
+        {"title": "A longer title", "url": "https://example.com/a/", "snippet": "More detail",
+         "domain": "example.com", "engine": "bing", "rank": 1},
+    ])
+    assert merged == [{
+        "title": "A longer title",
+        "url": "https://example.com/a/",
+        "snippet": "More detail",
+        "domain": "example.com",
+        "engine": "bing,duckduckgo",
+        "rank": 1,
+    }]
+
+
+def test_diverse_selection_defers_repeated_domains():
+    results = [
+        {"title": "A1", "url": "https://a.com/1", "snippet": "", "domain": "a.com", "engine": "ddg", "rank": 1},
+        {"title": "A2", "url": "https://a.com/2", "snippet": "", "domain": "a.com", "engine": "ddg", "rank": 2},
+        {"title": "A3", "url": "https://a.com/3", "snippet": "", "domain": "a.com", "engine": "ddg", "rank": 3},
+        {"title": "B1", "url": "https://b.com/1", "snippet": "", "domain": "b.com", "engine": "ddg", "rank": 4},
+    ]
+    assert [item["title"] for item in search._select_diverse(results, 4)] == ["A1", "A2", "B1", "A3"]
+    assert [item["title"] for item in search._select_diverse(results, 2)] == ["A1", "A2"]
+
+
+async def test_search_degrades_when_one_provider_fails(monkeypatch):
+    monkeypatch.setattr(search, "_client", FakeClient)
+
+    async def duckduckgo(_client, _query):
+        return [
+            {"type": "organic", "url": "http://example.com/a", "title": "A", "snippet": "",
+             "engine": "duckduckgo", "rank": 1},
+            {"type": "organic", "url": "https://example.org/b", "title": "B", "snippet": "",
+             "engine": "duckduckgo", "rank": 2},
+        ]
+
+    async def bing(_client, _query):
+        raise RuntimeError("bing is unavailable")
+
+    monkeypatch.setattr(search, "_duckduckgo", duckduckgo)
+    monkeypatch.setattr(search, "_bing", bing)
+
+    results = await search.web_search("python", 5)
+    assert [item["title"] for item in results] == ["A", "B"]
+    assert results[0]["url"] == "http://example.com/a"
+
+
+async def test_search_uses_the_in_process_cache(monkeypatch):
+    calls = 0
+
+    async def duckduckgo(_client, _query):
+        nonlocal calls
+        calls += 1
+        return [{"type": "organic", "url": "https://example.com/a", "title": "A", "snippet": "",
+                 "engine": "duckduckgo", "rank": 1}]
+
+    async def bing(_client, _query):
+        return []
+
+    monkeypatch.setattr(search, "_client", FakeClient)
+    monkeypatch.setattr(search, "_duckduckgo", duckduckgo)
+    monkeypatch.setattr(search, "_bing", bing)
+
+    first = await search.web_search("cached query", 3)
+    assert calls == 1
+    assert await cache.cache_get(search_cache_key("cached query", 3)) is not None
+
+    def fail_client():
+        raise AssertionError("providers must not run on a cache hit")
+
+    monkeypatch.setattr(search, "_client", fail_client)
+    assert await search.web_search("cached query", 3) == first
+    assert calls == 1
+
+
+def search_cache_key(query: str, limit: int) -> str:
+    return "matrius:search:" + hashlib.sha256(f"{query}|{limit}".encode()).hexdigest()
+
+
+async def test_search_fails_with_502_only_when_every_provider_fails(monkeypatch):
+    monkeypatch.setattr(search, "_client", FakeClient)
+
+    async def failing(_client, _query):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(search, "_duckduckgo", failing)
+    monkeypatch.setattr(search, "_bing", failing)
+    with pytest.raises(AppError) as raised:
+        await search.web_search("anything", 3)
+    assert raised.value.status_code == 502
+    assert raised.value.code == "upstream_error"
+
+
+async def test_search_with_no_usable_results_is_empty_not_an_error(monkeypatch):
+    monkeypatch.setattr(search, "_client", FakeClient)
+
+    async def duckduckgo(_client, _query):
+        return [{"type": "ads", "url": "https://example.com/ad"}]
+
+    async def bing(_client, _query):
+        return [{"type": "organic", "url": "ftp://example.com/file"}]
+
+    monkeypatch.setattr(search, "_duckduckgo", duckduckgo)
+    monkeypatch.setattr(search, "_bing", bing)
+    assert await search.web_search("nothing usable", 3) == []

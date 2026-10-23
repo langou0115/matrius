@@ -14,12 +14,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthContext, read_rate_limit, write_rate_limit
+from app.cache import enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError, invalid, not_found
 from app.files.parsing import TEXT_EXTENSIONS
 from app.models import Conversation, StoredFile
-from app.redis import enforce_rate_limit
 from app.storage import delete_object, get_object, put_object
 from app.utils import to_ms, validate_client_id
 
@@ -54,12 +54,7 @@ def safe_filename(filename: str) -> str:
 
 
 def read_object_bytes(key: str) -> bytes:
-    response = get_object(key)
-    body = response["Body"]
-    try:
-        return body.read()
-    finally:
-        body.close()
+    return get_object(key)
 
 
 async def get_owned_file(db: AsyncSession, user_id: uuid.UUID, file_id: uuid.UUID) -> StoredFile:

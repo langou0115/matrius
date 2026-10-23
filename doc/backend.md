@@ -11,15 +11,16 @@
     │
     ├── REST /api/* ──────────────→ FastAPI
     │                                 ├── 认证、校验、限流
-    │                                 ├── PostgreSQL（事实源）
-    │                                 ├── Redis（限流、缓存）
-    │                                 ├── RustFS（文件内容）
-    │                                 └── OpenSERP（搜索、网页提取）
+    │                                 ├── SQLite（事实源，/data/matrius.db）
+    │                                 ├── 本地文件（/data/files）
+    │                                 ├── 进程内缓存与限流
+    │                                 └── DuckDuckGo / Bing（搜索）、trafilatura（网页提取）
     │
     └── /api/model-proxy/* ──────→ 现有 Node 模型中继 → 模型服务商
 ```
 
 - 服务端**不运行 Agent Loop**，不保存流式中间态，也不保管模型 API key。
+- API 必须以**单个 uvicorn worker** 运行：缓存和限流是进程内状态，多 worker 会各自计数。单进程不妨碍并发，模型代理、搜索与抓取都是 async I/O。
 - 云端模式下服务端是唯一事实源；客户端不再把新会话写入本地持久化，断网时不能读取历史。
 - 本地模式仍使用浏览器 IndexedDB，与后端无关。
 - 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；原生端使用 Bearer token。
@@ -29,15 +30,15 @@
 ```text
 app/main.py             应用装配、请求 ID/日志、CORS、异常映射
 app/config.py           pydantic-settings
-app/db.py               async engine / get_db
-app/redis.py            连接、滑动窗口限流、登录锁定、缓存
-app/storage.py          RustFS（boto3, path-style）与 bucket 初始化
+app/db.py               async engine / get_db / SQLite PRAGMA
+app/cache.py            进程内缓存、滑动窗口限流、登录锁定
+app/storage.py          本地文件存储（DATA_DIR/files）
 app/auth/               密码哈希、Bearer 会话、鉴权依赖、普通登录
 app/admin/              管理员登录与用户管理
 app/conversations/      会话、消息、已读状态、keyset 分页
 app/account/            偏好、画像、画像字段、记忆、存量导入
 app/files/              上传、下载、删除、配额、文本提取
-app/tools/              OpenSERP 搜索、URL 校验、网页读取、文件读/grep
+app/tools/              搜索、URL 校验、网页读取、文件读/grep
 app/models/             SQLAlchemy 表
 alembic/                迁移
 tests/                  集成测试（内存 SQLite）
@@ -60,7 +61,7 @@ POST /api/auth/login  { username, password }
 - 管理员使用独立入口 `POST /api/admin/auth/login`，只能签发 admin scope；普通接口同时接受 user 与 admin token，管理员接口要求 admin scope。
 - `must_change_password=true` 时只有 `me`、改密和登出可用，其余接口返回 403。
 - 密码使用 Argon2id，允许 1–256 个字符；新密码不能与当前密码相同。
-- 登录按 IP（10/分钟）和用户名（5/分钟）限流；连续失败 15 次锁定 15 分钟。Redis 不可用时登录 fail-closed（503）。
+- 登录按 IP（10/分钟）和用户名（5/分钟）限流；连续失败 15 次锁定 15 分钟。计数在进程内，API 重启后清零。
 
 ### 初始化与管理员
 
@@ -196,11 +197,11 @@ DELETE /api/files/{id}
 
 - 单文件默认 20 MiB，每用户默认 512 MiB；并发上传解析限制为 2。
 - 白名单：文本/代码/Markdown/CSV、图片、PDF、DOCX、XLSX、PPTX。
-- 对象键 `users/{userId}/{fileId}/{safeName}`；先写 RustFS 再写数据库，数据库失败时补偿删除对象。
+- 对象键 `users/{userId}/{fileId}/{safeName}`；内容写入 `DATA_DIR/files`（生产为 `/data/files`），先写文件再写数据库，数据库失败时补偿删除对象。写入使用临时文件 + `os.replace` 原子替换。
 - 下载先校验归属；设置 `X-Content-Type-Options: nosniff`，非图片使用 `Content-Disposition: attachment`。
 - 删除先删对象再删记录；文件随会话删除只置空 `conversation_id`。
 - 解析：PDF 用 pypdf；DOCX/XLSX/PPTX 用 python-docx/openpyxl/python-pptx；其他白名单文件按纯文本解码（UTF-8，失败时使用 charset-normalizer）。不做 OCR，不支持旧版 Office。
-- 单次提取上限 2,000,000 字符；解析结果缓存 Redis 1 小时。
+- 单次提取上限 2,000,000 字符；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
 
 ## 云端工具
 
@@ -210,9 +211,9 @@ DELETE /api/files/{id}
 POST /api/tools/search { query, limit? (1-20, 默认 10) }
 ```
 
-- OpenSERP `/mega/search`：`engines=duckduckgo,bing,baidu`、`mode=any`、`merge=false`、`dedupe=true`。
+- 并行请求 DuckDuckGo HTML（失败回退 lite 端点）与 Bing RSS；单个来源失败时降级，全部失败返回 502。
 - 服务端规范化 URL、移除跟踪参数、去重、每域最多 2 条；标题截断 280 字符，摘要 640 字符。
-- 结果缓存 5 分钟，并发 4，超时 45 秒。
+- 结果缓存在进程内 5 分钟，并发 4，单来源超时 `SEARCH_TIMEOUT_SECONDS`（默认 15 秒），响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。可选 `SEARCH_PROXY_URL` 走上游代理。
 
 ### 网页读取
 
@@ -221,8 +222,9 @@ POST /api/tools/fetch { url, mode? (fast|full) }
 ```
 
 - 先做 SSRF 校验：仅 http/https、禁止 URL 凭据、禁止 localhost/私网/链路本地/ULA/组播，DNS 解析后要求所有地址 `is_global`。
-- 再调用 OpenSERP `/extract`（`clean=true`、`use_llms_txt=true`），返回 title/url/text，文本截断 `FETCH_MAX_CHARS`。
-- OpenSERP 位于独立 `search` 网络，无法直接访问 PostgreSQL/RustFS。DNS 重绑定仍有残余风险，生产环境应在主机或云防火墙限制 OpenSERP 的出站网段。
+- 手动跟随最多 5 次重定向，每一跳都用 `urljoin` 后重新校验，防止重定向到内网；非文本类型返回 422。
+- 流式读取并按 `FETCH_MAX_BYTES`（默认 5 MiB）截断；`trafilatura` 提取正文（`fast` 偏 precision，`full` 偏 recall 并包含表格），失败时回退 lxml 纯文本。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`。
+- 生产环境仍建议在主机或云防火墙限制 API 容器的出站网段，缩小 SSRF 与 DNS 重绑定的残余风险。
 
 ### 文件读取
 
@@ -246,12 +248,12 @@ POST /api/tools/files/grep { fileId, pattern, context?, maxMatches? }
 | 搜索/网页读取 | 用户 30/分钟，并发 4 |
 | 文件 read/grep | 用户 60/分钟 |
 
-Redis 不可用时除登录外 fail-open 并记录告警。
+计数保存在 API 进程内，重启后清零；只影响频率限制，不影响账号与数据隔离。
 
 ## 健康检查与日志
 
 - `GET /api/health`：数据库探活；成功 `{"service":"matrius","status":"ok"}`。远程发布与容器健康检查使用此接口。
-- `GET /api/health/ready`：并行检查数据库、Redis、RustFS、OpenSERP；任一失败返回 503 与 `checks`。
+- `GET /api/health/ready`：并行检查 `database`、`schema`（数据库 revision 与镜像 head 一致）、`cache`、`storage`；任一失败返回 503 与 `checks`。
 - 日志为 JSON，包含 request id、user id、方法、路径、状态、耗时；不记录 Authorization、token、消息正文或文件内容。
 - 响应头 `X-Request-ID` 可用于和服务端日志对照。
 
@@ -275,11 +277,13 @@ files
 - 角色、状态、反馈、标题来源、已读状态均有 CHECK。
 - 用户删除级联业务数据；会话删除级联消息；文件随会话删除仅置空关联。
 
-结构变更必须走 Alembic，并在空 PostgreSQL 上验证全部迁移可执行。
+生产数据库是单文件 SQLite（`/data/matrius.db`），启用 WAL、`foreign_keys=ON`、`busy_timeout`（默认 30 秒）和 `synchronous=NORMAL`。它只支持单机单实例：写事务串行化，`with_for_update()` 在 SQLite 上不生效，因此业务事务要保持短小，文件 I/O 不放在数据库事务内。需要多实例或高写入并发时应换回 PostgreSQL。
+
+结构变更必须走 Alembic，并在空 SQLite 上验证全部迁移可执行；API 启动时运行 `alembic upgrade head` 和 `alembic check`。
 
 ## 账号功能开关
 
-认证返回的 `UserOut` 增加 `features: string[]`，登录响应与 `/api/auth/me` 动态计算。清单位于 `app/features/registry.py`，preview 仅 `PREVIEW_USERNAME`（默认 admin_test）开放；stable 且已记录到最近成功发布清单的功能对所有已认证且完成首次改密的用户开放。部署时 FEATURE_RELEASES_FILE 固定指向只读卷中的 `/app/releases/features.json`，清单缺失或非法时不向普通账号开放。`require_feature(id)` 必须用于新增受控接口，账号停用或会话撤销后不能继续调用。
+认证返回的 `UserOut` 增加 `features: string[]`，登录响应与 `/api/auth/me` 动态计算。清单位于 `app/features/registry.py`，preview 仅 `admin_test` 开放；stage 为 stable 的功能对所有已认证且完成首次改密的用户开放，部署成功后立即生效。`require_feature(id)` 必须用于新增受控接口，账号停用或会话撤销后不能继续调用。
 
 - `GET /api/features`：返回当前账号可用的功能元数据。
 - `GET /api/features/labs`：受 labs 功能校验的实验页数据；匿名 401、无功能权限 403。

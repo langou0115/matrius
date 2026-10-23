@@ -46,7 +46,7 @@
 
 不同步：模型 API key、认证令牌、BYOK 服务商配置、`selectedId`/`titleModelId`、草稿、引用草稿、滚动位置、`activeId`、`sidebarOpen`、`chatVisible`、Runtime 状态。
 
-文件内容始终在 RustFS，云端保存的只是元数据与 `fileId` 引用。
+文件内容始终在服务器本地（生产为 `/data/files`，开发为 `server/.data/files`），数据库只保存元数据与 `fileId` 引用。
 
 ### 并发与删除
 
@@ -73,9 +73,9 @@
 
 ---
 
-## PostgreSQL
+## SQLite
 
-PostgreSQL 是云端模式持久数据的唯一事实来源，保存：
+SQLite 是云端模式持久数据的唯一事实来源：生产为 `/data/matrius.db`，开发为 `server/.data/dev.db`。保存：
 
 ```text
 users, auth_sessions
@@ -85,9 +85,11 @@ user_profiles, user_profile_fields, user_preferences
 file metadata
 ```
 
-结构变更使用 Alembic 迁移，并应在空 PostgreSQL 上验证全部迁移可执行。
+生产启用 WAL、`foreign_keys=ON`、`busy_timeout`（默认 30 秒）和 `synchronous=NORMAL`。它只支持单机、单实例、单 uvicorn worker；写事务串行化，业务事务要保持短小，文件 I/O 不放在数据库事务内。
 
-不要把上传文件的二进制内容存进 PostgreSQL。
+结构变更使用 Alembic 迁移，并应在临时空 SQLite 上验证全部迁移可执行；部署时 API 入口会运行 `alembic upgrade head` 和 `alembic check`。
+
+不要把上传文件的二进制内容存进 SQLite。
 
 ### 服务端表结构注意事项
 
@@ -95,14 +97,14 @@ file metadata
 - 会话、消息、记忆、文件都有 `revision`（从 1 开始，每次修改 +1），用于乐观并发。
 - `client_id` 只用于存量导入与请求幂等，唯一约束为 `(user_id, client_id)`；主键仍是 UUID。
 - 不保存墓碑；删除直接执行，会话删除级联消息。
-- 消息 `position` 在会话行锁内分配，`(conversation_id, position)` 唯一。
+- 消息 `position` 在同一个写事务内取 `max(position)+1`，`(conversation_id, position)` 唯一。
 - 只读或追加消息时才改变排序时间；修改标题、置顶或已读状态不改变会话在列表中的位置。
 
 ---
 
-## Redis
+## 进程内缓存
 
-Redis 只用于临时和运行时数据：
+API 进程内存只保存临时和运行时数据：
 
 ```text
 搜索结果缓存（5 分钟）
@@ -111,16 +113,16 @@ Redis 只用于临时和运行时数据：
 滑动窗口限流
 ```
 
-不要把 Redis 当作主要的持久化数据库。Agent Runtime 的循环状态与可恢复进度由客户端本地管理，不存放在 Redis 中推进。
+这些状态随进程重启清零，因此 API 必须单 worker 运行。不要把它当作持久化数据库；Agent Runtime 的循环状态与可恢复进度仍由客户端本地管理。
 
 ---
 
-## RustFS
+## 本地文件存储
 
-RustFS 保存上传文件的实际内容，**仅云端模式可用**。对象键为 `users/{userId}/{fileId}/{safeName}`；单文件默认 20 MiB，每用户配额默认 512 MiB。上传类型白名单、解析与读取限制见[后端架构](backend.md)。
+上传文件的实际内容写在 `DATA_DIR/files`：生产为 `/data/files`（与 `matrius.db` 同在 `matrius_prod_api_data` 卷），开发为 `server/.data/files`。**仅云端模式可用**。对象键为 `users/{userId}/{fileId}/{safeName}`；单文件默认 20 MiB，每用户配额默认 512 MiB。上传类型白名单、解析与读取限制见[后端架构](backend.md)。
 
 ```text
-PostgreSQL
+SQLite（matrius.db）
 └── 文件元数据
     ├── id
     ├── userId
@@ -129,11 +131,11 @@ PostgreSQL
     ├── contentType
     └── size
 
-RustFS
+DATA_DIR/files
 └── 文件二进制内容
 ```
 
-读取或删除文件前必须验证归属。`objectKey` 可以带用户目录前缀，但目录前缀不能替代数据库归属校验。
+写入使用临时文件 + `os.replace` 原子替换，并拒绝越出根目录的键。读取或删除文件前必须验证归属；`objectKey` 的用户目录前缀不能替代数据库归属校验。
 
 ---
 

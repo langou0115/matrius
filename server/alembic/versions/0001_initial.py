@@ -16,7 +16,7 @@ down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-NOW = sa.text("now()")
+NOW = sa.text("CURRENT_TIMESTAMP")
 
 
 def upgrade() -> None:
@@ -25,8 +25,8 @@ def upgrade() -> None:
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("username", sa.String(length=64), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
-        sa.Column("is_admin", sa.Boolean(), server_default=sa.text("false"), nullable=False),
-        sa.Column("must_change_password", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column("is_admin", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+        sa.Column("must_change_password", sa.Boolean(), server_default=sa.text("0"), nullable=False),
         sa.Column("disabled_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=NOW, nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=NOW, nullable=False),
@@ -57,7 +57,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("client_id", sa.String(length=128), nullable=True),
         sa.Column("title", sa.String(length=500), server_default="", nullable=False),
-        sa.Column("pinned", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column("pinned", sa.Boolean(), server_default=sa.text("0"), nullable=False),
         sa.Column("model_id", sa.String(length=200), nullable=True),
         sa.Column("title_source", sa.String(length=16), nullable=True),
         sa.Column("client_updated_at_ms", sa.BigInteger(), nullable=True),

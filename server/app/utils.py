@@ -18,7 +18,8 @@ def ensure_aware(value: datetime) -> datetime:
 
 
 def to_ms(value: datetime | None) -> int | None:
-    return int(value.timestamp() * 1000) if value is not None else None
+    # SQLite returns naive UTC values; ensure_aware prevents a local-time shift.
+    return int(ensure_aware(value).timestamp() * 1000) if value is not None else None
 
 
 def validate_client_id(value: str | None) -> str | None:

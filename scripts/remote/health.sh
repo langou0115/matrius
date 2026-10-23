@@ -48,22 +48,15 @@ validate_config() {
   validate_port APP_PORT "$APP_PORT"
   validate_port APP_HTTPS_PORT "$APP_HTTPS_PORT"
   validate_port API_PORT "$API_PORT"
-  validate_port POSTGRES_PORT "${POSTGRES_PORT:-5432}"
-  validate_port REDIS_PORT "${REDIS_PORT:-6379}"
-  validate_port RUSTFS_PORT "${RUSTFS_PORT:-9000}"
-  validate_port OPENSERP_PORT "${OPENSERP_PORT:-7000}"
   [[ $APP_BIND == 0.0.0.0 || $APP_BIND == 127.0.0.1 ]] \
     || fail 'APP_BIND must be 0.0.0.0 or 127.0.0.1.'
   [[ $CADDY_SITE_ADDRESS =~ ^(:80|([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(:[0-9]+)?)?$ ]] \
     || fail 'CADDY_SITE_ADDRESS must be empty, :80, or a hostname.'
 
-  local name value
-  for name in POSTGRES_PASSWORD REDIS_PASSWORD RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY; do
-    value=${!name:-}
-    [[ -n $value ]] || fail "$name is required."
-    [[ $value != change-me* ]] || fail "$name still contains the example value."
-  done
-  if [[ -n ${INITIAL_ADMIN_PASSWORD:-} && $INITIAL_ADMIN_PASSWORD == change-me* ]]; then
+  local user=${INITIAL_ADMIN_USERNAME:-} password=${INITIAL_ADMIN_PASSWORD:-}
+  [[ -n $user && -n $password ]] || [[ -z $user && -z $password ]] \
+    || fail 'INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD must be set together.'
+  if [[ -n $password && $password == change-me* ]]; then
     fail 'INITIAL_ADMIN_PASSWORD still contains the example value.'
   fi
 }

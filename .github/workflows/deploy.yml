@@ -2,11 +2,6 @@ name: Deploy Production
 
 on:
   workflow_dispatch:
-    inputs:
-      migrate:
-        description: Apply reviewed database migrations
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -45,7 +40,6 @@ jobs:
           REMOTE_WORKSPACE: ${{ vars.REMOTE_WORKSPACE }}
           SSH_PRIVATE_KEY: ${{ secrets.REMOTE_SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.REMOTE_SSH_KNOWN_HOSTS }}
-          APPLY_MIGRATIONS: ${{ inputs.migrate }}
         shell: bash
         run: |
           set -euo pipefail
@@ -57,6 +51,4 @@ jobs:
           unset SSH_PRIVATE_KEY SSH_KNOWN_HOSTS
           export REMOTE_SSH_KEY="$work_dir/key"
           export REMOTE_SSH_KNOWN_HOSTS="$work_dir/known_hosts"
-          args=(--publish)
-          if [[ "$APPLY_MIGRATIONS" == true ]]; then args+=(--migrate); fi
-          npm run deploy -- "${args[@]}"
+          npm run deploy

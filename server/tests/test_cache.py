@@ -1,0 +1,111 @@
+from types import SimpleNamespace
+
+import pytest
+
+from app import cache
+from app.errors import AppError
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(cache, "_now", lambda: now[0])
+    return now
+
+
+async def test_cache_entries_expire(clock):
+    await cache.cache_set("key", "value", ttl_seconds=30)
+    assert await cache.cache_get("key") == "value"
+    clock[0] += 29
+    assert await cache.cache_get("key") == "value"
+    clock[0] += 2
+    assert await cache.cache_get("key") is None
+
+
+async def test_zero_ttl_is_never_returned(clock):
+    await cache.cache_set("key", "value", ttl_seconds=0)
+    assert await cache.cache_get("key") is None
+
+
+async def test_cache_overwrites_and_tracks_bytes(monkeypatch):
+    settings = SimpleNamespace(cache_max_entries=100, cache_max_bytes=1000)
+    monkeypatch.setattr(cache, "get_settings", lambda: settings)
+    await cache.cache_set("key", "longer", ttl_seconds=60)
+    await cache.cache_set("key", "x", ttl_seconds=60)
+    assert await cache.cache_get("key") == "x"
+    assert cache._cache_bytes == len(b"x")
+    await cache.cache_set("key", "yy", ttl_seconds=60)
+    assert cache._cache_bytes == len(b"yy")
+
+
+async def test_cache_evicts_oldest_entries_when_full(monkeypatch):
+    settings = SimpleNamespace(cache_max_entries=2, cache_max_bytes=10_000)
+    monkeypatch.setattr(cache, "get_settings", lambda: settings)
+    for key in ("a", "b", "c"):
+        await cache.cache_set(key, key, ttl_seconds=60)
+    assert await cache.cache_get("a") is None
+    assert await cache.cache_get("b") == "b"
+    assert await cache.cache_get("c") == "c"
+
+
+async def test_cache_evicts_oldest_entries_over_the_byte_limit(monkeypatch):
+    settings = SimpleNamespace(cache_max_entries=100, cache_max_bytes=5)
+    monkeypatch.setattr(cache, "get_settings", lambda: settings)
+    await cache.cache_set("a", "1234", ttl_seconds=60)
+    await cache.cache_set("b", "5678", ttl_seconds=60)
+    assert await cache.cache_get("a") is None
+    assert await cache.cache_get("b") == "5678"
+    assert cache._cache_bytes == len(b"5678")
+
+
+async def test_rate_limit_allows_exactly_the_limit_then_resets(clock):
+    for _ in range(3):
+        await cache.enforce_rate_limit("chat", "user-a", 3)
+    with pytest.raises(AppError) as raised:
+        await cache.enforce_rate_limit("chat", "user-a", 3)
+    assert raised.value.status_code == 429
+    assert raised.value.code == "rate_limited"
+    assert raised.value.headers == {"Retry-After": "60"}
+
+    # Another identity has its own bucket.
+    await cache.enforce_rate_limit("chat", "user-b", 3)
+
+    clock[0] += 60
+    await cache.enforce_rate_limit("chat", "user-a", 3)
+
+
+async def test_login_lockout_after_fifteen_failures(clock):
+    for _ in range(cache.LOGIN_FAILURE_LIMIT - 1):
+        await cache.record_login_failure("Alice")
+        await cache.assert_login_not_locked("alice")
+    await cache.record_login_failure("Alice")
+    with pytest.raises(AppError) as raised:
+        await cache.assert_login_not_locked("alice")
+    assert raised.value.status_code == 429
+    assert raised.value.code == "login_locked"
+
+    clock[0] += cache.LOGIN_FAILURE_WINDOW_SECONDS + 1
+    await cache.assert_login_not_locked("alice")
+
+
+async def test_clear_login_failures_unlocks_the_account(clock):
+    for _ in range(cache.LOGIN_FAILURE_LIMIT):
+        await cache.record_login_failure("alice")
+    with pytest.raises(AppError):
+        await cache.assert_login_not_locked("alice")
+    await cache.clear_login_failures("ALICE")
+    await cache.assert_login_not_locked("alice")
+
+
+async def test_close_cache_clears_all_state():
+    await cache.cache_set("key", "value", ttl_seconds=60)
+    await cache.record_login_failure("alice")
+    await cache.enforce_rate_limit("chat", "alice", 5)
+    await cache.check_cache()
+    await cache.close_cache()
+    assert await cache.cache_get("key") is None
+    await cache.assert_login_not_locked("alice")
+    assert cache._cache == {}
+    assert cache._rate_windows == {}
+    assert cache._login_failures == {}
+    assert cache._cache_bytes == 0

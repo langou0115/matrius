@@ -19,8 +19,8 @@ export function canSync(path) {
   if (parts.some((part) => !part || part === '.' || part === '..')) return false;
   if (/[\r\n\0\\]/u.test(path)) return false;
   if (parts.some((part) => ['.git', '.ssh', '.aws', '.codex', '.agents', '.expo', '.remote',
-    'node_modules', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache', 'dist', 'web-build',
-    'ios', 'android'].includes(part))) return false;
+    'node_modules', '.venv', '.data', '__pycache__', '.pytest_cache', '.ruff_cache', 'dist',
+    'web-build', 'ios', 'android'].includes(part))) return false;
   if (path.startsWith('public/vendor/katex/') || path === '.remote-sync-manifest') return false;
   return !parts.some((part) => (part.startsWith('.env') && !part.endsWith('.example'))
     || /\.(?:pem|key|p12|p8|jks|db|sqlite|sqlite3|pyc|tsbuildinfo)$/iu.test(part)
@@ -74,14 +74,47 @@ export async function createArchive(directory, files, current, destination) {
   } finally { await rm(staging, { recursive: true, force: true }); }
 }
 
+// Application settings that are shared by local development and production.
+// When present in .env.local, deploy writes them into the server's production.env.
+export const APP_ENV_KEYS = [
+  'AUTH_SESSION_TTL_SECONDS', 'MAX_UPLOAD_BYTES', 'STORAGE_QUOTA_BYTES',
+  'FETCH_MAX_CHARS', 'SQLITE_BUSY_TIMEOUT_MS', 'CACHE_MAX_ENTRIES', 'CACHE_MAX_BYTES',
+  'SEARCH_TIMEOUT_SECONDS', 'SEARCH_MAX_BYTES', 'FETCH_MAX_BYTES', 'SEARCH_PROXY_URL', 'LOG_LEVEL',
+];
+
+export async function readEnvFile(path) {
+  try { return parseEnv(await readFile(path, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
+}
+
+// Deployment settings belong in docker-compose/.env.production; .env.local is
+// kept as an override for existing setups and for application settings.
+export async function loadDeployEnv(directory = root) {
+  return {
+    ...await readEnvFile(join(directory, 'docker-compose', '.env.production')),
+    ...await readEnvFile(join(directory, '.env.local')),
+  };
+}
+
+// One `KEY <base64 value>` line per override. Empty values are skipped so an
+// unset local key never rewrites the server configuration.
+export function appEnvOverrides(env) {
+  return APP_ENV_KEYS.flatMap((key) => {
+    const value = env[key];
+    if (value === undefined || value === '') return [];
+    if (/[\r\n\0]/u.test(value)) throw new Error(`${key} must be on one line.`);
+    return `${key} ${Buffer.from(value, 'utf8').toString('base64')}`;
+  }).join('\n');
+}
+
 export function validateConfig(env) {
   const user = (env.REMOTE_USER || '').trim();
   const host = (env.REMOTE_HOST || '').trim();
   if (!/^[A-Za-z0-9._-]+$/u.test(user)) {
-    throw new Error('Set REMOTE_USER to the SSH account in .env.local.');
+    throw new Error('Set REMOTE_USER to the SSH account in docker-compose/.env.production.');
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/u.test(host)) {
-    throw new Error('Set REMOTE_HOST to the server IP address in .env.local.');
+    throw new Error('Set REMOTE_HOST to the server IP address in docker-compose/.env.production.');
   }
   const envFile = env.REMOTE_ENV_FILE || '';
   if (envFile && (!envFile.startsWith('/') || /[\r\n]/u.test(envFile))) {
@@ -102,6 +135,9 @@ export function validateConfig(env) {
     }
     if (/[\r\n]/u.test(adminPassword)) {
       throw new Error('INITIAL_ADMIN_PASSWORD must be on one line.');
+    }
+    if (adminPassword.trim().toLowerCase() === 'change-me') {
+      throw new Error('INITIAL_ADMIN_PASSWORD is still "change-me". Set a real administrator password in .env.local.');
     }
   }
   if (env.REMOTE_SSH_PORT && (!/^\d+$/u.test(env.REMOTE_SSH_PORT)
@@ -124,43 +160,31 @@ export function validateConfig(env) {
 }
 
 export async function main({ args: cliArgs = process.argv.slice(2), env = process.env } = {}) {
-  const flags = new Set(cliArgs);
-  if (flags.has('--help')) {
-    console.log('npm run deploy [-- --check | --init | --publish | --migrate]\n'
-      + 'Copy .env.local.example to .env.local and configure SSH / public URL.\n'
-      + 'Default: sync source, build production Web/API images, health-check, then exit.\n'
-      + 'Images contain application code; Docker caches unchanged build layers.\n'
-      + 'Run --init first on a new server to create configuration, all containers and the database.\n'
-      + 'The default deployment does not change the released feature manifest.\n'
-      + '--check: validate local configuration and list source counts without SSH.\n'
-      + '--init: initialize all containers, apply migrations and bootstrap an empty database.\n'
-      + '--publish: deploy, then release this build\'s stable features after health checks pass.\n'
-      + '--migrate: explicitly apply reviewed database migrations before deploying.');
+  if (cliArgs.includes('--help')) {
+    console.log('npm run deploy\n'
+      + 'Copy docker-compose/.env.production.example to docker-compose/.env.production\n'
+      + 'and configure SSH / public ports there. .env.local supplies application\n'
+      + 'settings and the administrator password.\n'
+      + 'Syncs source, builds production Web/API images, applies migrations, refreshes\n'
+      + 'the administrator password, health-checks, then exits. The first deploy on a\n'
+      + 'new server initializes the data volume, database and containers automatically.\n'
+      + 'Stable features in the deployed code become available after health checks pass.');
     return;
   }
-  if ([...flags].some((flag) => !['--check', '--init', '--publish', '--migrate'].includes(flag))) {
-    throw new Error('Unknown option. Use --help.');
-  }
-  let fileEnv = {};
-  try { fileEnv = parseEnv(await readFile(join(root, '.env.local'), 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (cliArgs.length) throw new Error('npm run deploy takes no options. Use --help.');
+  const localEnv = await readEnvFile(join(root, '.env.local'));
+  const fileEnv = {
+    ...await readEnvFile(join(root, 'docker-compose', '.env.production')),
+    ...localEnv,
+  };
   const config = validateConfig({ ...fileEnv, ...env });
+  const appEnv = appEnvOverrides({ ...localEnv, ...env });
   const current = await snapshot(root);
   for (const required of ['package.json', 'package-lock.json', 'Dockerfile.web',
-    'docker-compose/docker-compose.yml', 'docker-compose/Caddyfile', 'server/app/main.py']) {
+    'docker-compose/docker-compose.yml', 'docker-compose/Caddyfile', 'server/app/main.py',
+    'server/scripts/entrypoint.sh']) {
     if (!current.has(required)) throw new Error(`Missing sync source: ${required}`);
   }
-  if (flags.has('--check')) {
-    const ports = [['APP_PORT', config.appPort], ['API_PORT', config.apiPort],
-      ['APP_HTTPS_PORT', config.httpsPort]]
-      .filter(([, value]) => value).map(([name, value]) => `${name}=${value}`);
-    console.log(`Configuration valid. ${current.size} source files; credentials and dependencies excluded.\n`
-      + `SSH: ${config.remoteSsh}\nRemote site: ${config.url}\n`
-      + `Ports: ${ports.length ? ports.join(', ') : 'server configuration defaults'}\n`
-      + `Initial admin: ${config.adminUser || 'generated by --init for an empty database'}\nNo server connection was made.`);
-    return;
-  }
-
   const args = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
     '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3'];
   if (config.REMOTE_SSH_PORT) args.push('-p', config.REMOTE_SSH_PORT);
@@ -169,8 +193,7 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
   const script = (await readFile(join(root, 'scripts/remote/session.sh'), 'utf8')).replaceAll('\r\n', '\n');
   const encoded = Buffer.from(script).toString('base64');
   const command = `bash -c "$(printf '%s' '${encoded}' | base64 -d)" -- `
-    + [config.workspace, config.envFile, config.url, flags.has('--init') ? '1' : '0',
-      flags.has('--publish') ? '1' : '0', flags.has('--migrate') ? '1' : '0',
+    + [config.workspace, config.envFile, config.url,
       config.appPort, config.apiPort, config.httpsPort].map(shellQuote).join(' ');
   console.log(`Connecting to ${config.remoteSsh}. Web/API will use the server's live data.`);
   const ssh = spawn('ssh', [...args, '--', config.remoteSsh, command], { env, stdio: ['pipe', 'pipe', 'inherit'] });
@@ -223,13 +246,12 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
     const synced = waitFor('@@MATRIUS_REMOTE_SYNCED');
     const encode = (value) => (value ? Buffer.from(value, 'utf8').toString('base64') : '-');
     ssh.stdin.write(`CRED ${encode(config.adminUser)} ${encode(config.adminPassword)}\n`);
+    ssh.stdin.write(`ENV ${encode(appEnv)}\n`);
     ssh.stdin.write(`SYNC ${payload.length}\n`);
     ssh.stdin.write(payload);
     frameSent = true;
     await synced;
-    console.log(flags.has('--publish')
-      ? `Published. ${config.url} (feature releases updated)`
-      : `Deployed. ${config.url} (feature releases unchanged)`);
+    console.log(`Deployed. ${config.url}`);
   } catch (error) {
     if (!aborted) throw error;
   } finally {

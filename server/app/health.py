@@ -1,16 +1,17 @@
 import asyncio
+import logging
 
-import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.config import get_settings
+from app.cache import check_cache
 from app.db import engine
-from app.redis import check_redis
+from app.schema import schema_status
 from app.storage import check_storage
 
 router = APIRouter(prefix="/api/health", tags=["health"])
+logger = logging.getLogger(__name__)
 
 
 async def _check_db() -> None:
@@ -18,10 +19,10 @@ async def _check_db() -> None:
         await connection.execute(text("SELECT 1"))
 
 
-async def _check_openserp() -> None:
-    async with httpx.AsyncClient(timeout=5) as client:
-        response = await client.get(f"{get_settings().openserp_url.rstrip('/')}/health")
-        response.raise_for_status()
+async def _check_schema() -> None:
+    ok, detail = await schema_status()
+    if not ok:
+        raise RuntimeError(detail)
 
 
 @router.get("")
@@ -30,6 +31,11 @@ async def health() -> JSONResponse:
         await asyncio.wait_for(_check_db(), timeout=5)
     except Exception:  # noqa: BLE001 - health must not leak internals
         return JSONResponse({"service": "matrius", "status": "error"}, status_code=503)
+    try:
+        await asyncio.wait_for(_check_schema(), timeout=5)
+    except Exception as error:  # noqa: BLE001 - keep the response generic, log the reason
+        logger.error("Database schema check failed: %s", error)
+        return JSONResponse({"service": "matrius", "status": "error"}, status_code=503)
     return JSONResponse({"service": "matrius", "status": "ok"})
 
 
@@ -37,9 +43,9 @@ async def health() -> JSONResponse:
 async def readiness() -> JSONResponse:
     checks = {
         "database": _check_db(),
-        "redis": check_redis(),
+        "schema": _check_schema(),
+        "cache": check_cache(),
         "storage": asyncio.to_thread(check_storage),
-        "search": _check_openserp(),
     }
     outcomes = await asyncio.gather(
         *(asyncio.wait_for(check, timeout=5) for check in checks.values()),

@@ -8,10 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import hash_token
+from app.cache import enforce_rate_limit
 from app.db import get_db
 from app.errors import AppError, unauthorized
 from app.models import AuthSession, User
-from app.redis import enforce_rate_limit
 from app.utils import ensure_aware, utcnow
 
 _bearer = HTTPBearer(auto_error=False)

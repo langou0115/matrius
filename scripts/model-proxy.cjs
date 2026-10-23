@@ -11,10 +11,9 @@
  *   x-matrius-target-origin: https://tokenhub.tencentmaas.com
  *     -> POST https://tokenhub.tencentmaas.com/v1/messages
  *
- * The relay is deliberately not an open proxy: by default it refuses credentials in the
- * target, loopback/private addresses and names, and (when configured) hosts outside
- * MATRIUS_PROXY_ALLOW_HOSTS. DNS answers are pinned for the actual request to close the
- * rebinding window between validation and connect.
+ * The relay is deliberately not an open proxy: it refuses credentials in the target,
+ * loopback/private addresses and names. DNS answers are pinned for the actual request to
+ * close the rebinding window between validation and connect.
  *
  * Used by both the Metro dev middleware (`metro.config.js`) and `server.mjs`.
  */
@@ -37,16 +36,6 @@ const HOP_BY_HOP = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
-
-function parseHostList(value) {
-  return String(value ?? '')
-    .split(',')
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-const allowHosts = parseHostList(process.env.MATRIUS_PROXY_ALLOW_HOSTS);
-const allowPrivate = process.env.MATRIUS_PROXY_ALLOW_PRIVATE === '1';
 
 function isPrivateIp(address) {
   const family = net.isIP(address);
@@ -105,8 +94,7 @@ function readTarget(req) {
   // URL#hostname keeps IPv6 brackets; DNS and net APIs want the bare address.
   const rawHostname = target.hostname.toLowerCase();
   const hostname = rawHostname.startsWith('[') && rawHostname.endsWith(']') ? rawHostname.slice(1, -1) : rawHostname;
-  if (allowHosts.length && !allowHosts.includes(hostname)) return { status: 403, message: 'Proxy target is not allowed.' };
-  if (!allowPrivate && (isLocalName(hostname) || (net.isIP(hostname) && isPrivateIp(hostname)))) {
+  if (isLocalName(hostname) || (net.isIP(hostname) && isPrivateIp(hostname))) {
     return { status: 403, message: 'Proxy target is not allowed.' };
   }
   return {
@@ -120,7 +108,7 @@ function readTarget(req) {
 }
 
 async function resolvePinnedAddress(hostname) {
-  if (allowPrivate || net.isIP(hostname)) return undefined;
+  if (net.isIP(hostname)) return undefined;
   const rows = await dns.promises.lookup(hostname, { all: true });
   if (!rows.length) throw new Error('DNS lookup failed');
   for (const row of rows) {

@@ -8,6 +8,7 @@ from app.admin import router as admin_router_module
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth.security import hash_password
+from app.cache import reset_cache
 from app.db import get_db
 from app.files import router as files_router_module
 from app.main import app
@@ -21,7 +22,8 @@ async def _noop(*args, **kwargs):
 
 
 @pytest.fixture(autouse=True)
-def disable_redis(monkeypatch):
+def disable_limits(monkeypatch):
+    reset_cache()
     for module in (
         admin_router_module,
         auth_router_module,
@@ -38,6 +40,8 @@ def disable_redis(monkeypatch):
 
     monkeypatch.setattr(tools_files_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(tools_files_module, "cache_set", _noop)
+    yield
+    reset_cache()
 
 
 @pytest.fixture

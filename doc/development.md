@@ -38,7 +38,7 @@ Web 使用 `web.output: single` 输出单页应用，支持运行时创建的 `/
 
 仓库内置零依赖的生产服务 `scripts/server.mjs`，执行 `npm run export:web && npm run serve` 即可同时托管 `dist/` 和同源模型中继 `/api/model-proxy`。静态回退规则与 Nginx 配置一致；SSE 响应直接透传，不做缓冲。可用 `PORT`、`HOST`、`MATRIUS_STATIC_DIR` 调整监听地址与产物目录。
 
-中继只接受带 `x-matrius-target-origin` 的 GET/POST，并默认拒绝回环、私网和链路本地目标；生产环境建议设置 `MATRIUS_PROXY_ALLOW_HOSTS=api.example.com,another.example.com` 限定允许的服务商主机。确需访问私网端点时再设置 `MATRIUS_PROXY_ALLOW_PRIVATE=1`。若改用 Nginx 等托管服务，需要额外代理 `/api/model-proxy/`，保留请求头并关闭响应缓冲（`proxy_buffering off`）以支持流式输出。
+中继只接受带 `x-matrius-target-origin` 的 GET/POST，并拒绝凭据、回环、私网和链路本地目标；DNS 解析结果会固定到实际连接，避免 DNS rebinding。若改用 Nginx 等托管服务，需要额外代理 `/api/model-proxy/`，保留请求头并关闭响应缓冲（`proxy_buffering off`）以支持流式输出。
 
 中继逻辑与服务器框架解耦，导出为 `handleModelProxy(req, res): boolean`。生产部署中它保留在 Web 容器，由 Caddy 将 `/api/model-proxy/*` 路由过去；FastAPI 不处理模型请求。例如 Express：
 
@@ -70,69 +70,80 @@ npx eas-cli@latest submit --platform ios
 
 ## 本机全栈开发：npm run dev
 
-Windows、macOS、Linux 均使用同一入口。本机安装 Node.js 24、npm、[uv](https://docs.astral.sh/uv/getting-started/installation/) 和 OpenSSH，执行一次 npm ci；uv 按 server/pyproject.toml 和 uv.lock 准备 Python 及依赖，不要求本机安装 Docker。
-
-复制根目录 .env.local.example 为 .env.local，填写 REMOTE_USER、REMOTE_HOST；非默认密钥、SSH 端口和 known_hosts 文件可通过 REMOTE_SSH_KEY、REMOTE_SSH_PORT、REMOTE_SSH_KNOWN_HOSTS 指定。首次手工连接并核对服务器指纹。
+Windows、macOS、Linux 使用同一入口。本机只需 Node.js 24、npm 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)；uv 按 `server/pyproject.toml` 和 `uv.lock` 自动准备 Python 3.12 及依赖。不需要 Docker、SSH、bash 或 WSL，也不会连接服务器。
 
 ```bash
 npm ci
-npm run dev -- --check       # 校验本机配置和工具，不连接服务器
-npm run dev                 # 常驻：SSH 隧道 + FastAPI reload + Expo Web
-npm run web                 # 仅本机前端与模型中继，不启动 API/隧道
+npm run dev -- --check       # 校验工具、端口与路径，不启动服务
+npm run dev                  # 常驻：FastAPI reload + Expo Web
+npm run web                  # 仅本机前端与模型中继
 ```
 
-dev 读取已运行的 matrius-postgres、matrius-redis、matrius-rustfs、matrius-openserp 容器地址和凭据，为四项服务建立仅监听本机 127.0.0.1 的 SSH 转发，不开放服务器数据端口。服务凭据仅保存在启动器内存并通过环境传给本机 API，不写入文件或日志。服务器首次初始化用 `npm run deploy -- --init`；dev 不创建容器、不迁移、不创建管理员。
+开发数据全部落在仓库内，且已被 `.gitignore` 排除：
 
-默认 Web 8081、API 8000，可在 .env.local 设置 DEV_WEB_PORT、DEV_API_PORT；四项服务的本机隧道端口自动选择。端口被占用时失败退出，不自动切到其他 Web/API 端口。Metro 先处理 /api/model-proxy，再把其余 /api/* 代理给本机 FastAPI，浏览器无需跨域配置。API 四项依赖的就绪检查通过后才启动 Expo；脚本不自动打开浏览器。
+```text
+server/.venv/            # uv 管理的 Python 环境
+server/.data/
+├── dev.db               # SQLite；WAL 模式会额外生成 dev.db-wal / dev.db-shm
+└── files/               # /api/files 写入的上传文件内容
+```
 
-命令持续挂起，前后端保存即热更新。Ctrl+C 清理本机进程树、隧道及临时功能清单；任何常驻子进程退出也会结束整个开发会话。云端基础服务和正式 Web/API 不受关闭动作影响。SSH 连接失效会结束会话，恢复网络后重新运行。
+浏览器自己的 IndexedDB 仍由浏览器管理，与 `server/.data` 是两套数据。
 
-启动阶段遇到 SSH 短暂断开时最多尝试三次；认证失败或主机密钥校验失败立即退出。隧道收到远端就绪确认、且 PostgreSQL 转发协议检查通过后才启动本机 API。运行期间断开会清理本机服务并显示具体退出原因。
+启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo Web。
 
-### 多台电脑共用云端环境
+开发管理员和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
 
-每台开发机安装 Node.js、uv、Git、OpenSSH 并运行 `npm ci`，各自复制 `.env.local.example` 为 `.env.local`，填写相同的 `REMOTE_USER`、`REMOTE_HOST`。在服务器部署账号的 `authorized_keys` 添加各台电脑自己的 SSH 公钥，并允许端口转发（例如 `restrict,port-forwarding`）；私钥保留在各自电脑。核对主机指纹后运行 `npm run dev`。开发电脑不运行 Docker Compose，四项基础服务仍由当前服务器的同一套 Compose 管理。
+开发环境下，如果库中已有同名管理员但密码与当前配置不一致，启动时会将其密码同步为配置值；正式环境不会修改已有管理员密码。
 
-`INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 只在首次部署到空库时创建管理员，不是 SSH 密码，也不是本机开发启动参数；已有账号直接在页面登录。不同电脑的浏览器本地对话和登录 token 仍按站点与浏览器隔离，当前未实现的对话云端存储不会因共用数据库自动生效。
+```bash
+npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再重新迁移
+```
 
-SSH 账号需要 Docker 权限以及本地 TCP 转发权限。若公钥含 restrict，维护者需显式增加 port-forwarding；服务端 sshd 也必须允许 AllowTcpForwarding local/yes，并且 PermitOpen 允许访问 Docker bridge 地址。脚本不会自动修改 SSH 权限。
+`--reset-db` 只删除 `server/.data/dev.db*` 和 `server/.data/files/`，不会碰其他文件。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
 
-本机 API 与正式 API 共用云端 PostgreSQL、Redis、RustFS、OpenSERP，写操作直接影响同一份服务端数据；开发代码和数据库迁移须兼容仍在运行的正式版本。浏览器 IndexedDB 按站点来源隔离，本机页面不会自动获得正式网页的本地对话或 token，当前尚未实现的对话云端存储仍保持原有产品边界。开发使用测试账号。若基础服务被重建、容器 IP 改变，重新运行 dev 即可发现新地址。
+默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`。端口被占用时失败退出，不自动切换。Metro 先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置。脚本不自动打开浏览器。
 
-运行中的正式 API 不作为本机 API 的调用目标。启动时读取其容器配置中的运行参数和已发布功能清单（停止的容器也可读取）；本机后端仍用自己代码里的功能 registry 执行权限校验。功能清单为启动时快照，发布后重启 dev 刷新。不复制服务端配置文件或管理员密码；正式 API 容器不存在时使用后端默认参数和空发布清单。
+命令持续挂起，前后端保存即热更新。Ctrl+C 清理本机进程树；任何常驻子进程退出也会结束整个开发会话。服务器和正式数据不受影响。
+
+### 多台电脑与数据隔离
+
+每台开发机独立安装 Node.js、npm、uv 并运行 `npm ci`；各自使用自己的 `server/.data`，数据不会在电脑之间同步，也不会与正式服务器共享。需要正式数据时，用 `scripts/backup.sh` 生成的快照在本地恢复，或重新登录后通过应用内导入。
+
+`INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 同时用于开发库和正式服务器；正式服务器以最近一次部署为准。浏览器 IndexedDB 和登录 token 仍按站点与浏览器隔离。
 
 ## 远程构建与部署：npm run deploy
 
 发布命令从原 npm run remote 更名为 npm run deploy。开发不再需要上传源码；只有正式发布才执行此命令。本机发布只需 Node.js、Git、OpenSSH、tar，不需要 Python 或 Docker。
 
+部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`SEARCH_PROXY_URL`、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改管理员密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
+
 ```bash
-npm run deploy -- --check             # 本机检查配置与同步范围
-npm run deploy                       # 上传源码、构建生产镜像、健康检查后退出
-npm run deploy -- --publish           # 健康检查后发布 stable 功能
-npm run deploy -- --publish --migrate # 显式执行已审查的数据库迁移
-npm run deploy -- --init              # 显式初始化全部容器、数据库和空库管理员
-npm run test:dev                      # 隧道配置、进程清理、API 代理回归
-npm run test:deploy                   # 源码上传、生产构建、发布门控、并发锁回归
+npm run deploy                       # 同步、构建、迁移、刷新管理员密码、健康检查后退出
+npm run test:dev                     # 本地配置、SQLite URL、重置数据、进程清理、API 代理回归
+npm run test:deploy                  # 源码上传、生产构建、自动初始化、并发锁回归
 npm run test:auth
 ```
 
-服务器运行完整 Compose：Caddy、Web、API 和四项基础服务。Web 用 Dockerfile.web 构建静态生产产物并运行 Node 模型中继，API 用 server/Dockerfile 内置的 Uvicorn 命令运行。源码直接复制进镜像，不挂载开发目录、不启动 Metro 或 reload；保留数据、功能发布清单和 Caddy 配置所需卷。每次发布都调用两个镜像的 build，由 Docker 复用未变化的层，应用镜像变化后替换对应容器。
+服务器只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite 数据库与上传文件）。Web 用 Dockerfile.web 构建静态生产产物并运行 Node 模型中继，API 用 server/Dockerfile 内置的入口脚本与单 worker Uvicorn 运行。源码直接复制进镜像，不挂载开发目录、不启动 Metro 或 reload；保留数据和 Caddy 配置所需卷。每次发布都调用两个镜像的 build，由 Docker 复用未变化的层，应用镜像变化后替换对应容器。
 
-新服务器必须先执行 `npm run deploy -- --init`，生成缺失的服务器 production.env，启动四项基础服务、执行迁移和空库管理员引导，再启动 Web/API 与 Caddy。普通 `deploy` 要求服务器配置及数据库卷已初始化，构建 Web/API 并由 Compose 应用整套服务的配置变化；未变化的容器保持运行，停止的服务会恢复，不自动执行迁移或创建管理员。REMOTE_WORKSPACE 默认仍为服务器 $HOME/.matrius-remote，以复用已有配置和数据；更名命令不会创建新数据卷。APP_PORT、API_PORT、APP_HTTPS_PORT 在每次部署时应用，未填写的端口保留服务器原值。Compose 根据端口、镜像及环境配置变化按需重建 Caddy；Caddyfile 内容变化时强制重建，健康检查通过后才记录已应用的文件摘要。配置未变化时保留原 Caddy 容器。INITIAL_ADMIN_* 只在空库初始化生效。不在本机对云端库执行迁移。
+`npm run deploy` 每次执行同一套流程：生成缺失的服务器 production.env（新服务器首次执行时）、备份现有数据库、构建 Web/API、执行迁移、刷新管理员密码、更新容器与 Caddy、健康检查。新服务器不需要单独初始化命令；首次执行会创建数据卷和空库管理员。API 每次重建，入口在启动 Uvicorn 前执行 `alembic upgrade head`、`alembic check` 和 `bootstrap`，因此迁移总是随之应用。运行时 `/api/health` 也会校验版本，不一致返回 503。REMOTE_WORKSPACE 默认仍为服务器 $HOME/.matrius-remote，以复用已有配置和数据；更名命令不会创建新数据卷。APP_PORT、API_PORT、APP_HTTPS_PORT 在每次部署时应用，未填写的端口保留服务器原值。Compose 根据端口、镜像及环境配置变化按需重建 Caddy；Caddyfile 内容变化时强制重建，健康检查通过后才记录已应用的文件摘要。配置未变化时保留原 Caddy 容器。INITIAL_ADMIN_* 以最近一次部署为准：每次部署都会写入服务器并更新该管理员密码，两个值留空时不动现有密码。不在本机对云端库执行迁移。
 
-同步包含未提交的新文件、修改和删除；排除密钥、.env、依赖、虚拟环境、构建产物、Git 元数据及符号链接。服务器会话锁防止两个发布同时覆盖源码。健康检查通过后才执行可选 --publish，并从本次构建的 API 镜像生成发布清单。默认不更改已发布功能。回退为切换到已验证提交后重新 deploy；数据库结构回退须另行评估。
+同步包含未提交的新文件、修改和删除；排除密钥、.env、依赖、虚拟环境、构建产物、Git 元数据及符号链接。服务器会话锁防止两个发布同时覆盖源码。健康检查通过即完成发布，代码中 stage=stable 的功能随即对所有账号开放。回退为切换到已验证提交后重新 deploy；数据库结构回退须另行评估。
 
-手动 CD 同样使用 npm run deploy -- --publish，不配置自动 CI。服务器准备、SSH 权限、备份见[服务器部署](deployment.md)。
+数据库已有数据时，每次部署都先用 SQLite backup API 生成一致性快照（包含 WAL 中已提交的事务）并复制到服务器 `<workspace>/backups/`（保留最近 10 份），备份失败或为空则中止。部署不再单独确认破坏性迁移，删表、删列等操作会随部署执行；发布前应在本地审查验证，备份是回退依据。迁移执行后运行 `alembic check`，模型与表结构不一致会中止发布。
+
+手动 CD 同样使用 npm run deploy，不配置自动 CI。服务器准备、SSH 权限、备份见[服务器部署](deployment.md)。
 
 ## 按账号开发新功能
 
-所有新增可见功能先登记到 `server/app/features/registry.py`（默认 preview），UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。用 `admin_test` 在本机页面验证，也可部署候选包到正式地址继续验证。验证后只把指定条目改为 stable，再通过手动 CD 或 `npm run deploy -- --publish` 发布。默认部署不更新已发布功能清单，因此即使同步了 stable 候选代码也不会提前向其他账号开放；只有 `--publish` 在健康检查通过后才更新清单。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
+所有新增可见功能先登记到 `server/app/features/registry.py`（默认 preview），UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。用 `admin_test` 在本机页面验证，也可部署候选包到正式地址继续验证。验证后只把指定条目改为 stable，再通过手动 CD 或 `npm run deploy` 发布；部署成功后这些功能即对所有账号开放。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
 
 账号登录当前仅用于功能权限，聊天仍保存在当前浏览器，不触发云端仓储切换或本地数据导入。会话仅保留在当前标签页，Mock 不使用真实账号。
 
 ## 后端与基础设施
 
-开发后端在本机运行并通过 SSH 借用云端四项基础服务；正式后端由 Compose 运行生产镜像。两者共用服务端数据，联调使用测试账号。
+开发后端由 `npm run dev` 在本机运行，使用本机 SQLite 与本地文件目录；正式后端由 Compose 运行生产镜像。两套数据完全分离，开发进程不会连接服务器。
 
 后端自动测试使用内存 SQLite，不依赖服务器。需要执行后端检查时安装 Python 开发依赖后运行：
 
@@ -143,7 +154,7 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest
 ```
 
-修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在专用空 PostgreSQL 上验证。仓库不配置自动 CI；日常部署用 `npm run deploy`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
+修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在临时空 SQLite 上验证全部迁移可执行（`server/tests/test_migrations.py` 覆盖这一点）。SQLite 的 `ALTER TABLE` 能力有限，Alembic 已启用 `render_as_batch`；重命名、删除列和收紧约束应拆成小步。仓库不配置自动 CI；日常部署用 `npm run deploy`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
 
 ## 验证与代码规则
 

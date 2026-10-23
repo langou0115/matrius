@@ -1,8 +1,6 @@
 from dataclasses import replace
 
-from app.config import get_settings
 from app.features.registry import FEATURES
-from app.features.release import publish
 from app.models import User
 from app.utils import utcnow
 
@@ -44,14 +42,13 @@ async def test_first_password_change_is_required_before_features(client, create_
     assert (await client.get("/api/auth/me", headers=headers)).json()["features"] == ["labs"]
 
 
-async def test_release_and_retraction_apply_to_existing_sessions(client, create_user, monkeypatch, tmp_path):
-    manifest = tmp_path / "features.json"
-    monkeypatch.setattr(get_settings(), "feature_releases_file", str(manifest))
+async def test_stable_features_apply_to_existing_sessions_without_a_separate_release(
+    client, create_user, monkeypatch
+):
     _, headers = await create_user()
     assert (await client.get("/api/features/labs", headers=headers)).status_code == 403
     preview = FEATURES["labs"]
     monkeypatch.setitem(FEATURES, "labs", replace(preview, stage="stable"))
-    publish(manifest)
     assert (await client.get("/api/auth/me", headers=headers)).json()["features"] == ["labs"]
     assert (await client.get("/api/features/labs", headers=headers)).status_code == 200
     monkeypatch.setitem(FEATURES, "labs", preview)
@@ -69,17 +66,11 @@ async def test_disabled_preview_account_loses_access(client, create_user, sessio
     assert (await client.get("/api/features/labs", headers=headers)).status_code == 401
 
 
-async def test_remote_does_not_promote_a_feature_until_successful_publication(
-    client, create_user, monkeypatch, tmp_path
-):
-    manifest = tmp_path / "releases" / "features.json"
-    monkeypatch.setattr(get_settings(), "feature_releases_file", str(manifest))
+async def test_stable_features_are_visible_to_regular_and_preview_accounts(client, create_user, monkeypatch):
     _, regular = await create_user("regular")
     _, preview = await create_user("admin_test")
-    monkeypatch.setitem(FEATURES, "labs", replace(FEATURES["labs"], stage="stable"))
     assert (await client.get("/api/features/labs", headers=regular)).status_code == 403
     assert (await client.get("/api/features/labs", headers=preview)).status_code == 200
-    publish(manifest)
+    monkeypatch.setitem(FEATURES, "labs", replace(FEATURES["labs"], stage="stable"))
     assert (await client.get("/api/features/labs", headers=regular)).status_code == 200
-    manifest.write_text('invalid-json')
-    assert (await client.get("/api/features/labs", headers=regular)).status_code == 403
+    assert (await client.get("/api/features/labs", headers=preview)).status_code == 200

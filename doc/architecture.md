@@ -13,13 +13,13 @@ React Native + Expo 客户端（Android / iOS / Web）
     ├── 本地模式 → 用户自带 key → 模型服务商（不注册云端工具）
     └── 云端模式 → REST /api/* → FastAPI（服务端是唯一事实源）
                         ├── 认证、校验、限流、CRUD
-                        ├── 搜索 / 网页读取 → OpenSERP
-                        └── 文件 → 解析器 / RustFS
+                        ├── 搜索 / 网页读取 → DuckDuckGo / Bing、trafilatura
+                        └── 文件 → 解析器 / DATA_DIR/files
     └── 模型中继 → /api/model-proxy/* → 现有 Node 中继 → 模型服务商
 
-PostgreSQL → 云端持久数据
-Redis      → 限流、登录锁定、短期缓存
-RustFS     → 上传文件内容
+SQLite        → 云端持久数据（/data/matrius.db）
+进程内缓存     → 限流、登录锁定、短期缓存（单 worker）
+本地文件       → 上传文件内容（/data/files）
 ```
 
 核心目标：
@@ -93,8 +93,8 @@ server/app/
 ├── admin/           # 管理员用户管理
 ├── conversations/   # 会话、消息、已读状态
 ├── account/         # 偏好、画像、记忆、存量导入
-├── files/           # RustFS、配额、文本提取
-├── tools/           # OpenSERP、URL 校验、文件读/grep
+├── files/           # 本地存储、配额、文本提取
+├── tools/           # 搜索、网页读取、URL 校验、文件读/grep
 └── models/          # SQLAlchemy 表
 ```
 

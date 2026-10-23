@@ -2,19 +2,22 @@ import asyncio
 import hashlib
 import json
 import logging
+import xml.etree.ElementTree as ET
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
+from charset_normalizer import from_bytes
+from lxml import html as lxml_html
 
+from app.cache import cache_get, cache_set
 from app.config import get_settings
 from app.errors import AppError
-from app.redis import cache_get, cache_set
 from app.tools.urls import canonical_result_key, normalize_search_url
 
 logger = logging.getLogger(__name__)
 
-SEARCH_ENGINES = "duckduckgo,bing,baidu"
+SEARCH_ENGINES = "duckduckgo,bing"
 CANDIDATE_LIMIT = 20
 MAX_PER_DOMAIN = 2
 MAX_TITLE_CHARS = 280
@@ -22,45 +25,165 @@ MAX_SNIPPET_CHARS = 640
 CACHE_TTL_SECONDS = 300
 SEARCH_SEMAPHORE = asyncio.Semaphore(4)
 
+DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/"
+DUCKDUCKGO_LITE = "https://lite.duckduckgo.com/lite/"
+BING_RSS = "https://www.bing.com/search"
 
-def _headers() -> dict[str, str]:
+
+def _client() -> httpx.AsyncClient:
     settings = get_settings()
-    headers = {"Accept": "application/json"}
-    if settings.openserp_proxy_url:
-        headers["X-Proxy-URL"] = settings.openserp_proxy_url
-    elif settings.openserp_proxy_tag:
-        headers["X-Use-Proxy"] = settings.openserp_proxy_tag
-    return headers
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.search_timeout_seconds, connect=5),
+        follow_redirects=False,
+        proxy=settings.search_proxy_url or None,
+        headers={
+            "User-Agent": settings.search_user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        },
+    )
 
 
-async def request_openserp(path: str, params: dict[str, Any]) -> Any:
+def _decode(body: bytes, encoding: str | None) -> str:
+    if encoding:
+        try:
+            return body.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            pass
+    best = from_bytes(body).best()
+    return str(best) if best is not None else body.decode("utf-8", errors="replace")
+
+
+async def _request_text(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    data: dict[str, str] | None = None,
+    params: dict[str, str | int] | None = None,
+) -> str:
     settings = get_settings()
-    url = f"{settings.openserp_url.rstrip('/')}{path}"
-    try:
-        async with httpx.AsyncClient(timeout=45) as client:
-            response = await client.get(url, params=params, headers=_headers())
-    except httpx.HTTPError as exc:
-        logger.warning("OpenSERP request failed: %s", path, exc_info=True)
-        raise AppError(502, "upstream_error", "联网服务暂时不可用，请稍后重试。") from exc
+    async with client.stream(method, url, data=data, params=params) as response:
+        if response.status_code >= 300:
+            raise RuntimeError(f"{url} returned HTTP {response.status_code}")
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > settings.search_max_bytes:
+                raise RuntimeError(f"{url} returned more than {settings.search_max_bytes} bytes")
+            chunks.append(chunk)
+        return _decode(b"".join(chunks), response.charset_encoding)
 
-    if response.status_code >= 400:
-        logger.warning(
-            "OpenSERP returned %s for %s: %s", response.status_code, path, response.text[:500]
+
+def _unwrap_duckduckgo(href: str) -> str:
+    if href.startswith("//"):
+        href = f"https:{href}"
+    parts = urlsplit(href)
+    host = (parts.hostname or "").lower()
+    if host.endswith("duckduckgo.com") and parts.path.startswith("/l/"):
+        target = parse_qs(parts.query).get("uddg")
+        if target:
+            return target[0]
+    return href
+
+
+def _text(node) -> str:
+    return " ".join(node.text_content().split()).strip()
+
+
+def _parse_duckduckgo(html: str) -> list[dict[str, Any]]:
+    tree = lxml_html.fromstring(html)
+    results: list[dict[str, Any]] = []
+    for anchor in tree.xpath("//a[contains(@class, 'result__a')]"):
+        containers = anchor.xpath("ancestor::div[contains(@class, 'result')][1]")
+        snippet = ""
+        if containers:
+            snippets = containers[0].xpath(".//*[contains(@class, 'result__snippet')]")
+            if snippets:
+                snippet = _text(snippets[0])
+        results.append(
+            {
+                "type": "organic",
+                "url": _unwrap_duckduckgo(anchor.get("href") or ""),
+                "title": _text(anchor),
+                "snippet": snippet,
+                "engine": "duckduckgo",
+                "rank": len(results) + 1,
+            }
         )
-        raise AppError(502, "upstream_error", "联网服务暂时不可用，请稍后重试。")
+    return results
+
+
+def _parse_duckduckgo_lite(html: str) -> list[dict[str, Any]]:
+    tree = lxml_html.fromstring(html)
+    results: list[dict[str, Any]] = []
+    for anchor in tree.xpath("//a[contains(@class, 'result-link')]"):
+        rows = anchor.xpath("ancestor::tr[1]/following-sibling::tr[1]")
+        snippet = ""
+        if rows:
+            cells = rows[0].xpath(".//*[contains(@class, 'result-snippet')]")
+            if cells:
+                snippet = _text(cells[0])
+        results.append(
+            {
+                "type": "organic",
+                "url": _unwrap_duckduckgo(anchor.get("href") or ""),
+                "title": _text(anchor),
+                "snippet": snippet,
+                "engine": "duckduckgo",
+                "rank": len(results) + 1,
+            }
+        )
+    return results
+
+
+def _parse_bing_rss(xml: str) -> list[dict[str, Any]]:
+    root = ET.fromstring(xml)
+    results: list[dict[str, Any]] = []
+    for item in root.iter("item"):
+        results.append(
+            {
+                "type": "organic",
+                "url": (item.findtext("link") or "").strip(),
+                "title": (item.findtext("title") or "").strip(),
+                "snippet": " ".join((item.findtext("description") or "").split()),
+                "engine": "bing",
+                "rank": len(results) + 1,
+            }
+        )
+    return results
+
+
+async def _duckduckgo(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
     try:
-        return response.json()
-    except ValueError as exc:
-        raise AppError(502, "upstream_error", "联网服务返回了无效数据。") from exc
+        page = await _request_text(client, "POST", DUCKDUCKGO_HTML, data={"q": query})
+        results = _parse_duckduckgo(page)
+        if results:
+            return results
+    except Exception as exc:  # noqa: BLE001 - fall through to the lite endpoint
+        logger.warning("DuckDuckGo HTML search failed: %s", exc)
+    page = await _request_text(client, "POST", DUCKDUCKGO_LITE, data={"q": query})
+    return _parse_duckduckgo_lite(page)
+
+
+async def _bing(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
+    page = await _request_text(
+        client,
+        "GET",
+        BING_RSS,
+        params={"format": "rss", "count": CANDIDATE_LIMIT, "q": query},
+    )
+    return _parse_bing_rss(page)
+
+
+def _clean_text(value: str) -> str:
+    return " ".join(value.split()).strip()
 
 
 def _truncate(value: str, limit: int) -> str:
-    value = depth_clean(value)
+    value = _clean_text(value)
     return value if len(value) <= limit else f"{value[:limit].rstrip()}…"
-
-
-def depth_clean(value: str) -> str:
-    return " ".join(value.split()).strip()
 
 
 def _rank_of(result: dict[str, Any], fallback: int) -> int:
@@ -132,7 +255,13 @@ def _select_diverse(results: list[dict[str, Any]], limit: int) -> list[dict[str,
     return [*selected, *deferred][:limit]
 
 
+async def _run_provider(coro, seconds: float):
+    async with asyncio.timeout(seconds):
+        return await coro
+
+
 async def web_search(query: str, limit: int) -> list[dict[str, Any]]:
+    settings = get_settings()
     cache_key = "matrius:search:" + hashlib.sha256(f"{query}|{limit}".encode()).hexdigest()
     cached = await cache_get(cache_key)
     if cached is not None:
@@ -141,26 +270,31 @@ async def web_search(query: str, limit: int) -> list[dict[str, Any]]:
         except ValueError:
             pass
 
-    params = {
-        "dedupe": "true",
-        "engines": SEARCH_ENGINES,
-        "features": "false",
-        "format": "json",
-        "limit": CANDIDATE_LIMIT,
-        "merge": "false",
-        "mode": "any",
-        "text": query,
-    }
     async with SEARCH_SEMAPHORE:
-        payload = await request_openserp("/mega/search", params)
+        async with _client() as client:
+            outcomes = await asyncio.gather(
+                _run_provider(_duckduckgo(client, query), settings.search_timeout_seconds),
+                _run_provider(_bing(client, query), settings.search_timeout_seconds),
+                return_exceptions=True,
+            )
 
-    raw_results = payload.get("results") if isinstance(payload, dict) else payload
-    if not isinstance(raw_results, list):
-        raise AppError(502, "upstream_error", "联网服务返回了无效数据。")
+    raw_results: list[dict[str, Any]] = []
+    failures = 0
+    for outcome in outcomes:
+        if isinstance(outcome, asyncio.CancelledError):
+            raise outcome
+        if isinstance(outcome, BaseException):
+            failures += 1
+            logger.warning("Search provider failed: %s", outcome)
+            continue
+        raw_results.extend(outcome)
+
+    if failures == len(outcomes):
+        raise AppError(502, "upstream_error", "联网服务暂时不可用，请稍后重试。")
 
     normalized = [
         item
-        for index, result in enumerate(raw_results)
+        for index, result in enumerate(raw_results[: CANDIDATE_LIMIT * 2])
         if isinstance(result, dict) and (item := _normalize_result(result, index)) is not None
     ]
     results = _select_diverse(_dedupe(normalized), limit)

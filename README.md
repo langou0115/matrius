@@ -9,8 +9,8 @@
 - **自带模型**：支持 OpenAI Chat Completions、Responses、Anthropic Messages 及兼容服务，密钥只保存在本机
 - **完整渲染**：Markdown / GFM、KaTeX 公式、代码高亮、复制与折叠
 - **账号与灰度**：管理员建号、首次改密；新功能先在测试账号验证，再按账号发布
-- **自部署后端**：FastAPI、PostgreSQL、Redis、RustFS、OpenSERP，Caddy 统一入口
-- **远程发布**：本机一条命令，服务器构建并运行生产镜像
+- **自部署后端**：FastAPI + SQLite + 本地文件存储 + 进程内缓存，Caddy 统一入口
+- **远程发布**：本机一条命令，服务器构建并运行 Caddy / Web / API 三个容器
 
 > 登录当前只用于功能权限，对话仍保存在本机；云端数据同步尚未接入。
 
@@ -20,23 +20,23 @@
 | --- | --- |
 | 客户端 | Expo SDK 57、React Native、React、TypeScript |
 | 路由 | Expo Router（`src/app/`） |
-| 后端 | Python 3.12、FastAPI、SQLAlchemy、Alembic |
-| 基础设施 | PostgreSQL、Redis、RustFS、OpenSERP、Caddy |
+| 后端 | Python 3.12、FastAPI、SQLite、SQLAlchemy、Alembic |
+| 运行时能力 | 进程内缓存/限流、本地文件存储、DuckDuckGo + Bing 搜索、trafilatura 正文提取 |
+| 基础设施 | Caddy（生产只运行 Caddy / Web / API 三个容器） |
 | 部署 | Docker Compose、SSH、`npm run deploy` |
 
 ## 本地开发
 
-要求 Node.js 24、npm、uv（管理 Python 3.12+）和 OpenSSH；支持 Windows、macOS、Linux。
+要求 Node.js 24、npm 和 uv（管理 Python 3.12+）；支持 Windows、macOS、Linux。不需要 Docker、SSH 或 WSL。
 
 ```bash
 npm ci
-cp .env.local.example .env.local   # 填 SSH 连接信息
 npm run dev
 ```
 
 打开 `http://localhost:8081`，在「设置 → 模型服务」添加服务商和模型后即可对话。
 
-`npm run dev` 常驻运行本机 Expo、FastAPI 和 SSH 隧道，借用云端 PostgreSQL、Redis、OpenSERP、RustFS。前后端保存后热更新，Ctrl+C 一并停止本机进程，云端服务继续运行。首次需要先用 `npm run deploy -- --init` 初始化云端环境。开发 API 与正式 API 使用相同云端数据，当前浏览器对话仍按产品进度保存在本机。
+`npm run dev` 完全在本机运行 Expo、FastAPI 与 SQLite：数据保存在 `server/.data/dev.db` 和 `server/.data/files`（已加入 `.gitignore`），不连接服务器。前后端保存后热更新，Ctrl+C 一并停止本机进程。开发管理员使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，未设置时回退到 `admin` / `dev-password`；密码仍是 `change-me` 时拒绝启动。`npm run dev` 不读取 `docker-compose/.env.production`。已有开发管理员会在启动时同步为当前配置的密码。`npm run dev -- --reset-db` 会清空本地开发数据后重新迁移。
 
 只调试前端也可用 `npm run web`。两种开发方式都可访问 `/mock`；正式 Web 使用静态生产构建。
 
@@ -49,17 +49,16 @@ npm run export:web && npm run serve   # 本地验证生产构建
 服务器只需 Docker、SSH 和常用命令行工具，本机不需要 Python、Docker 或数据库。
 
 ```bash
-cp .env.local.example .env.local   # 填 SSH 目标和网页地址
-npm run deploy -- --check          # 本地校验，不连接服务器
-npm run deploy -- --init             # 新服务器：初始化全部容器、数据库和管理员
-npm run deploy                       # 后续：更新 Web/API，按配置更新 Caddy
+cp docker-compose/.env.production.example docker-compose/.env.production  # 服务器地址与端口
+cp .env.local.example .env.local                                          # 本地开发与通用设置
+npm run deploy                                                            # 首次自动初始化，之后更新
 ```
 
-`--init` 会在服务器生成缺失配置、初始化数据库和管理员，并启动全部容器；普通 `deploy` 构建和更新 Web/API，并按端口及入口配置更新 Caddy，四项基础服务配置未变时保持运行，服务器配置变化时由 Compose 按需重建，保留数据卷。管理员账号密码可在 `.env.local` 中通过 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 指定；不填则随机生成并在首次输出中打印。
+`.env.local` 管本地开发和通用应用设置（`DEV_*`、`INITIAL_ADMIN_*`、登录有效期、`SEARCH_PROXY_URL` 等），其中通用项会在部署时写入服务器配置；SSH 目标、公开端口和工作目录等服务器相关内容放在 `docker-compose/.env.production`。每次 `npm run deploy` 都会同步源码、备份数据库、构建并更新 Web/API、应用迁移、刷新管理员密码、更新 Caddy 并做健康检查；新服务器首次执行时会自动生成配置、创建 SQLite 数据库和管理员，数据卷长期保留。管理员账号密码来自 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，以最近一次部署为准；两个值都不填时，首次初始化会随机生成并打印一次，之后不会改动现有密码。
 
-默认端口：`16666` 为网页 + API，`16667` 仅 API（可选）；在 `.env.local` 用 `APP_PORT` / `API_PORT` 覆盖，详见[修改端口](doc/deployment.md#修改端口)。每次命令完成同步、构建、健康检查后退出；默认部署不更新功能清单，`--publish` 才把 stable 功能开放给其他账号。
+默认端口：`16666` 为网页 + API，`16667` 仅 API（可选）；在 `docker-compose/.env.production` 用 `APP_PORT` / `API_PORT` 覆盖，详见[修改端口](doc/deployment.md#修改端口)。每次命令完成同步、构建、健康检查后退出；代码中 stage=stable 的功能在部署成功后对所有账号开放。
 
-Web/API 源码直接打入各自镜像，不挂载源码、不运行开发服务器；基础服务和数据卷长期保留。
+Web/API 源码直接打入各自镜像，不挂载源码、不运行开发服务器；`matrius_prod_api_data` 数据卷长期保留。
 
 服务器初始化、账号、HTTPS、备份与 CD 见[服务器部署](doc/deployment.md)。
 

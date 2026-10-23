@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthContext, read_rate_limit
+from app.cache import enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
 from app.errors import invalid
 from app.files.router import get_owned_file
-from app.redis import enforce_rate_limit
 from app.tools.files import grep_file_text, read_file_text
 from app.tools.schemas import FetchRequest, FileGrepRequest, FileReadRequest, SearchRequest
 from app.tools.search import web_search

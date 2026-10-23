@@ -19,8 +19,8 @@
 
 9. 用户与助手消息接入 Markdown/GFM 与 KaTeX 公式渲染，代码语言按需高亮，支持代码块原文复制和折叠，提供 Node/DOM 回归检查。
 10. 接入本地 Agent Runtime、BYOK 模型配置、同源模型中继、流式回复、停止/重试、引用、反馈、分支与 AI 标题生成。
-11. 完成 Python 后端：Bearer 认证与管理员、会话/消息 REST CRUD、已读三态、记忆/画像/偏好、存量导入、文件上传与解析、OpenSERP 搜索与网页读取。
-12. 完成 Docker 镜像、统一 Compose、Caddy 路由、健康检查及 `npm run deploy` 远程构建部署与发布。
+11. 完成 Python 后端：Bearer 认证与管理员、会话/消息 REST CRUD、已读三态、记忆/画像/偏好、存量导入、文件上传与解析、Python 搜索与网页读取。
+12. 完成 Docker 镜像、Caddy / Web / API 三容器 Compose、健康检查及 `npm run deploy` 远程构建部署与发布；基础设施改为 SQLite、本地文件与进程内缓存。
 
 ## 交互与边界
 

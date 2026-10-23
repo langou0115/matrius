@@ -3,11 +3,11 @@ import re
 from pathlib import PurePath
 from typing import Any
 
+from app.cache import cache_get, cache_set
 from app.errors import AppError, invalid
 from app.files.parsing import ParseError, extract_text
 from app.files.router import load_file_bytes
 from app.models import StoredFile
-from app.redis import cache_get, cache_set
 
 LEGACY_OFFICE = {"doc", "xls", "ppt"}
 FILE_TEXT_TTL_SECONDS = 3600

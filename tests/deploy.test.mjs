@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
 
-import { canSync, createArchive, main, shellQuote, snapshot, validateConfig } from '../scripts/deploy.mjs';
+import { appEnvOverrides, canSync, createArchive,
+  loadDeployEnv, main, shellQuote, snapshot, validateConfig } from '../scripts/deploy.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const execute = promisify(execFile);
@@ -20,12 +21,36 @@ const config = {
 test('source selection rejects secrets, traversal, generated files and unsafe file names', () => {
   for (const path of ['.env', '.env.local', '.env.remote.local', 'server/.env',
     'docker-compose/.env.production', 'private.key', '.aws/credentials', '.ssh/config',
-    'node_modules/x.js', 'server/.venv/bin/python', 'public/vendor/katex/a.css',
+    'node_modules/x.js', 'server/.venv/bin/python', 'server/.data/dev.db',
+    'server/.data/files/upload.png', 'public/vendor/katex/a.css',
     '../outside', '/absolute', 'a/../outside', 'a\\b', 'a\nb', '.remote-sync-manifest']) {
     assert.equal(canSync(path), false, path);
   }
   for (const path of ['src/app/index.tsx', 'server/app/main.py', '.env.local.example',
     'docker-compose/.env.production.example', 'assets/a b.png']) assert.equal(canSync(path), true, path);
+});
+
+test('deployment settings come from .env.production with .env.local as an override', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'matrius-env-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  assert.deepEqual(await loadDeployEnv(dir), {});
+  await mkdir(join(dir, 'docker-compose'));
+  await writeFile(join(dir, 'docker-compose/.env.production'),
+    'REMOTE_USER=deploy\nREMOTE_HOST=203.0.113.10\nAPP_PORT=16666\nAUTH_SESSION_TTL_SECONDS=100\n');
+  assert.equal((await loadDeployEnv(dir)).APP_PORT, '16666');
+  await writeFile(join(dir, '.env.local'), 'APP_PORT=3000\nINITIAL_ADMIN_USERNAME=admin\n');
+  const merged = await loadDeployEnv(dir);
+  assert.equal(merged.APP_PORT, '3000');
+  assert.equal(merged.REMOTE_HOST, '203.0.113.10');
+  assert.equal(merged.AUTH_SESSION_TTL_SECONDS, '100');
+  assert.equal(merged.INITIAL_ADMIN_USERNAME, 'admin');
+});
+
+test('shared application settings are framed for the server and empty values skipped', () => {
+  const encoded = Buffer.from('http://proxy.local:7890', 'utf8').toString('base64');
+  assert.equal(appEnvOverrides({ SEARCH_PROXY_URL: 'http://proxy.local:7890', LOG_LEVEL: '',
+    UNRELATED: 'ignored' }), `SEARCH_PROXY_URL ${encoded}`);
+  assert.throws(() => appEnvOverrides({ LOG_LEVEL: 'a\nb' }), /LOG_LEVEL must be on one line/);
 });
 
 test('SSH configuration rejects command injection and invalid origins / paths', async () => {
@@ -39,7 +64,8 @@ test('SSH configuration rejects command injection and invalid origins / paths', 
     { REMOTE_HOST: 'host/path' }, { REMOTE_USER: 'user:password' }, { REMOTE_HOST: '' },
     { REMOTE_ENV_FILE: 'relative.env' }, { REMOTE_WORKSPACE: '/' }, { REMOTE_SSH_PORT: '65536' },
     { APP_PORT: '0' }, { APP_PORT: '65536' }, { API_PORT: 'abc' }, { APP_HTTPS_PORT: '99999' },
-    { INITIAL_ADMIN_USERNAME: 'admin' }, { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'a\nb' }]) {
+    { INITIAL_ADMIN_USERNAME: 'admin' }, { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'a\nb' },
+    { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'change-me' }]) {
     assert.throws(() => validateConfig({ ...config, ...patch }));
   }
   assert.equal(validateConfig({ ...config, INITIAL_ADMIN_USERNAME: 'admin',
@@ -79,7 +105,7 @@ test('snapshot includes uncommitted files, excludes ignored secrets and symlinks
   assert.notEqual(first.get('new.txt').hash, next.get('new.txt').hash);
 });
 
-test('remote deploys production once per invocation, gates releases and locks concurrent sessions',
+test('remote deploys production once per invocation and locks concurrent sessions',
   { skip: process.platform === 'win32', timeout: 90000 }, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), 'matrius-session-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
@@ -96,7 +122,9 @@ test('remote deploys production once per invocation, gates releases and locks co
     await writeFile(join(bin, 'docker'), '#!/usr/bin/env bash\n'
       + 'printf "%s\\n" "$*" >> "$DOCKER_TEST_LOG"\n'
       + 'if [[ ${DOCKER_TEST_FRESH:-0} == 1 && " $* " == *" volume inspect "* ]]; then exit 1; fi\n'
-      + 'case " $* " in *" ps "*) for service in caddy postgres redis rustfs openserp; do '
+      + 'if [[ " $* " == *" --entrypoint python api -c "* ]]; then exit 0; fi\n'
+      + 'if [[ " $* " == *" --entrypoint cat api /data/backup-snapshot.db "* ]]; then printf snapshot; exit 0; fi\n'
+      + 'case " $* " in *" ps "*) for service in caddy api web; do '
       + '[[ $service == "${DOCKER_TEST_STOPPED:-}" ]] || printf "%s\\n" "$service"; done ;;'
       + ' *" logs "*) printf "fake logs\\n" ;; esac\n');
     await chmod(join(bin, 'docker'), 0o755);
@@ -112,8 +140,8 @@ test('remote deploys production once per invocation, gates releases and locks co
       DOCKER_TEST_LOG: dockerLog, CURL_TEST_LOG: curlLog,
     };
     const sessionScript = join(repo, 'scripts/remote/session.sh');
-    const start = (flags = [], extraEnv = {}) => spawn('bash', [sessionScript, workspace, envFile,
-      'http://server:16666', ...flags], { env: { ...env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const start = (extraEnv = {}) => spawn('bash', [sessionScript, workspace, envFile,
+      'http://server:16666'], { env: { ...env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
     const collect = (child) => {
       let text = '';
       let errors = '';
@@ -147,9 +175,9 @@ test('remote deploys production once per invocation, gates releases and locks co
       child.stdin.write(`SYNC ${payload.length}\n`);
       child.stdin.write(payload);
     };
-    const deploy = async (files, flags = [], extraEnv = {}) => {
+    const deploy = async (files, extraEnv = {}) => {
       await writeSource(files);
-      const child = start(flags, extraEnv);
+      const child = start(extraEnv);
       const output = collect(child);
       const closed = once(child, 'close');
       await waitForText(output, '@@MATRIUS_REMOTE_READY');
@@ -196,9 +224,10 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert.match(commands, /up -d --no-deps web api\n/);
     assert.doesNotMatch(commands, /--build/);
     assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
-    assert.match(commands, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
-    assert.doesNotMatch(commands, /run .*migrate/);
-    assert(!commands.includes('app.features.release'));
+    assert.match(commands, /--entrypoint python api -c/);
+    assert.match(commands, /--entrypoint cat api \/data\/backup-snapshot\.db/);
+    assert.match(commands, /up -d --wait --wait-timeout 180 --remove-orphans --force-recreate api\n/);
+    assert.doesNotMatch(commands, /postgres|redis|rustfs|openserp|--no-deps migrate/);
     assert(!commands.includes('remote.override.yml'));
     assert.match(await readFile(curlLog, 'utf8'), /\/api\/health/);
 
@@ -213,7 +242,6 @@ test('remote deploys production once per invocation, gates releases and locks co
     // Source changes must be included in rebuilt production images.
     assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --no-deps web api\n/);
-    assert(!commands.includes('app.features.release'));
     assert.equal(await readFile(envFile, 'utf8'), serviceEnv);
     assert.match(commands, /up -d --no-deps caddy\n/);
     assert.doesNotMatch(commands, /--force-recreate caddy/);
@@ -250,25 +278,18 @@ test('remote deploys production once per invocation, gates releases and locks co
     assert.equal(caddyDeploy.code, 0, caddyDeploy.output.errors);
     commands = await readFile(dockerLog, 'utf8');
     assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
-    assert.doesNotMatch(commands, /run .*migrate/);
-
-    await writeFile(dockerLog, '');
-    const published = await deploy(changed, ['0', '1', '0']);
-    assert.equal(published.code, 0, published.output.errors);
-    assert.match(await readFile(dockerLog, 'utf8'), /-m app.features.release/);
 
     await writeFile(dockerLog, '');
     const successfulCaddy = await readFile(join(workspace, 'caddy-config.sha256'), 'utf8');
     const failingFiles = { ...changed, 'docker-compose/Caddyfile': ':80 { respond 503 }' };
     await writeSource(failingFiles);
-    const failing = start(['0', '1', '0'], { CURL_TEST_FAIL: '1' });
+    const failing = start({ CURL_TEST_FAIL: '1' });
     const failingOutput = collect(failing);
     const failingClosed = once(failing, 'close');
     await waitForText(failingOutput, '@@MATRIUS_REMOTE_READY');
     await sendFrame(failing, await archiveFor(failingFiles, 'failing.tar.gz'));
     failing.stdin.end();
     assert.equal((await failingClosed)[0], 1);
-    assert(!(await readFile(dockerLog, 'utf8')).includes('app.features.release'));
     assert.equal(await readFile(join(workspace, 'caddy-config.sha256'), 'utf8'), successfulCaddy);
 
     // Exercise the real npm entrypoint and SSH command quoting without a network connection.
@@ -284,44 +305,27 @@ test('remote deploys production once per invocation, gates releases and locks co
     commands = await readFile(dockerLog, 'utf8');
     assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --no-deps web api\n/);
-    assert(!commands.includes('app.features.release'));
     assert(!commands.includes('remote.override.yml'));
 
+    // Every deploy backs up existing data and recreates the API so the
+    // entrypoint applies migrations and refreshes the administrator password.
     await writeFile(dockerLog, '');
     await main({ args: [], env: cliEnv });
     commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
-    assert.doesNotMatch(commands, /--force-recreate (postgres|redis|rustfs|openserp)|run .*migrate/);
+    const backupIndex = commands.indexOf('--entrypoint python api -c');
+    const deployIndex = commands.indexOf('--force-recreate api');
+    assert(backupIndex >= 0 && deployIndex > backupIndex);
+    assert.match(commands, /--entrypoint cat api \/data\/backup-snapshot\.db/);
+    assert.match(commands, /up -d --wait --wait-timeout 180 --remove-orphans --force-recreate api\n/);
 
     await writeFile(dockerLog, '');
-    await main({ args: ['--init'], env: cliEnv });
-    commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, / build web api\n/);
-    assert.match(commands, /--wait --wait-timeout 180 postgres redis rustfs openserp\n/);
-    assert.match(commands, /run -T --rm --no-deps migrate\n/);
-    assert(!commands.includes('app.features.release'));
-
-    await writeFile(dockerLog, '');
-    await main({ args: ['--publish'], env: cliEnv });
-    commands = await readFile(dockerLog, 'utf8');
-    assert.match(commands, /up -d --no-deps web api\n/);
-    assert.match(commands, /-m app.features.release/);
-
-    await writeFile(dockerLog, '');
-    await main({ args: ['--publish', '--migrate'], env: cliEnv });
-    commands = await readFile(dockerLog, 'utf8');
-    const migrateIndex = commands.indexOf('run -T --rm --no-deps migrate');
-    const deployIndex = commands.indexOf('up -d --no-deps web api');
-    assert(migrateIndex >= 0 && deployIndex > migrateIndex);
-
-    await writeFile(dockerLog, '');
-    await assert.rejects(main({ args: ['--publish'], env: { ...cliEnv, CURL_TEST_FAIL: '1' } }),
+    await assert.rejects(main({ args: [], env: { ...cliEnv, CURL_TEST_FAIL: '1' } }),
       /SSH session closed \(1\)/);
-    assert(!(await readFile(dockerLog, 'utf8')).includes('app.features.release'));
-    await assert.rejects(main({ args: ['--once'], env: cliEnv }), /Unknown option/);
+    await assert.rejects(main({ args: ['--publish'], env: cliEnv }), /takes no options/);
+    await assert.rejects(main({ args: ['--once'], env: cliEnv }), /takes no options/);
   });
 
-test('new servers require --init; subsequent deploys reconcile services and public ports without migration',
+test('one deploy initializes new servers and reconciles services, ports and administrator credentials',
   { skip: process.platform === 'win32', timeout: 90000 }, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), 'matrius-fresh-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
@@ -332,11 +336,10 @@ test('new servers require --init; subsequent deploys reconcile services and publ
     await mkdir(bin); await mkdir(workspace);
     await writeFile(join(bin, 'docker'), '#!/usr/bin/env bash\n'
       + 'printf "%s\\n" "$*" >> "$DOCKER_TEST_LOG"\n'
-      + 'if [[ " $* " == *" run "* ]]; then\n'
-      + '  printf "run-admin=%s/%s\\n" "${INITIAL_ADMIN_USERNAME:-}" "${INITIAL_ADMIN_PASSWORD:-}" >> "$DOCKER_TEST_LOG"\n'
-      + 'fi\n'
       + 'if [[ ${DOCKER_TEST_FRESH:-0} == 1 && " $* " == *" volume inspect "* ]]; then exit 1; fi\n'
-      + 'if [[ " $* " == *" ps "* ]]; then printf "caddy\\npostgres\\nredis\\nrustfs\\nopenserp\\n"; fi\n');
+      + 'if [[ " $* " == *" --entrypoint python api -c "* ]]; then exit 0; fi\n'
+      + 'if [[ " $* " == *" --entrypoint cat api /data/backup-snapshot.db "* ]]; then printf snapshot; exit 0; fi\n'
+      + 'if [[ " $* " == *" ps "* ]]; then printf "caddy\\napi\\nweb\\n"; fi\n');
     await chmod(join(bin, 'docker'), 0o755);
     await writeFile(join(bin, 'curl'), '#!/usr/bin/env bash\n'
       + 'printf "%s\\n" "$*" >> "$CURL_TEST_LOG"\n'
@@ -351,55 +354,69 @@ test('new servers require --init; subsequent deploys reconcile services and publ
       REMOTE_WORKSPACE: workspace, REMOTE_ENV_FILE: '',
       INITIAL_ADMIN_USERNAME: 'root', INITIAL_ADMIN_PASSWORD: 'custom-admin-password',
       APP_PORT: '3000', API_PORT: '3001', APP_HTTPS_PORT: '3443',
+      SEARCH_PROXY_URL: 'http://proxy.local:7890',
     };
 
-    await assert.rejects(main({ args: [], env }), /SSH session closed \(1\)/);
-    await assert.rejects(readFile(join(workspace, 'production.env')), { code: 'ENOENT' });
-    assert.doesNotMatch(await readFile(dockerLog, 'utf8'), / (build|up|run) /);
-    await writeFile(dockerLog, '');
-    await main({ args: ['--init'], env });
+    // The first deploy initializes a new server without a separate command.
+    await main({ args: [], env });
     const generated = await readFile(join(workspace, 'production.env'), 'utf8');
-    assert.match(generated, /^POSTGRES_PASSWORD=[0-9a-f]{64}$/m);
+    assert.doesNotMatch(generated, /POSTGRES_PASSWORD|REDIS_PASSWORD|RUSTFS_/);
+    assert.match(generated, /^SQLITE_BUSY_TIMEOUT_MS=30000$/m);
     assert.match(generated, /^INITIAL_ADMIN_USERNAME=root$/m);
     assert.match(generated, /^INITIAL_ADMIN_PASSWORD=custom-admin-password$/m);
     assert.match(generated, /^APP_PORT=3000$/m);
     assert.match(generated, /^API_PORT=3001$/m);
     assert.match(generated, /^APP_HTTPS_PORT=3443$/m);
+    assert.match(generated, /^SEARCH_PROXY_URL=http:\/\/proxy\.local:7890$/m);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
     assert.match(await readFile(join(workspace, 'initial-admin.txt'), 'utf8'),
       /username=root\npassword=custom-admin-password/);
     const commands = await readFile(dockerLog, 'utf8');
     assert.match(commands, / build web api\n/);
-    assert.match(commands, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
-    assert.match(commands, /run -T --rm --no-deps migrate\n/);
-    assert.match(commands, /run-admin=root\/custom-admin-password\n/);
+    assert.match(commands, /up -d --wait --wait-timeout 180 --remove-orphans --force-recreate api\n/);
+    assert.doesNotMatch(commands, /--entrypoint python api -c/);
     assert(!commands.includes('INITIAL_ADMIN_PASSWORD=custom-admin-password'));
     assert.match(commands, /up -d --no-deps web api\n/);
     assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
 
-    // Later runs keep the generated file and skip initialization.
+    // The latest deployment owns the administrator password; existing data is
+    // backed up before its migrations run.
     await writeFile(dockerLog, '');
-    await main({ args: [], env: { ...env, DOCKER_TEST_FRESH: '0' } });
-    assert.equal(await readFile(join(workspace, 'production.env'), 'utf8'), generated);
+    const other = { ...env, DOCKER_TEST_FRESH: '0',
+      INITIAL_ADMIN_USERNAME: 'other', INITIAL_ADMIN_PASSWORD: 'other-password' };
+    await main({ args: [], env: other });
+    const replaced = await readFile(join(workspace, 'production.env'), 'utf8');
+    assert.match(replaced, /^INITIAL_ADMIN_USERNAME=other$/m);
+    assert.match(replaced, /^INITIAL_ADMIN_PASSWORD=other-password$/m);
+    assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
+    const replacedCommands = await readFile(dockerLog, 'utf8');
+    const backupIndex = replacedCommands.indexOf('--entrypoint python api -c');
+    const deployIndex = replacedCommands.indexOf('--force-recreate api');
+    assert(backupIndex >= 0 && deployIndex > backupIndex);
+    assert.match(replacedCommands, /--entrypoint cat api \/data\/backup-snapshot\.db/);
+
+    // Later runs keep the current configuration and do not churn Caddy.
+    await writeFile(dockerLog, '');
+    await main({ args: [], env: other });
+    assert.equal(await readFile(join(workspace, 'production.env'), 'utf8'), replaced);
     const later = await readFile(dockerLog, 'utf8');
     assert.match(later, / build web api\n/);
-    assert(!later.includes('run -T --rm --no-deps migrate'));
-    assert.match(later, /up -d --wait --wait-timeout 180 postgres redis rustfs openserp\n/);
+    assert.match(later, /--entrypoint python api -c/);
+    assert.match(later, /up -d --wait --wait-timeout 180 --remove-orphans --force-recreate api\n/);
     assert.match(later, /up -d --no-deps caddy\n/);
     assert.doesNotMatch(later, /--force-recreate caddy/);
 
-    // Ordinary deploy applies local port changes without initializing infrastructure.
+    // Port changes apply on the same single command.
     await writeFile(dockerLog, '');
     await writeFile(curlLog, '');
-    await main({ args: [], env: { ...env, DOCKER_TEST_FRESH: '0', APP_PORT: '4000' } });
+    await main({ args: [], env: { ...other, APP_PORT: '4000' } });
     const updated = await readFile(join(workspace, 'production.env'), 'utf8');
     assert.match(updated, /^APP_PORT=4000$/m);
     assert.match(updated, /^API_PORT=3001$/m);
-    assert.match(updated, /^POSTGRES_PASSWORD=[0-9a-f]{64}$/m);
-    assert.match(updated, /^INITIAL_ADMIN_PASSWORD=custom-admin-password$/m);
+    assert.match(updated, /^INITIAL_ADMIN_PASSWORD=other-password$/m);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
     assert.match(await readFile(curlLog, 'utf8'), /:4000\/api\/health/);
     const portUpdate = await readFile(dockerLog, 'utf8');
     assert.match(portUpdate, /up -d --no-deps caddy\n/);
-    assert.doesNotMatch(portUpdate, /run .*migrate|--force-recreate (postgres|redis|rustfs|openserp)/);
+    assert.match(portUpdate, /--force-recreate api/);
   });

@@ -21,7 +21,7 @@ Matrius 是 Expo + React Native（Web 优先）前端与 FastAPI 后端的自部
 
 ```bash
 npm ci
-npm run dev                 # 本机 Expo + FastAPI 热更新，通过 SSH 借用云端四项基础服务
+npm run dev                 # 本机 Expo + FastAPI 热更新，SQLite 与文件都在 server/.data
 npm run web                 # Web 开发（Metro，可访问 /mock）
 npx expo start              # Metro 开发服务
 npx expo lint
@@ -56,26 +56,26 @@ uv run --no-sync pytest
 - 本地模式数据在 IndexedDB；云端模式服务端是唯一事实源，不做本地缓存或增量同步。
 - 模型密钥只存客户端，不写日志、不上传。
 - 云端资源按认证得到的 `userId` 隔离，写操作使用 `baseRevision` 乐观并发。
-- PostgreSQL 存持久数据，Redis 只做限流与缓存，RustFS 存文件；结构变更走 Alembic，并确保能在空库执行。
+- SQLite 存持久数据（单服务器、单实例、单 uvicorn worker），文件落在 `DATA_DIR/files`，限流与短期缓存只存在于 API 进程内存；结构变更走 Alembic，并确保能在空库执行。
 - 保持简单：不引入微服务、多 Agent 编排、RBAC、组织或租户。
 - 新增状态管理、网络或代码生成库前先与维护者确认。
 
 ## 功能开关
 
 - 新功能先在 `server/app/features/registry.py` 登记，默认 `preview`。
-- `preview` 仅认证后的 `admin_test` 可用（`PREVIEW_USERNAME` 可配），与 `isAdmin` 无关。
+- `preview` 仅认证后的 `admin_test` 可用，与 `isAdmin` 无关。
 - 前端统一用 `useFeature` / `FeatureGate`，后端用 `require_feature`，禁止按客户端用户名授权。
-- 验证通过后改为 `stable`；只有 `--publish` 在健康检查后更新发布清单。
+- 验证通过后改为 `stable`；下次 `npm run deploy` 健康检查通过后即对所有账号开放。
 
 ## 部署
 
 - 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
-- `npm run dev` 常驻运行本机 Expo、FastAPI 和 SSH 隧道，开发 API 共用云端数据；Ctrl+C 仅停止本机进程。不自动执行迁移。
-- 默认部署不更新功能清单；`--publish` 才把 stable 功能开放给其他账号。
-- 新服务器必须先执行 `npm run deploy -- --init`，生成配置、初始化数据库和管理员并启动全部容器；普通 `deploy` 更新 Web/API，并应用端口和 Caddy 配置变更；四项基础服务按 Compose 配置按需更新，未变化不重建；可选内部端口在服务端模板中默认注释。后续显式迁移用 `--migrate`。
-- 本机 `.env.local` 只放连接信息、可选的端口覆盖（`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`DEV_WEB_PORT` / `DEV_API_PORT`）和 `INITIAL_ADMIN_*`；服务密钥持久化仅在服务器。`dev` 经 SSH 读取运行中容器凭据，仅在内存中传给本机 API，不写文件或日志。
+- `npm run dev` 完全在本机常驻运行 Expo 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`。
+- 部署成功后，代码中 stage=stable 的功能立即对所有账号开放。
+- 生产只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite + 上传文件）。`npm run deploy` 没有子命令：首次执行自动初始化，之后每次都会备份数据库、应用迁移、刷新管理员密码、更新 Web/API 与 Caddy；`--remove-orphans` 会清理旧拓扑遗留容器。
+- `.env.local` 管本地开发与通用应用设置：`DEV_WEB_PORT` / `DEV_API_PORT`、`INITIAL_ADMIN_*`、`AUTH_SESSION_TTL_SECONDS` 等。服务器相关内容放在 `docker-compose/.env.production`（SSH 目标、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`），`npm run deploy` 从该文件读取；`.env.local` 只作覆盖。`.env.local` 中的通用应用项（`AUTH_SESSION_TTL_SECONDS`、限额、`SEARCH_PROXY_URL` 等）会在部署时写入服务器 `production.env`。`INITIAL_ADMIN_*` 同时用于开发库和正式服务器；示例密码 `change-me` 会被 `npm run dev` 和 `npm run deploy` 拒绝，必须先改成真实密码。正式库的管理员密码以最近一次部署为准：每次部署都会把 `INITIAL_ADMIN_*` 应用到该账号；两个值留空则不改动现有密码。`dev` 不连接服务器，也不读取 `docker-compose/.env.production`。
 - 不在本机对服务器执行迁移；`docker compose down` 永远不加 `-v`。
-- 不配置自动 CI；CD 手动触发并复用 `--publish`。
+- 不配置自动 CI；CD 手动触发并复用 `npm run deploy`。
 
 ## 完成前
 

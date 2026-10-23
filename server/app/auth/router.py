@@ -13,17 +13,17 @@ from app.auth.security import (
     hash_token,
     verify_password,
 )
-from app.config import get_settings
-from app.db import get_db
-from app.errors import AppError, unauthorized
-from app.features.registry import enabled_features
-from app.models import AuthSession, User
-from app.redis import (
+from app.cache import (
     assert_login_not_locked,
     clear_login_failures,
     enforce_rate_limit,
     record_login_failure,
 )
+from app.config import get_settings
+from app.db import get_db
+from app.errors import AppError, unauthorized
+from app.features.registry import enabled_features
+from app.models import AuthSession, User
 from app.utils import utcnow
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])

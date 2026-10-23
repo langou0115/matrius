@@ -12,16 +12,15 @@ from fastapi.responses import JSONResponse
 from app.account.router import router as account_router
 from app.admin.router import router as admin_router
 from app.auth.router import router as auth_router
+from app.cache import close_cache
 from app.config import get_settings
 from app.conversations.router import router as conversations_router
-from app.db import dispose_engine
+from app.db import dispose_engine, ensure_data_dir
 from app.errors import AppError, app_error_handler, validation_error_handler
 from app.features.router import router as features_router
 from app.files.router import router as files_router
 from app.health import router as health_router
 from app.logging import configure_logging
-from app.redis import close_redis
-from app.storage import ensure_bucket
 from app.tools.router import router as tools_router
 
 logger = logging.getLogger(__name__)
@@ -32,11 +31,11 @@ MAX_IMPORT_BODY = 8 * 1024 * 1024
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
-        await asyncio.to_thread(ensure_bucket)
+        await asyncio.to_thread(ensure_data_dir)
     except Exception:  # noqa: BLE001 - readiness reports the failure
-        logger.warning("RustFS bucket is not available at startup", exc_info=True)
+        logger.warning("Data directory is not available at startup", exc_info=True)
     yield
-    await close_redis()
+    await close_cache()
     await dispose_engine()
 
 

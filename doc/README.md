@@ -17,7 +17,7 @@
 | [UI 风格与交互规范](ui-style.md) | 旧版设计目标与移动端适配要求 |
 | [客户端结构与修改入口](client-structure.md) | 当前实际文件、待创建的功能目录 |
 | [React Native + Expo 客户端约定](client.md) | 路由、主题、字体、平台适配与模型直连 |
-| [存储与数据同步](data.md) | 浏览器存储、手机本地存储规划、PostgreSQL、Redis、RustFS、合并与冲突 |
+| [存储与数据同步](data.md) | 浏览器存储、手机本地存储规划、SQLite、进程内缓存、本地文件、合并与冲突 |
 | [认证与用户管理](auth.md) | 初始化、登录、改密和管理员操作 |
 | [Agent Runtime、模型与工具](agent.md) | 客户端本地 Runtime、单次模型代理与云端工具边界 |
 | [文件读取与个人记忆](files-and-memory.md) | 文档解析、记忆提炼与注入 |
