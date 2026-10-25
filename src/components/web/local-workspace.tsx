@@ -13,10 +13,10 @@ import { AccountSyncProvider } from '@/features/auth/account-sync-state.web';
 import { NetworkToolsProvider } from '@/features/auth/network-tools-state.web';
 
 function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean }>) {
-  const { conversations, activeId, sidebarOpen } = useChat();
+  const { conversations, deletedConversationIds, activeId, sidebarOpen } = useChat();
   const { themeId, mode } = useAppearance();
   const { preferences: personalization } = usePersonalization();
-  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), activeId, sidebarOpen }, appearance: { themeId, mode }, personalization }), [conversations, activeId, sidebarOpen, themeId, mode, personalization]);
+  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), ...(deletedConversationIds?.length ? { deletedConversationIds } : {}), activeId, sidebarOpen }, appearance: { themeId, mode }, personalization }), [conversations, deletedConversationIds, activeId, sidebarOpen, themeId, mode, personalization]);
   const revision = useRef(initial.revision);
   const saved = useRef(JSON.stringify(initial.data));
   const queue = useRef(Promise.resolve());

@@ -30,34 +30,44 @@ const AccountSyncContext = createContext<AccountSyncContextValue | null>(null);
 
 export function AccountSyncProvider({ children, preview }: PropsWithChildren<{ preview: boolean }>) {
   const auth = useAuth();
-  const { conversations, dispatch } = useChat();
+  const { conversations, deletedConversationIds, dispatch } = useChat();
   const { themeId, mode } = useAppearance();
   const { preferences: personalization } = usePersonalization();
   const [state, setState] = useState<AccountSyncState>(idleState);
-  const latest = useRef({ auth, conversations, appearance: { themeId, mode }, personalization });
-  latest.current = { auth, conversations, appearance: { themeId, mode }, personalization };
+  const latest = useRef({ auth, conversations, deletedConversationIds, appearance: { themeId, mode }, personalization });
+  latest.current = { auth, conversations, deletedConversationIds, appearance: { themeId, mode }, personalization };
   const running = useRef(false);
+  const rerun = useRef(false);
   const lastAttempt = useRef(0);
 
-  const runSync = useCallback(async () => {
+  const runSync = useCallback(async (): Promise<void> => {
     const current = latest.current;
     const session = current.auth;
     if (preview || session.status !== 'authenticated' || !session.user || session.user.mustChangePassword) return;
-    if (running.current) return;
+    if (running.current) { rerun.current = true; return; }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
     running.current = true;
     lastAttempt.current = Date.now();
     setState((previous) => ({ ...previous, phase: 'syncing', error: null }));
+    const isCurrentSession = () => session.getSnapshot().status === 'authenticated'
+      && session.getSnapshot().user?.id === session.user?.id;
     try {
       const preferences = await loadSyncPreferences(session.user.id);
-      const result = await syncAccount(session.request, {
-        chat: { conversations: current.conversations },
+      const result = await syncAccount(async <T,>(path: string, init?: RequestInit): Promise<T> => {
+        if (!isCurrentSession()) throw new Error('Account changed during sync');
+        const result = await session.request<T>(path, init);
+        if (!isCurrentSession()) throw new Error('Account changed during sync');
+        return result;
+      }, {
+        chat: { conversations: current.conversations, deletedConversationIds: current.deletedConversationIds },
         appearance: current.appearance,
         personalization: current.personalization,
       }, preferences);
-      if (result.pulled.length) dispatch({ type: 'merge-sync', conversations: result.pulled });
+      if (!isCurrentSession()) return;
+      dispatch({ type: 'merge-sync', conversations: result.pulled, deletedConversationIds: result.deletedConversationIds });
       const syncedAt = Date.now();
       await saveLastSyncedAt(session.user.id, syncedAt);
+      if (!isCurrentSession()) return;
       setState({
         phase: 'done',
         lastSyncedAt: syncedAt,
@@ -66,6 +76,7 @@ export function AccountSyncProvider({ children, preview }: PropsWithChildren<{ p
         uploaded: result.uploadedConversations + result.updatedConversations,
       });
     } catch (reason) {
+      if (!isCurrentSession()) return;
       setState((previous) => ({
         ...previous,
         phase: 'error',
@@ -73,13 +84,24 @@ export function AccountSyncProvider({ children, preview }: PropsWithChildren<{ p
       }));
     } finally {
       running.current = false;
+      if (rerun.current) { rerun.current = false; void runSync(); }
     }
   }, [dispatch, preview]);
 
   const syncNow = useCallback(() => { void runSync(); }, [runSync]);
 
+  // Deletion should reach the server promptly, even if an older upload is in flight.
+  const previousDeletions = useRef(deletedConversationIds);
+  useEffect(() => {
+    const previous = previousDeletions.current;
+    previousDeletions.current = deletedConversationIds;
+    if (deletedConversationIds?.some((id) => !previous?.includes(id))) void runSync();
+  }, [deletedConversationIds, runSync]);
+
   useEffect(() => {
     const userId = auth.user?.id;
+    lastAttempt.current = 0;
+    setState(idleState);
     if (!userId) return;
     let active = true;
     loadLastSyncedAt(userId).then((lastSyncedAt) => {
@@ -110,7 +132,7 @@ export function AccountSyncProvider({ children, preview }: PropsWithChildren<{ p
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
     };
-  }, [authenticated, preview, runSync]);
+  }, [authenticated, auth.user?.id, preview, runSync]);
 
   useEffect(() => {
     if (preview || !authenticated) return;

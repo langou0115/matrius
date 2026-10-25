@@ -1,5 +1,5 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -87,6 +87,9 @@ class ImportConversation(BaseModel):
 
 class ImportChat(BaseModel):
     conversations: list[ImportConversation] = Field(default_factory=list)
+    deletedConversationIds: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(
+        default_factory=list, max_length=2000
+    )
 
 
 class ImportAppearance(BaseModel):

@@ -142,7 +142,7 @@ GET    /api/health/ready
 - 文件内容写入 `DATA_DIR/files`，对象键为 `users/{userId}/{fileId}/{safeName}`，数据库只保存元数据；写入使用临时文件 + `os.replace` 原子替换。
 - 上传类型白名单：纯文本/代码/Markdown/CSV、图片、PDF、DOCX/XLSX/PPTX。不支持旧版 DOC/XLS/PPT，也不做 OCR。
 - 文件读取与 grep 只对已上传文件生效；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
-- 搜索并行请求 DuckDuckGo HTML（失败回退 lite 端点）与 Bing RSS，结果去重并限制每域 2 条；单来源失败时降级，全部失败返回 502。
+- 搜索优先 DuckDuckGo HTML → Lite，只有失败或没有有效结果才回退 Bing RSS；结果去重、按关键词相关性排序并优先保证域名多样性。验证码/异常页不当作零结果，有来源失败且无可用结果时返回 502；空结果不缓存。
 - 网页读取前校验 URL：仅 http/https、禁止凭据、localhost、私网/链路本地/云元数据地址，并解析 DNS 检查全部地址；最多手动跟随 5 次重定向，每一跳重新校验。`WEBTOOL_PROXY_URL` 同时用于搜索与抓取。生产环境仍建议在主机/云防火墙限制 API 容器的出站网段。
 - 限流与登录锁定使用进程内滑动窗口：登录按 IP 与用户名，登录失败 15 次锁定 15 分钟；其余接口按用户。重启后清零，因此 API 必须单 worker 运行。
 

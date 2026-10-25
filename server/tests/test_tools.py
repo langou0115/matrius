@@ -1,3 +1,4 @@
+import asyncio
 import io
 import uuid
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from docx import Document
 from app.errors import AppError
 from app.files.parsing import extract_text
 from app.tools import files as tools_files
+from app.tools import web_fetch as web_fetch_module
 from app.tools.urls import canonical_result_key, normalize_search_url, validate_fetch_url
 
 
@@ -68,6 +70,30 @@ async def test_grep_rejects_invalid_pattern(monkeypatch):
 async def test_fetch_rejects_unsafe_urls(url):
     with pytest.raises(AppError):
         await validate_fetch_url(url)
+
+
+async def test_four_fetch_endpoints_download_pages_concurrently(client, create_user, monkeypatch):
+    _, headers = await create_user()
+    all_started = asyncio.Event()
+    started = []
+
+    async def download(url):
+        started.append(url)
+        if len(started) == 4:
+            all_started.set()
+        await all_started.wait()
+        return url, "Synthetic page text", False, "text/plain"
+
+    monkeypatch.setattr(web_fetch_module, "_download", download)
+    monkeypatch.setattr(web_fetch_module, "_extract", lambda body, _url, _mode, _mime: ("Page", body))
+    urls = [f"https://example.com/parallel-{index}" for index in range(4)]
+    async with asyncio.timeout(3):
+        responses = await asyncio.gather(*(
+            client.post("/api/tools/fetch", json={"url": url}, headers=headers) for url in urls
+        ))
+    assert set(started) == set(urls)
+    assert [response.status_code for response in responses] == [200] * 4
+    assert [response.json()["url"] for response in responses] == urls
 
 
 def test_normalize_search_url_strips_tracking():

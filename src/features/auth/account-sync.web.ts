@@ -7,7 +7,7 @@ import type { SyncPreferences } from './sync-preferences.web';
 export type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
 
 export type SyncWorkspace = {
-  chat: { conversations: Conversation[] };
+  chat: { conversations: Conversation[]; deletedConversationIds?: string[] };
   appearance: AppearancePreferences;
   personalization: PersonalizationPreferences;
 };
@@ -18,6 +18,7 @@ export type SyncResult = {
   updatedConversations: number;
   failed: string[];
   pulled: Conversation[];
+  deletedConversationIds?: string[];
 };
 
 type RemoteReadMarker = { state?: unknown; readAt?: unknown };
@@ -198,8 +199,16 @@ export async function pushWorkspace(
   preferences: SyncPreferences,
 ): Promise<Omit<SyncResult, 'pulled'>> {
   const conversations = preferences.conversations
-    ? workspace.chat.conversations.filter((conversation) => !hasStreamingMessage(conversation))
+    ? workspace.chat.conversations.filter((conversation) => !hasStreamingMessage(conversation)
+      && !workspace.chat.deletedConversationIds?.includes(conversation.id))
     : [];
+  // Keep tombstones after acknowledgement: an offline device can return with an old copy.
+  const deleted = preferences.conversations ? workspace.chat.deletedConversationIds ?? [] : [];
+  for (let offset = 0; offset < deleted.length; offset += MAX_BATCH_MESSAGES) {
+    await request('/api/account/import', { method: 'POST', body: JSON.stringify({
+      schemaVersion: 1, chat: { deletedConversationIds: deleted.slice(offset, offset + MAX_BATCH_MESSAGES) },
+    }) });
+  }
   const { batches, tooLarge } = buildBatches(conversations, preferences.reading);
   const appearance = preferences.appearance ? workspace.appearance : null;
   const personalization = preferences.personalization ? workspace.personalization : null;
@@ -313,6 +322,7 @@ export async function pullWorkspace(
   request: ApiRequest,
   localConversations: Conversation[],
   preferences: SyncPreferences,
+  deletedConversationIds: string[] = [],
 ): Promise<Conversation[]> {
   if (!preferences.conversations) return [];
   const remoteList = await listRemoteConversations(request);
@@ -324,6 +334,7 @@ export async function pullWorkspace(
       ? remote.clientId
       : typeof remote.id === 'string' ? remote.id : null;
     if (!id) continue;
+    if (deletedConversationIds.includes(id)) continue;
     const local = localById.get(id);
     const remoteId = typeof remote.id === 'string' ? remote.id : null;
     if (!remoteId) continue;
@@ -343,8 +354,21 @@ export async function syncAccount(
   preferences: SyncPreferences,
 ): Promise<SyncResult> {
   const pushed = await pushWorkspace(request, workspace, preferences);
-  const pulled = await pullWorkspace(request, workspace.chat.conversations, preferences);
-  return { ...pushed, pulled };
+  const deleted = new Set(workspace.chat.deletedConversationIds ?? []);
+  if (preferences.conversations) {
+    let cursor: string | null = null;
+    // Read every page; silently truncating tombstones would resurrect older deletions.
+    do {
+      const response: { items: string[]; nextCursor?: string | null } = await request(
+        `/api/account/conversation-deletions?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      );
+      for (const id of response.items) deleted.add(id);
+      cursor = response.nextCursor ?? null;
+    } while (cursor);
+  }
+  const deletedConversationIds = [...deleted];
+  const pulled = await pullWorkspace(request, workspace.chat.conversations, preferences, deletedConversationIds);
+  return { ...pushed, pulled, deletedConversationIds };
 }
 
 export async function loadLastSyncedAt(userId: string): Promise<number | null> {

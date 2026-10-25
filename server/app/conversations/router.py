@@ -7,6 +7,7 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.account.import_service import _import_lock, record_conversation_deletion
 from app.auth.dependencies import AuthContext, read_rate_limit, write_rate_limit
 from app.conversations.schemas import (
     ConversationCreate,
@@ -17,7 +18,7 @@ from app.conversations.schemas import (
 from app.conversations.serializers import conversation_out, message_out
 from app.db import get_db
 from app.errors import conflict, invalid, not_found
-from app.models import Conversation, Message, StoredFile
+from app.models import Conversation, ConversationDeletion, Message, StoredFile
 from app.utils import (
     clamp_page_size,
     decode_cursor,
@@ -130,7 +131,17 @@ async def create_conversation(
     ctx: AuthContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    async with _import_lock():
+        return await _create_conversation_record(payload, ctx, db)
+
+
+async def _create_conversation_record(
+    payload: ConversationCreate, ctx: AuthContext, db: AsyncSession,
+) -> dict[str, Any]:
     client_id = validate_client_id(payload.clientId)
+    for identity in (client_id, str(payload.id) if payload.id else None):
+        if identity and await db.get(ConversationDeletion, (ctx.user.id, identity)) is not None:
+            raise conflict("对话已删除，请创建新的对话。")
     existing = await _find_by_id_or_client(db, Conversation, ctx.user.id, payload.id, client_id)
     if existing is not None:
         return conversation_out(existing)
@@ -240,11 +251,15 @@ async def delete_conversation(
     ctx: AuthContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
-    conversation = await _get_conversation(db, ctx.user.id, conversation_id, lock=True)
-    if conversation.revision != baseRevision:
-        raise conflict("对话已在其他设备更新，请刷新后重试。", current=conversation_out(conversation))
-    await db.delete(conversation)
-    await db.commit()
+    async with _import_lock():
+        conversation = await _get_conversation(db, ctx.user.id, conversation_id, lock=True)
+        if conversation.revision != baseRevision:
+            raise conflict("对话已在其他设备更新，请刷新后重试。", current=conversation_out(conversation))
+        await record_conversation_deletion(db, ctx.user.id, str(conversation.id))
+        if conversation.client_id:
+            await record_conversation_deletion(db, ctx.user.id, conversation.client_id)
+        await db.delete(conversation)
+        await db.commit()
     return {"ok": True}
 
 

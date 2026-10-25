@@ -91,7 +91,7 @@ async def test_download_uses_the_configured_proxy(fetched, monkeypatch):
 
     monkeypatch.setattr(web_fetch, "validate_fetch_url", allow)
     assert await web_fetch._download("https://example.com/page") == (
-        "https://example.com/page", "hello", False
+        "https://example.com/page", "hello", False, ""
     )
     assert seen["proxy"] == "http://proxy.internal:3128"
 
@@ -115,7 +115,7 @@ async def test_download_connects_directly_without_a_proxy(fetched, monkeypatch):
 
     monkeypatch.setattr(web_fetch, "validate_fetch_url", allow)
     assert await web_fetch._download("https://example.com/page") == (
-        "https://example.com/page", "hello", False
+        "https://example.com/page", "hello", False, ""
     )
     assert seen["proxy"] is None
 
@@ -125,7 +125,7 @@ async def test_download_returns_decoded_text(fetched, monkeypatch):
         "https://example.com/page": FakeResponse(chunks=[b"hello ", b"world"], charset="utf-8"),
     })
     assert await web_fetch._download("https://example.com/page") == (
-        "https://example.com/page", "hello world", False
+        "https://example.com/page", "hello world", False, ""
     )
 
 
@@ -134,7 +134,7 @@ async def test_download_truncates_oversized_bodies(fetched, monkeypatch):
     patch_download(monkeypatch, {
         "https://example.com/page": FakeResponse(chunks=[b"12345", b"6789"]),
     })
-    url, body, truncated = await web_fetch._download("https://example.com/page")
+    url, body, truncated, _content_type = await web_fetch._download("https://example.com/page")
     assert (url, body, truncated) == ("https://example.com/page", "12345", True)
 
 
@@ -154,7 +154,8 @@ async def test_download_reports_upstream_http_errors(fetched, monkeypatch):
     })
     with pytest.raises(AppError) as raised:
         await web_fetch._download("https://example.com/missing")
-    assert raised.value.code == "upstream_error"
+    assert raised.value.code == "fetch_not_found"
+    assert raised.value.status_code == 422
     assert "404" in raised.value.message
 
 
@@ -199,7 +200,7 @@ async def test_download_stops_after_five_redirects(fetched, monkeypatch):
 
 async def test_web_fetch_extracts_article_text(fetched, monkeypatch):
     async def download(_url):
-        return "https://example.com/page", PAGE, False
+        return "https://example.com/page", PAGE, False, "text/html"
 
     monkeypatch.setattr(web_fetch, "_download", download)
     result = await web_fetch.web_fetch("https://example.com/page")
@@ -214,7 +215,7 @@ async def test_web_fetch_applies_the_character_limit(fetched, monkeypatch):
     fetched.fetch_max_chars = 12
 
     async def download(_url):
-        return "https://example.com/page", PAGE, False
+        return "https://example.com/page", PAGE, False, "text/html"
 
     monkeypatch.setattr(web_fetch, "_download", download)
     result = await web_fetch.web_fetch("https://example.com/page")
@@ -256,7 +257,7 @@ async def test_web_fetch_rejects_an_empty_extraction(fetched, monkeypatch):
     fetched.fetch_max_chars = 100
 
     async def download(_url):
-        return "https://example.com/page", "<html><body><script>let x = 1;</script></body></html>", False
+        return "https://example.com/page", "<html><body><script>let x = 1;</script></body></html>", False, "text/html"
 
     monkeypatch.setattr(web_fetch, "_download", download)
     with pytest.raises(AppError) as raised:
@@ -277,3 +278,81 @@ def test_textual_content_types():
     assert web_fetch._is_textual("")
     assert not web_fetch._is_textual("application/pdf")
     assert not web_fetch._is_textual("image/png")
+
+
+def test_plain_markdown_json_and_code_preserve_structure():
+    markdown = "# Title\n\n[Docs](https://example.com)\n\n```cpp\nif (a < b) {\n  return;\n}\n```"
+    assert web_fetch._extract(markdown, "https://example.com", "fast", "text/markdown")[1] == markdown
+    data = '{"example": "<article>not HTML</article>"}'
+    assert web_fetch._extract(data, "https://example.com", "fast", "application/json")[1] == data
+    assert web_fetch._extract("a < b\n  keep indentation", "https://example.com", "fast", "text/plain")[1] == (
+        "a < b\n  keep indentation"
+    )
+
+
+def test_html_fallback_keeps_headings_links_code_and_tables(monkeypatch):
+    monkeypatch.setattr(web_fetch, "_extract_with_trafilatura", lambda *_args: None)
+    body = """<html><head><title>Reference</title></head><body><nav>Ignore navigation</nav><main>
+      <h1>API</h1><p>Read <a href="/guide">the guide</a>.</p><pre>if x:\n  print(x)</pre>
+      <table><tr><th>Name</th><th>Value</th></tr><tr><td>A</td><td>1</td></tr></table>
+      <script>secretScript()</script></main></body></html>"""
+    title, text = web_fetch._extract(body, "https://example.com/api", "fast")
+    assert title == "Reference"
+    assert "# API" in text
+    assert "[the guide](https://example.com/guide)" in text
+    assert "```\nif x:\n  print(x)\n```" in text
+    assert "| Name | Value |" in text
+    assert "Ignore navigation" not in text and "secretScript" not in text
+
+
+def test_challenge_page_is_not_cached_as_evidence():
+    with pytest.raises(AppError) as raised:
+        web_fetch._extract("<html><title>Just a moment...</title><body>Checking your browser</body></html>",
+                           "https://example.com", "fast")
+    assert raised.value.code == "fetch_blocked"
+
+
+def test_javascript_only_shell_is_reported_explicitly():
+    with pytest.raises(AppError) as raised:
+        web_fetch._extract('<html><div id="root"></div><noscript>You need to enable JavaScript.</noscript></html>',
+                           "https://example.com", "fast")
+    assert raised.value.code == "fetch_requires_browser"
+
+
+async def test_exact_download_limit_is_not_mislabeled_truncated(fetched, monkeypatch):
+    fetched.fetch_max_bytes = 5
+    patch_download(monkeypatch, {"https://example.com/exact": FakeResponse(chunks=[b"12345"])})
+    assert (await web_fetch._download("https://example.com/exact"))[2] is False
+
+
+@pytest.mark.parametrize("status,code", [(403, "fetch_blocked"), (410, "fetch_not_found"), (429, "fetch_rate_limited")])
+async def test_download_reports_actionable_permanent_and_transient_failures(fetched, monkeypatch, status, code):
+    patch_download(monkeypatch, {"https://example.com/page": FakeResponse(status, headers={"retry-after": "2"})})
+    with pytest.raises(AppError) as raised:
+        await web_fetch._download("https://example.com/page")
+    assert raised.value.code == code
+    if status == 429:
+        assert raised.value.headers["Retry-After"] == "2"
+
+
+async def test_total_fetch_deadline_includes_slow_response_body(fetched, monkeypatch):
+    class SlowResponse(FakeResponse):
+        async def aiter_bytes(self):
+            yield b"first chunk"
+            await asyncio.sleep(10)
+            yield b"never arrive"
+
+    patch_download(monkeypatch, {"https://example.com/slow": SlowResponse()})
+    monkeypatch.setattr(web_fetch, "FETCH_TIMEOUT_SECONDS", 0.03)
+    with pytest.raises(AppError) as raised:
+        await web_fetch.web_fetch("https://example.com/slow")
+    assert raised.value.code == "fetch_timeout"
+    assert raised.value.status_code == 504
+
+
+async def test_total_fetch_deadline_includes_waiting_for_a_global_slot(fetched, monkeypatch):
+    monkeypatch.setattr(web_fetch, "FETCH_SEMAPHORE", asyncio.Semaphore(0))
+    monkeypatch.setattr(web_fetch, "FETCH_TIMEOUT_SECONDS", 0.01)
+    with pytest.raises(AppError) as raised:
+        await web_fetch.web_fetch("https://example.com/queued")
+    assert raised.value.code == "fetch_timeout"

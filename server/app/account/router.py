@@ -20,7 +20,7 @@ from app.account.schemas import (
 from app.auth.dependencies import AuthContext, read_rate_limit, write_rate_limit
 from app.db import get_db
 from app.errors import conflict, invalid, not_found
-from app.models import MemoryEntry, UserPreference, UserProfile, UserProfileField
+from app.models import ConversationDeletion, MemoryEntry, UserPreference, UserProfile, UserProfileField
 from app.utils import (
     clamp_page_size,
     decode_cursor,
@@ -416,6 +416,23 @@ async def archive_memory(
         memory.updated_at = utcnow()
         await db.commit()
     return _memory_out(memory)
+
+
+@router.get("/account/conversation-deletions")
+async def list_conversation_deletions(
+    limit: int = Query(default=100, ge=1),
+    cursor: str | None = None,
+    ctx: AuthContext = Depends(read_rate_limit),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    page_size = clamp_page_size(limit)
+    stmt = select(ConversationDeletion.client_id).where(ConversationDeletion.user_id == ctx.user.id)
+    if cursor:
+        (client_id,) = decode_cursor(cursor, 1)
+        stmt = stmt.where(ConversationDeletion.client_id > client_id)
+    rows = list((await db.execute(stmt.order_by(ConversationDeletion.client_id).limit(page_size + 1))).scalars())
+    items = rows[:page_size]
+    return {"items": items, "nextCursor": encode_cursor(items[-1]) if len(rows) > page_size else None}
 
 
 @router.post("/account/import")

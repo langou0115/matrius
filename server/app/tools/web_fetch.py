@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urljoin
 
@@ -13,6 +14,7 @@ from lxml import html as lxml_html
 from app.cache import cache_get, cache_set
 from app.config import get_settings
 from app.errors import AppError, invalid
+from app.tools.html_markdown import extract_markdown
 from app.tools.urls import FETCH_TIMEOUT_SECONDS, validate_fetch_url
 
 logger = logging.getLogger(__name__)
@@ -52,11 +54,11 @@ def _is_textual(content_type: str) -> bool:
     lowered = content_type.split(";", 1)[0].strip().lower()
     if not lowered:
         return True
-    return lowered.startswith(TEXTUAL_CONTENT_TYPES)
+    return lowered.startswith(TEXTUAL_CONTENT_TYPES) or lowered.endswith(("+json", "+xml"))
 
 
-async def _download(url: str) -> tuple[str, str, bool]:
-    """Return (final_url, body, truncated), re-validating every redirect hop."""
+async def _download(url: str) -> tuple[str, str, bool, str]:
+    """Return (final_url, body, truncated, content_type), re-validating redirect hops."""
     settings = get_settings()
     current = await validate_fetch_url(url)
     timeout = httpx.Timeout(FETCH_TIMEOUT_SECONDS, connect=10)
@@ -68,7 +70,8 @@ async def _download(url: str) -> tuple[str, str, bool]:
         proxy=getattr(settings, "web_tool_proxy_url", "") or None,
         headers={
             "User-Agent": _user_agent(),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": ("text/markdown,text/x-markdown;q=0.95,text/plain;q=0.9,"
+                       "text/html;q=0.85,application/xhtml+xml;q=0.8,*/*;q=0.1"),
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         },
     ) as client:
@@ -83,8 +86,16 @@ async def _download(url: str) -> tuple[str, str, bool]:
                         raise AppError(502, "upstream_error", "网页重定向次数过多。")
                     continue
 
+                if response.status_code in (401, 403):
+                    raise AppError(422, "fetch_blocked", "该网页拒绝自动访问或需要登录，请尝试其他公开来源。")
+                if response.status_code in (404, 410):
+                    raise AppError(422, "fetch_not_found", f"网页不存在或已删除（HTTP {response.status_code}）。")
+                if response.status_code == 429:
+                    retry_after = response.headers.get("retry-after", "5")
+                    raise AppError(503, "fetch_rate_limited", "目标网站暂时限流，请稍后读取或更换来源。",
+                                   headers={"Retry-After": retry_after})
                 if response.status_code >= 400:
-                    raise AppError(502, "upstream_error", f"网页返回了 HTTP {response.status_code}。")
+                    raise AppError(502, "fetch_upstream_error", f"目标网站返回 HTTP {response.status_code}。")
                 if not _is_textual(response.headers.get("content-type", "")):
                     raise AppError(422, "unsupported_content", "该地址不是可提取的文本网页。")
 
@@ -94,14 +105,15 @@ async def _download(url: str) -> tuple[str, str, bool]:
                 truncated = False
                 async for chunk in response.aiter_bytes():
                     remaining = limit - total
-                    if len(chunk) >= remaining:
+                    if len(chunk) > remaining:
                         chunks.append(chunk[:remaining])
                         total = limit
                         truncated = True
                         break
                     chunks.append(chunk)
                     total += len(chunk)
-                return current, _decode(b"".join(chunks), response.charset_encoding), truncated
+                return (current, _decode(b"".join(chunks), response.charset_encoding), truncated,
+                        response.headers.get("content-type", ""))
 
     raise AppError(502, "upstream_error", "网页重定向次数过多。")
 
@@ -119,26 +131,43 @@ def _extract_with_trafilatura(body: str, url: str, mode: str) -> tuple[str, str]
     output = trafilatura.extract(
         body,
         url=url,
-        output_format="json",
-        with_metadata=True,
+        output_format="markdown",
+        with_metadata=False,
         include_comments=False,
-        include_tables=mode == "full",
+        include_tables=True,
+        include_links=True,
         favor_precision=mode == "fast",
         favor_recall=mode == "full",
         deduplicate=True,
     )
     if not output:
         return None
-    try:
-        payload = json.loads(output)
-    except ValueError:
-        return None
-    text = payload.get("text") or payload.get("raw_text") or ""
-    title = payload.get("title") or ""
-    return str(title), str(text)
+    tree = lxml_html.fromstring(body)
+    titles = tree.xpath("//title|//h1")
+    title = " ".join(titles[0].text_content().split()) if titles else url
+    return title, output
 
 
-def _extract(body: str, url: str, mode: str) -> tuple[str, str]:
+def _extract(body: str, url: str, mode: str, content_type: str = "text/html") -> tuple[str, str]:
+    if not body.strip():
+        return url, ""
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mime and mime not in ("text/html", "application/xhtml+xml"):
+        return url, body.strip()
+    if not mime and not re.search(r"<(?:html|head|body|main|article|div|p|h[1-6])(?:\s|>)", body, re.I):
+        return url, body.strip()
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", body, re.I | re.S)
+    title_text = title_match.group(1).strip().lower() if title_match else ""
+    visible = re.sub(r"<[^>]+>", " ", body)
+    short_page = len(" ".join(visible.split())) < 2000
+    if (re.match(r"^(?:just a moment|attention required)", title_text)
+            or (short_page and title_text.rstrip(".! ") in ("access denied", "security check"))
+            or ("cf-chl-" in body and len(body) < 20_000)):
+        raise AppError(422, "fetch_blocked", "该网页返回了验证或访问限制页面，未作为正文读取。")
+    if ("<noscript" in body.lower() and len(" ".join(visible.split())) < 500
+            and re.search(r"(?:enable|requires?|need)[^<\n]{0,50}javascript|启用\s*javascript", visible, re.I)):
+        raise AppError(422, "fetch_requires_browser",
+                       "该网页需要 JavaScript 渲染，当前读取器无法取得正文，请更换公开来源。")
     if mode == "full" or "<" in body:
         try:
             extracted = _extract_with_trafilatura(body, url, mode)
@@ -147,10 +176,10 @@ def _extract(body: str, url: str, mode: str) -> tuple[str, str]:
         except Exception as exc:  # noqa: BLE001 - fall back to plain text extraction
             logger.warning("trafilatura extraction failed for %s: %s", url, exc)
     try:
-        return _extract_with_lxml(body, url)
+        return extract_markdown(body, url, main_only=mode == "fast")
     except Exception as exc:  # noqa: BLE001
         logger.warning("lxml extraction failed for %s: %s", url, exc)
-        return url, " ".join(body.split())
+        return _extract_with_lxml(body, url)
 
 
 def _forget_flight(key: str, task: asyncio.Task) -> None:
@@ -162,7 +191,7 @@ def _forget_flight(key: str, task: asyncio.Task) -> None:
 
 async def web_fetch(url: str, mode: str = "fast") -> dict[str, Any]:
     ensure_mode(mode)
-    cache_key = "matrius:fetch:" + hashlib.sha256(f"{url}|{mode}".encode()).hexdigest()
+    cache_key = "matrius:fetch:v2:" + hashlib.sha256(f"{url}|{mode}".encode()).hexdigest()
     cached = await cache_get(cache_key)
     if cached is not None:
         try:
@@ -182,9 +211,20 @@ async def _fetch_uncached(url: str, mode: str, cache_key: str) -> dict[str, Any]
     settings = get_settings()
     # Extraction is CPU-bound too, so it stays inside the slot: four concurrent pages are
     # already the limit for both downloading and parsing.
-    async with FETCH_SEMAPHORE:
-        final_url, body, truncated = await _download(url)
-        title, text = await asyncio.to_thread(_extract, body, final_url, mode)
+    try:
+        # A single deadline covers queueing, redirects, response body and extraction.
+        async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
+            async with FETCH_SEMAPHORE:
+                final_url, body, truncated, content_type = await _download(url)
+                title, text = await asyncio.to_thread(_extract, body, final_url, mode, content_type)
+    except TimeoutError:
+        raise AppError(504, "fetch_timeout", "网页读取超时，已停止等待该页面。") from None
+    except AppError:
+        raise
+    except httpx.TimeoutException:
+        raise AppError(504, "fetch_timeout", "目标网页连接或传输超时。") from None
+    except httpx.TransportError:
+        raise AppError(502, "fetch_network_error", "无法连接目标网页，请稍后读取或更换来源。") from None
     if not text.strip():
         raise AppError(502, "fetch_empty", "未能提取到网页正文。")
 

@@ -16,7 +16,7 @@ export type WebSearchResult = {
 export type WebActivity = {
   id: string;
   kind: 'search' | 'fetch';
-  status: 'running' | 'complete' | 'error';
+  status: 'running' | 'complete' | 'stopped' | 'error';
   query?: string;
   results?: WebSearchResult[];
   url?: string;
@@ -27,6 +27,17 @@ export type WebActivity = {
   startedAt?: number;
   endedAt?: number;
 };
+
+export type ThinkingActivity = {
+  id: string;
+  kind: 'thinking';
+  content: string;
+  status: 'running' | 'complete' | 'stopped' | 'error';
+  startedAt?: number;
+  endedAt?: number;
+};
+/** Append in runtime event order; separate thinking segments may surround tool calls. */
+export type ProcessActivity = ThinkingActivity | WebActivity;
 
 export type Message = {
   id: string;
@@ -39,7 +50,9 @@ export type Message = {
   reasoningActive?: boolean;
   /** Web tool calls made while composing this reply. Local-only: not part of account sync. */
   activities?: WebActivity[];
-  /** Time to the last reasoning token or tool call, excluding answer generation. */
+  /** Ordered thinking and tool segments, retained in the local workspace. */
+  process?: ProcessActivity[];
+  /** Total elapsed time for this reply, including reasoning, tools and answer generation. */
   thinkingMs?: number;
   status?: 'streaming' | 'complete' | 'stopped' | 'error';
   error?: string;
@@ -52,6 +65,7 @@ export type ReplyUpdate = {
   reasoningActive: boolean;
   /** A stable array that only changes when a tool call starts or finishes. */
   activities?: WebActivity[];
+  process?: ProcessActivity[];
 };
 export type ReplyResult = { status: 'complete' | 'stopped' | 'error'; error?: string };
 export type RuntimeRun = { conversationId: string; replyId: string; startedAt: number };

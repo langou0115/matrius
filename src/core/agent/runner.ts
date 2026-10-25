@@ -4,8 +4,8 @@ import type { AssistantMessage } from '@mariozechner/pi-ai';
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, ReplyUpdate, ReplyResult, WebActivity } from './types';
-import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
+import type { Message, ProcessActivity, ReplyUpdate, ReplyResult, WebActivity } from './types';
+import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import { buildContext } from './context';
 import { getWebActivityEnd, getWebActivityStart } from './web-tools';
 
@@ -58,13 +58,16 @@ export function describeModelError(reason: unknown) {
   return '模型回复失败，请检查模型配置和服务商状态后重试。';
 }
 
-export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000 }: {
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000 }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
   /** Registered cloud tools. Empty means a local text-only run, where a tool call is an error. */
   tools?: AgentTool[];
-  onUpdate: (value: ReplyUpdate) => void; streamFn?: StreamFn; timeoutMs?: number;
+  onUpdate: (value: ReplyUpdate) => void; streamFn?: StreamFn;
+  /** Maximum silence, reset by streamed output and tool progress. */
+  timeoutMs?: number;
+  maxDurationMs?: number;
 }) {
   const model = createAgentModel(config);
   if (thinkingEffort !== 'default') model.reasoning = true;
@@ -72,9 +75,22 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     initialState: { model, messages: buildContext(messages, config), systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
     getApiKey: () => apiKey || 'no-key', streamFn,
     transport: 'sse', maxRetryDelayMs: 5000,
+    // Match OpenStudio: serialize model tool calls, while each fetch batches four pages.
+    // Parallel four-page calls otherwise overflow the account's four-request cap.
+    toolExecution: 'sequential',
   });
   let stopped = false;
   let timedOut = false;
+  let durationExceeded = false;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  function resetIdleTimer() {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { timedOut = true; agent.abort(); }, timeoutMs);
+  }
+  function timeoutError() {
+    return durationExceeded ? '本轮生成时间过长，已保留收到的内容。'
+      : '响应超时：服务商长时间未返回新内容。已生成内容已保留。';
+  }
   let finalMessage: AssistantMessage | undefined;
   let unsupportedTool = false;
   let reasoningActive = false;
@@ -83,6 +99,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   const contentTurns: string[] = [];
   const reasoningTurns: string[] = [];
   let activities: WebActivity[] = [];
+  let process: ProcessActivity[] = [];
+  let assistantIndex = 0;
 
   function setLast(target: string[], value: string) {
     if (target.length) target[target.length - 1] = value;
@@ -94,13 +112,18 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       content: contentTurns.filter(Boolean).join('\n\n'),
       reasoning: reasoningTurns.filter(Boolean).join('\n\n'),
       activities,
+      process,
     });
   }
 
   function startTool(event: { toolCallId: string; toolName: string; args: unknown }) {
     const activity = getWebActivityStart(event.toolName, event.toolCallId, event.args);
     if (!activity) return;
-    activities = [...activities, { ...activity, startedAt: Date.now() }];
+    const now = Date.now();
+    const started = { ...activity, startedAt: now };
+    activities = [...activities, started];
+    process = [...process.map((item) => item.kind === 'thinking' && item.status === 'running'
+      ? { ...item, status: 'complete' as const, endedAt: now } : item), started];
     emit();
   }
 
@@ -113,15 +136,32 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       if (!ended) return { ...activity, status: event.isError ? 'error' as const : 'complete' as const, endedAt };
       return { ...ended, startedAt: activity.startedAt, endedAt };
     });
+    process = process.map((activity) => activity.id === event.toolCallId && activity.kind !== 'thinking'
+      ? activities.find((item) => item.id === event.toolCallId)! : activity);
     emit();
   }
 
   const unsubscribe = agent.subscribe((event) => {
+    if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end' || event.type === 'tool_execution_update'
+      || (event.type === 'message_update' && event.message.role === 'assistant'
+        && ['text_delta', 'thinking_delta', 'toolcall_delta'].includes(event.assistantMessageEvent.type))) resetIdleTimer();
     if (event.type === 'tool_execution_start') { startTool(event); return; }
     if (event.type === 'tool_execution_end') { endTool(event); return; }
+    if (event.type === 'tool_execution_update') {
+      const previous = activities.find((activity) => activity.id === event.toolCallId);
+      const updated = getWebActivityEnd(event.toolName, event.toolCallId, event.partialResult, false, previous);
+      if (updated) {
+        const next = { ...updated, status: 'running' as const, startedAt: previous?.startedAt };
+        activities = activities.map((activity) => activity.id === event.toolCallId ? next : activity);
+        process = process.map((activity) => activity.id === event.toolCallId && activity.kind !== 'thinking' ? next : activity);
+        emit();
+      }
+      return;
+    }
     if ((event.type === 'message_start' || event.type === 'message_update' || event.type === 'message_end') && event.message.role === 'assistant') {
       const message = event.message;
       if (event.type === 'message_start') {
+        assistantIndex++;
         contentTurns.push('');
         reasoningTurns.push('');
       }
@@ -130,6 +170,19 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         if (type === 'thinking_start' || type === 'thinking_delta') reasoningActive = true;
         else if (type === 'thinking_end' || type === 'text_start' || type === 'text_delta') reasoningActive = false;
       } else if (event.type === 'message_end') reasoningActive = false;
+      message.content.forEach((block, index) => {
+        if (block.type !== 'thinking') return;
+        const id = `thinking:${assistantIndex}:${index}`;
+        const previous = process.find((item) => item.kind === 'thinking' && item.id === id);
+        const done = event.type === 'message_end' || (event.type === 'message_update'
+          && event.assistantMessageEvent.type === 'thinking_end' && event.assistantMessageEvent.contentIndex === index);
+        const next = { id, kind: 'thinking' as const, content: block.thinking,
+          status: done || previous?.status === 'complete' ? 'complete' as const : 'running' as const,
+          startedAt: previous?.startedAt ?? Date.now(),
+          ...(done ? { endedAt: Date.now() } : previous?.endedAt !== undefined ? { endedAt: previous.endedAt } : {}),
+        };
+        process = previous ? process.map((item) => item.kind === 'thinking' && item.id === id ? next : item) : [...process, next];
+      });
       setLast(contentTurns, message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''));
       setLast(reasoningTurns, message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join(''));
       emit();
@@ -145,19 +198,21 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     abort() { stopped = true; agent.abort(); },
     async start(): Promise<ReplyResult> {
       if (stopped) { unsubscribe(); return { status: 'stopped' }; }
-      const timeout = setTimeout(() => { timedOut = true; agent.abort(); }, timeoutMs);
+      resetIdleTimer();
+      const deadline = setTimeout(() => { timedOut = true; durationExceeded = true; agent.abort(); }, maxDurationMs);
       try {
         await agent.continue();
-        if (timedOut) return { status: 'error', error: '请求超时，已停止生成。已收到的内容会保留。' };
+        if (timedOut) return { status: 'error', error: timeoutError() };
         if (unsupportedTool) return { status: 'error', error: '当前本地模式仅支持文本对话，模型请求了不可用的工具。' };
         if (stopped || finalMessage?.stopReason === 'aborted') return { status: 'stopped' };
         if (finalMessage?.stopReason === 'error') return { status: 'error', error: describeModelError(finalMessage.errorMessage) };
         if (!finalMessage) return { status: 'error', error: agent.state.errorMessage ? describeModelError(agent.state.errorMessage) : '服务商未返回有效回复，请检查模型配置。' };
+        if (!finalMessage.content.some((block) => block.type === 'text' && block.text.trim())) return { status: 'error', error: '服务商未返回回答正文，已保留思考和工具记录。' };
         if (finalMessage.stopReason === 'length') return { status: 'complete', error: '已达到最大输出长度，可继续追问。' };
         return { status: 'complete' };
       } catch (reason) {
-        return stopped ? { status: 'stopped' } : { status: 'error', error: timedOut ? '模型请求超时，请稍后重试。' : describeModelError(reason) };
-      } finally { clearTimeout(timeout); unsubscribe(); }
+        return stopped ? { status: 'stopped' } : { status: 'error', error: timedOut ? timeoutError() : describeModelError(reason) };
+      } finally { clearTimeout(idleTimer); clearTimeout(deadline); unsubscribe(); }
     },
   };
 }

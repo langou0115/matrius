@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createAdminSession, createAuthSession } from '../src/core/api/auth-session.ts';
+import { ApiError, createAdminSession, createAuthSession } from '../src/core/api/auth-session.ts';
 import { hasFeature } from '../src/core/features/capabilities.ts';
 import { visibleSettings } from '../src/features/settings/settings-catalog.ts';
 
@@ -12,6 +12,20 @@ function storage(initial = null) {
   return { read: () => value, write: (next) => { value = next; } };
 }
 function deferred() { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; }
+
+test('tool request cancellation stays an AbortError and retry-after survives HTTP errors', async () => {
+  const controller = new AbortController();
+  const auth = createAuthSession(storage(), async (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true });
+  }));
+  const pending = auth.request('/api/tools/fetch', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, (error) => error.name === 'AbortError');
+  const busy = createAuthSession(storage(), async () => new Response(JSON.stringify({ error: { code: 'rate_limited', message: 'Busy' } }), {
+    status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '5' },
+  }));
+  await assert.rejects(busy.request('/api/tools/search'), (error) => error instanceof ApiError && error.retryAfterMs === 5000);
+});
 
 test('restoring a token hides features until the server validates the account', async () => {
   const gate = deferred();

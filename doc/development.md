@@ -16,6 +16,8 @@ npx expo start --port 8082      # 端口占用时换端口
 npx expo lint                  # 使用仓库 ESLint 配置检查
 npx tsc --noEmit               # TypeScript 类型检查
 npm run test:rendering         # Markdown、公式、代码高亮与折叠/复制回归
+npm run test:auth              # 账号、密码控件与同步途中删除的集成回归
+npm run test:models            # Agent、会话删除合并与 IndexedDB 持久化回归
 npm run assets:katex           # 按需重新生成本地公式 CSS 和字体（npm ci 后自动生成）
 npx expo-doctor                # 诊断依赖与配置
 npx expo install <package>     # 安装 SDK 兼容依赖
@@ -72,6 +74,8 @@ npx eas-cli@latest submit --platform ios
 
 Windows、macOS、Linux 使用同一入口。本机只需 Node.js 24、npm 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)；uv 按 `server/pyproject.toml` 和 `uv.lock` 自动准备 Python 3.12 及依赖。不需要 Docker、SSH、bash 或 WSL，也不会连接服务器。
 
+先切换到含 `package.json` 的项目根目录，再运行以下命令。终端重开后可能回到用户目录，此时直接运行 npm 会报 `ENOENT ... package.json`；也可在任意目录使用 `npm --prefix <项目绝对路径> run dev`。
+
 ```bash
 npm ci
 npm run dev -- --check       # 校验工具、端口与路径，不启动服务
@@ -92,6 +96,8 @@ server/.data/
 
 启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo Web。
 
+API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载；修改配置或迁移后需手动重启。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
+
 开发管理员和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
 
 开发环境下，如果库中已有同名管理员但密码与当前配置不一致，启动时会将其密码同步为配置值；正式环境不会修改已有管理员密码。
@@ -105,6 +111,10 @@ npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再
 默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`。端口被占用时失败退出，不自动切换。Metro 先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置。脚本不自动打开浏览器。
 
 命令持续挂起，前后端保存即热更新。Ctrl+C 清理本机进程树；任何常驻子进程退出也会结束整个开发会话。服务器和正式数据不受影响。
+
+Web 生成期间暂缓 HMR，全部回复结束后延迟恢复，避免代码修改导致 React 重挂载或整页刷新切断流。开发 Metro 关闭懒分包，避免断开 HMR 后在模型/工具按需加载时触发整页刷新；生产仍正常分包。修改 `metro.config.js` 后需重启开发命令。浏览器刷新或离开时，如果仍在生成，会触发离开确认；确认离开仍会中断客户端请求。
+
+`/mock/process` 使用真实回复组件展示等待、思考、搜索、读取、完成、主动停止与连接中断，可直接比较状态与动效，不调用模型。预览及模拟数据只在开发构建加载。
 
 ### 多台电脑与数据隔离
 
@@ -153,6 +163,8 @@ uv sync --python 3.12 --frozen --extra dev
 uv run --no-sync ruff check .
 uv run --no-sync pytest
 ```
+
+本机容量测试：在 `server/` 运行 `uv run --no-sync python scripts/benchmark.py`；仓库根目录运行 `node scripts/benchmark-relay.mjs` 测量模型 SSE 中继。前者创建隔离的临时 SQLite 并执行真实迁移，以单 worker Uvicorn 和真实 HTTP 测试认证后读写，保留限流；结束后清理测试库，不读取开发库或连接正式服务器。可用 `--seconds 30 --levels 1 10 25 50` 调整单档时长与并发。结果写入 `doc/benchmark-results.json`，中继结果写入 `doc/benchmark-relay-results.json`。中继使用真实生产模块及本地模拟上游，仅在隔离测试环境替换出站网络，不改动生产目标校验。测试条件、已知瓶颈和用户数换算见[容量报告](performance.md)。短时间本机压测不能作为生产 SLA。
 
 修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在临时空 SQLite 上验证全部迁移可执行（`server/tests/test_migrations.py` 覆盖这一点）。SQLite 的 `ALTER TABLE` 能力有限，Alembic 已启用 `render_as_batch`；重命名、删除列和收紧约束应拆成小步。仓库不配置自动 CI；日常部署用 `npm run deploy`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
 

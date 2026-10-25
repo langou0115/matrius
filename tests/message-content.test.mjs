@@ -13,6 +13,143 @@ import { ModelIcon } from '../src/features/chat/components/model-icon.web.tsx';
 import { normalizeMarkdown } from '../src/features/chat/markdown/normalize-markdown.ts';
 import { highlightCode } from '../src/features/chat/markdown/highlight-code.web.ts';
 import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
+import { ReasoningBlock } from '../src/features/chat/components/reasoning-block.web.tsx';
+import { ReplyStatus } from '../src/features/chat/components/reply-status.web.tsx';
+
+test('collapsed thinking stays lightweight and the waiting header remains clickable', () => {
+  const reasoning = renderToStaticMarkup(createElement(ReasoningBlock, { state: 'running', reasoning: '**Long thinking transcript**' }));
+  assert.ok(!reasoning.includes('Long thinking transcript'), 'collapsed transcripts do not repeatedly parse/render streamed Markdown');
+  assert.ok(reasoning.includes('aria-expanded="false"'));
+  const waiting = renderToStaticMarkup(createElement(ReasoningBlock, { state: 'running' }));
+  assert.ok(waiting.includes('<button'), 'the same thinking header is clickable before the first token');
+  assert.ok(waiting.includes('aria-expanded="false"'));
+
+});
+
+test('stopping is neutral and historical failures without a retry callback have no retry button', () => {
+  for (const status of ['stopped', 'error']) {
+    const { document } = parseHTML(renderToStaticMarkup(createElement(ReplyStatus, { message: { status } })));
+    assert.equal(document.querySelector('p').getAttribute('role'), status === 'stopped' ? 'status' : 'alert');
+    assert.equal(document.querySelectorAll('button').length, 0);
+  }
+});
+
+test('the latest failure exposes retry and removes it as soon as the caller starts a new message', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  let retries = 0;
+  const message = { status: 'error', error: '服务商暂时不可用，请稍后重试。' };
+  try {
+    await act(async () => root.render(createElement(ReplyStatus, { message, onRetry: () => retries++ })));
+    assert.equal(document.querySelector('.reply-retry').textContent, '重试');
+    await act(async () => document.querySelector('.reply-retry').click());
+    assert.equal(retries, 1);
+    await act(async () => root.render(createElement(ReplyStatus, { message })));
+    assert.equal(document.querySelector('.reply-retry'), null);
+    assert.match(document.querySelector('[role=alert]').textContent, /服务商暂时不可用/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('reasoning keeps all source links inside collapsed tool sections and reports empty searches', () => {
+  const results = Array.from({ length: 8 }, (_, rank) => ({
+    rank, title: `Source ${rank}`, url: `https://example.com/${rank}`, domain: 'example.com', snippet: '', engine: 'duckduckgo',
+  }));
+  const { document } = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
+    state: 'complete', open: true, activities: [
+      { id: 'full', kind: 'search', status: 'complete', query: 'query', results },
+      { id: 'empty', kind: 'search', status: 'complete', query: 'empty', results: [] },
+    ],
+  })));
+  assert.equal(document.querySelectorAll('.web-activity-sources a').length, 8);
+  assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('.web-activity-details').hidden, true);
+  assert.match(document.querySelector('.web-activity-empty').textContent, /未找到可用结果/);
+  assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
+});
+
+test('thinking disclosure keeps its open state and content across tool, answer and interrupted phases', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const render = async (props) => act(async () => { root.render(createElement(ReasoningBlock, props)); });
+  try {
+    await render({ state: 'running' });
+    await act(async () => { document.querySelector('.reasoning-toggle').click(); });
+    assert.equal(document.querySelector('.reasoning-body').textContent, '', 'empty process expands to a blank body');
+    assert.equal(document.querySelector('.reasoning-body').hidden, false);
+    for (const state of ['running', 'complete', 'stopped', 'error']) {
+      await render({ state, reasoning: '已收到的思考', activities: [{ id: 'search', kind: 'search', query: '资料', status: state === 'running' ? 'running' : 'complete', results: [] }] });
+      assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
+      assert.equal(document.querySelector('.reasoning-label').textContent, '思考过程');
+      assert.ok(document.querySelector('.reasoning-text').textContent.includes('已收到的思考'));
+      assert.equal(document.querySelector('.reasoning-body').hidden, false);
+      assert.equal(document.querySelector('.response-sources'), null);
+    }
+    await act(async () => { document.querySelector('.reasoning-toggle').click(); });
+    assert.equal(document.querySelector('.reasoning-text'), null, 'collapsed text unmounts to avoid streaming Markdown work');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('tool sections follow OpenStudio: active details open, completed details collapse and can be reopened', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const activity = { id: 'batch', kind: 'fetch', url: 'https://example.com/a', urls: ['https://example.com/a', 'https://example.com/b'] };
+  const render = (status) => act(async () => root.render(createElement(ReasoningBlock, { open: true, state: status === 'running' ? 'running' : 'complete', activities: [{ ...activity, status }] })));
+  try {
+    await render('running');
+    assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'true');
+    assert.equal(document.querySelectorAll('.web-activity-result').length, 2);
+    await render('complete');
+    assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'false');
+    await act(async () => document.querySelector('.web-activity-toggle').click());
+    assert.equal(document.querySelector('.web-activity-details').hidden, false);
+    await render('complete');
+    assert.equal(document.querySelector('.web-activity-details').hidden, false, 'later render does not reset manual expansion');
+    await act(async () => document.querySelector('.web-activity-toggle').click());
+    assert.equal(document.querySelector('.web-activity-details').hidden, true);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('the process renders separate thinking segments around search and fetch in event order', () => {
+  const process = [
+    { id: 'first', kind: 'thinking', content: '先搜索', status: 'complete' },
+    { id: 'search', kind: 'search', status: 'complete', query: 'Python' },
+    { id: 'fetch', kind: 'fetch', status: 'complete', url: 'https://example.com/a' },
+    { id: 'second', kind: 'thinking', content: '再分析', status: 'running' },
+  ];
+  const { document } = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
+    state: 'running', open: true, reasoning: 'legacy merged transcript', process,
+  })));
+  const steps = [...document.querySelector('.reasoning-steps').children];
+  assert.equal(steps.length, 4);
+  assert.equal(steps[0].textContent, '先搜索');
+  assert.ok(steps[1].querySelector('.web-activity'));
+  assert.ok(steps[2].querySelector('.web-activity'));
+  assert.equal(steps[3].textContent, '再分析');
+  assert.ok(!document.body.textContent.includes('legacy merged transcript'));
+});
 
 function render(content) { return renderToStaticMarkup(createElement(MessageContent, { content })); }
 function documentFor(content) { return parseHTML(render(content)).document; }

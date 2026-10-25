@@ -15,6 +15,12 @@ export type MockItem = {
 /** 每项对应 src/app/mock/ 下的一个路由，该路由复用真实页面组件而不是另写一套。 */
 export const mockItems: readonly MockItem[] = [
   {
+    href: '/mock/process',
+    title: '回复过程预览',
+    description: '切换等待、思考、搜索、完成、主动停止与连接中断，检查真实组件的展示。',
+    icon: 'sparkle',
+  },
+  {
     href: '/mock/chat',
     title: '聊天渲染测试',
     description: '109 个会话、1730 条消息，覆盖 Markdown、公式、代码高亮与长对话渲染。',

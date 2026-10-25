@@ -36,7 +36,9 @@ export function buildContext(messages: Message[], config: ModelConfig): AgentMes
   const context: AgentMessage[] = [];
   for (const message of withoutFailedReplies(messages).filter((message) => message.content.trim() || message.quote?.trim() || message.images?.length)) {
     if (message.role === 'assistant') {
-      context.push({ role: 'assistant', content: [{ type: 'text', text: message.content }], api: model.api, provider: model.provider, model: model.id,
+      const content = message.status === 'stopped' || message.status === 'error'
+        ? `${message.content}\n\n[这条回复在此中断，尚未完成。]` : message.content;
+      context.push({ role: 'assistant', content: [{ type: 'text', text: content }], api: model.api, provider: model.provider, model: model.id,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'stop', timestamp: Date.now() });
       const feedback = getFeedbackText(message);

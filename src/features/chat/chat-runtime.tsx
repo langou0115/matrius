@@ -2,13 +2,13 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, us
 
 import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
-import { withoutFailedTurn } from '@/core/agent/history';
 import { generateConversationTitle } from '@/core/agent/title';
 import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
+import { protectBrowserRun } from '@/core/platform/run-protection.web';
 import { useAuth } from '@/features/auth/auth-state.web';
 import { useNetworkTools } from '@/features/auth/network-tools-state.web';
 import { deriveConversationTitle, useChat, type Message, type MessageImage } from './chat-state';
@@ -103,6 +103,14 @@ function useRuntime() {
   const { runs, error } = useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
 
   useEffect(() => {
+    const protection = protectBrowserRun();
+    const update = () => protection.setActive(Object.keys(agent.getSnapshot().runs).length > 0);
+    const unsubscribe = agent.subscribe(update);
+    update();
+    return () => { unsubscribe(); protection.dispose(); };
+  }, [agent]);
+
+  useEffect(() => {
     activeIdRef.current = activeId;
     chatVisibleRef.current = chatVisible;
     conversationsRef.current = conversations;
@@ -188,9 +196,8 @@ function useRuntime() {
       const isFirstMessage = !current || current.messages.length === 0;
       const message: Message = { id: createId(), role: 'user', content, ...(images.length ? { images } : {}), ...(quote?.trim() ? { quote: quote.trim() } : {}) };
       // start schedules work on a microtask; dispatch user before any reply update.
-      // Sending a new message supersedes a failed turn, so neither its question nor its error report
-      // is part of the conversation the model continues from.
-      const config = start(conversationId, [...withoutFailedTurn(current?.messages ?? []), message], createId(), current?.modelId);
+      // Keep the user's question and partial reply available for follow-ups such as “continue”.
+      const config = start(conversationId, [...(current?.messages ?? []), message], createId(), current?.modelId);
       if (!config) return false;
       if (existingId === null) newConversationLock.current = true;
       // Record the model on the conversation, so reopening it restores the same one. New
@@ -210,7 +217,10 @@ function useRuntime() {
       if (!conversation || !last || (last.role === 'assistant' && last.status !== 'error' && last.status !== 'stopped')) return;
       if ((last.role === 'assistant' ? conversation.messages.at(-2) : last)?.role !== 'user') return;
       const history = buildRetryHistory(conversation.messages);
-      const config = start(conversationId, history, last.role === 'assistant' ? last.id : createId(), conversation.modelId);
+      const replyId = last.role === 'assistant' ? last.id : createId();
+      const config = start(conversationId, history, replyId, conversation.modelId);
+      if (config) dispatch({ type: 'reply', conversationId,
+        message: { id: replyId, role: 'assistant', content: '', status: 'streaming' } });
       if (config && conversation.modelId !== config.id) dispatch({ type: 'bind-model', conversationId, modelId: config.id });
     },
   };

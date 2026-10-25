@@ -5,13 +5,13 @@ import weakref
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.account.schemas import ImportConversation, ImportMessage, ImportReadState, ImportRequest
 from app.errors import invalid
-from app.models import Conversation, Message, UserPreference, UserProfile
+from app.models import Conversation, ConversationDeletion, Message, UserPreference, UserProfile
 from app.utils import to_ms, utcnow, validate_client_id
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,32 @@ def _import_lock() -> asyncio.Lock:
         lock = asyncio.Lock()
         _IMPORT_LOCKS[loop] = lock
     return lock
+
+
+async def record_conversation_deletion(db: AsyncSession, user_id: uuid.UUID, client_id: str) -> None:
+    if await db.get(ConversationDeletion, (user_id, client_id)) is None:
+        db.add(ConversationDeletion(user_id=user_id, client_id=client_id))
+        await db.flush()
+
+
+async def _delete_conversations(db: AsyncSession, user_id: uuid.UUID, ids: list[str]) -> None:
+    for raw_id in set(ids):
+        client_id = validate_client_id(raw_id)
+        await record_conversation_deletion(db, user_id, client_id)
+        try:
+            server_id = uuid.UUID(client_id)
+        except ValueError:
+            server_id = None
+        rows = (await db.execute(select(Conversation).where(
+            Conversation.user_id == user_id,
+            or_(Conversation.client_id == client_id, Conversation.id == server_id),
+        ))).scalars().all()
+        for conversation in rows:
+            await record_conversation_deletion(db, user_id, str(conversation.id))
+            if conversation.client_id:
+                await record_conversation_deletion(db, user_id, conversation.client_id)
+            await db.delete(conversation)
+        await db.flush()
 
 
 def _client_time(ms: int | None) -> datetime:
@@ -275,6 +301,8 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
     skipped = 0
     failed: list[dict[str, str]] = []
 
+    # Same lock and transaction as imports: deletion wins in either arrival order.
+    await _delete_conversations(db, user_id, payload.chat.deletedConversationIds)
     await _import_settings(db, user_id, payload)
 
     seen_ids: set[str] = set()
@@ -284,6 +312,10 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
             client_id = validate_client_id(raw_client_id)
         except Exception:  # noqa: BLE001
             failed.append({"clientId": raw_client_id, "reason": "对话标识不合法"})
+            continue
+
+        if await db.get(ConversationDeletion, (user_id, client_id)) is not None:
+            skipped += 1
             continue
 
         messages: list[tuple[ImportMessage, str | None]] = []

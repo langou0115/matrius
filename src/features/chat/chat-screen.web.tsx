@@ -11,6 +11,7 @@ import { MessageAttachments } from './components/message-attachments.web';
 import { CollapsibleMessageContent } from './components/collapsible-message-content.web';
 import { MessageActions } from './components/message-actions.web';
 import { ReasoningBlock, getReasoningState } from './components/reasoning-block.web';
+import { ReplyStatus } from './components/reply-status.web';
 import { useChatRuntime } from './chat-runtime';
 import { useModels } from '@/features/models/model-state';
 import { router } from 'expo-router';
@@ -38,7 +39,6 @@ export default function ChatScreen() {
   // The effort follows the model: switching models shows the depth that model last used.
   const thinkingEffort = models.selected?.thinkingEffort ?? 'default';
   const lastMessage = conversation?.messages.at(-1);
-  const failedReply = lastMessage?.role === 'assistant' && lastMessage.status === 'error' ? lastMessage : null;
   // One indicator for the whole wait, instead of separate copy for "request sent" and "no token yet".
   // Until the reply message exists the line lives outside the list; once it does, the reply renders
   // the same line itself, so the two never show together.
@@ -47,10 +47,8 @@ export default function ChatScreen() {
   const liveReply = lastMessage?.role === 'assistant' ? lastMessage : null;
   const awaitingReply = generating && !liveReply;
   const liveStartedAt = conversationRun?.startedAt ?? null;
-  // Shared by the wait line and the reply's own line so expanding before the first token keeps
-  // the reasoning body open when the text starts streaming into it. It also carries across runs:
-  // someone who opened the stream once is asking to watch it, not to open it every time.
-  const [liveReasoningOpen, setLiveReasoningOpen] = useState(false);
+  // Keep each disclosure independent through completion, new replies and conversation switches.
+  const [reasoningOpen, setReasoningOpen] = useState<Record<string, boolean>>({});
   const messages = conversation?.messages ?? [];
   const draftKey = activeId ?? 'new';
   const draft = drafts[draftKey] ?? '';
@@ -118,18 +116,10 @@ export default function ChatScreen() {
       <div className="messages-scroll">
         <div className="messages-content">
           {messages.map((message) => {
-            // A failed request can leave no prose at all. The error still has to be visible
-            // here rather than in the workspace-wide notice, which now belongs to this reply.
-            if (message.role === 'assistant' && message.status === 'error' && !message.content.trim() && !message.reasoning?.trim()) {
-              return <article className="assistant-message" key={message.id} aria-label="助手回复">
-                <p className="reply-status" role="alert">{message.error ?? '模型回复失败，请稍后重试。'}</p>
-              </article>;
-            }
             const live = message.id === liveReply?.id;
-            // A live reply shows the disclosure before reasoning arrives, so it can be opened
-            // while the response is still warming up. Once prose starts without reasoning the
-            // line has nothing to reveal and disappears.
-            const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length
+            // Preserve an explicitly opened waiting disclosure even if the model only emits prose.
+            const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length || !!message.process?.length
+              || reasoningOpen[message.id] === true
               || (live && message.status === 'streaming' && !message.content.trim());
             return message.role === 'user'
               ? <article className="user-message" key={message.id} data-user-message-id={message.id} aria-label="你的消息">
@@ -141,25 +131,21 @@ export default function ChatScreen() {
                 <MessageActions message={message} />
               </article>
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
-              {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={live ? liveReasoningOpen : undefined} onOpenChange={live ? setLiveReasoningOpen : undefined} />}
+              {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} process={message.process} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} open={reasoningOpen[message.id] ?? false} onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [message.id]: open }))} />}
               <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
-              {message.status === 'complete' && message.error && <p className="reply-status" role="status">{message.error}</p>}
-              {message.status === 'error' && <p className="reply-status" role="alert">{message.error ?? '模型回复失败，请稍后重试。'}</p>}
-              {message.status === 'stopped' && <p className="reply-status">已停止生成</p>}
+              <ReplyStatus message={message} onRetry={message.status === 'error' && message.id === lastMessage?.id && !generating
+                ? () => runtime.retry(conversation.id) : undefined} />
               {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message}
                 onFeedback={(feedback) => dispatch({ type: 'feedback', conversationId: conversation.id, messageId: message.id, feedback })} onFork={() => {
                 const forkId = createId();
                 dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId, updatedAt: Date.now() });
                 router.push(conversationHref(forkId, preview));
               }} />}
-              {message.status === 'stopped' && message.id === lastMessage?.id && <button className="secondary-button" disabled={generating} onClick={() => runtime.retry(conversation.id)}>重新生成</button>}
             </article>;
           })}
-          {failedReply && !generating && <div>
-            <button className="secondary-button reply-error-retry" type="button" disabled={generating} onClick={() => runtime.retry(conversation.id)}><Icon name="refresh" size={15} />重新生成</button>
-          </div>}
-          {awaitingReply && <ReasoningBlock state="running" startedAt={liveStartedAt} runningLabel={thinkingEffort === 'default' ? '生成中' : '思考中'} open={liveReasoningOpen} onOpenChange={setLiveReasoningOpen} />}
-          {!generating && lastMessage?.role === 'user' && <button className="secondary-button" onClick={() => runtime.retry(conversation.id)}>生成回复</button>}
+          {awaitingReply && conversationRun && <ReasoningBlock state="running" startedAt={liveStartedAt}
+            open={reasoningOpen[conversationRun.replyId] ?? false}
+            onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [conversationRun.replyId]: open }))} />}
         </div>
       </div>
       <div className="bottom-composer">

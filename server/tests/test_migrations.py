@@ -44,6 +44,7 @@ def test_upgrade_and_check_pass_on_a_fresh_sqlite_database(tmp_path):
         "users",
         "auth_sessions",
         "conversations",
+        "conversation_deletions",
         "messages",
         "files",
         "user_profiles",

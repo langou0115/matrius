@@ -12,7 +12,7 @@ export type AuthState = {
 };
 export type SessionStore = { read(): string | null; write(token: string | null): void };
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) { super(message); }
+  constructor(public status: number, public code: string, message: string, public retryAfterMs?: number) { super(message); }
 }
 
 function parseAccount(value: unknown): Account {
@@ -52,10 +52,16 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     let response: Response;
     try { response = await fetcher(path, { ...init, headers, credentials: 'omit', cache: 'no-store', redirect: 'error' }); }
-    catch { throw new ApiError(0, 'unavailable', '无法连接服务器，请稍后重试。'); }
+    catch (error) {
+      if (init.signal?.aborted) throw error;
+      throw new ApiError(0, 'unavailable', '无法连接服务器，请稍后重试。');
+    }
     let data: unknown;
     try { data = await response.json(); }
-    catch { throw new ApiError(response.status, 'invalid_response', '服务器响应无效，请稍后重试。'); }
+    catch (error) {
+      if (init.signal?.aborted) throw error;
+      throw new ApiError(response.status, 'invalid_response', '服务器响应无效，请稍后重试。');
+    }
     if (!response.ok) {
       if (response.status === 401 && authToken && token === authToken) {
         generation += 1;
@@ -63,8 +69,13 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
         update({ status: 'anonymous', user: null, error: '登录已失效，请重新登录。' });
       }
       const error = (data as { error?: { code?: string; message?: string } })?.error;
+      const retryAfter = response.headers.get('Retry-After');
+      const seconds = retryAfter === null ? NaN : Number(retryAfter);
+      const retryAfterMs = Number.isFinite(seconds) ? Math.max(0, seconds * 1000)
+        : retryAfter ? Math.max(0, Date.parse(retryAfter) - Date.now()) : undefined;
       throw new ApiError(response.status, error?.code ?? 'request_failed',
-        typeof error?.message === 'string' ? error.message : '请求未能完成，请重试。');
+        typeof error?.message === 'string' ? error.message : '请求未能完成，请重试。',
+        retryAfterMs !== undefined && Number.isFinite(retryAfterMs) ? retryAfterMs : undefined);
     }
     return data as T;
   }

@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -262,3 +263,103 @@ async def test_search_with_no_usable_results_is_empty_not_an_error(monkeypatch):
     monkeypatch.setattr(search, "_duckduckgo", duckduckgo)
     monkeypatch.setattr(search, "_bing", bing)
     assert await search.web_search("nothing usable", 3) == []
+
+
+async def test_duckduckgo_success_never_calls_bing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(search, "_client", FakeClient)
+
+    async def primary(_client, _query):
+        calls.append("duckduckgo")
+        return [{"url": "https://docs.python.org/3/", "title": "Python docs", "engine": "duckduckgo"}]
+
+    async def fallback(_client, _query):
+        calls.append("bing")
+        return []
+
+    monkeypatch.setattr(search, "_duckduckgo", primary)
+    monkeypatch.setattr(search, "_bing", fallback)
+    results = await search.web_search("Python docs", 8)
+    assert calls == ["duckduckgo"]
+    assert results[0]["engine"] == "duckduckgo"
+
+
+@pytest.mark.parametrize("primary_result", [None, [], [{"url": "ftp://example.com/file"}]])
+async def test_bing_only_follows_unusable_duckduckgo(monkeypatch, primary_result):
+    calls = []
+    monkeypatch.setattr(search, "_client", FakeClient)
+
+    async def primary(_client, _query):
+        calls.append("duckduckgo")
+        if primary_result is None:
+            raise TimeoutError()
+        return primary_result
+
+    async def fallback(_client, _query):
+        calls.append("bing")
+        return [{"url": "https://example.com/answer", "title": "Answer", "engine": "bing"}]
+
+    monkeypatch.setattr(search, "_duckduckgo", primary)
+    monkeypatch.setattr(search, "_bing", fallback)
+    assert (await search.web_search("fallback", 3))[0]["engine"] == "bing"
+    assert calls == ["duckduckgo", "bing"]
+
+
+async def test_challenge_is_an_error_instead_of_empty_results(monkeypatch):
+    async def request(*_args, **_kwargs):
+        return '<html><form id="challenge-form">Verify you are human</form></html>'
+
+    monkeypatch.setattr(search, "_request_text", request)
+    with pytest.raises(RuntimeError, match="verification challenge"):
+        await search._duckduckgo(None, "test")
+
+
+async def test_html_timeout_leaves_time_for_lite(monkeypatch):
+    calls = []
+
+    async def request(_client, _method, url, **_kwargs):
+        calls.append(url)
+        if url == search.DUCKDUCKGO_HTML:
+            await asyncio.sleep(10)
+        return DUCKDUCKGO_LITE
+
+    monkeypatch.setattr(search, "get_settings", lambda: SimpleNamespace(search_timeout_seconds=0.2))
+    monkeypatch.setattr(search, "_request_text", request)
+    results = await asyncio.wait_for(search._duckduckgo(None, "test"), timeout=1)
+    assert len(results) == 2
+    assert calls == [search.DUCKDUCKGO_HTML, search.DUCKDUCKGO_LITE]
+
+
+def test_nested_result_body_preserves_the_snippet():
+    page = '<div class="result"><div class="result__body"><h2 class="result__title">'
+    page += '<a class="result__a" href="https://example.com">Title</a></h2>'
+    page += '<a class="result__snippet">Useful snippet</a></div></div>'
+    assert search._parse_duckduckgo(page)[0]["snippet"] == "Useful snippet"
+
+
+@pytest.mark.parametrize("query,title", [
+    ("Python asyncio TaskGroup", "Python asyncio TaskGroup documentation"),
+    ("如何配置联网搜索", "配置联网搜索的说明"),
+])
+def test_relevant_document_beats_generic_homepage(query, title):
+    results = [
+        {"title": "Python homepage", "snippet": "Downloads", "domain": "python.org", "rank": 1},
+        {"title": title, "snippet": "", "domain": "docs.example.com", "rank": 5},
+    ]
+    assert search._rank_relevant(query, results)[0]["title"] == title
+
+
+async def test_degraded_empty_search_is_not_cached(monkeypatch):
+    monkeypatch.setattr(search, "_client", FakeClient)
+
+    async def primary(_client, _query):
+        raise TimeoutError()
+
+    async def fallback(_client, _query):
+        return []
+
+    monkeypatch.setattr(search, "_duckduckgo", primary)
+    monkeypatch.setattr(search, "_bing", fallback)
+    with pytest.raises(AppError):
+        await search.web_search("transient", 3)
+    assert await cache.cache_get(search_cache_key("transient", 3)) is None

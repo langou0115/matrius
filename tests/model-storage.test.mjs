@@ -48,7 +48,12 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     const next = structuredClone(initial);
     next.chat.conversations[0].messages[0].quote = '引用的原文\n跨段落内容';
     next.personalization = { customInstructions: '先给结论', aboutName: '小林', occupation: '设计师', aboutMore: '学习编程' };
-    next.chat.conversations[0].messages.push({ id: 'a', role: 'assistant', content: 'partial', reasoning: 'visible provider reasoning', thinkingMs: 4200, status: 'streaming', feedback: 'bad' });
+    next.chat.conversations[0].messages.push({ id: 'a', role: 'assistant', content: 'partial', reasoning: 'visible provider reasoning', thinkingMs: 4200, status: 'streaming', feedback: 'bad',
+      activities: [{ id: 'search', kind: 'search', status: 'running', query: 'Python' }],
+      process: [{ id: 'first', kind: 'thinking', content: '先搜索', status: 'complete' },
+        { id: 'search', kind: 'search', status: 'complete', query: 'Python' },
+        { id: 'fetch', kind: 'fetch', status: 'complete', urls: ['https://example.com/1', 'https://example.com/2', 'https://example.com/3', 'https://example.com/4'] },
+        { id: 'second', kind: 'thinking', content: '再分析', status: 'running' }] });
     await writeWorkspace(next, 5);
     assert.equal(messageWrites, 2, 'the quote and new reply are both persisted');
     messageWrites = 0;
@@ -60,7 +65,12 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     assert.deepEqual(restored.data.personalization, next.personalization, 'all personalization fields survive reloading from IndexedDB');
     assert.equal(restored.data.chat.conversations[0].messages[1].content, 'partial reply');
     assert.equal(restored.data.chat.conversations[0].messages[1].status, 'stopped');
+    assert.match(restored.data.chat.conversations[0].messages[1].error, /页面重新加载/);
+    assert.equal(restored.data.chat.conversations[0].messages[1].activities[0].status, 'stopped', 'restored tool calls cannot keep showing a spinner');
     assert.equal(restored.data.chat.conversations[0].messages[1].thinkingMs, 4200, 'thinking duration survives a reload');
+    assert.deepEqual(restored.data.chat.conversations[0].messages[1].process.map((step) => step.kind), ['thinking', 'search', 'fetch', 'thinking']);
+    assert.equal(restored.data.chat.conversations[0].messages[1].process.at(-1).status, 'stopped');
+    assert.equal(restored.data.chat.conversations[0].messages[1].process[2].urls.length, 4);
     assert.equal(restored.data.chat.conversations[0].messages[1].feedback, 'bad', 'assistant feedback survives a database reload');
     assert.equal(restored.data.chat.conversations[0].messages[0].feedback, undefined, 'older messages do not get an implicit rating');
     assert.equal(restored.data.chat.conversations[0].messages[0].thinkingMs, undefined, 'messages without a measured duration stay undefined');
@@ -117,9 +127,13 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     const latest = await readWorkspace();
     const deleted = structuredClone(initial);
     deleted.chat.conversations = []; deleted.chat.activeId = null;
+    deleted.chat.deletedConversationIds = ['chat'];
     await writeWorkspace(deleted, latest.revision);
     const bodies = await requestResult(database.transaction('messages').objectStore('messages').getAllKeys());
     assert.deepEqual(bodies, []);
+    const reloaded = await loadWorkspace();
+    assert.deepEqual(reloaded.data.chat.deletedConversationIds, ['chat'], 'offline deletion survives reloading');
+    assert.deepEqual(reloaded.data.chat.conversations, []);
   } finally {
     IDBObjectStore.prototype.put = originalPut;
     database?.close();

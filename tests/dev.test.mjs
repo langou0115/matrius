@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  assertAdminPassword, availablePort, devAdminCredentials, devDataDir, devEnvironment, devPorts, resetDatabase,
+  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devDataDir, devEnvironment, devPorts, resetDatabase,
   resetTargets, sqliteUrl, supervise,
 } from '../scripts/dev.mjs';
 const { handleDevApi } = createRequire(import.meta.url)('../scripts/dev-api-proxy.cjs');
@@ -44,7 +44,18 @@ test('development environment is local-only and never inherits production data l
   assert.equal(env.DATA_DIR, dataDir);
   assert.equal(env.INITIAL_ADMIN_USERNAME, 'prod-admin');
   assert.equal(env.INITIAL_ADMIN_PASSWORD, 'production');
-  assert.equal(devDataDir('/repo'), '/repo/server/.data');
+  assert.equal(devDataDir('/repo'), join('/repo', 'server', '.data'));
+});
+
+test('development API watches application code and isolates Windows console signals', () => {
+  const windows = devApiArgs(8000, 'win32');
+  assert.deepEqual(windows.slice(0, 4), ['run', '--no-sync', 'python', 'scripts/dev-api.py']);
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const args = devApiArgs(8000, platform);
+    assert.equal(args[args.indexOf('--reload-dir') + 1], 'app');
+    assert.equal(args[args.indexOf('--port') + 1], '8000');
+    if (platform !== 'win32') assert.equal(args[2], 'uvicorn');
+  }
 });
 
 test('development admin credentials use INITIAL_ADMIN_* and local defaults', () => {
@@ -110,6 +121,49 @@ test('supervisor reports missing executables and cleans up surviving children', 
     runner.start('matrius-missing-command-fixture', [], { stdio: 'ignore' });
     assert.equal(await runner.finished, 1);
   } finally { await runner.stop(); }
+});
+
+test('Windows backend survives repeated Uvicorn reloads and its entire tree stops', {
+  skip: process.platform !== 'win32', timeout: 20000,
+}, async (t) => {
+  const python = resolve('server/.venv/Scripts/python.exe');
+  try { await stat(python); } catch { t.skip('Install backend development dependencies first.'); return; }
+  const directory = await mkdtemp(join(tmpdir(), 'matrius-reload-'));
+  const fixture = join(directory, 'fixture_api.py');
+  const source = 'from fastapi import FastAPI\napp = FastAPI()\n';
+  await writeFile(fixture, source);
+  const port = await availablePort();
+  const runner = supervise();
+  let output = '';
+  try {
+    const child = runner.start(python, [resolve('server/scripts/dev-api.py'),
+      'fixture_api:app', '--host', '127.0.0.1', '--port', String(port), '--reload', '--reload-dir', directory],
+    { cwd: directory, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.on('data', (chunk) => { output += chunk; });
+    child.stderr.on('data', (chunk) => { output += chunk; });
+    runner.watch(child, 'fixture API');
+    const waitForStart = async (count) => {
+      const deadline = Date.now() + 5000;
+      while ((output.match(/Application startup complete/g) ?? []).length < count) {
+        assert.equal(runner.failure, undefined, output);
+        assert.ok(Date.now() < deadline, `Reload ${count} did not complete:\n${output}`);
+        await new Promise((accept) => setTimeout(accept, 50));
+      }
+    };
+    await waitForStart(1);
+    for (let count = 2; count <= 3; count++) {
+      await writeFile(fixture, `${source}# reload ${count}\n`);
+      await waitForStart(count);
+    }
+    assert.equal(child.exitCode, null, 'reloading must not terminate the launcher');
+  } catch (error) {
+    error.message += `\nBackend output:\n${output}`;
+    throw error;
+  } finally {
+    await runner.stop();
+    await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+  assert.equal(await availablePort(port), port, 'cleanup must release the worker socket');
 });
 
 async function listen(server) {

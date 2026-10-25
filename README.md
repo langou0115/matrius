@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **多轮对话**：流式回复、停止、重试、引用、分支、搜索与置顶
+- **多轮对话**：流式回复、停止、引用、分支、搜索与置顶；思考、工具与后续思考按事件顺序展示，整轮连续计时，中断保留内容和上下文
 - **本地优先**：未登录即可使用，对话保存在浏览器 IndexedDB
 - **自带模型**：支持 OpenAI Chat Completions、Responses、Anthropic Messages 及兼容服务，密钥只保存在本机
 - **完整渲染**：Markdown / GFM、KaTeX 公式、代码高亮、复制与折叠
@@ -21,13 +21,15 @@
 | 客户端 | Expo SDK 57、React Native、React、TypeScript |
 | 路由 | Expo Router（`src/app/`） |
 | 后端 | Python 3.12、FastAPI、SQLite、SQLAlchemy、Alembic |
-| 运行时能力 | 进程内缓存/限流、本地文件存储、DuckDuckGo + Bing 搜索、trafilatura 正文提取 |
+| 运行时能力 | 进程内缓存/限流、本地文件存储、DuckDuckGo 优先（Bing 回退）搜索、trafilatura 正文提取 |
 | 基础设施 | Caddy（生产只运行 Caddy / Web / API 三个容器） |
 | 部署 | Docker Compose、SSH、`npm run deploy` |
 
 ## 本地开发
 
 要求 Node.js 24、npm 和 uv（管理 Python 3.12+）；支持 Windows、macOS、Linux。不需要 Docker、SSH 或 WSL。
+
+下面命令须在包含 `package.json` 的项目根目录运行；其他目录可使用 `npm --prefix <项目绝对路径> run dev`。若报用户目录下找不到 `package.json`（ENOENT），先切换到项目目录。
 
 ```bash
 npm ci
@@ -38,7 +40,7 @@ npm run dev
 
 `npm run dev` 完全在本机运行 Expo、FastAPI 与 SQLite：数据保存在 `server/.data/dev.db` 和 `server/.data/files`（已加入 `.gitignore`），不连接服务器。前后端保存后热更新，Ctrl+C 一并停止本机进程。开发管理员使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，未设置时回退到 `admin` / `dev-password`；密码仍是 `change-me` 时拒绝启动。`npm run dev` 不读取 `docker-compose/.env.production`。已有开发管理员会在启动时同步为当前配置的密码。`npm run dev -- --reset-db` 会清空本地开发数据后重新迁移。
 
-只调试前端也可用 `npm run web`。两种开发方式都可访问 `/mock`；正式 Web 使用静态生产构建。
+只调试前端也可用 `npm run web`。两种开发方式都可访问 `/mock`，其中 `/mock/process` 可预览思考过程、工具步骤和中断状态，不调用模型；回答末尾的来源区留待后续实现。生成期间会暂缓开发热更新，避免代码保存打断回答；本次更新后需手动重启开发命令以应用 Metro 配置。正式 Web 使用静态生产构建。
 
 ```bash
 npm run export:web && npm run serve   # 本地验证生产构建

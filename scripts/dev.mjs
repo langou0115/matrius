@@ -46,6 +46,14 @@ export function devPorts(env) {
   return ports;
 }
 
+export function devApiArgs(apiPort, platform = process.platform) {
+  const launch = platform === 'win32'
+    ? ['python', 'scripts/dev-api.py']
+    : ['uvicorn'];
+  return ['run', '--no-sync', ...launch, 'app.main:app', '--host', '127.0.0.1',
+    '--port', String(apiPort), '--reload', '--reload-dir', 'app'];
+}
+
 export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
   const admin = devAdminCredentials(env);
   return {
@@ -271,8 +279,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     }, abort.signal);
     abort.signal.throwIfAborted();
 
-    const api = runner.start('uv', ['run', '--no-sync', 'uvicorn', 'app.main:app', '--host', '127.0.0.1',
-      '--port', String(apiPort), '--reload'], { cwd: join(root, 'server'), env: backendEnv });
+    const api = runner.start('uv', devApiArgs(apiPort), { cwd: join(root, 'server'), env: backendEnv });
     runner.watch(api, 'FastAPI');
     await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal);
     abort.signal.throwIfAborted();

@@ -175,7 +175,7 @@ POST /api/account/import
     id, title, pinned, updatedAt, modelId, titleSource,
     readState: { completed: { state, readAt? }, error: { state, readAt? } },
     messages: [...]
-  } ] },
+  } ], "deletedConversationIds": ["local-conversation-id"] },
   "appearance": { "themeId", "mode" },
   "personalization": { "customInstructions", "aboutName", "occupation", "aboutMore" }
 }
@@ -189,7 +189,9 @@ POST /api/account/import
 - 每个会话使用 savepoint，单个会话失败不影响其他会话。
 - 消息按数组顺序分配 `position`；本地 id 写入 `client_id`，服务端生成 UUID。
 - 服务端在单进程内用 `asyncio.Lock` 串行执行导入，避免多个标签页并发同步时同时读到"不存在"并触发唯一约束；锁按事件循环绑定，仅对单 worker 有效。
-- 删除不传播：接口没有墓碑或删除列表，不会移除服务端已有记录。
+- 可传 `chat.deletedConversationIds`（单批最多 2000 个、每个 1–128 字符）。同一事务内先记录删除标识并级联删除会话正文，再导入其余会话；已删除 ID 的旧副本计入 `skipped`，即使时间戳更新也不复活。普通 REST 会话删除同样记录墓碑；重新创建已删除 ID 返回 409。
+- `GET /api/account/conversation-deletions?limit=100&cursor=` 返回 `{ items: string[], nextCursor }`，按用户隔离、按标识 keyset 分页。客户端逐页读取，并在合并前删除本地对应会话；本地墓碑也过滤同步期间晚到的响应。
+- 迁移 `0002_conversation_deletions.py` 新增仅含 `(user_id, client_id)` 的持久删除表，不存正文；普通 REST 会话创建/删除与导入共用写锁。
 
 ## 文件
 
@@ -217,9 +219,9 @@ DELETE /api/files/{id}
 POST /api/tools/search { query, limit? (1-20, 默认 10) }
 ```
 
-- 并行请求 DuckDuckGo HTML（失败回退 lite 端点）与 Bing RSS；单个来源失败时降级，全部失败返回 502。
-- 服务端规范化 URL、移除跟踪参数、去重、每域最多 2 条；标题截断 280 字符，摘要 640 字符。
-- 结果缓存在进程内 5 分钟，并发 4，单来源超时 `SEARCH_TIMEOUT_SECONDS`（默认 15 秒），响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。
+- 优先请求 DuckDuckGo HTML（失败或无结果回退 Lite，HTML 阶段最多占一半来源超时）；仅当 DuckDuckGo 失败或没有有效结果时请求 Bing RSS，不混合两家的结果。验证码/异常页按上游失败处理，无可用结果且有来源失败时返回 502。
+- 服务端规范化 URL、移除跟踪参数、去重，按查询关键词与标题/域名/摘要的相关性排序，再优先保证域名多样性；标题截断 280 字符，摘要 640 字符。相关性只是词面匹配，不等于事实核实。
+- 非空结果缓存在进程内 5 分钟，空结果不缓存；并发 4，单来源超时 `SEARCH_TIMEOUT_SECONDS`（默认 15 秒），响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。
 - 相同查询使用 single-flight 合并并发请求；每个账号最多 4 个在途搜索，超出立即返回 429。
 - `WEBTOOL_PROXY_URL` 同时用于搜索和网页读取的上游连接；留空时直连。
 
@@ -231,7 +233,8 @@ POST /api/tools/fetch { url, mode? (fast|full) }
 
 - 先做 SSRF 校验：仅 http/https、禁止 URL 凭据、禁止 localhost/私网/链路本地/ULA/组播，DNS 解析后要求所有地址 `is_global`。
 - 手动跟随最多 5 次重定向，每一跳都用 `urljoin` 后重新校验，防止重定向到内网；非文本类型返回 422。
-- 流式读取并按 `FETCH_MAX_BYTES`（默认 5 MiB）截断；`trafilatura` 提取正文（`fast` 偏 precision，`full` 偏 recall 并包含表格），失败时回退 lxml 纯文本。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`。
+- 整次 45 秒截止时间覆盖排队、跳转、响应体下载和提取；流式读取按 `FETCH_MAX_BYTES`（默认 5 MiB）截断。优先接受 Markdown/纯文本，非 HTML 的 JSON/XML/代码等原样保留结构。HTML 由 `trafilatura` 转为带链接与表格的 Markdown（`fast` 偏 precision，`full` 偏 recall），失败时使用 `html_markdown.py` 结构化回退。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`；text 字段可包含 Markdown。缓存版本随提取格式更新，避免复用旧版扁平正文。
+- 404/410 返回 422 `fetch_not_found`；401/403 和验证页返回 422 `fetch_blocked`；纯 JavaScript 空壳返回 422 `fetch_requires_browser`。上游 429 返回 503 `fetch_rate_limited` 并传递 Retry-After，下载超时为 504 `fetch_timeout`，网络失败为 502 `fetch_network_error`。无浏览器渲染、登录或验证码处理能力；这些页面不会冒充成功读取。
 - 相同 URL + 模式使用 single-flight 合并并发请求，结果缓存 10 分钟（`FETCH_CACHE_TTL_SECONDS`）；全局抓取并发 4，每个账号最多 4 个在途读取。
 - `WEBTOOL_PROXY_URL` 同样作用于抓取请求；URL 与每一跳重定向仍在本地校验，代理不会跳过 SSRF 检查。
 - 生产环境仍建议在主机或云防火墙限制 API 容器的出站网段，缩小 SSRF 与 DNS 重绑定的残余风险。

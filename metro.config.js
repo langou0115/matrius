@@ -3,6 +3,11 @@ const { getDefaultConfig } = require('expo/metro-config');
 const { handleModelProxy } = require('./scripts/model-proxy.cjs');
 const { handleDevApi } = require('./scripts/dev-api-proxy.cjs');
 
+// SDK 57's lazy chunk registration can force a page reload after Metro loses
+// its HMR graph. Eager dev bundles avoid fetching/registering a new chunk in
+// the middle of a tool-using reply. Production exports keep normal splitting.
+if (process.env.NODE_ENV !== 'production') process.env.EXPO_NO_METRO_LAZY ??= '1';
+
 const config = getDefaultConfig(__dirname);
 
 // Serve the same-origin model relay from the dev server, so `npm run web` alone is enough

@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -86,7 +88,7 @@ def _unwrap_duckduckgo(href: str) -> str:
         href = f"https:{href}"
     parts = urlsplit(href)
     host = (parts.hostname or "").lower()
-    if host.endswith("duckduckgo.com") and parts.path.startswith("/l/"):
+    if (host == "duckduckgo.com" or host.endswith(".duckduckgo.com")) and parts.path.startswith("/l/"):
         target = parse_qs(parts.query).get("uddg")
         if target:
             return target[0]
@@ -101,7 +103,9 @@ def _parse_duckduckgo(html: str) -> list[dict[str, Any]]:
     tree = lxml_html.fromstring(html)
     results: list[dict[str, Any]] = []
     for anchor in tree.xpath("//a[contains(@class, 'result__a')]"):
-        containers = anchor.xpath("ancestor::div[contains(@class, 'result')][1]")
+        containers = anchor.xpath(
+            "ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' result ')][1]"
+        )
         snippet = ""
         if containers:
             snippets = containers[0].xpath(".//*[contains(@class, 'result__snippet')]")
@@ -162,7 +166,9 @@ def _parse_bing_rss(xml: str) -> list[dict[str, Any]]:
 
 async def _duckduckgo(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
     try:
-        page = await _request_text(client, "POST", DUCKDUCKGO_HTML, data={"q": query})
+        # Leave time for Lite within the provider's overall deadline.
+        async with asyncio.timeout(max(0.1, get_settings().search_timeout_seconds / 2)):
+            page = await _request_text(client, "POST", DUCKDUCKGO_HTML, data={"q": query})
         # Parsing large HTML is CPU work; keep it off the event loop so other searches and
         # chat requests keep flowing while this one is being decoded.
         results = await asyncio.to_thread(_parse_duckduckgo, page)
@@ -171,7 +177,13 @@ async def _duckduckgo(client: httpx.AsyncClient, query: str) -> list[dict[str, A
     except Exception as exc:  # noqa: BLE001 - fall through to the lite endpoint
         logger.warning("DuckDuckGo HTML search failed: %s", exc)
     page = await _request_text(client, "POST", DUCKDUCKGO_LITE, data={"q": query})
-    return await asyncio.to_thread(_parse_duckduckgo_lite, page)
+    # A CAPTCHA is a successful HTTP response, but is not evidence of zero results.
+    if re.search(r"anomaly\.js|challenge-form|anomaly-modal|unusual traffic", page, re.I):
+        raise RuntimeError("DuckDuckGo returned a verification challenge")
+    results = await asyncio.to_thread(_parse_duckduckgo_lite, page)
+    if not results and not re.search(r"no (?:more )?results|did not match any", page, re.I):
+        raise RuntimeError("DuckDuckGo returned an unrecognized search page")
+    return results
 
 
 async def _bing(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
@@ -262,6 +274,36 @@ def _select_diverse(results: list[dict[str, Any]], limit: int) -> list[dict[str,
     return [*selected, *deferred][:limit]
 
 
+def _query_terms(query: str) -> list[str]:
+    query = unicodedata.normalize("NFKC", query).casefold()
+    query = re.sub(r"(?:^|\s)(?:site|filetype|inurl|intitle):\S+", " ", query)
+    stop_words = {"the", "what", "how", "when", "where", "which", "who", "about", "latest"}
+    terms = []
+    for word in re.findall(r"[a-z0-9][a-z0-9_.+-]*|[\u3400-\u9fff]+", query):
+        if len(word) < 2 or word in stop_words:
+            continue
+        # Chinese queries rarely have spaces; adjacent pairs preserve subject overlap
+        # without adding a tokenizer dependency or treating a whole sentence as one term.
+        terms.extend([word] if word.isascii() or len(word) <= 2 else
+                     [word[index:index + 2] for index in range(len(word) - 1)])
+    return list(dict.fromkeys(terms))[:32]
+
+
+def _rank_relevant(query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    terms = _query_terms(query)
+    if not terms:
+        return results
+
+    def score(result: dict[str, Any]) -> int:
+        title, domain, snippet = (
+            unicodedata.normalize("NFKC", result[key]).casefold() for key in ("title", "domain", "snippet")
+        )
+        return sum(3 if term in title else 2 if term in domain else 1 if term in snippet else 0 for term in terms)
+
+    # Stable ties keep provider ranking; lexical overlap is advisory, not proof.
+    return sorted(results, key=score, reverse=True)
+
+
 async def _run_provider(coro, seconds: float):
     async with asyncio.timeout(seconds):
         return await coro
@@ -297,33 +339,31 @@ async def web_search(query: str, limit: int) -> list[dict[str, Any]]:
 
 async def _search_uncached(query: str, limit: int, cache_key: str) -> list[dict[str, Any]]:
     settings = get_settings()
+    results: list[dict[str, Any]] = []
+    failures = 0
     async with SEARCH_SEMAPHORE:
         async with _client() as client:
-            outcomes = await asyncio.gather(
-                _run_provider(_duckduckgo(client, query), settings.search_timeout_seconds),
-                _run_provider(_bing(client, query), settings.search_timeout_seconds),
-                return_exceptions=True,
-            )
+            # DuckDuckGo is the primary source. Bing only runs when the primary
+            # fails or has no usable results; never dilute good results with RSS hits.
+            for provider in (_duckduckgo, _bing):
+                try:
+                    raw_results = await _run_provider(provider(client, query), settings.search_timeout_seconds)
+                except Exception as exc:
+                    failures += 1
+                    logger.warning("Search provider %s failed: %s", provider.__name__, exc)
+                    continue
+                normalized = [
+                    item
+                    for index, result in enumerate(raw_results[:CANDIDATE_LIMIT])
+                    if isinstance(result, dict) and (item := _normalize_result(result, index)) is not None
+                ]
+                results = _select_diverse(_rank_relevant(query, _dedupe(normalized)), limit)
+                if results:
+                    break
 
-    raw_results: list[dict[str, Any]] = []
-    failures = 0
-    for outcome in outcomes:
-        if isinstance(outcome, asyncio.CancelledError):
-            raise outcome
-        if isinstance(outcome, BaseException):
-            failures += 1
-            logger.warning("Search provider failed: %s", outcome)
-            continue
-        raw_results.extend(outcome)
-
-    if failures == len(outcomes):
+    if failures and not results:
         raise AppError(502, "upstream_error", "联网服务暂时不可用，请稍后重试。")
-
-    normalized = [
-        item
-        for index, result in enumerate(raw_results[: CANDIDATE_LIMIT * 2])
-        if isinstance(result, dict) and (item := _normalize_result(result, index)) is not None
-    ]
-    results = _select_diverse(_dedupe(normalized), limit)
-    await cache_set(cache_key, json.dumps(results, ensure_ascii=False), CACHE_TTL_SECONDS)
+    # A degraded empty response may be transient; do not poison the next search for 5 minutes.
+    if results:
+        await cache_set(cache_key, json.dumps(results, ensure_ascii=False), CACHE_TTL_SECONDS)
     return results

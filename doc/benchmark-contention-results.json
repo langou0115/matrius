@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-10-24T12:34:44.963099+00:00",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "cpu": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
+  "logical_cpus": 12,
+  "python": "3.12.15",
+  "users": 500,
+  "seed_conversations": 5000,
+  "seed_messages": 10000,
+  "duration_per_stage": 8,
+  "single_worker": true,
+  "rate_limits": "unchanged",
+  "results": [
+    {
+      "concurrency": 25,
+      "requests": 25,
+      "seconds": 0.65,
+      "successful_rps": 10.7,
+      "statuses": {
+        "201": 7,
+        "500": 18
+      },
+      "p50_ms": 254.18,
+      "p95_ms": 534.14,
+      "p99_ms": 648.62,
+      "scenario": "same_conversation_burst"
+    },
+    {
+      "concurrency": 25,
+      "requests": 25,
+      "seconds": 0.18,
+      "successful_rps": 5.54,
+      "statuses": {
+        "200": 1,
+        "409": 24
+      },
+      "p50_ms": 145.21,
+      "p95_ms": 162.91,
+      "p99_ms": 163.53,
+      "scenario": "same_revision_burst",
+      "initial_revision": 1,
+      "final_revision": 2
+    },
+    {
+      "scenario": "login_burst",
+      "concurrency": 10,
+      "health_max_ms": 573.61,
+      "requests": 10,
+      "seconds": 0.78,
+      "successful_rps": 12.76,
+      "statuses": {
+        "200": 10
+      },
+      "p50_ms": 614.64,
+      "p95_ms": 734.15,
+      "p99_ms": 734.15
+    }
+  ],
+  "server_error_counts": {
+    "database is locked": 0,
+    "QueuePool limit": 0,
+    "UNIQUE constraint failed": 36,
+    "MissingGreenlet": 36
+  },
+  "server_errors": [
+    "(sqlite3.IntegrityError) UNIQUE constraint failed: messages.conversation_id, messages.position",
+    "UNIQUE constraint failed: messages.conversation_id, messages.position",
+    "greenlet_spawn has not been called; can't call await_() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/21/xd2s)"
+  ]
+}

@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { createReplyRun, describeModelError } from '../src/core/agent/runner.ts';
 import { buildContext, buildRetryHistory, validateAgentRequest } from '../src/core/agent/context.ts';
-import { withoutFailedTurn } from '../src/core/agent/history.ts';
+import { withoutFailedReplies } from '../src/core/agent/history.ts';
 import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
 import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.web.ts';
@@ -13,8 +13,198 @@ import { PersonalizationProvider, usePersonalization } from '../src/features/set
 import { AuthProvider } from '../src/features/auth/auth-state.web.tsx';
 import { NetworkToolsProvider } from '../src/features/auth/network-tools-state.web.tsx';
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
-import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from '../src/core/agent/system-prompt.ts';
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
 import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
+import { createWebTools, getWebActivityEnd } from '../src/core/agent/web-tools.ts';
+import { createRunProtection } from '../src/core/platform/run-protection.web.ts';
+import { ApiError } from '../src/core/api/auth-session.ts';
+import { syncAccount } from '../src/features/auth/account-sync.web.ts';
+
+test('account sync sends persistent deletions before uploads and excludes remote tombstones across pages', async () => {
+  const calls = [];
+  const conversation = id => ({ id, title: id, pinned: false, updatedAt: 1, messages: [] });
+  const result = await syncAccount(async (path, init) => {
+    calls.push({ path, body: init?.body ? JSON.parse(init.body) : undefined });
+    if (init?.method === 'POST') return {};
+    if (path.includes('conversation-deletions')) return path.includes('cursor=')
+      ? { items: ['remote-deleted'], nextCursor: null } : { items: ['local-deleted'], nextCursor: 'page2' };
+    if (path.startsWith('/api/conversations?')) return { items: ['local-deleted', 'remote-deleted', 'keep'].map(id => ({ ...conversation(id), clientId: id })) };
+    if (path.startsWith('/api/conversations/keep?')) return { messages: [] };
+    throw new Error(`Deleted conversations must not be fetched: ${path}`);
+  }, { chat: { conversations: [conversation('local-deleted'), conversation('remote-deleted')], deletedConversationIds: ['local-deleted'] },
+    appearance: { themeId: 'twitter', mode: 'system' }, personalization: defaultPersonalization },
+  { conversations: true, reading: true, appearance: false, personalization: false });
+  assert.deepEqual(calls[0].body.chat.deletedConversationIds, ['local-deleted']);
+  assert.deepEqual(calls[1].body.chat.conversations.map(item => item.id), ['remote-deleted']);
+  assert.deepEqual(result.deletedConversationIds, ['local-deleted', 'remote-deleted']);
+  assert.deepEqual(result.pulled.map(item => item.id), ['keep']);
+});
+
+test('failed deletion upload aborts sync instead of importing the old remote copy', async () => {
+  let requests = 0;
+  await assert.rejects(syncAccount(async () => { requests++; throw new Error('offline'); }, {
+    chat: { conversations: [], deletedConversationIds: ['deleted'] },
+    appearance: { themeId: 'twitter', mode: 'system' }, personalization: defaultPersonalization,
+  }, { conversations: true, reading: false, appearance: false, personalization: false }), /offline/);
+  assert.equal(requests, 1);
+});
+
+test('turning conversation sync off keeps local deletions out of remote requests', async () => {
+  const result = await syncAccount(async () => { throw new Error('must not request'); }, {
+    chat: { conversations: [], deletedConversationIds: ['local-only'] },
+    appearance: { themeId: 'twitter', mode: 'system' }, personalization: defaultPersonalization,
+  }, { conversations: false, reading: false, appearance: false, personalization: false });
+  assert.deepEqual(result.pulled, []);
+  assert.deepEqual(result.deletedConversationIds, ['local-only']);
+});
+
+test('a late sync response cannot resurrect a deleted conversation, including after restoring the workspace', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const conversation = { id: 'deleted', title: 'old', pinned: false, updatedAt: 1, messages: [] };
+  let chat;
+  function Harness() { chat = useChat(); return null; }
+  try {
+    await act(async () => root.render(createElement(ChatProvider, { initialState: { conversations: [conversation], activeId: 'deleted', sidebarOpen: true } }, createElement(Harness))));
+    await act(async () => chat.dispatch({ type: 'delete', id: 'deleted' }));
+    await act(async () => chat.dispatch({ type: 'merge-sync', conversations: [conversation] }));
+    assert.deepEqual(chat.conversations, []);
+    assert.deepEqual(chat.deletedConversationIds, ['deleted']);
+    assert.equal(chat.activeId, null);
+    await act(async () => root.render(createElement(ChatProvider, { key: 'reload', initialState: { conversations: [], deletedConversationIds: ['deleted'], activeId: null, sidebarOpen: true } }, createElement(Harness))));
+    await act(async () => chat.dispatch({ type: 'merge-sync', conversations: [conversation, { ...conversation, id: 'other' }] }));
+    assert.deepEqual(chat.conversations.map(item => item.id), ['other']);
+    await act(async () => chat.dispatch({ type: 'select', id: 'other' }));
+    await act(async () => chat.dispatch({ type: 'merge-sync', conversations: [], deletedConversationIds: ['other'] }));
+    assert.deepEqual(chat.conversations, []);
+    assert.equal(chat.activeId, null);
+    assert.deepEqual(new Set(chat.deletedConversationIds), new Set(['deleted', 'other']));
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('live replies pause development updates and protect navigation until every run is idle', async () => {
+  const listeners = new Map();
+  let pauses = 0;
+  let resumes = 0;
+  const protection = createRunProtection({
+    target: { addEventListener: (name, listener) => listeners.set(name, listener), removeEventListener: (name) => listeners.delete(name) },
+    refresh: { disable: () => pauses++, enable: () => resumes++ }, resumeDelayMs: 15,
+  });
+  let prevented = false;
+  const event = { preventDefault: () => { prevented = true; }, returnValue: undefined };
+  protection.setActive(true);
+  listeners.get('beforeunload')(event);
+  assert.equal(prevented, true);
+  assert.equal(pauses, 1);
+  protection.setActive(false);
+  protection.setActive(true);
+  await new Promise((accept) => setTimeout(accept, 30));
+  assert.equal(resumes, 0, 'a new run cancels the pending update release');
+  protection.setActive(false);
+  prevented = false;
+  listeners.get('beforeunload')(event);
+  assert.equal(prevented, false);
+  await new Promise((accept) => setTimeout(accept, 30));
+  assert.equal(resumes, 1);
+  protection.dispose();
+  assert.equal(listeners.size, 0);
+});
+
+test('batch fetch exposes only successful sources and warns about missing and truncated evidence', async () => {
+  const tools = createWebTools(async (_path, init) => {
+    const { url } = JSON.parse(init.body);
+    if (url.includes('broken')) throw new Error('upstream failed');
+    return { url: 'https://example.com/redirected', title: 'Document', text: 'Partial document', truncated: true };
+  });
+  const result = await tools[1].execute('fetch1', { urls: ['https://example.com/good', 'https://example.com/broken'] });
+  const activity = getWebActivityEnd('web_fetch', 'fetch1', result, false);
+  assert.deepEqual(activity.urls, ['https://example.com/redirected']);
+  assert.equal(activity.status, 'complete');
+  assert.match(activity.error, /1 个网页未能读取/);
+  assert.match(result.content[0].text, /truncated/);
+  assert.match(result.content[1].text, /Do not cite this URL/);
+});
+
+test('a four-page fetch starts every request before any page resolves and preserves partial results in URL order', async () => {
+  const urls = ['one', 'two', 'three', 'four'].map((name) => `https://example.com/${name}`);
+  const pending = new Map();
+  const tools = createWebTools((_path, init) => new Promise((resolve, reject) => {
+    pending.set(JSON.parse(init.body).url, { resolve, reject });
+  }));
+  const resultPromise = tools[1].execute('parallel', { urls });
+  assert.equal(pending.size, 4, 'four HTTP requests must be in flight before the first response');
+  assert.equal(tools[1].executionMode, 'sequential', 'model batches serialize while the four pages inside a batch run concurrently');
+  for (const url of [urls[3], urls[1], urls[0]]) pending.get(url).resolve({ url, title: url, text: 'Page text' });
+  pending.get(urls[2]).reject(new Error('one page failed'));
+  const result = await resultPromise;
+  assert.deepEqual(result.details.urls, [urls[0], urls[1], urls[3]]);
+  assert.match(result.details.warning, /1 个网页未能读取/);
+  assert.match(result.content[2].text, /Could not fetch/);
+});
+
+test('cancelling a parallel fetch aborts all four in-flight requests', async () => {
+  const controller = new AbortController();
+  let started = 0;
+  let aborted = 0;
+  const tools = createWebTools((_path, init) => new Promise((_resolve, reject) => {
+    started++;
+    init.signal.addEventListener('abort', () => { aborted++; reject(new DOMException('cancelled', 'AbortError')); }, { once: true });
+  }));
+  const result = tools[1].execute('cancel', { urls: ['a', 'b', 'c', 'd'].map((name) => `https://example.com/${name}`) }, controller.signal);
+  assert.equal(started, 4);
+  controller.abort();
+  await assert.rejects(result, /取消/);
+  assert.equal(aborted, 4);
+});
+
+test('transient web failures recover once without consuming another model tool call', async () => {
+  let attempts = 0;
+  const tools = createWebTools(async () => {
+    if (++attempts === 1) throw new ApiError(503, 'busy', 'Temporary failure', 0);
+    return { results: [] };
+  });
+  await tools[0].execute('search', { query: 'Python' });
+  assert.equal(attempts, 2);
+  let forbiddenAttempts = 0;
+  const forbidden = createWebTools(async () => { forbiddenAttempts++; throw new ApiError(403, 'forbidden', 'Denied'); });
+  await assert.rejects(forbidden[0].execute('denied', { query: 'Python' }), /Denied/);
+  assert.equal(forbiddenAttempts, 1);
+});
+
+test('a short retry-after is honoured but cancelling the delay makes no second request', async () => {
+  const controller = new AbortController();
+  let attempts = 0;
+  const tools = createWebTools(async () => { attempts++; throw new ApiError(429, 'rate_limited', 'Busy', 5000); });
+  const result = tools[0].execute('search', { query: 'Python' }, controller.signal);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  controller.abort();
+  await assert.rejects(result, /取消/);
+  assert.equal(attempts, 1);
+});
+
+test('multi-page results use OpenStudio-sized excerpts instead of overflowing the next model context', async () => {
+  const tools = createWebTools(async (_path, init) => ({ url: JSON.parse(init.body).url, title: 'Page', text: 'x'.repeat(50_000) }));
+  const result = await tools[1].execute('fetch', { urls: ['https://example.com/a', 'https://example.com/b'] });
+  assert.ok(result.content[0].text.length < 16_300);
+  assert.match(result.content[0].text, /truncated/);
+});
+
+test('off-topic search snippets carry a warning rather than being treated as verified evidence', async () => {
+  const tools = createWebTools(async () => ({ results: [
+    { title: 'Welcome', url: 'https://example.com/', snippet: 'Homepage', rank: 1 },
+  ] }));
+  const result = await tools[0].execute('search1', { query: 'Python asyncio TaskGroup' });
+  assert.match(result.content[0].text, /may be off-topic/);
+});
 
 const config = { id: 'test', name: 'Test model', protocol: 'completion', baseUrl: 'https://test.invalid/v1', modelId: 'test-model', contextWindow: 128000, maxOutput: 4096, requiresApiKey: true };
 const history = [{ id: 'u1', role: 'user', content: '你好' }, { id: 'a1', role: 'assistant', content: '先前的回答', reasoning: 'do not resend hidden thinking' }, { id: 'u2', role: 'user', content: '继续', quote: '选中的历史回复\n第二段引用' }];
@@ -159,8 +349,11 @@ test('agent core has no UI, feature-module or browser dependencies', async () =>
 });
 test('personalization defaults, limits and prompt composition keep optional sections out of empty requests', () => {
   assert.deepEqual(readPersonalization(undefined), defaultPersonalization);
-  assert.equal(buildSystemPrompt(defaultPersonalization), DEFAULT_SYSTEM_PROMPT);
-  assert.equal(buildSystemPrompt({ ...defaultPersonalization, customInstructions: '  \n  ' }), DEFAULT_SYSTEM_PROMPT);
+  for (const prompt of [buildSystemPrompt(defaultPersonalization), buildSystemPrompt({ ...defaultPersonalization, customInstructions: '  \n  ' })]) {
+    assert.ok(prompt.startsWith(DEFAULT_SYSTEM_PROMPT));
+    assert.equal(prompt.match(/<current_context>/g)?.length, 1);
+    assert.ok(!prompt.includes('<user_instructions>') && !prompt.includes('<user_profile>'));
+  }
   const preferences = readPersonalization({ customInstructions: '  使用中文\n先给结论  ', aboutName: '小林', memoryEnabled: true });
   assert.equal(preferences.customInstructions, '  使用中文\n先给结论  ', 'editing preserves whitespace');
   assert.equal(preferences.memoryEnabled, undefined, 'memory is outside the stored contract');
@@ -172,6 +365,17 @@ test('personalization defaults, limits and prompt composition keep optional sect
   assert.throws(() => readPersonalization({ aboutMore: 42 }));
   assert.equal(readPersonalization({ customInstructions: 'x'.repeat(10000) }).customInstructions.length, 10000);
   assert.deepEqual(searchSettings('自定义指令').map(item => item.id), ['personalization']);
+});
+
+test('current context uses the local calendar date and timezone, including midnight across UTC', () => {
+  const context = withCurrentContext('Base instructions', new Date('2026-10-24T16:05:06Z'), 'Asia/Shanghai');
+  assert.match(context, /Current date: 2026-10-25/);
+  assert.match(context, /Current local time: 00:05:06 \(UTC\+08:00\)/);
+  assert.match(context, /Timezone: Asia\/Shanghai/);
+  assert.ok(context.startsWith('Base instructions'));
+  const next = withCurrentContext('Base', new Date('2026-10-25T16:05:06Z'), 'Asia/Shanghai');
+  assert.match(next, /Current date: 2026-10-26/);
+  assert.match(withCurrentContext('Base', new Date('2026-10-24T16:05:06Z'), 'invalid-zone'), /Timezone: UTC/);
 });
 function events(protocol) {
   if (protocol === 'completion') return [
@@ -239,6 +443,9 @@ test('three real pi providers stream text and preserve multi-turn context withou
       const systemPayload = JSON.stringify(protocol === 'message' ? request.body.system
         : (protocol === 'responses' ? request.body.input : request.body.messages).filter(item => item.role === 'system' || item.role === 'developer'));
       for (const preference of ['优先给出简洁结论', '小林', '设计师', '正在学习编程']) assert.ok(systemPayload.includes(preference), `${protocol} carries personalization as system instructions`);
+      assert.match(systemPayload, /<current_context>/);
+      assert.match(systemPayload, /Current date: \d{4}-\d{2}-\d{2}/);
+      assert.match(systemPayload, /Timezone:/);
       assert.ok(payload.includes('先前的回答'));
       assert.ok(payload.includes('继续'));
       assert.ok(payload.includes('选中的历史回复'), `${protocol} includes the selected quote`);
@@ -312,32 +519,27 @@ test('good and bad feedback reach all pi providers as user feedback tied to the 
   });
 });
 
-test('a failed reply never reaches the next model request', () => {
+test('interrupted replies retain their question and partial prose for follow-up requests', () => {
   const failed = [
     { id: 'u1', role: 'user', content: 'first question' },
     { id: 'a1', role: 'assistant', content: 'half an answer', status: 'error', error: '超时' },
   ];
   const context = buildContext(failed, config);
-  assert.deepEqual(context.map(message => message.role), ['user'], 'only the original question remains');
-  assert.ok(!JSON.stringify(context).includes('half an answer'), 'a partial failed reply is not replayed as an answer');
+  assert.deepEqual(context.map(message => message.role), ['user', 'assistant']);
+  assert.ok(JSON.stringify(context).includes('half an answer'));
+  assert.ok(JSON.stringify(context).includes('尚未完成'), 'partial replies are explicitly marked as incomplete');
   assert.ok(!JSON.stringify(context).includes('超时'), 'the error text is not part of the conversation');
-  // Continuing with a new question must not smuggle the failed turn in either.
-  assert.ok(!JSON.stringify(buildContext([...failed, { id: 'u2', role: 'user', content: 'another question' }], config)).includes('half an answer'));
+  assert.ok(JSON.stringify(buildContext([...failed, { id: 'u2', role: 'user', content: '继续' }], config)).includes('half an answer'));
   assert.deepEqual(buildRetryHistory(failed).map(message => message.id), ['u1'], 'retry re-sends the original question');
-  // A fresh message supersedes the failed turn: its unanswered question goes too.
-  assert.deepEqual(withoutFailedTurn(failed), [], 'both the failed error and its question are dropped');
-  assert.deepEqual(
-    withoutFailedTurn([{ id: 'u0', role: 'user', content: 'earlier' }, { id: 'a0', role: 'assistant', content: 'answer', status: 'complete' }, ...failed]).map(message => message.id),
-    ['u0', 'a0'],
-    'only the failed turn is dropped; answered history stays',
-  );
+  assert.deepEqual(withoutFailedReplies(failed), failed);
+  assert.deepEqual(withoutFailedReplies([failed[0], { ...failed[1], content: '' }]), [failed[0]], 'only empty error placeholders are excluded');
   // A stopped turn is different: it holds text the user may want to continue from.
   const stopped = [failed[0], { id: 'a1', role: 'assistant', content: 'partial answer', status: 'stopped' }];
   assert.ok(JSON.stringify(buildContext(stopped, config)).includes('partial answer'));
   assert.deepEqual(buildRetryHistory(stopped).map(message => message.id), ['u1']);
 });
 
-test('sending after a failure removes the whole failed turn from local history', async () => {
+test('sending after a failure preserves the question and partial reply on screen', async () => {
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
@@ -363,8 +565,19 @@ test('sending after a failure removes the whole failed turn from local history',
     await act(async () => {
       chat.dispatch({ type: 'send', conversationId: 'c1', message: { id: 'u2', role: 'user', content: 'next' }, modelId: 'test' });
     });
-    assert.deepEqual(chat.conversations[0].messages.map(message => message.id), ['u2'], 'the failed question and its error report are gone');
+    assert.deepEqual(chat.conversations[0].messages.map(message => message.id), ['u1', 'a1', 'u2'], 'sending never deletes the previous turn');
     assert.equal(chat.conversations[0].errorReadAt, undefined, 'the unread-error marker is cleared');
+    const stale = structuredClone(chat.conversations[0]);
+    await act(async () => {
+      chat.dispatch({ type: 'reply', conversationId: 'c1', message: { id: 'a2', role: 'assistant', content: 'new live answer', status: 'streaming' } });
+      chat.dispatch({ type: 'merge-sync', conversations: [{ ...stale, updatedAt: Date.now() + 10000 }] });
+    });
+    assert.equal(chat.conversations[0].messages.at(-1).content, 'new live answer', 'even a newer remote snapshot cannot overwrite a running stream');
+    await act(async () => {
+      chat.dispatch({ type: 'reply', conversationId: 'c1', message: { id: 'a2', role: 'assistant', content: 'finished answer', status: 'complete' } });
+      chat.dispatch({ type: 'merge-sync', conversations: [{ ...stale, updatedAt: 0 }] });
+    });
+    assert.equal(chat.conversations[0].messages.at(-1).content, 'finished answer', 'a late old response cannot roll back the completed reply');
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
@@ -400,6 +613,131 @@ test('timeouts terminate requests; authentication failures do not expose provide
   } finally { globalThis.fetch = original; }
 });
 
+test('ongoing streamed output resets the idle timeout while a separate total deadline stays bounded', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => new Response(new ReadableStream({
+    start(controller) {
+      let count = 0;
+      const send = (delta, finish_reason = null) => controller.enqueue(new TextEncoder().encode(
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+      ));
+      send({ role: 'assistant', content: '开始' });
+      const interval = setInterval(() => {
+        send({ content: '继续' });
+        if (++count === 8) {
+          clearInterval(interval);
+          options.signal.removeEventListener('abort', abort);
+          send({}, 'stop'); controller.close();
+        }
+      }, 25);
+      const abort = () => { clearInterval(interval); controller.error(new DOMException('aborted', 'AbortError')); };
+      options.signal.addEventListener('abort', abort, { once: true });
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } });
+  try {
+    const result = await createReplyRun({ config, apiKey: 'key', messages: history, onUpdate() {}, timeoutMs: 100, maxDurationMs: 1500 }).start();
+    assert.equal(result.status, 'complete', '200 ms of ongoing output must not hit a 100 ms idle timeout');
+    const bounded = await createReplyRun({ config, apiKey: 'key', messages: history, onUpdate() {}, timeoutMs: 100, maxDurationMs: 90 }).start();
+    assert.equal(bounded.status, 'error');
+    assert.match(bounded.error, /本轮生成时间过长/);
+  } finally { globalThis.fetch = original; }
+});
+
+test('real pi tool loop searches, reads evidence, then answers without losing process state', async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  const updates = [];
+  const toolRequests = [];
+  const frozenPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT, new Date('2026-10-24T16:05:06Z'), 'Asia/Shanghai');
+  const requestPrompts = [];
+  const url = 'https://docs.python.org/3/library/asyncio-task.html';
+  const tools = createWebTools(async (path, init) => {
+    toolRequests.push(path);
+    assert.ok(init.signal instanceof AbortSignal);
+    return path.endsWith('/search') ? { results: [{ title: 'TaskGroup', url, snippet: 'Structured concurrency', rank: 1 }] }
+      : { title: 'TaskGroup', url, text: 'TaskGroup waits for all tasks when the context manager exits.' };
+  });
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    requestPrompts.push(body.messages.find((message) => message.role === 'system')?.content);
+    const index = calls++;
+    if (index === 2) assert.match(JSON.stringify(body.messages), /waits for all tasks/);
+    const delta = index < 2 ? { role: 'assistant', tool_calls: [{ index: 0, id: `tool-${index}`, type: 'function',
+      function: { name: index === 0 ? 'web_search' : 'web_fetch', arguments: JSON.stringify(index === 0 ? { query: 'Python TaskGroup' } : { url }) } }] }
+      : { role: 'assistant', content: `TaskGroup 等待组内任务完成。参考[文档](${url})。` };
+    const chunks = [...(index === 0 || index === 2 ? [{ choices: [{ index: 0, delta: { role: 'assistant', reasoning_content: index === 0 ? '先检索官方文档。' : '读取完成，核对资料后作答。' }, finish_reason: null }] }] : []),
+      { choices: [{ index: 0, delta, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: index < 2 ? 'tool_calls' : 'stop' }] }];
+    return new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const result = await createReplyRun({ config, apiKey: 'key', messages: history, systemPrompt: frozenPrompt, tools, onUpdate: (update) => updates.push(update) }).start();
+    assert.equal(result.status, 'complete');
+    assert.equal(calls, 3);
+    assert.deepEqual(requestPrompts, [frozenPrompt, frozenPrompt, frozenPrompt], 'the initial system prompt is reused unchanged across search and fetch continuations');
+    assert.equal(requestPrompts[0].match(/<current_context>/g).length, 1);
+    assert.deepEqual(toolRequests, ['/api/tools/search', '/api/tools/fetch']);
+    assert.deepEqual(updates.at(-1).activities.map((activity) => activity.status), ['complete', 'complete']);
+    assert.match(updates.at(-1).content, /参考\[文档\]/);
+    assert.ok(updates.some((update) => update.activities.some((activity) => activity.status === 'running')));
+    assert.deepEqual(updates.find((update) => update.activities.some((step) => step.kind === 'search' && step.status === 'running')).process.map((step) => step.kind), ['thinking', 'search']);
+    assert.deepEqual(updates.find((update) => update.activities.some((step) => step.kind === 'fetch' && step.status === 'running')).process.map((step) => step.kind), ['thinking', 'search', 'fetch']);
+    assert.deepEqual(updates.at(-1).process.map((step) => step.kind), ['thinking', 'search', 'fetch', 'thinking']);
+    assert.equal(updates.at(-1).process[0].content, '先检索官方文档。');
+    assert.equal(updates.at(-1).process[3].content, '读取完成，核对资料后作答。');
+    assert.ok(updates.at(-1).process.every((step) => step.status === 'complete'));
+  } finally { globalThis.fetch = original; }
+});
+
+test('two model fetch batches never exceed four concurrent page requests', async () => {
+  const original = globalThis.fetch;
+  let modelCalls = 0;
+  let active = 0;
+  let peak = 0;
+  let pages = 0;
+  const updates = [];
+  const tools = createWebTools(async (_path, init) => {
+    active++; peak = Math.max(peak, active); pages++;
+    try {
+      if (active > 4) throw new ApiError(429, 'rate_limited', 'Too many parallel pages');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { url: JSON.parse(init.body).url, title: 'Page', text: 'Evidence' };
+    } finally { active--; }
+  });
+  globalThis.fetch = async () => {
+    const first = modelCalls++ === 0;
+    const delta = first ? { role: 'assistant', tool_calls: [0, 1].map((batch) => ({
+      index: batch, id: `batch-${batch}`, type: 'function', function: { name: 'web_fetch',
+        arguments: JSON.stringify({ urls: [0, 1, 2, 3].map((page) => `https://example.com/${batch}/${page}`) }) },
+    })) } : { role: 'assistant', content: '已核对八个网页。' };
+    return new Response([{ choices: [{ index: 0, delta, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }] }]
+      .map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const result = await createReplyRun({ config, apiKey: 'test', messages: history, tools, onUpdate: (update) => updates.push(update) }).start();
+    assert.equal(result.status, 'complete');
+    assert.equal(pages, 8);
+    assert.equal(peak, 4, 'independent pages stay parallel but model batches cannot self-trigger the four-slot limiter');
+    assert.ok(updates.at(-1).activities.every((activity) => activity.status === 'complete'));
+  } finally { globalThis.fetch = original; }
+});
+
+test('a reasoning-only final response keeps its transcript but does not claim a completed answer', async () => {
+  const original = globalThis.fetch;
+  const updates = [];
+  globalThis.fetch = async () => new Response([
+    { choices: [{ index: 0, delta: { role: 'assistant', reasoning_content: 'Only thinking' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+  ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+  try {
+    const result = await createReplyRun({ config, apiKey: 'test', messages: history, onUpdate: (update) => updates.push(update) }).start();
+    assert.equal(result.status, 'error');
+    assert.match(result.error, /未返回回答正文/);
+    assert.equal(updates.at(-1).process[0].content, 'Only thinking');
+  } finally { globalThis.fetch = original; }
+});
+
 test('model metadata whitelists fields and credentials stay isolated in memory', () => {
   const normalized = validateModelConfig({ ...config, apiKey: 'must-not-persist' });
   assert.ok(!JSON.stringify(normalized).includes('must-not-persist'));
@@ -428,7 +766,8 @@ test('generated titles are normalised, bounded and silently optional', async () 
   assert.equal(normalizeConversationTitle('1. Title: Weekly plan'), 'Weekly plan');
   assert.equal(normalizeConversationTitle('普通标题。'), '普通标题。', 'a sentence-ending mark inside the title is kept');
   assert.equal(normalizeConversationTitle('   \n\t'), null);
-  assert.equal(normalizeConversationTitle('标'.repeat(50)), '标'.repeat(32), 'titles are cut to 32 graphemes');
+  assert.equal(normalizeConversationTitle('标'.repeat(50)), '标'.repeat(16), 'CJK titles are bounded to 16 graphemes');
+  assert.ok(normalizeConversationTitle('one two three four five six seven eight').split(' ').length <= 6);
 
   let captured;
   const success = async (model, context, options) => {
@@ -437,10 +776,13 @@ test('generated titles are normalised, bounded and silently optional', async () 
   };
   assert.equal(await generateConversationTitle({ config, apiKey: 'session-secret', content: '  first message  ', streamFn: success }), 'AI 标题');
   assert.equal(captured.model.id, config.modelId);
-  assert.equal(captured.context.systemPrompt, TITLE_SYSTEM_PROMPT);
+  assert.ok(captured.context.systemPrompt.startsWith(TITLE_SYSTEM_PROMPT));
+  assert.match(captured.context.systemPrompt, /<current_context>/);
   assert.equal(captured.context.messages[0].content, 'first message');
   assert.equal(captured.options.apiKey, 'session-secret');
-  assert.equal(captured.options.maxTokens, 64, 'title requests stay small');
+  assert.equal(captured.options.maxTokens, 512, 'leave room for low reasoning and a short title');
+  assert.equal(captured.options.reasoning, 'low');
+  assert.equal(captured.model.reasoning, true);
   assert.ok(captured.options.signal instanceof AbortSignal);
 
   let calls = 0;
@@ -953,7 +1295,7 @@ test('composer reports validation in a compact chat notice without blocking inpu
   }
 });
 
-test('reasoning stops animating before the answer starts and preserves its own duration', async () => {
+test('the process header stays running after thinking ends and measures through answer completion', async () => {
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
@@ -964,8 +1306,7 @@ test('reasoning stops animating before the answer starts and preserves its own d
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
-  // Thinking finishes well before the answer, so a duration measured to the end of the turn
-  // would land near the gap while a duration measured to the last thinking token stays early.
+  // The header must keep running throughout this quiet gap and include it in the final time.
   const gapAfterThinkingMs = 400;
   const frames = [
     { type: 'message_start', message: { id: 'msg_t', type: 'message', role: 'assistant', content: [], model: 'test-model', usage: { input_tokens: 5, output_tokens: 0 } } },
@@ -1008,12 +1349,13 @@ test('reasoning stops animating before the answer starts and preserves its own d
     assert.equal(thinkingFinished.content, '', 'thinking ends before the first answer token');
     const { getReasoningState, ReasoningBlock } = await import('../src/features/chat/components/reasoning-block.web.tsx');
     const { renderToStaticMarkup } = await import('react-dom/server');
-    assert.equal(getReasoningState(thinkingFinished), 'complete');
+    assert.equal(getReasoningState(thinkingFinished), 'running');
     const markup = renderToStaticMarkup(createElement(ReasoningBlock, { reasoning: thinkingFinished.reasoning, state: getReasoningState(thinkingFinished), elapsedMs: thinkingFinished.thinkingMs }));
-    assert.ok(markup.includes('已完成思考'));
-    assert.ok(!markup.includes('is-running'), 'thinking animation stops while the answer is still pending');
-    assert.equal(getReasoningState({ status: 'streaming', content: '正文', reasoningActive: false }), 'complete');
+    assert.ok(markup.includes('思考过程'));
+    assert.ok(markup.includes('is-running'), 'the whole process stays active while the answer is pending');
+    assert.equal(getReasoningState({ status: 'streaming', content: '正文', reasoningActive: false }), 'running');
     assert.equal(getReasoningState({ status: 'streaming', content: '', reasoningActive: true }), 'running');
+    assert.equal(getReasoningState({ status: 'streaming', content: '', reasoningActive: false }), 'running', 'an empty message_start is still waiting, not completed thinking');
     assert.equal(getReasoningState({ status: 'stopped', content: '' }), 'stopped');
     assert.equal(getReasoningState({ status: 'error', content: '' }), 'error');
     await until(() => Object.keys(runtime.runs).length === 0);
@@ -1021,8 +1363,8 @@ test('reasoning stops animating before the answer starts and preserves its own d
     assert.equal(reply.content, '答案');
     assert.equal(reply.reasoning, '先想一下');
     assert.ok(Number.isFinite(reply.thinkingMs), 'a reply with reasoning carries a measured duration');
-    assert.ok(reply.thinkingMs >= 0 && reply.thinkingMs < gapAfterThinkingMs - 50,
-      `duration must stop at the last thinking token, measured ${reply.thinkingMs}ms`);
+    assert.ok(reply.thinkingMs >= gapAfterThinkingMs,
+      `total duration includes the gap before the answer, measured ${reply.thinkingMs}ms`);
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;

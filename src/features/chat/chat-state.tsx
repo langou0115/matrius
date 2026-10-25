@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
-import { withoutFailedTurn } from '@/core/agent/history';
 import type { Message, MessageFeedback } from '@/core/agent/types';
+import { normalizeConversationTitle } from '@/core/agent/title';
 export type { Message, MessageImage } from '@/core/agent/types';
 
 export type Conversation = {
@@ -20,10 +20,10 @@ export type Conversation = {
 
 /** The fallback shown until a title request succeeds, and the value a late result may replace. */
 export function deriveConversationTitle(message: Pick<Message, 'content' | 'images'>): string {
-  return message.content.replace(/\s+/g, ' ').trim().slice(0, 32)
+  return normalizeConversationTitle(message.content.replace(/\s+/g, ' ').trim())
     || (message.images?.length ? '图片对话' : '新对话');
 }
-export type ChatState = { conversations: Conversation[]; activeId: string | null; sidebarOpen: boolean; chatVisible: boolean };
+export type ChatState = { conversations: Conversation[]; deletedConversationIds?: string[]; activeId: string | null; sidebarOpen: boolean; chatVisible: boolean };
 /** Visibility is a per-tab concern, so it is kept out of the persisted workspace. */
 export type PersistedChatState = Omit<ChatState, 'chatVisible'>;
 type Action =
@@ -37,7 +37,7 @@ type Action =
   | { type: 'pin'; id: string }
   | { type: 'fork'; conversationId: string; messageId: string; forkId: string; updatedAt: number }
   | { type: 'delete'; id: string }
-  | { type: 'merge-sync'; conversations: Conversation[] }
+  | { type: 'merge-sync'; conversations: Conversation[]; deletedConversationIds?: string[] }
   | { type: 'visible'; value: boolean }
   | { type: 'sidebar' };
 
@@ -72,6 +72,7 @@ function reducer(state: ChatState, action: Action): ChatState {
           if (state.chatVisible && state.activeId === conversation.id) delete next.completedReadAt;
           else next.completedReadAt = null;
         } else if (action.message.status === 'stopped') {
+          delete next.errorReadAt;
           delete next.completedReadAt;
         }
         return next;
@@ -113,17 +114,28 @@ function reducer(state: ChatState, action: Action): ChatState {
     case 'delete':
       return {
         ...state,
+        deletedConversationIds: [...new Set([...(state.deletedConversationIds ?? []), action.id])],
         conversations: state.conversations.filter((item) => item.id !== action.id),
         activeId: state.activeId === action.id ? null : state.activeId,
       };
     case 'merge-sync': {
+      const deleted = new Set([...(state.deletedConversationIds ?? []), ...(action.deletedConversationIds ?? [])]);
+      if (action.deletedConversationIds?.length) {
+        state = { ...state, deletedConversationIds: [...deleted],
+          conversations: state.conversations.filter((item) => !deleted.has(item.id)),
+          activeId: state.activeId && deleted.has(state.activeId) ? null : state.activeId };
+      }
       if (!action.conversations.length) return state;
-      const incoming = new Map(action.conversations.map((conversation) => [conversation.id, conversation]));
+      const incoming = new Map(action.conversations.filter((conversation) => !deleted.has(conversation.id)).map((conversation) => [conversation.id, conversation]));
       let changed = false;
       const conversations = state.conversations.map((conversation) => {
         const next = incoming.get(conversation.id);
         if (!next) return conversation;
         incoming.delete(conversation.id);
+        // A sync response was built from an older snapshot. It must never replace
+        // a live stream, or a message the user changed while the request was away.
+        if (conversation.messages.some((message) => message.status === 'streaming')
+          || conversation.updatedAt > next.updatedAt) return conversation;
         if (JSON.stringify(next) === JSON.stringify(conversation)) return conversation;
         changed = true;
         return next;
@@ -169,11 +181,9 @@ function reducer(state: ChatState, action: Action): ChatState {
     }
     case 'send': {
       const current = state.conversations.find((item) => item.id === action.conversationId);
-      // Sending a new message supersedes a failed turn: the unanswered question and its error
-      // report are both dropped, so the conversation history matches what was actually answered.
       const modelId = action.modelId ?? current?.modelId;
       const conversation: Conversation = current
-        ? { ...current, ...(modelId ? { modelId } : {}), messages: [...withoutFailedTurn(current.messages), action.message], updatedAt: Date.now() }
+        ? { ...current, ...(modelId ? { modelId } : {}), messages: [...current.messages, action.message], updatedAt: Date.now() }
         : {
             id: action.conversationId,
             title: deriveConversationTitle(action.message),

@@ -45,6 +45,7 @@ src/
 │   │       ├── message-actions.web.tsx  消息复制、赞/踩与创建分支入口
 │   │       ├── message-content.web.tsx  用户与助手 Markdown/GFM、KaTeX 渲染
 │   │       ├── reasoning-block.web.tsx  等待与思考共用的状态行及折叠正文
+│   │       ├── reply-status.web.tsx     停止/失败提示及末条失败回复的重试操作
 │   │       ├── code-block.web.tsx       代码高亮、复制与折叠
 │   │       ├── model-icon.web.tsx      theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.web.tsx        输入法、Enter/Shift+Enter、模型提示
@@ -83,6 +84,7 @@ src/
 - 路径别名 `@/` 指向 `src/`；本地字体在 `assets/fonts/`，通过根布局的 expo-font 加载。
 - 模板 Explore、标签导航、启动动画组件和 reset-project 脚本已移除。
 - `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 9 个专项会话。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需加一个路由文件与一条清单记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；`src/app/mock/_layout.tsx` 用 `__DEV__` 统一保护所有子路由，生产模式跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
+- `/mock/process` 通过 `features/mock/process-preview.web.tsx` 复用思考折叠区、正文和中断提示；阶段切换保留展开状态及连续计时，包含等待、思考、搜索、读取、再次思考、回答和结束，可验证按发生顺序追加步骤及整轮完成状态。模拟数据位于 `dev/fixtures/process-preview.ts`，不调用模型或写入聊天记录。
 - Web 会话与外观通过 IndexedDB 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过本地 Runtime 生成真实回复。
 - 新建对话首条消息发送后，`chat-runtime.tsx` 在回复之外并行调用 `core/agent/title.ts` 生成标题；`titleModelId` 已配置时使用该模型，否则跟随会话绑定的模型。生成失败保留首条消息截断标题，并在后续回复成功后重试；`titleSource` 防止迟到的结果覆盖手动重命名或分支标题。每个会话最多一个进行中的标题请求，删除会话或卸载工作区时取消。
 - 发送、置顶、重命名和删除会写回浏览器数据库；读取或保存失败有提示。当前会话、侧栏和外观状态也会恢复，草稿仅在本次页面会话中保留。
@@ -147,6 +149,7 @@ src/
 ## 开发与发布脚本
 
 - `scripts/dev.mjs`：跨平台本机开发启动器，管理本地 SQLite、uv/FastAPI 和 Expo 进程及退出清理，不连接服务器。
+- `server/scripts/dev-api.py`：Windows 开发 API 热重载适配，复用 Uvicorn 监听器并定向重启工作进程，避免控制台 Ctrl+C 传播至 npm/Expo；仅监听应用代码。
 - `scripts/dev-api-proxy.cjs`：Metro 同源 `/api/*` 转发，模型中继优先处理。
 - `scripts/deploy.mjs`：单次上传源码和生产镜像发布；服务端协议、初始化及健康检查位于 `scripts/remote/`。
 - `Dockerfile.web`、`server/Dockerfile`：生产 Web/API 镜像，直接包含代码；Compose 不挂载源码。
