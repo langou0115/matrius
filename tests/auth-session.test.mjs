@@ -105,11 +105,11 @@ test('catalogue and capability checks hide preview features for ordinary/anonymo
   assert.equal(hasFeature({ ...account('admin'), isAdmin: true }, 'labs'), false);
 });
 
-test('the account category belongs to its own group and owns the sync controls', () => {
+test('the account category belongs to its own group', () => {
   const anonymous = visibleSettings([], false, false);
   const authenticated = visibleSettings([], false, true);
   assert(anonymous.some((item) => item.id === 'account'));
-  assert(!anonymous.some((item) => item.id === 'sync'), 'sync lives on the account page, not its own category');
+  assert(!anonymous.some((item) => item.id === 'sync'), 'legacy sync must not appear as a settings category');
   assert.equal(authenticated.find((item) => item.id === 'account')?.group, '账号');
   assert(!authenticated.some((item) => item.id === 'sync'));
   assert(!authenticated.some((item) => item.group === '应用' && item.id === 'account'));

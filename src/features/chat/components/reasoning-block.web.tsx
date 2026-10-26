@@ -38,11 +38,22 @@ function activityLabel(activity: WebActivity): string {
   return activity.status === 'error' ? '读取失败' : activity.status === 'running' ? '正在读取' : '已读取';
 }
 
+/** The site's own root favicon keeps requests on the result's domain; a 404 or a broken
+    response falls back to the neutral globe instead of leaving a broken image. */
+function SiteIcon({ url, size = 14 }: { url: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  let source: string | null = null;
+  try { source = `https://${new URL(url).hostname}/favicon.ico`; } catch { /* unusable URL */ }
+  if (!source || failed) return <Globe2 size={size} aria-hidden="true" />;
+  return <img className="web-activity-result-icon" src={source} width={size} height={size} alt=""
+    loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+}
+
 function SearchResults({ results }: { results: WebSearchResult[] }) {
   return <span className="web-activity-results">
     {results.map((result) => <a className="web-activity-result" key={`${result.rank}:${result.url}`}
       href={result.url} target="_blank" rel="noopener noreferrer">
-      <Globe2 size={14} aria-hidden="true" />
+      <SiteIcon url={result.url} />
       <span className="web-activity-result-copy">
       <span className="web-activity-result-title">{result.title}</span>
       <span className="web-activity-result-domain">{result.domain || hostname(result.url)}</span>
@@ -84,7 +95,7 @@ function WebActivityRow({ activity }: { activity: WebActivity }) {
         ? <span className="web-activity-results">
           {urls.map((url) => <a className="web-activity-result" key={url} href={url}
             target="_blank" rel="noopener noreferrer">
-            <Globe2 size={15} aria-hidden="true" />
+            <SiteIcon url={url} size={15} />
             <span className="web-activity-result-copy">
               <span className="web-activity-result-title">{url === activity.url ? activity.title || hostname(url) : hostname(url)}</span>
               <span className="web-activity-result-domain">{url}</span>

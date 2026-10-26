@@ -169,3 +169,29 @@ async def test_rejects_duplicate_user_message_id(client, create_user):
     assert second.status_code == 201
     assert first.json()["id"] == second.json()["id"]
     assert second.json()["position"] == 1
+
+
+async def test_message_patch_can_clear_optional_fields(client, create_user):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+    created = await _post_message(
+        client, headers, conversation["id"], "assistant", "partial",
+        feedback="bad", quote="old quote", reasoning="old reasoning", thinkingMs=5,
+        error="old error",
+    )
+    message = created.json()
+    cleared = await client.patch(
+        f"/api/messages/{message['id']}", headers=headers,
+        json={"baseRevision": message["revision"], "feedback": None, "quote": None,
+              "reasoning": None, "thinkingMs": None, "error": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    for key in ("feedback", "quote", "reasoning", "thinkingMs", "error"):
+        assert cleared.json()[key] is None
+    assert cleared.json()["content"] == "partial"
+    for key in ("content", "status"):
+        invalid = await client.patch(
+            f"/api/messages/{message['id']}", headers=headers,
+            json={"baseRevision": cleared.json()["revision"], key: None},
+        )
+        assert invalid.status_code == 422, invalid.text

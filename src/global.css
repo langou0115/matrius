@@ -1106,6 +1106,7 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .web-activity-results { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .web-activity-result { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); font-size: 12px; text-decoration: none; transition: background 180ms; }
 .web-activity-result > svg { flex: none; color: var(--muted-text); }
+.web-activity-result-icon { flex: none; border-radius: 3px; object-fit: contain; }
 .web-activity-result-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .web-activity-result:hover { background: var(--soft); }
 .web-activity-result:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }

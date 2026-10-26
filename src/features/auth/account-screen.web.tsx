@@ -1,136 +1,21 @@
 import { Link, type Href } from 'expo-router';
 import {
-  AlertCircle, Bookmark, Check, ChevronDown, ChevronRight, Cloud, Eye, Globe2, KeyRound,
-  LoaderCircle, LogIn, LogOut, MessageSquare, Palette, RefreshCw, ShieldCheck,
+  AlertCircle, Check, ChevronRight, Cloud, Globe2, KeyRound,
+  LoaderCircle, LogIn, LogOut, ShieldCheck,
   UserRound, type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
 import { SettingsPage } from '@/features/settings/settings-page.web';
-import { useAccountSync } from './account-sync-state.web';
 import { useAuth } from './auth-state.web';
 import { ChangePasswordDialog } from './change-password-dialog.web';
 import { LoginDialog } from './login-dialog.web';
 import { useNetworkTools } from './network-tools-state.web';
-import {
-  defaultSyncPreferences, loadSyncPreferences, saveSyncPreferences, syncCategories,
-  type SyncCategoryId, type SyncPreferences,
-} from './sync-preferences.web';
-
 /** The one benefit login currently promises. */
 const benefits: { icon: LucideIcon; title: string; description: string }[] = [
-  { icon: Cloud, title: '跨设备同步', description: '换台设备登录同一个账号，就能带回聊天记录和设置。' },
+  { icon: Cloud, title: '云端对话', description: '登录后使用账号的云端对话与设置，本地记录独立保留；模型配置仍使用本机配置。' },
 ];
-
-const categoryIcons: Record<SyncCategoryId, LucideIcon> = {
-  conversations: MessageSquare,
-  reading: Eye,
-  personalization: Bookmark,
-  appearance: Palette,
-};
-
-function formatSyncTime(timestamp: number | null): string {
-  if (!timestamp) return '尚未同步';
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return '尚未同步';
-  const clock = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-  const today = new Date();
-  if (date.toDateString() === today.toDateString()) return `今天 ${clock}`;
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return `昨天 ${clock}`;
-  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日 ${clock}`;
-}
-
-function SyncSection({ userId }: { userId: string }) {
-  const sync = useAccountSync();
-  const [open, setOpen] = useState(false);
-  const [preferences, setPreferences] = useState<SyncPreferences | null>(null);
-  const [preferenceError, setPreferenceError] = useState<string | null>(null);
-  const latest = useRef<SyncPreferences | null>(null);
-  const queue = useRef(Promise.resolve());
-
-  useEffect(() => {
-    let active = true;
-    loadSyncPreferences(userId).then((loaded) => {
-      if (!active) return;
-      latest.current = loaded;
-      setPreferences(loaded);
-    }).catch(() => {
-      if (!active) return;
-      const fallback = defaultSyncPreferences();
-      latest.current = fallback;
-      setPreferences(fallback);
-      setPreferenceError('无法读取同步设置，已恢复为全部开启。');
-    });
-    return () => { active = false; };
-  }, [userId]);
-
-  function toggle(id: SyncCategoryId) {
-    if (!latest.current) return;
-    const next = { ...latest.current, [id]: !latest.current[id] };
-    latest.current = next;
-    setPreferences(next);
-    setPreferenceError(null);
-    queue.current = queue.current
-      .then(() => saveSyncPreferences(userId, next))
-      .catch(() => setPreferenceError('同步设置未能保存，请重试。'));
-  }
-
-  const syncing = sync.phase === 'syncing';
-  const lastSync = formatSyncTime(sync.lastSyncedAt);
-  const summary = syncing ? '正在同步…' : sync.error ? '同步失败' : sync.lastSyncedAt ? `上次同步：${lastSync}` : lastSync;
-
-  return <section className="settings-section" aria-labelledby="sync-heading">
-    <h2 id="sync-heading">数据同步</h2>
-    <div className="account-sync">
-      <button className="account-sync-toggle" type="button" aria-expanded={open} aria-controls="account-sync-panel"
-        onClick={() => setOpen((current) => !current)}>
-        <span className="account-sync-toggle-icon"><Cloud size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-        <span className="account-sync-toggle-copy">
-          <strong>同步到账号</strong>
-          <span>{summary}</span>
-        </span>
-        <ChevronDown className="account-sync-chevron" size={18} strokeWidth={1.75} aria-hidden="true" />
-      </button>
-      {open && <div className="account-sync-panel" id="account-sync-panel">
-        {preferences
-          ? <div className="account-sync-options">
-            {syncCategories.map((category) => {
-              const Glyph = categoryIcons[category.id];
-              return <label className="account-sync-option" key={category.id}>
-                <span className="account-sync-option-icon"><Glyph size={18} strokeWidth={1.75} aria-hidden="true" /></span>
-                <span className="account-sync-option-copy">
-                  <strong>{category.title}</strong>
-                  <span>{category.description}</span>
-                </span>
-                <input className="model-checkbox-input" type="checkbox" checked={preferences[category.id]}
-                  onChange={() => toggle(category.id)} />
-                <span className="model-checkbox" aria-hidden="true" />
-              </label>;
-            })}
-          </div>
-          : <p className="account-sync-loading" role="status">正在读取同步设置…</p>}
-        <div className="account-sync-footer">
-          <span className={`account-sync-status ${sync.error || preferenceError ? 'is-error' : ''}`} role="status">
-            {syncing && <LoaderCircle className="login-spinner" size={14} strokeWidth={2} aria-hidden="true" />}
-            {!syncing && !sync.error && !preferenceError && sync.phase === 'done'
-              && <Check size={14} strokeWidth={2} aria-hidden="true" />}
-            <span>{sync.error ?? preferenceError ?? summary}</span>
-          </span>
-          <button className="primary-button account-sync-button" type="button" disabled={syncing}
-            onClick={sync.syncNow}>
-            {syncing
-              ? <LoaderCircle className="login-spinner" size={16} strokeWidth={2} aria-hidden="true" />
-              : <RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
-            {syncing ? '正在同步' : '同步'}
-          </button>
-        </div>
-      </div>}
-    </div>
-  </section>;
-}
 
 function NetworkToolsSection() {
   const { enabled, ready, saving, error, setEnabled } = useNetworkTools();
@@ -200,7 +85,7 @@ export default function AccountScreen() {
   const profileTitle = checking ? '正在验证账号…' : unavailable ? '账号状态未知' : user ? user.username : '未登录';
   const syncReady = Boolean(user && !user.mustChangePassword);
 
-  return <SettingsPage title="账号" description="登录账号、管理密码与选择要同步的内容。">
+  return <SettingsPage title="账号" description="登录账号、管理密码与查看账号状态。">
     <section className="settings-section" aria-labelledby="account-profile-heading">
       <div className={`account-profile ${user ? 'is-authenticated' : ''}`}>
         <span className="account-avatar" aria-hidden="true">
@@ -245,8 +130,6 @@ export default function AccountScreen() {
         </div>)}
       </div>
     </section>}
-
-    {user && syncReady && <SyncSection userId={user.id} />}
 
     {user && syncReady && <NetworkToolsSection />}
 

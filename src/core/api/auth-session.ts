@@ -83,7 +83,7 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
   async function refresh() {
     const version = ++generation;
     if (!token) { update({ status: 'anonymous', user: null, error: null }); return; }
-    update({ status: 'checking', user: null, error: null });
+    update({ status: 'checking', user: state.user, error: null });
     try {
       const user = parseAccount(await request(mePath));
       if (version === generation) update({ status: 'authenticated', user, error: null });
@@ -95,8 +95,12 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
 
   async function login(username: string, password: string) {
     const version = ++generation;
+    const previous = state.user;
     saveToken(null);
-    update({ status: 'checking', user: null, error: null });
+    // The dialog owns login progress and errors. Staying anonymous (or keeping the
+    // previous account) keeps the current workspace mounted; a server answer is the
+    // only thing that may switch it to the account workspace.
+    update({ status: previous ? 'checking' : 'anonymous', user: previous, error: null });
     try {
       const result = await request<{ token: string; user: unknown }>(loginPath, {
         method: 'POST', body: JSON.stringify({ username, password }),

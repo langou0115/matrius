@@ -376,8 +376,10 @@ async def update_message(
 
     fields = payload.model_dump(exclude_unset=True)
     for name in ("content", "quote", "reasoning", "thinkingMs", "status", "error", "feedback"):
-        if name not in fields or fields[name] is None:
+        if name not in fields:
             continue
+        if fields[name] is None and name in ("content", "status"):
+            raise invalid("消息正文和状态不能为空。")
         if name == "status" and message.role == "user" and payload.status != "complete":
             raise invalid("用户消息状态必须为 complete。")
         setattr(message, _snake(name), fields[name])

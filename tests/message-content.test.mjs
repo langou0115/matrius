@@ -66,10 +66,37 @@ test('reasoning keeps all source links inside collapsed tool sections and report
     ],
   })));
   assert.equal(document.querySelectorAll('.web-activity-sources a').length, 8);
+  assert.equal(document.querySelectorAll('.web-activity-sources img').length, 8, 'results use the site favicon');
+  assert.equal(document.querySelector('.web-activity-sources img').getAttribute('src'), 'https://example.com/favicon.ico');
   assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'false');
   assert.equal(document.querySelector('.web-activity-details').hidden, true);
   assert.match(document.querySelector('.web-activity-empty').textContent, /未找到可用结果/);
   assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
+});
+
+test('search result icons fall back to the globe when a favicon is unavailable', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  try {
+    await act(async () => root.render(createElement(ReasoningBlock, {
+      state: 'complete', open: true, activities: [{ id: 'search', kind: 'search', status: 'complete', query: 'q',
+        results: [{ rank: 0, title: 'Source', url: 'https://unreachable.example/x', domain: 'unreachable.example' }] }],
+    })));
+    const image = document.querySelector('.web-activity-result-icon');
+    assert.equal(image.getAttribute('src'), 'https://unreachable.example/favicon.ico');
+    await act(async () => { image.dispatchEvent(new window.Event('error')); });
+    assert.equal(document.querySelector('.web-activity-result-icon'), null);
+    assert.ok(document.querySelector('.web-activity-result svg'), 'falls back to the default globe');
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
 });
 
 test('thinking disclosure keeps its open state and content across tool, answer and interrupted phases', async () => {

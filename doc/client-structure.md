@@ -140,7 +140,7 @@ src/
 - `core/platform/auth-session.web.ts`：当前标签页 token 存储适配，不持久化账号权限。
 - `core/features/capabilities.ts`：统一判断服务端授予的功能。
 - `features/auth/auth-state.web.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。
-- `features/auth/account-screen.web.tsx`：设置账号页、登录、改密、退出；不切换本地聊天仓储。
+- `features/auth/account-screen.web.tsx`：设置账号页、登录、改密与退出；根工作区按认证状态切换数据源。
 - `features/admin/admin-screen.web.tsx`：`/admin` 管理页，管理员独立登录后按用户名创建用户，展示一次初始密码。
 - `features/settings/labs-screen.web.tsx`：受控实验页，路由和数据调用均需权限。
 - `settings-catalog.ts` / `settings-page.web.tsx`：分类与搜索按功能能力统一过滤。
@@ -153,3 +153,7 @@ src/
 - `scripts/dev-api-proxy.cjs`：Metro 同源 `/api/*` 转发，模型中继优先处理。
 - `scripts/deploy.mjs`：单次上传源码和生产镜像发布；服务端协议、初始化及健康检查位于 `scripts/remote/`。
 - `Dockerfile.web`、`server/Dockerfile`：生产 Web/API 镜像，直接包含代码；Compose 不挂载源码。
+
+- `features/workspace/workspace-mode.ts`：按认证状态决定本地、账号云端或等待验证的工作区身份。
+- `features/workspace/cloud-workspace-repository.ts`：账号作用域的内存 REST 仓储，加载服务端数据并按 revision 保存变化；不访问 IndexedDB，不包含模型配置或凭据。
+- `components/web/local-workspace.tsx`：按工作区身份重建聊天、草稿与 Runtime；本地保存队列写 IndexedDB，云端保存队列写 REST，ModelProvider 始终位于切换边界之外。旧 AccountSyncProvider 不再挂载。

@@ -9,10 +9,12 @@ import { PreviewContext } from '@/features/workspace/preview-context';
 import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
-import { AccountSyncProvider } from '@/features/auth/account-sync-state.web';
+import { useAuth } from '@/features/auth/auth-state.web';
+import { createCloudWorkspaceRepository } from '@/features/workspace/cloud-workspace-repository';
+import { workspaceScope } from '@/features/workspace/workspace-mode';
 import { NetworkToolsProvider } from '@/features/auth/network-tools-state.web';
 
-function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean }>) {
+function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean; cloud?: ReturnType<typeof createCloudWorkspaceRepository> }>) {
   const { conversations, deletedConversationIds, activeId, sidebarOpen } = useChat();
   const { themeId, mode } = useAppearance();
   const { preferences: personalization } = usePersonalization();
@@ -39,17 +41,27 @@ function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<
       // Queue snapshots so that slower writes cannot overwrite a newer action.
       queue.current = queue.current.then(async () => {
         if (saved.current === serialized) return;
-        revision.current = await writeWorkspace(snapshot, revision.current);
+        if (cloud) await cloud.save(snapshot);
+        else revision.current = await writeWorkspace(snapshot, revision.current);
         saved.current = serialized;
         setError(null);
       }).catch((reason: unknown) => {
         setError(reason instanceof LocalDataConflict
           ? '其他页面已更新本地数据。请先保留当前未保存的内容，再刷新页面。'
+          : cloud ? '最新修改未能保存到云端。请检查网络后重试；若其他设备已修改，请保留内容后刷新。'
           : '最新修改未能保存到浏览器，关闭页面可能丢失这些修改。');
       });
-    }, streaming ? 300 : 0);
-  }, [data, retry, preview, streaming]);
-  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+    }, streaming ? (cloud ? 1500 : 300) : 0);
+  }, [data, retry, preview, streaming, cloud]);
+  useEffect(() => () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const snapshot = pending.current;
+    if (!preview && snapshot) queue.current = queue.current.then(async () => {
+      if (saved.current === JSON.stringify(snapshot)) return;
+      if (cloud) await cloud.save(snapshot);
+      else await writeWorkspace(snapshot, revision.current);
+    }).catch(() => {});
+  }, [cloud, preview]);
 
   return <>
     {error && <div className="storage-error" role="alert"><span>{error}</span><button onClick={() => setRetry((current) => current + 1)}>重试保存</button></div>}
@@ -58,31 +70,54 @@ function WorkspacePersistence({ initial, preview, children }: PropsWithChildren<
 }
 
 export function LocalWorkspace({ children, preview }: PropsWithChildren<{ preview: boolean }>) {
+  const auth = useAuth();
+  const scope = workspaceScope(auth, preview);
+  // Models and credentials belong to this browser, independent of the workspace/account.
+  return <ModelProvider preview={preview}><ScopedWorkspace key={scope} scope={scope} preview={preview}>{children}</ScopedWorkspace></ModelProvider>;
+}
+
+function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ preview: boolean; scope: string }>) {
+  const auth = useAuth();
+  const [cloud] = useState(() => scope.startsWith('cloud:') ? createCloudWorkspaceRepository(async <T,>(path: string, init?: RequestInit) => {
+    const matches = () => {
+      const current = auth.getSnapshot();
+      return current.user?.id === scope.slice(6) && !current.user.mustChangePassword;
+    };
+    if (!matches()) throw new Error('账号已切换，请重新打开对话空间。');
+    const result = await auth.request<T>(path, init);
+    if (!matches()) throw new Error('账号已切换，请重新打开对话空间。');
+    return result;
+  }) : undefined);
   const [loaded, setLoaded] = useState<(LoadedWorkspace & { preview: boolean }) | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
+    if (scope === 'pending') return;
     async function load() {
       if (__DEV__ && preview) {
         const { createDemoWorkspace } = await import('../../../dev/fixtures/chat-workspace');
         return { data: createDemoWorkspace(), revision: 0, preview: true };
       }
-      return { ...await loadWorkspace(), preview: false };
+      return { ...await (cloud ? cloud.load() : loadWorkspace()), preview: false };
     }
     load().then((value) => { if (active) { setLoaded(value); setFailed(false); } }).catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
-  }, [attempt, preview]);
+  }, [attempt, preview, scope, cloud]);
 
   if (!loaded) return <div className="storage-screen" role={failed ? 'alert' : 'status'}>
     <strong>Matrius</strong>
-    <p>{failed ? '无法读取浏览器中的本地数据，请检查网站存储权限后重试。已有数据不会被覆盖。' : '正在打开你的对话空间…'}</p>
+    <p>{scope === 'pending' && auth.status === 'unavailable' ? '无法验证账号，请联网后重试。也可以退出登录，继续使用本机数据。' : failed ? (cloud ? '无法读取云端数据，请检查网络后重试。' : '无法读取浏览器中的本地数据，请检查网站存储权限后重试。已有数据不会被覆盖。') : '正在打开你的对话空间…'}</p>
+    {scope === 'pending' && auth.status === 'unavailable' && <>
+      <button onClick={() => void auth.refresh()}>重新验证</button>
+      <button onClick={() => { void auth.logout().catch(() => {}); }}>退出登录并使用本地数据</button>
+    </>}
     {failed && <button onClick={() => { setFailed(false); setAttempt((current) => current + 1); }}>重新打开</button>}
   </div>;
 
   return <AppearanceProvider initialPreferences={loaded.data.appearance}>
     <PersonalizationProvider initialPreferences={loaded.data.personalization}><ChatProvider initialState={loaded.data.chat}><DraftProvider>
-      <PreviewContext value={loaded.preview}><ModelProvider preview={loaded.preview}><NetworkToolsProvider><ChatRuntimeProvider><AccountSyncProvider preview={loaded.preview}><WorkspacePersistence initial={loaded} preview={loaded.preview}>{children}</WorkspacePersistence></AccountSyncProvider></ChatRuntimeProvider></NetworkToolsProvider></ModelProvider></PreviewContext>
+      <PreviewContext value={loaded.preview}><NetworkToolsProvider><ChatRuntimeProvider><WorkspacePersistence initial={loaded} preview={loaded.preview} cloud={cloud}>{children}</WorkspacePersistence></ChatRuntimeProvider></NetworkToolsProvider></PreviewContext>
     </DraftProvider></ChatProvider></PersonalizationProvider>
   </AppearanceProvider>;
 }

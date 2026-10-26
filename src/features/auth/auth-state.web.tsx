@@ -26,7 +26,8 @@ export function useAuth() {
 }
 
 export function useFeature(feature: string) {
-  return hasFeature(useAuth().user, feature);
+  const auth = useAuth();
+  return hasFeature(auth.status === 'authenticated' ? auth.user : null, feature);
 }
 
 export function FeatureGate({ name, children }: PropsWithChildren<{ name: string }>) {

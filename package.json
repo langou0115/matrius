@@ -56,7 +56,7 @@
     "deploy": "node scripts/deploy.mjs",
     "test:deploy": "node --test --test-isolation=none tests/deploy.test.mjs tests/compose.test.mjs",
     "test:dev": "node --test --test-isolation=none tests/dev.test.mjs",
-    "test:auth": "node --import ./tests/register.mjs --test --test-isolation=none tests/auth-session.test.mjs tests/password-input.test.mjs tests/account-sync.test.mjs",
+    "test:auth": "node --import ./tests/register.mjs --test --test-isolation=none tests/auth-session.test.mjs tests/password-input.test.mjs tests/account-sync.test.mjs tests/cloud-workspace.test.mjs",
     "export:web": "expo export --platform web",
     "serve": "node scripts/server.mjs",
     "lint": "expo lint",

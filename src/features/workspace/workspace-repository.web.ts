@@ -116,7 +116,10 @@ function readConversation(value: unknown): Conversation {
 export async function loadWorkspace(): Promise<LoadedWorkspace> {
   const stored = await readWorkspace();
   if (!stored) return { revision: 0, data: { schemaVersion: 1, chat: { conversations: [], activeId: null, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' } } };
-  const value = stored.value;
+  return parseWorkspace(stored.value, stored.revision);
+}
+
+export function parseWorkspace(value: unknown, revision = 0): LoadedWorkspace {
   if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.chat) || !isRecord(value.appearance)) throw new Error('Invalid stored workspace');
   const { chat, appearance } = value;
   if (!Array.isArray(chat.conversations) || (chat.activeId !== null && typeof chat.activeId !== 'string') || typeof chat.sidebarOpen !== 'boolean' || !isThemeId(appearance.themeId) || !['light', 'dark', 'system'].includes(String(appearance.mode))) throw new Error('Invalid stored preferences');
@@ -128,7 +131,7 @@ export async function loadWorkspace(): Promise<LoadedWorkspace> {
   if (new Set(conversations.map((conversation) => conversation.id)).size !== conversations.length) throw new Error('Duplicate stored conversations');
   const activeId = conversations.some((item) => item.id === chat.activeId) ? chat.activeId as string : null;
   return {
-    revision: stored.revision,
+    revision,
     data: {
       schemaVersion: 1,
       chat: { conversations, ...(deletedConversationIds.length ? { deletedConversationIds } : {}), activeId, sidebarOpen: chat.sidebarOpen },
