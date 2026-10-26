@@ -100,7 +100,7 @@ REMOTE_HOST=服务器IP
 - 密钥不是默认文件名：加 `REMOTE_SSH_KEY=~/.ssh/你的密钥`。
 - `APP_PORT` / `API_PORT` / `APP_HTTPS_PORT` 和 `REMOTE_WORKSPACE` 也在同一个文件里调整。
 
-`.env.local`（从 `.env.local.example` 复制）只放本地开发与通用应用设置；登录有效期、限额、`WEBTOOL_PROXY_URL` 等通用项设置后会写入服务器的 `production.env`。管理员账号在 `.env.local` 里用 `INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 指定；密码仍是示例占位值 `change-me` 时部署会直接失败。首次初始化时两个值都留空则不创建固定密码，而是随机生成并打印一次。
+`.env.local`（从 `.env.local.example` 复制）只放本地开发与通用应用设置；登录有效期、限额、`LOG_LEVEL` 等通用项设置后会写入服务器的 `production.env`。代理需要分两个键：`WEBTOOL_PROXY_URL` 只给本机 `npm run dev` 使用，**不会**同步到服务器；`WEBTOOL_PROXY_URL_PRODUCTION` 才会在部署时映射为服务器的 `WEBTOOL_PROXY_URL`。API 运行在容器里，生产代理不能用 `127.0.0.1` / `localhost` / `::1`，应使用 `host.docker.internal` 或其它容器可达地址；部署会拒绝 loopback 地址，并清理服务器上由旧版本同步的 loopback 值。管理员账号在 `.env.local` 里用 `INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 指定；密码仍是示例占位值 `change-me` 时部署会直接失败。首次初始化时两个值都留空则不创建固定密码，而是随机生成并打印一次。
 
 管理员密码**以最近一次部署为准**：每次 `npm run deploy` 都会把 `.env.local` 中的 `INITIAL_ADMIN_*` 写入服务器 `production.env`，API 启动时的 bootstrap 会把该账号密码更新为这份值。A、B 两台机器分别部署不同密码时，后部署的生效。两个值都留空时不会改动现有密码；首次初始化且留空则随机生成并打印一次。
 
@@ -129,7 +129,7 @@ API 容器入口会在 uvicorn 启动前执行 `alembic upgrade head`、`alembic
     └── 其它路径            → Caddy → web:8081（静态前端）
 ```
 
-因此浏览器访问哪个地址，工具请求就发到同一个地址，由 Caddy 分流到 API 容器；换服务器、换端口或换域名都不需要改前端配置。API 容器再按 `WEBTOOL_PROXY_URL` 决定直连还是经上游代理访问搜索与网页。只有原生端或其他跨源调用才需要显式 API 地址与 `CORS_ORIGINS`。
+因此浏览器访问哪个地址，工具请求就发到同一个地址，由 Caddy 分流到 API 容器；换服务器、换端口或换域名都不需要改前端配置。API 容器再按部署时写入的 `WEBTOOL_PROXY_URL` 决定直连还是经上游代理访问搜索与网页；该生产值来自 `.env.local` 的 `WEBTOOL_PROXY_URL_PRODUCTION`，容器可通过 compose 的 `host.docker.internal:host-gateway` 访问宿主机代理。只有原生端或其他跨源调用才需要显式 API 地址与 `CORS_ORIGINS`。
 
 日常开发使用本机 `npm run dev`，完全在本机运行，不影响服务器；详见[开发与验证](development.md#本机全栈开发npm-run-dev)。
 

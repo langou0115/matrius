@@ -75,7 +75,7 @@ apply_app_env() {
     [[ -n $key && -n $encoded ]] || {
       echo 'Invalid application setting frame.' >&2; return 1; }
     case $key in
-      AUTH_SESSION_TTL_SECONDS|MAX_UPLOAD_BYTES|STORAGE_QUOTA_BYTES|FETCH_MAX_CHARS|SQLITE_BUSY_TIMEOUT_MS|CACHE_MAX_ENTRIES|CACHE_MAX_BYTES|SEARCH_TIMEOUT_SECONDS|SEARCH_MAX_BYTES|FETCH_MAX_BYTES|WEBTOOL_PROXY_URL|LOG_LEVEL) ;;
+      AUTH_SESSION_TTL_SECONDS|MAX_UPLOAD_BYTES|STORAGE_QUOTA_BYTES|FETCH_MAX_CHARS|SQLITE_BUSY_TIMEOUT_MS|CACHE_MAX_ENTRIES|CACHE_MAX_BYTES|SEARCH_TIMEOUT_SECONDS|SEARCH_DDGS_TIMEOUT_SECONDS|SEARCH_MAX_ATTEMPTS|SEARCH_FALLBACK|SEARCH_BREAKER_FAILURES|SEARCH_BREAKER_COOLDOWN_SECONDS|SEARCH_MAX_BYTES|FETCH_TIMEOUT_SECONDS|FETCH_MAX_ATTEMPTS|FETCH_MAX_BYTES|WEBTOOL_PROXY_URL|LOG_LEVEL) ;;
       *) echo "Unsupported application setting: $key" >&2; return 1 ;;
     esac
     value=$(printf '%s' "$encoded" | base64 -d) || {
@@ -84,6 +84,31 @@ apply_app_env() {
       echo "$key must be on one line." >&2; return 1; }
     set_env_value "$key" "$value"
   done <<<"$app_env_payload"
+}
+
+# Older deploys synced the local development proxy verbatim. Loopback addresses cannot
+# reach the host from inside the API container, so drop them instead of breaking web tools.
+clear_stale_loopback_proxy() {
+  local value authority host
+  value=$(env_value WEBTOOL_PROXY_URL)
+  [[ -n $value ]] || return 0
+  authority=${value#*://}
+  authority=${authority%%/*}
+  authority=${authority##*@}
+  if [[ $authority == \[*\]* ]]; then
+    host=${authority#\[}
+    host=${host%%\]*}
+  else
+    host=${authority%%:*}
+  fi
+  host=${host,,}
+  case $host in
+    localhost|127.*|::1|0.0.0.0|::ffff:127.*)
+      set_env_value WEBTOOL_PROXY_URL ''
+      echo 'Cleared WEBTOOL_PROXY_URL: the server still had a loopback proxy from an older deploy.' >&2
+      echo 'Set WEBTOOL_PROXY_URL_PRODUCTION in .env.local to a container-reachable proxy instead.' >&2
+      ;;
+  esac
 }
 
 apply_ports() {
@@ -185,7 +210,9 @@ if [[ ! -f $env_file ]]; then
     printf 'AUTH_SESSION_TTL_SECONDS=604800\n'
     printf 'MAX_UPLOAD_BYTES=20971520\nSTORAGE_QUOTA_BYTES=536870912\nFETCH_MAX_CHARS=50000\n'
     printf 'SQLITE_BUSY_TIMEOUT_MS=30000\nCACHE_MAX_ENTRIES=10000\nCACHE_MAX_BYTES=67108864\n'
-    printf 'SEARCH_TIMEOUT_SECONDS=15\nSEARCH_MAX_BYTES=2097152\nFETCH_MAX_BYTES=5242880\n'
+    printf 'SEARCH_TIMEOUT_SECONDS=8\nSEARCH_DDGS_TIMEOUT_SECONDS=4\nSEARCH_MAX_ATTEMPTS=2\n'
+    printf 'SEARCH_FALLBACK=true\nSEARCH_BREAKER_FAILURES=3\nSEARCH_BREAKER_COOLDOWN_SECONDS=60\n'
+    printf 'SEARCH_MAX_BYTES=2097152\nFETCH_TIMEOUT_SECONDS=45\nFETCH_MAX_ATTEMPTS=2\nFETCH_MAX_BYTES=5242880\n'
     printf 'WEBTOOL_PROXY_URL=\n'
     printf 'LOG_LEVEL=INFO\n'
   } >"$env_file" || {
@@ -208,6 +235,7 @@ fi
 # Explicit local application settings and port overrides apply on every
 # deployment; omitted values retain the server configuration.
 apply_app_env
+clear_stale_loopback_proxy
 apply_ports
 
 # The latest deployment owns the administrator password. Bootstrap reapplies

@@ -1,7 +1,37 @@
-from functools import lru_cache
+import logging
+import os
+import threading
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+
+def _env_files() -> tuple[str, ...]:
+    """Environment files for this process.
+
+    Development gets a second source so `npm run dev` can hot-read .env.local without
+    restarting uvicorn. The entrypoint sets MATRIUS_DEV_ENV_FILE; production never does,
+    and APP_ENV=production is a second guard. Real environment variables still win over
+    both files, so the entrypoint's forced DATABASE_URL/DATA_DIR cannot be overridden.
+    """
+    files = [".env"]
+    dev_file = os.environ.get("MATRIUS_DEV_ENV_FILE", "").strip()
+    if dev_file and os.environ.get("APP_ENV", "development") == "development":
+        files.append(dev_file)
+    return tuple(files)
+
+
+def _dev_env_stamp() -> tuple[int, int, int] | None:
+    dev_file = os.environ.get("MATRIUS_DEV_ENV_FILE", "").strip()
+    if not dev_file or os.environ.get("APP_ENV", "development") != "development":
+        return None
+    try:
+        info = os.stat(dev_file)
+    except OSError:
+        return None
+    return info.st_mtime_ns, info.st_size, info.st_ino
 
 
 class Settings(BaseSettings):
@@ -23,7 +53,14 @@ class Settings(BaseSettings):
     cache_max_entries: int = 10000
     cache_max_bytes: int = 64 * 1024 * 1024
 
-    search_timeout_seconds: int = 15
+    # Total budget for one search, shared by DuckDuckGo and the Bing fallback.
+    search_timeout_seconds: int = 8
+    # A single ddgs attempt. Half of the total budget stays available for the Bing fallback.
+    search_ddgs_timeout_seconds: int = 4
+    search_max_attempts: int = 2
+    search_fallback: bool = True
+    search_breaker_failures: int = 3
+    search_breaker_cooldown_seconds: int = 60
     search_max_bytes: int = 2 * 1024 * 1024
     # Shared by web search and page fetching. Leave empty to connect directly.
     # The env name has no separator between WEB and TOOL, so it needs an explicit alias.
@@ -32,6 +69,8 @@ class Settings(BaseSettings):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 Matrius/0.1"
     )
+    fetch_timeout_seconds: int = 45
+    fetch_max_attempts: int = 2
     fetch_max_bytes: int = 5 * 1024 * 1024
     # Short-lived fetch cache: research agents often re-read the same source within one reply.
     fetch_cache_ttl_seconds: int = 600
@@ -52,6 +91,40 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
-@lru_cache
+_settings: Settings | None = None
+_settings_stamp: tuple[int, int, int] | None = None
+_settings_lock = threading.Lock()
+
+
+def _load_settings() -> Settings:
+    # Passing _env_file on every construction keeps the development file path dynamic
+    # instead of freezing it when this module is imported.
+    return Settings(_env_file=_env_files())
+
+
 def get_settings() -> Settings:
-    return Settings()
+    global _settings, _settings_stamp
+    stamp = _dev_env_stamp()
+    if _settings is not None and stamp == _settings_stamp:
+        return _settings
+    with _settings_lock:
+        # Re-check under the lock: another request or worker thread may have reloaded.
+        stamp = _dev_env_stamp()
+        if _settings is not None and stamp == _settings_stamp:
+            return _settings
+        try:
+            fresh = _load_settings()
+        except Exception:  # noqa: BLE001 - a half-edited dev file must not kill the API
+            if _settings is None:
+                raise
+            # Keep the last valid values until the next edit. Production still fails fast
+            # at startup because there is no previous Settings instance.
+            logger.warning("Invalid .env.local; keeping the previous settings", exc_info=True)
+            _settings_stamp = stamp
+            return _settings
+        reloaded = _settings is not None
+        _settings = fresh
+        _settings_stamp = stamp
+        if reloaded and stamp is not None:
+            logger.info("Reloaded development settings after .env.local changed")
+        return fresh

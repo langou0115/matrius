@@ -22,6 +22,7 @@ from app.files.router import router as files_router
 from app.health import router as health_router
 from app.logging import configure_logging
 from app.tools.router import router as tools_router
+from app.tools.search import close_bing_client
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ async def lifespan(_: FastAPI):
         logger.warning("Data directory is not available at startup", exc_info=True)
     yield
     await close_cache()
+    await close_bing_client()
     await dispose_engine()
 
 

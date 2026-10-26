@@ -9,7 +9,8 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 
 import { appEnvOverrides, canSync, createArchive,
-  loadDeployEnv, main, shellQuote, snapshot, validateConfig } from '../scripts/deploy.mjs';
+  loadDeployEnv, main, PRODUCTION_PROXY_KEY, shellQuote, snapshot,
+  validateConfig, validateProductionProxy } from '../scripts/deploy.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const execute = promisify(execFile);
@@ -53,6 +54,18 @@ test('shared application settings are framed for the server and empty values ski
   assert.throws(() => appEnvOverrides({ LOG_LEVEL: 'a\nb' }), /LOG_LEVEL must be on one line/);
 });
 
+test('the production proxy must be container-reachable', () => {
+  assert.equal(validateProductionProxy(''), '');
+  assert.equal(validateProductionProxy('  http://host.docker.internal:7890  '),
+    'http://host.docker.internal:7890');
+  assert.equal(validateProductionProxy('socks5://proxy.internal:1080'), 'socks5://proxy.internal:1080');
+  for (const value of ['http://127.0.0.1:7890', 'http://localhost:7890', 'http://[::1]:7890',
+    'http://0.0.0.0:7890', 'http://[::ffff:127.0.0.1]:7890', 'ftp://proxy.internal:21',
+    'not-a-url']) {
+    assert.throws(() => validateProductionProxy(value), new RegExp(PRODUCTION_PROXY_KEY), value);
+  }
+});
+
 test('SSH configuration rejects command injection and invalid origins / paths', async () => {
   assert.equal(validateConfig(config).url, 'http://server:16666');
   assert.equal(validateConfig(config).remoteSsh, 'dev@server');
@@ -65,9 +78,12 @@ test('SSH configuration rejects command injection and invalid origins / paths', 
     { REMOTE_ENV_FILE: 'relative.env' }, { REMOTE_WORKSPACE: '/' }, { REMOTE_SSH_PORT: '65536' },
     { APP_PORT: '0' }, { APP_PORT: '65536' }, { API_PORT: 'abc' }, { APP_HTTPS_PORT: '99999' },
     { INITIAL_ADMIN_USERNAME: 'admin' }, { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'a\nb' },
-    { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'change-me' }]) {
+    { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'change-me' },
+    { [PRODUCTION_PROXY_KEY]: 'http://127.0.0.1:7890' }]) {
     assert.throws(() => validateConfig({ ...config, ...patch }));
   }
+  assert.equal(validateConfig({ ...config, [PRODUCTION_PROXY_KEY]: 'http://host.docker.internal:7890' })
+    .productionProxy, 'http://host.docker.internal:7890');
   assert.equal(validateConfig({ ...config, INITIAL_ADMIN_USERNAME: 'admin',
     INITIAL_ADMIN_PASSWORD: 'x' }).adminPassword, 'x');
   assert.equal(validateConfig({ ...config, APP_PORT: '3000', API_PORT: '3001' }).appPort, '3000');
@@ -354,7 +370,9 @@ test('one deploy initializes new servers and reconciles services, ports and admi
       REMOTE_WORKSPACE: workspace, REMOTE_ENV_FILE: '',
       INITIAL_ADMIN_USERNAME: 'root', INITIAL_ADMIN_PASSWORD: 'custom-admin-password',
       APP_PORT: '3000', API_PORT: '3001', APP_HTTPS_PORT: '3443',
-      WEBTOOL_PROXY_URL: 'http://proxy.local:7890',
+      // The local development proxy stays on this PC; only the production key is uploaded.
+      WEBTOOL_PROXY_URL: 'http://127.0.0.1:7890',
+      WEBTOOL_PROXY_URL_PRODUCTION: 'http://host.docker.internal:7890',
     };
 
     // The first deploy initializes a new server without a separate command.
@@ -367,7 +385,11 @@ test('one deploy initializes new servers and reconciles services, ports and admi
     assert.match(generated, /^APP_PORT=3000$/m);
     assert.match(generated, /^API_PORT=3001$/m);
     assert.match(generated, /^APP_HTTPS_PORT=3443$/m);
-    assert.match(generated, /^WEBTOOL_PROXY_URL=http:\/\/proxy\.local:7890$/m);
+    assert.match(generated, /^SEARCH_TIMEOUT_SECONDS=8$/m);
+    assert.match(generated, /^SEARCH_DDGS_TIMEOUT_SECONDS=4$/m);
+    assert.match(generated, /^FETCH_TIMEOUT_SECONDS=45$/m);
+    assert.match(generated, /^WEBTOOL_PROXY_URL=http:\/\/host\.docker\.internal:7890$/m);
+    assert.doesNotMatch(generated, /127\.0\.0\.1:7890/);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
     assert.match(await readFile(join(workspace, 'initial-admin.txt'), 'utf8'),
       /username=root\npassword=custom-admin-password/);

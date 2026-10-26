@@ -12,11 +12,33 @@ type SearchHit = {
   rank: number;
 };
 
+type SearchDiagnostics = {
+  provider?: string;
+  status?: string;
+  attempts?: number;
+  elapsedMs?: number;
+  fallback?: boolean;
+  fallbackStatus?: string | null;
+  fallbackAttempts?: number;
+  fallbackElapsedMs?: number;
+  error?: string;
+  fallbackError?: string;
+};
+
+type FetchDiagnostics = {
+  attempts?: number;
+  contentType?: string;
+  finalUrl?: string;
+  truncated?: boolean;
+  extractor?: string;
+};
+
 type SearchTestResult = {
   kind: 'search';
   query: string;
   tookMs: number;
   proxy: boolean;
+  diagnostics?: SearchDiagnostics;
   results: SearchHit[];
 };
 
@@ -24,12 +46,15 @@ type FetchTestResult = {
   kind: 'fetch';
   tookMs: number;
   proxy: boolean;
+  diagnostics?: FetchDiagnostics;
   url: string;
   title: string;
   text: string;
   chars: number;
   truncated: boolean;
 };
+
+type DiagnosticItem = [label: string, value: string | number | boolean | null | undefined];
 
 function ResultHeader({ tookMs, proxy }: { tookMs: number; proxy: boolean }) {
   return <div className="admin-tool-result-header" role="status">
@@ -38,6 +63,44 @@ function ResultHeader({ tookMs, proxy }: { tookMs: number; proxy: boolean }) {
     <span className="admin-tool-duration">耗时 {(tookMs / 1000).toFixed(2)} 秒</span>
     <span className="admin-tool-duration">{proxy ? '经上游代理' : '直连上游'}</span>
   </div>;
+}
+
+function Diagnostics({ items }: { items: DiagnosticItem[] }) {
+  const visible = items.filter(([, value]) => value !== undefined && value !== null && value !== '');
+  if (!visible.length) return null;
+  return <dl className="admin-tool-diagnostics">
+    {visible.map(([label, value]) => <div key={label}>
+      <dt>{label}</dt>
+      <dd>{typeof value === 'boolean' ? (value ? '是' : '否') : String(value)}</dd>
+    </div>)}
+  </dl>;
+}
+
+function SearchDiagnosticsView({ diagnostics }: { diagnostics?: SearchDiagnostics }) {
+  if (!diagnostics) return null;
+  return <Diagnostics items={[
+    ['主来源', diagnostics.provider],
+    ['状态', diagnostics.status],
+    ['尝试次数', diagnostics.attempts],
+    ['主来源耗时', diagnostics.elapsedMs === undefined ? undefined : `${diagnostics.elapsedMs} ms`],
+    ['回退 Bing', diagnostics.fallback],
+    ['回退状态', diagnostics.fallbackStatus],
+    ['回退尝试', diagnostics.fallbackAttempts],
+    ['回退耗时', diagnostics.fallbackElapsedMs === undefined ? undefined : `${diagnostics.fallbackElapsedMs} ms`],
+    ['主来源错误', diagnostics.error],
+    ['回退错误', diagnostics.fallbackError],
+  ]} />;
+}
+
+function FetchDiagnosticsView({ diagnostics }: { diagnostics?: FetchDiagnostics }) {
+  if (!diagnostics) return null;
+  return <Diagnostics items={[
+    ['提取器', diagnostics.extractor],
+    ['下载尝试', diagnostics.attempts],
+    ['内容类型', diagnostics.contentType],
+    ['最终地址', diagnostics.finalUrl],
+    ['响应截断', diagnostics.truncated],
+  ]} />;
 }
 
 function SearchResults({ result }: { result: SearchTestResult }) {
@@ -124,6 +187,7 @@ function SearchTester({ request }: { request: Request }) {
       </p>}
       {result && <>
         <ResultHeader tookMs={result.tookMs} proxy={result.proxy} />
+        <SearchDiagnosticsView diagnostics={result.diagnostics} />
         <SearchResults result={result} />
       </>}
     </div>
@@ -185,6 +249,7 @@ function FetchTester({ request }: { request: Request }) {
       </p>}
       {result && <>
         <ResultHeader tookMs={result.tookMs} proxy={result.proxy} />
+        <FetchDiagnosticsView diagnostics={result.diagnostics} />
         <FetchResult result={result} />
       </>}
     </div>

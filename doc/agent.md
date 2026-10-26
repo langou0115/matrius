@@ -136,7 +136,7 @@ execute()
 
 ## 联网搜索
 
-联网搜索由 API 进程内的 `app/tools/search.py` 完成：优先 DuckDuckGo HTML → Lite，失败或没有有效结果时才回退 Bing RSS，规范化、去重、按关键词相关性排序后返回，**仅云端模式可用**。偏题结果向模型附带警示，不能作为已核实证据。网页读取由 `app/tools/web_fetch.py` 完成：逐跳校验重定向目标、限制下载字节数，整次 45 秒截止时间覆盖排队、重定向、响应体与提取。优先接受 Markdown/纯文本，JSON、XML、代码和 Markdown 保留原始结构；HTML 用 trafilatura 提取 Markdown，失败后由 `html_markdown.py` 保留标题、链接、代码块和表格。404/410、拒绝访问、限流、超时和网络错误使用不同错误码；验证页和纯 JavaScript 空壳明确报错，不作为已读取证据。目前没有浏览器渲染或登录页面能力。批量读取仅将成功页面列为来源，部分失败和正文截断均明确反馈。
+联网搜索由 API 进程内的 `app/tools/search.py` 完成：优先 `ddgs` 的 DuckDuckGo 后端，失败、超时、限流或没有有效结果时才在剩余预算内回退 Bing RSS，规范化、去重、按关键词相关性排序后返回，**仅云端模式可用**。整次搜索默认 8 秒，DuckDuckGo 单次默认 4 秒；Bing 复用长连接并重试瞬时传输错误，连续失败会短暂熔断，避免每次都耗满预算。偏题结果向模型附带警示，不能作为已核实证据。网页读取由 `app/tools/web_fetch.py` 完成：逐跳校验重定向目标、限制下载字节数，整次默认 45 秒截止时间覆盖排队、重定向、响应体与提取，并对超时、传输错误、5xx 和短时 429 做有限重试。优先接受 Markdown/纯文本，JSON、XML、代码和 Markdown 保留原始结构；HTML 先由 trafilatura 提取 Markdown（precision 为空时改用 recall），再降级到 `html_markdown.py`（保留标题、链接、代码块和表格），最后是 lxml 纯文本。缺失或 `application/octet-stream` 的响应会嗅探前 4 KiB，二进制内容直接拒绝。404/410、拒绝访问、限流、超时和网络错误使用不同错误码；验证页和纯 JavaScript 空壳明确报错，不作为已读取证据。目前没有浏览器渲染或登录页面能力。批量读取仅将成功页面列为来源，部分失败和正文截断均明确反馈。
 
 实现参考：[OpenCode webfetch](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/tool/plugin/webfetch.ts) 的内容协商与覆盖响应体的超时，[OpenSERP extract](https://github.com/karust/openserp/blob/main/core/server_extract.go) 和[资源配置](https://github.com/karust/openserp/blob/main/extract/config.go)的正文/完整页边界及并发预算。也查看了 [Codex web search 调用测试](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/web_search.rs)，其网页处理由 web 服务端承担；当前实现不依赖该服务。
 

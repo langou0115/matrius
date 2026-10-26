@@ -36,6 +36,14 @@ test('Compose runs exactly caddy, web and api on one network with one data volum
   assert.deepEqual(api.volumes, [{ type: 'volume', source: 'api_data', target: '/data', volume: {} }]);
   assert.equal(api.depends_on, undefined);
   assert(api.healthcheck.start_period.endsWith('s'));
+  assert.match(JSON.stringify(api.extra_hosts), /host\.docker\.internal/);
+  assert.match(JSON.stringify(api.extra_hosts), /host-gateway/);
+  assert.equal(api.environment.SEARCH_TIMEOUT_SECONDS, '8');
+  assert.equal(api.environment.SEARCH_DDGS_TIMEOUT_SECONDS, '4');
+  assert.equal(api.environment.SEARCH_MAX_ATTEMPTS, '2');
+  assert.equal(api.environment.SEARCH_FALLBACK, 'true');
+  assert.equal(api.environment.FETCH_TIMEOUT_SECONDS, '45');
+  assert.equal(api.environment.FETCH_MAX_ATTEMPTS, '2');
   for (const removed of ['POSTGRES_PASSWORD', 'REDIS_URL', 'RUSTFS_ENDPOINT', 'OPENSERP_URL']) {
     assert.equal(api.environment[removed], undefined, `${removed} must be gone`);
   }

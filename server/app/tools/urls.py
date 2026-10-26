@@ -8,7 +8,6 @@ from app.errors import invalid
 TRACKING_PARAMS = {"fbclid", "gclid", "igshid", "mc_cid", "mc_eid", "ref_src", "msclkid"}
 BLOCKED_HOST_SUFFIXES = (".local", ".localhost", ".internal", ".home.arpa")
 BLOCKED_HOSTS = {"localhost", "host.docker.internal", "metadata.google.internal"}
-FETCH_TIMEOUT_SECONDS = 45
 
 
 def _is_tracking(name: str) -> bool:
@@ -116,7 +115,6 @@ async def validate_fetch_url(raw: str) -> str:
 
 
 __all__ = [
-    "FETCH_TIMEOUT_SECONDS",
     "canonical_result_key",
     "normalize_search_url",
     "validate_fetch_url",

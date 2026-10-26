@@ -56,7 +56,7 @@ cp .env.local.example .env.local                                          # 本�
 npm run deploy                                                            # 首次自动初始化，之后更新
 ```
 
-`.env.local` 管本地开发和通用应用设置（`DEV_*`、`INITIAL_ADMIN_*`、登录有效期、`WEBTOOL_PROXY_URL` 等），其中通用项会在部署时写入服务器配置；SSH 目标、公开端口和工作目录等服务器相关内容放在 `docker-compose/.env.production`。每次 `npm run deploy` 都会同步源码、备份数据库、构建并更新 Web/API、应用迁移、刷新管理员密码、更新 Caddy 并做健康检查；新服务器首次执行时会自动生成配置、创建 SQLite 数据库和管理员，数据卷长期保留。管理员账号密码来自 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，以最近一次部署为准；两个值都不填时，首次初始化会随机生成并打印一次，之后不会改动现有密码。
+`.env.local` 管本地开发和通用应用设置（`DEV_*`、`INITIAL_ADMIN_*`、登录有效期等），其中通用项会在部署时写入服务器配置。代理分两个键：`WEBTOOL_PROXY_URL` 只用于本机开发、不会同步；`WEBTOOL_PROXY_URL_PRODUCTION` 才会在部署时映射为服务器的 `WEBTOOL_PROXY_URL`，且必须是容器可达地址（如 `host.docker.internal`），loopback 会被拒绝。SSH 目标、公开端口和工作目录等服务器相关内容放在 `docker-compose/.env.production`。每次 `npm run deploy` 都会同步源码、备份数据库、构建并更新 Web/API、应用迁移、刷新管理员密码、更新 Caddy 并做健康检查；新服务器首次执行时会自动生成配置、创建 SQLite 数据库和管理员，数据卷长期保留。管理员账号密码来自 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，以最近一次部署为准；两个值都不填时，首次初始化会随机生成并打印一次，之后不会改动现有密码。
 
 默认端口：`16666` 为网页 + API，`16667` 仅 API（可选）；在 `docker-compose/.env.production` 用 `APP_PORT` / `API_PORT` 覆盖，详见[修改端口](doc/deployment.md#修改端口)。每次命令完成同步、构建、健康检查后退出；代码中 stage=stable 的功能在部署成功后对所有账号开放。
 

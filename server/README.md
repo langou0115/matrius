@@ -33,7 +33,7 @@ server/
 
 ## 运行与验证
 
-开发在仓库根目录执行 `npm run dev`：本机 uv 按锁文件安装依赖、启动 FastAPI 热重载，SQLite 数据库和上传文件都在 `server/.data`。全程不连接服务器，也不需要 Docker、SSH 或 `server/.env`；启动时自动迁移开发库并运行 `alembic check`。
+开发在仓库根目录执行 `npm run dev`：本机 uv 按锁文件安装依赖、启动 FastAPI 热重载，SQLite 数据库和上传文件都在 `server/.data`。全程不连接服务器，也不需要 Docker、SSH 或 `server/.env`；启动时自动迁移开发库并运行 `alembic check`。开发模式下后端直接读取仓库根目录的 `.env.local`，文件变化后代理、搜索/抓取预算、限流等运行时设置会在下一次请求生效，无需重启；端口、数据库路径、管理员初始化和日志级别仍需重启。
 
 正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，自动应用迁移并刷新管理员密码，健康检查后退出；不挂载源码、不热重载。部署成功后 stage=stable 的功能即对所有账号开放。完整说明见[开发与验证](../doc/development.md)。
 
@@ -75,10 +75,16 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `DATA_DIR` | `./.data` | SQLite 与上传文件的根目录；生产为 `/data` |
 | `SQLITE_BUSY_TIMEOUT_MS` | `30000` | SQLite 写锁等待时间 |
 | `CACHE_MAX_ENTRIES` / `CACHE_MAX_BYTES` | `10000` / 64 MiB | 进程内缓存上限，超出后淘汰最旧条目 |
-| `SEARCH_TIMEOUT_SECONDS` | `15` | 单个搜索来源超时 |
-| `SEARCH_MAX_BYTES` | `2097152` | 单个搜索响应体上限 |
-| `WEBTOOL_PROXY_URL` | 空 | 可选上游代理，搜索与网页读取共用 |
-| `SEARCH_USER_AGENT` | 内置 UA | 搜索引擎请求头 |
+| `SEARCH_TIMEOUT_SECONDS` | `8` | 整次搜索预算，DuckDuckGo 与 Bing 回退共用 |
+| `SEARCH_DDGS_TIMEOUT_SECONDS` | `4` | 单次 ddgs 尝试上限，其余预算留给 Bing 回退 |
+| `SEARCH_MAX_ATTEMPTS` | `2` | 每个来源最多尝试次数（仅快速失败或传输错误会重试） |
+| `SEARCH_FALLBACK` | `true` | DuckDuckGo 失败/空结果时是否回退 Bing RSS |
+| `SEARCH_BREAKER_FAILURES` / `SEARCH_BREAKER_COOLDOWN_SECONDS` | `3` / `60` | 连续失败熔断阈值与冷却时间；阈值 `0` 关闭 |
+| `SEARCH_MAX_BYTES` | `2097152` | Bing RSS 响应体上限 |
+| `WEBTOOL_PROXY_URL` | 空 | 可选上游代理，搜索与网页读取共用；配置后始终走代理 |
+| `SEARCH_USER_AGENT` | 内置 UA | 搜索与网页读取请求头 |
+| `FETCH_TIMEOUT_SECONDS` | `45` | 整次网页读取截止时间（含排队与提取） |
+| `FETCH_MAX_ATTEMPTS` | `2` | 下载最多尝试次数；仅超时/传输错误/5xx/短 429 重试 |
 | `FETCH_MAX_BYTES` | `5242880` | 网页读取响应体上限（5 MiB） |
 | `AUTH_SESSION_TTL_SECONDS` | `604800` | 登录会话有效期 |
 | `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | 空 | 空库创建管理员；已有用户时按当前值更新密码 |
@@ -86,7 +92,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `STORAGE_QUOTA_BYTES` | `536870912` | 每用户存储配额（512 MiB） |
 | `FETCH_MAX_CHARS` | `50000` | 单次网页读取最大字符数 |
 
-生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；其中登录有效期、限额、`WEBTOOL_PROXY_URL` 等通用项会在部署时写入服务器的 `production.env`。不要把真实密钥提交到仓库。
+生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；开发时后端会在文件变化后自动重新读取运行时设置，生产容器仍只使用部署时写入的环境变量。其中登录有效期、限额、`LOG_LEVEL` 等通用项会在部署时写入服务器的 `production.env`。代理分两个键：`WEBTOOL_PROXY_URL` 只用于本机开发、不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 在部署时映射为服务器的 `WEBTOOL_PROXY_URL`，必须是容器可达地址（如 `host.docker.internal`，loopback 会被拒绝）。不要把真实密钥提交到仓库。
 
 ## API 概览
 
@@ -142,8 +148,8 @@ GET    /api/health/ready
 - 文件内容写入 `DATA_DIR/files`，对象键为 `users/{userId}/{fileId}/{safeName}`，数据库只保存元数据；写入使用临时文件 + `os.replace` 原子替换。
 - 上传类型白名单：纯文本/代码/Markdown/CSV、图片、PDF、DOCX/XLSX/PPTX。不支持旧版 DOC/XLS/PPT，也不做 OCR。
 - 文件读取与 grep 只对已上传文件生效；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
-- 搜索优先 DuckDuckGo HTML → Lite，只有失败或没有有效结果才回退 Bing RSS；结果去重、按关键词相关性排序并优先保证域名多样性。验证码/异常页不当作零结果，有来源失败且无可用结果时返回 502；空结果不缓存。
-- 网页读取前校验 URL：仅 http/https、禁止凭据、localhost、私网/链路本地/云元数据地址，并解析 DNS 检查全部地址；最多手动跟随 5 次重定向，每一跳重新校验。`WEBTOOL_PROXY_URL` 同时用于搜索与抓取。生产环境仍建议在主机/云防火墙限制 API 容器的出站网段。
+- 搜索优先 `ddgs` 的 DuckDuckGo 后端，只有失败、超时、限流或零结果时才在剩余预算内回退 Bing RSS；整次默认 8 秒，连续失败会短暂熔断。DuckDuckGo 的 HTML 接口使用 GET：部分代理地址会对 POST 返回 HTTP 202 验证页；Bing 复用长连接并会重试一次瞬时传输错误。结果去重、按关键词相关性排序并优先保证域名多样性。可达来源零结果返回 `[]` 且不缓存；只有实际尝试的所有来源都失败才返回 502。
+- 网页读取前校验 URL：仅 http/https、禁止凭据、localhost、私网/链路本地/云元数据地址，并解析 DNS 检查全部地址；最多手动跟随 5 次重定向，每一跳重新校验。缺失或 `application/octet-stream` 的响应会嗅探前 4 KiB，二进制内容直接拒绝；HTML 依次用 trafilatura（precision → recall）、`html_markdown.py`、lxml 提取。`WEBTOOL_PROXY_URL` 同时用于搜索与抓取，配置后始终走代理。生产环境仍建议在主机/云防火墙限制 API 容器的出站网段。
 - 限流与登录锁定使用进程内滑动窗口：登录按 IP 与用户名，登录失败 15 次锁定 15 分钟；其余接口按用户。重启后清零，因此 API 必须单 worker 运行。
 
 ## 容器

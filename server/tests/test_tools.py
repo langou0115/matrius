@@ -77,7 +77,7 @@ async def test_four_fetch_endpoints_download_pages_concurrently(client, create_u
     all_started = asyncio.Event()
     started = []
 
-    async def download(url):
+    async def download(url, _deadline):
         started.append(url)
         if len(started) == 4:
             all_started.set()
@@ -85,7 +85,7 @@ async def test_four_fetch_endpoints_download_pages_concurrently(client, create_u
         return url, "Synthetic page text", False, "text/plain"
 
     monkeypatch.setattr(web_fetch_module, "_download", download)
-    monkeypatch.setattr(web_fetch_module, "_extract", lambda body, _url, _mode, _mime: ("Page", body))
+    monkeypatch.setattr(web_fetch_module, "_extract", lambda body, _url, _mode, _mime: ("Page", body, "raw"))
     urls = [f"https://example.com/parallel-{index}" for index in range(4)]
     async with asyncio.timeout(3):
         responses = await asyncio.gather(*(

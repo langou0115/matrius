@@ -206,13 +206,15 @@ async def test_web_tool(
                 query = (payload.query or "").strip()
                 if not query:
                     raise invalid("请输入搜索内容。")
-                results = await web_search(query, 8)
+                trace: dict[str, Any] = {}
+                results = await web_search(query, 8, trace=trace)
                 return {
                     "result": {
                         "kind": "search",
                         "query": query,
                         "tookMs": round((time.perf_counter() - started) * 1000),
                         "proxy": using_proxy,
+                        "diagnostics": trace,
                         "results": results,
                     }
                 }
@@ -220,12 +222,14 @@ async def test_web_tool(
             url = (payload.url or "").strip()
             if not url:
                 raise invalid("请输入网页地址。")
-            page = await web_fetch(url, payload.mode)
+            trace = {}
+            page = await web_fetch(url, payload.mode, trace=trace)
             return {
                 "result": {
                     "kind": "fetch",
                     "tookMs": round((time.perf_counter() - started) * 1000),
                     "proxy": using_proxy,
+                    "diagnostics": trace,
                     **page,
                 }
             }

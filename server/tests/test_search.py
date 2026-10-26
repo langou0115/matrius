@@ -1,35 +1,17 @@
 import asyncio
 import hashlib
+import json
+import time
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from ddgs.engines import ENGINES
+from ddgs.exceptions import RatelimitException, TimeoutException
 
 from app import cache
 from app.errors import AppError
 from app.tools import search
-
-DUCKDUCKGO_HTML = """
-<html><body>
-  <div class="result results_links">
-    <a class="result__a"
-       href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.python.org%2F3%2F&amp;rut=abc">Python Docs</a>
-    <a class="result__snippet"> The official <b>Python</b> documentation. </a>
-  </div>
-  <div class="result results_links">
-    <a class="result__a" href="https://example.com/direct">Direct result</a>
-    <div class="result__snippet">A direct link.</div>
-  </div>
-</body></html>
-"""
-
-DUCKDUCKGO_LITE = """
-<html><body><table>
-  <tr><td><a rel="nofollow" class="result-link" href="https://example.com/a">Example A</a></td></tr>
-  <tr><td class="result-snippet">Snippet for A.</td></tr>
-  <tr><td><a rel="nofollow" class="result-link" href="https://example.com/b">Example B</a></td></tr>
-  <tr><td class="result-snippet">Snippet for B.</td></tr>
-</table></body></html>
-"""
 
 BING_RSS = """
 <rss><channel>
@@ -40,28 +22,78 @@ BING_RSS = """
 """
 
 
-class FakeClient:
-    async def __aenter__(self):
-        return self
+def make_settings(**overrides):
+    values = {
+        "search_timeout_seconds": 8,
+        "search_ddgs_timeout_seconds": 4,
+        "search_max_attempts": 2,
+        "search_fallback": True,
+        "search_breaker_failures": 3,
+        "search_breaker_cooldown_seconds": 60,
+        "search_max_bytes": 2 * 1024 * 1024,
+        "web_tool_proxy_url": "",
+        "search_user_agent": "Matrius test",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
-    async def __aexit__(self, *_args):
-        return False
+
+@pytest.fixture(autouse=True)
+def reset_breaker():
+    search._ddg_breaker.failures = 0
+    search._ddg_breaker.open_until = 0.0
+    yield
+    search._ddg_breaker.failures = 0
+    search._ddg_breaker.open_until = 0.0
 
 
-def test_duckduckgo_html_parser_unwraps_redirects_and_reads_snippets():
-    results = search._parse_duckduckgo(DUCKDUCKGO_HTML)
-    assert [item["url"] for item in results] == ["https://docs.python.org/3/", "https://example.com/direct"]
-    assert results[0]["title"] == "Python Docs"
-    assert results[0]["snippet"] == "The official Python documentation."
-    assert results[0]["engine"] == "duckduckgo"
-    assert [item["rank"] for item in results] == [1, 2]
+@pytest.fixture(autouse=True)
+def reset_bing_client():
+    # Each test runs in its own event loop, so a pooled client cannot be reused across tests.
+    search._bing_client = None
+    search._bing_client_proxy = ""
+    search._bing_client_loop = None
+    yield
+    search._bing_client = None
+    search._bing_client_proxy = ""
+    search._bing_client_loop = None
 
 
-def test_duckduckgo_lite_parser_reads_the_snippet_row():
-    results = search._parse_duckduckgo_lite(DUCKDUCKGO_LITE)
-    assert [(item["title"], item["url"], item["snippet"]) for item in results] == [
-        ("Example A", "https://example.com/a", "Snippet for A."),
-        ("Example B", "https://example.com/b", "Snippet for B."),
+@pytest.fixture
+def settings(monkeypatch):
+    current = make_settings()
+    monkeypatch.setattr(search, "get_settings", lambda: current)
+    return current
+
+
+def ddg_result(title="Python docs", url="https://docs.python.org/3/", body="Official documentation"):
+    return {"title": title, "href": url, "body": body}
+
+
+def test_ddgs_results_map_title_href_and_body():
+    results = search._normalize_ddgs_results([
+        ddg_result(),
+        {"title": "Example", "href": "https://example.com/page", "body": "Snippet"},
+        "not a mapping",
+    ])
+    assert results == [
+        {"type": "organic", "url": "https://docs.python.org/3/", "title": "Python docs",
+         "snippet": "Official documentation", "engine": "duckduckgo", "rank": 1},
+        {"type": "organic", "url": "https://example.com/page", "title": "Example",
+         "snippet": "Snippet", "engine": "duckduckgo", "rank": 2},
+    ]
+
+
+def test_ddgs_redirect_links_are_unwrapped():
+    results = search._normalize_ddgs_results([
+        {"title": "Target", "href": "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage%3Fid%3D1&rut=abc"},
+        {"title": "Absolute", "href": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fother"},
+        {"title": "Plain", "href": "//example.net/plain"},
+    ])
+    assert [item["url"] for item in results] == [
+        "https://example.com/page?id=1",
+        "https://example.org/other",
+        "https://example.net/plain",
     ]
 
 
@@ -74,11 +106,142 @@ def test_bing_rss_parser_collapses_whitespace():
     assert all(item["engine"] == "bing" for item in results)
 
 
-def test_duckduckgo_unwrapping_only_touches_redirect_paths():
-    assert search._unwrap_duckduckgo(
-        "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F%3Fq%3D1"
-    ) == "https://example.com/?q=1"
-    assert search._unwrap_duckduckgo("https://example.com/keep") == "https://example.com/keep"
+async def test_bing_retries_a_transient_transport_failure(settings, monkeypatch):
+    calls = []
+
+    async def flaky(_client, _method, _url, **_kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("proxy tunnel dropped")
+        return BING_RSS
+
+    monkeypatch.setattr(search, "_request_text", flaky)
+    outcome = await search._bing_search("python", time.monotonic() + 8)
+
+    assert outcome.status == "ok"
+    assert outcome.attempts == 2
+    assert len(calls) == 2
+
+
+async def test_bing_does_not_retry_an_http_error(settings, monkeypatch):
+    calls = []
+
+    async def fail(*_args, **_kwargs):
+        calls.append(1)
+        raise RuntimeError("https://www.bing.com/search returned HTTP 404")
+
+    monkeypatch.setattr(search, "_request_text", fail)
+    outcome = await search._bing_search("python", time.monotonic() + 8)
+
+    assert outcome.status == "error"
+    assert outcome.attempts == 1
+    assert "HTTP 404" in outcome.error
+    assert len(calls) == 1
+
+
+def test_bing_connect_timeout_uses_the_remaining_budget():
+    request_timeout = search._request_timeout(7.5)
+    assert request_timeout.connect == 7.5
+    assert request_timeout.read == 7.5
+
+
+async def test_bing_timeout_without_a_message_is_still_traceable(settings, monkeypatch):
+    async def fail(*_args, **_kwargs):
+        raise httpx.ConnectTimeout("")
+
+    monkeypatch.setattr(search, "_request_text", fail)
+    outcome = await search._bing_search("python", time.monotonic() + 8)
+
+    assert outcome.status == "timeout"
+    assert outcome.error == "ConnectTimeout"
+
+
+@pytest.mark.parametrize("error,status", [
+    (RatelimitException("slow down"), "blocked"),
+    (RuntimeError("unusual traffic detected"), "blocked"),
+    (RuntimeError("DuckDuckGo returned HTTP 202"), "blocked"),
+    (TimeoutException("request timed out"), "timeout"),
+    (TimeoutError(), "timeout"),
+    (RuntimeError("No results found."), "empty"),
+    (RuntimeError("tls handshake eof"), "error"),
+])
+def test_ddgs_errors_are_classified(error, status):
+    assert search._classify_ddgs_error(error) == status
+
+
+def test_ddgs_client_uses_the_configured_proxy(settings, monkeypatch):
+    settings.web_tool_proxy_url = "http://proxy.internal:3128"
+    captured = {}
+
+    class FakeDDGS:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def text(self, query, **kwargs):
+            captured["text"] = (query, kwargs)
+            return [ddg_result()]
+
+    monkeypatch.setattr(search, "DDGS", FakeDDGS)
+    results = search._ddgs_sync("python docs", 5)
+
+    assert results == [ddg_result()]
+    assert captured["init"] == {"proxy": "http://proxy.internal:3128", "timeout": 5}
+    query, kwargs = captured["text"]
+    assert query == "python docs"
+    assert kwargs["backend"] == "duckduckgo"
+    assert kwargs["region"] == search.SEARCH_REGION
+    assert kwargs["safesearch"] == search.SEARCH_SAFESEARCH
+    assert kwargs["max_results"] == search.CANDIDATE_LIMIT
+
+
+def test_ddgs_client_connects_directly_without_a_proxy(settings, monkeypatch):
+    captured = {}
+
+    class FakeDDGS:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def text(self, *_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(search, "DDGS", FakeDDGS)
+    search._ddgs_sync("python docs", 5)
+    assert captured["init"]["proxy"] is None
+
+
+def test_duckduckgo_engine_uses_get():
+    # DuckDuckGo returns HTTP 202 anomaly pages for POSTs from many proxies but still answers
+    # GET on the same endpoint.
+    engine = ENGINES["text"]["duckduckgo"]
+    assert engine is search._DuckDuckGoGet
+    assert engine.search_method == "GET"
+
+
+def test_duckduckgo_202_is_reported_as_blocked():
+    class Response:
+        status_code = 202
+        text = "anomaly"
+
+    class FakeHttpClient:
+        def request(self, *_args, **_kwargs):
+            return Response()
+
+    engine = search._DuckDuckGoGet(timeout=1)
+    engine.http_client = FakeHttpClient()
+    with pytest.raises(RatelimitException, match="HTTP 202"):
+        engine.request("GET", "https://html.duckduckgo.com/html/")
 
 
 def test_normalization_rejects_non_web_results_and_strips_tracking():
@@ -130,79 +293,235 @@ def test_diverse_selection_defers_repeated_domains():
     assert [item["title"] for item in search._select_diverse(results, 2)] == ["A1", "A2"]
 
 
-async def test_search_degrades_when_one_provider_fails(monkeypatch):
-    monkeypatch.setattr(search, "_client", FakeClient)
-
-    async def duckduckgo(_client, _query):
-        return [
-            {"type": "organic", "url": "http://example.com/a", "title": "A", "snippet": "",
-             "engine": "duckduckgo", "rank": 1},
-            {"type": "organic", "url": "https://example.org/b", "title": "B", "snippet": "",
-             "engine": "duckduckgo", "rank": 2},
-        ]
-
-    async def bing(_client, _query):
-        raise RuntimeError("bing is unavailable")
-
-    monkeypatch.setattr(search, "_duckduckgo", duckduckgo)
-    monkeypatch.setattr(search, "_bing", bing)
-
-    results = await search.web_search("python", 5)
-    assert [item["title"] for item in results] == ["A", "B"]
-    assert results[0]["url"] == "http://example.com/a"
+@pytest.mark.parametrize("query,title", [
+    ("Python asyncio TaskGroup", "Python asyncio TaskGroup documentation"),
+    ("如何配置联网搜索", "配置联网搜索的说明"),
+])
+def test_relevant_document_beats_generic_homepage(query, title):
+    results = [
+        {"title": "Python homepage", "snippet": "Downloads", "domain": "python.org", "rank": 1},
+        {"title": title, "snippet": "", "domain": "docs.example.com", "rank": 5},
+    ]
+    assert search._rank_relevant(query, results)[0]["title"] == title
 
 
-async def test_search_uses_the_in_process_cache(monkeypatch):
+async def test_fast_ddgs_failure_is_retried(settings, monkeypatch):
+    settings.search_max_attempts = 2
+    calls = []
+
+    def fail(_query, _timeout):
+        calls.append(1)
+        raise RuntimeError("tls handshake eof")
+
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+    outcome = await search._ddg_search("python", time.monotonic() + 8)
+
+    assert outcome.status == "error"
+    assert outcome.attempts == 2
+    assert len(calls) == 2
+
+
+async def test_blocked_ddgs_is_not_retried(settings, monkeypatch):
+    settings.search_max_attempts = 3
+    calls = []
+
+    def fail(_query, _timeout):
+        calls.append(1)
+        raise RatelimitException("slow down")
+
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+    outcome = await search._ddg_search("python", time.monotonic() + 8)
+
+    assert outcome.status == "blocked"
+    assert outcome.attempts == 1
+    assert len(calls) == 1
+
+
+async def test_ddgs_is_skipped_when_the_budget_is_too_small(settings, monkeypatch):
+    called = []
+    monkeypatch.setattr(search, "_ddgs_sync", lambda *_args: called.append(1))
+    outcome = await search._ddg_search("python", time.monotonic() + 0.2)
+
+    assert outcome.status == "timeout"
+    assert outcome.attempts == 0
+    assert called == []
+
+
+async def test_breaker_skips_ddgs_after_consecutive_failures(settings, monkeypatch):
+    settings.search_max_attempts = 1
+    settings.search_breaker_failures = 2
+    calls = []
+
+    def fail(_query, _timeout):
+        calls.append(1)
+        raise RuntimeError("tls handshake eof")
+
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+    for _ in range(2):
+        outcome = await search._ddg_search("python", time.monotonic() + 8)
+        assert outcome.status == "error"
+    assert search._ddg_breaker.open_until > time.monotonic()
+
+    skipped = await search._ddg_search("python", time.monotonic() + 8)
+    assert skipped.status == "skipped"
+    assert skipped.attempts == 0
+    assert len(calls) == 2
+
+
+async def test_empty_ddgs_response_resets_the_breaker(settings, monkeypatch):
+    search._ddg_breaker.failures = 2
+    search._ddg_breaker.open_until = time.monotonic() + 60
+
+    def empty(_query, _timeout):
+        raise RuntimeError("No results found.")
+
+    monkeypatch.setattr(search, "_ddgs_sync", empty)
+    # Open circuits short-circuit before calling the provider; close it to exercise recovery.
+    search._ddg_breaker.open_until = 0.0
+    outcome = await search._ddg_search("python", time.monotonic() + 8)
+
+    assert outcome.status == "empty"
+    assert search._ddg_breaker.failures == 0
+    assert search._ddg_breaker.open_until == 0.0
+
+
+async def test_successful_ddgs_never_calls_bing(settings, monkeypatch):
+    calls = []
+    monkeypatch.setattr(search, "_ddgs_sync", lambda *_args: [ddg_result()])
+
+    async def bing(_query, _deadline):
+        calls.append("bing")
+        return search.ProviderOutcome("bing", "ok", [])
+
+    monkeypatch.setattr(search, "_bing_search", bing)
+    results = await search._search_uncached("python docs", 5, None)
+
+    assert calls == []
+    assert results[0]["engine"] == "duckduckgo"
+    assert results[0]["url"] == "https://docs.python.org/3/"
+
+
+async def test_empty_ddgs_falls_back_to_bing(settings, monkeypatch):
+    monkeypatch.setattr(search, "_ddgs_sync", lambda *_args: [])
+    fallback = search.ProviderOutcome("bing", "ok", [
+        {"type": "organic", "url": "https://example.com/answer", "title": "Answer",
+         "snippet": "From Bing", "engine": "bing", "rank": 1},
+    ])
+
+    async def bing(_query, _deadline):
+        return fallback
+
+    monkeypatch.setattr(search, "_bing_search", bing)
+    results = await search._search_uncached("fallback", 3, None)
+
+    assert [(item["title"], item["engine"]) for item in results] == [("Answer", "bing")]
+
+
+async def test_failed_ddgs_falls_back_to_bing(settings, monkeypatch):
+    settings.search_max_attempts = 1
+
+    def fail(_query, _timeout):
+        raise RuntimeError("tls handshake eof")
+
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+
+    async def bing(_query, _deadline):
+        return search.ProviderOutcome("bing", "ok", [
+            {"type": "organic", "url": "https://example.com/answer", "title": "Answer",
+             "snippet": "", "engine": "bing", "rank": 1},
+        ])
+
+    monkeypatch.setattr(search, "_bing_search", bing)
+    results = await search._search_uncached("fallback", 3, None)
+    assert [item["engine"] for item in results] == ["bing"]
+
+
+async def test_ddgs_failure_with_empty_bing_is_empty_not_502(settings, monkeypatch):
+    settings.search_max_attempts = 1
+
+    def fail(_query, _timeout):
+        raise RuntimeError("tls handshake eof")
+
+    async def bing(_query, _deadline):
+        return search.ProviderOutcome("bing", "empty", [])
+
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+    monkeypatch.setattr(search, "_bing_search", bing)
+    assert await search._search_uncached("nothing", 3, None) == []
+
+
+async def test_all_providers_failing_raises_502(settings, monkeypatch):
+    settings.search_max_attempts = 1
+
+    def fail(_query, _timeout):
+        raise RuntimeError("tls handshake eof")
+
+    async def bing(_query, _deadline):
+        return search.ProviderOutcome("bing", "error", [])
+
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+    monkeypatch.setattr(search, "_bing_search", bing)
+    with pytest.raises(AppError) as raised:
+        await search._search_uncached("anything", 3, None)
+    assert raised.value.status_code == 502
+    assert raised.value.code == "upstream_error"
+
+
+async def test_trace_reports_the_fallback(settings, monkeypatch):
+    settings.search_max_attempts = 1
+
+    def fail(_query, _timeout):
+        raise RuntimeError("tls handshake eof")
+
+    async def bing(_query, _deadline):
+        return search.ProviderOutcome("bing", "empty", [], attempts=1, elapsed_ms=12)
+
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+    monkeypatch.setattr(search, "_bing_search", bing)
+    trace = {}
+    await search._search_uncached("fallback", 3, None, trace)
+
+    assert trace["provider"] == "duckduckgo"
+    assert trace["status"] == "error"
+    assert trace["fallback"] is True
+    assert trace["fallbackStatus"] == "empty"
+    assert trace["fallbackAttempts"] == 1
+    assert trace["fallbackElapsedMs"] == 12
+    assert "handshake" in trace["error"]
+
+
+async def test_web_search_uses_the_in_process_cache(settings, monkeypatch):
     calls = 0
+    monkeypatch.setattr(search, "_ddgs_sync", lambda *_args: [ddg_result()])
 
-    async def duckduckgo(_client, _query):
+    async def uncached(query, _limit, cache_key, _trace=None):
         nonlocal calls
         calls += 1
-        return [{"type": "organic", "url": "https://example.com/a", "title": "A", "snippet": "",
-                 "engine": "duckduckgo", "rank": 1}]
+        result = [{"title": query, "url": "https://example.com/a"}]
+        await cache.cache_set(cache_key, json.dumps(result), 60)
+        return result
 
-    async def bing(_client, _query):
-        return []
-
-    monkeypatch.setattr(search, "_client", FakeClient)
-    monkeypatch.setattr(search, "_duckduckgo", duckduckgo)
-    monkeypatch.setattr(search, "_bing", bing)
-
+    monkeypatch.setattr(search, "_search_uncached", uncached)
     first = await search.web_search("cached query", 3)
     assert calls == 1
     assert await cache.cache_get(search_cache_key("cached query", 3)) is not None
 
-    def fail_client():
-        raise AssertionError("providers must not run on a cache hit")
-
-    monkeypatch.setattr(search, "_client", fail_client)
+    monkeypatch.setattr(search, "_search_uncached", lambda *_args, **_kwargs: pytest.fail(
+        "the cache must answer without a provider call"
+    ))
     assert await search.web_search("cached query", 3) == first
     assert calls == 1
 
 
 def search_cache_key(query: str, limit: int) -> str:
-    return "matrius:search:" + hashlib.sha256(f"{query}|{limit}".encode()).hexdigest()
+    return "matrius:search:v2:" + hashlib.sha256(f"{query}|{limit}".encode()).hexdigest()
 
 
-async def test_search_fails_with_502_only_when_every_provider_fails(monkeypatch):
-    monkeypatch.setattr(search, "_client", FakeClient)
-
-    async def failing(_client, _query):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(search, "_duckduckgo", failing)
-    monkeypatch.setattr(search, "_bing", failing)
-    with pytest.raises(AppError) as raised:
-        await search.web_search("anything", 3)
-    assert raised.value.status_code == 502
-    assert raised.value.code == "upstream_error"
-
-
-async def test_identical_searches_share_one_inflight_task(monkeypatch):
+async def test_identical_searches_share_one_inflight_task(settings, monkeypatch):
     calls = 0
     gate = asyncio.Event()
 
-    async def uncached(query, _limit, _cache_key):
+    async def uncached(query, _limit, _cache_key, _trace=None):
         nonlocal calls
         calls += 1
         await gate.wait()
@@ -225,11 +544,11 @@ async def test_identical_searches_share_one_inflight_task(monkeypatch):
     assert search._search_flights == {}
 
 
-async def test_cancelling_one_waiter_does_not_cancel_the_shared_search(monkeypatch):
+async def test_cancelling_one_waiter_does_not_cancel_the_shared_search(settings, monkeypatch):
     calls = 0
     gate = asyncio.Event()
 
-    async def uncached(query, _limit, _cache_key):
+    async def uncached(query, _limit, _cache_key, _trace=None):
         nonlocal calls
         calls += 1
         await gate.wait()
@@ -251,115 +570,16 @@ async def test_cancelling_one_waiter_does_not_cancel_the_shared_search(monkeypat
     assert calls == 1
 
 
-async def test_search_with_no_usable_results_is_empty_not_an_error(monkeypatch):
-    monkeypatch.setattr(search, "_client", FakeClient)
+async def test_degraded_empty_search_is_not_cached(settings, monkeypatch):
+    settings.search_max_attempts = 1
 
-    async def duckduckgo(_client, _query):
-        return [{"type": "ads", "url": "https://example.com/ad"}]
+    def fail(_query, _timeout):
+        raise RuntimeError("tls handshake eof")
 
-    async def bing(_client, _query):
-        return [{"type": "organic", "url": "ftp://example.com/file"}]
+    async def bing(_query, _deadline):
+        return search.ProviderOutcome("bing", "empty", [])
 
-    monkeypatch.setattr(search, "_duckduckgo", duckduckgo)
-    monkeypatch.setattr(search, "_bing", bing)
-    assert await search.web_search("nothing usable", 3) == []
-
-
-async def test_duckduckgo_success_never_calls_bing(monkeypatch):
-    calls = []
-    monkeypatch.setattr(search, "_client", FakeClient)
-
-    async def primary(_client, _query):
-        calls.append("duckduckgo")
-        return [{"url": "https://docs.python.org/3/", "title": "Python docs", "engine": "duckduckgo"}]
-
-    async def fallback(_client, _query):
-        calls.append("bing")
-        return []
-
-    monkeypatch.setattr(search, "_duckduckgo", primary)
-    monkeypatch.setattr(search, "_bing", fallback)
-    results = await search.web_search("Python docs", 8)
-    assert calls == ["duckduckgo"]
-    assert results[0]["engine"] == "duckduckgo"
-
-
-@pytest.mark.parametrize("primary_result", [None, [], [{"url": "ftp://example.com/file"}]])
-async def test_bing_only_follows_unusable_duckduckgo(monkeypatch, primary_result):
-    calls = []
-    monkeypatch.setattr(search, "_client", FakeClient)
-
-    async def primary(_client, _query):
-        calls.append("duckduckgo")
-        if primary_result is None:
-            raise TimeoutError()
-        return primary_result
-
-    async def fallback(_client, _query):
-        calls.append("bing")
-        return [{"url": "https://example.com/answer", "title": "Answer", "engine": "bing"}]
-
-    monkeypatch.setattr(search, "_duckduckgo", primary)
-    monkeypatch.setattr(search, "_bing", fallback)
-    assert (await search.web_search("fallback", 3))[0]["engine"] == "bing"
-    assert calls == ["duckduckgo", "bing"]
-
-
-async def test_challenge_is_an_error_instead_of_empty_results(monkeypatch):
-    async def request(*_args, **_kwargs):
-        return '<html><form id="challenge-form">Verify you are human</form></html>'
-
-    monkeypatch.setattr(search, "_request_text", request)
-    with pytest.raises(RuntimeError, match="verification challenge"):
-        await search._duckduckgo(None, "test")
-
-
-async def test_html_timeout_leaves_time_for_lite(monkeypatch):
-    calls = []
-
-    async def request(_client, _method, url, **_kwargs):
-        calls.append(url)
-        if url == search.DUCKDUCKGO_HTML:
-            await asyncio.sleep(10)
-        return DUCKDUCKGO_LITE
-
-    monkeypatch.setattr(search, "get_settings", lambda: SimpleNamespace(search_timeout_seconds=0.2))
-    monkeypatch.setattr(search, "_request_text", request)
-    results = await asyncio.wait_for(search._duckduckgo(None, "test"), timeout=1)
-    assert len(results) == 2
-    assert calls == [search.DUCKDUCKGO_HTML, search.DUCKDUCKGO_LITE]
-
-
-def test_nested_result_body_preserves_the_snippet():
-    page = '<div class="result"><div class="result__body"><h2 class="result__title">'
-    page += '<a class="result__a" href="https://example.com">Title</a></h2>'
-    page += '<a class="result__snippet">Useful snippet</a></div></div>'
-    assert search._parse_duckduckgo(page)[0]["snippet"] == "Useful snippet"
-
-
-@pytest.mark.parametrize("query,title", [
-    ("Python asyncio TaskGroup", "Python asyncio TaskGroup documentation"),
-    ("如何配置联网搜索", "配置联网搜索的说明"),
-])
-def test_relevant_document_beats_generic_homepage(query, title):
-    results = [
-        {"title": "Python homepage", "snippet": "Downloads", "domain": "python.org", "rank": 1},
-        {"title": title, "snippet": "", "domain": "docs.example.com", "rank": 5},
-    ]
-    assert search._rank_relevant(query, results)[0]["title"] == title
-
-
-async def test_degraded_empty_search_is_not_cached(monkeypatch):
-    monkeypatch.setattr(search, "_client", FakeClient)
-
-    async def primary(_client, _query):
-        raise TimeoutError()
-
-    async def fallback(_client, _query):
-        return []
-
-    monkeypatch.setattr(search, "_duckduckgo", primary)
-    monkeypatch.setattr(search, "_bing", fallback)
-    with pytest.raises(AppError):
-        await search.web_search("transient", 3)
+    monkeypatch.setattr(search, "_ddgs_sync", fail)
+    monkeypatch.setattr(search, "_bing_search", bing)
+    assert await search.web_search("transient", 3) == []
     assert await cache.cache_get(search_cache_key("transient", 3)) is None

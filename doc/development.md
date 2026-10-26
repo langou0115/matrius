@@ -96,7 +96,7 @@ server/.data/
 
 启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo Web。
 
-API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载；修改配置或迁移后需手动重启。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
+API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启；数据库迁移也需手动重启。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
 
 开发管理员和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
 
@@ -126,7 +126,7 @@ Web 生成期间暂缓 HMR，全部回复结束后延迟恢复，避免代码修
 
 发布命令从原 npm run remote 更名为 npm run deploy。开发不再需要上传源码；只有正式发布才执行此命令。本机发布只需 Node.js、Git、OpenSSH、tar，不需要 Python 或 Docker。
 
-部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`WEBTOOL_PROXY_URL`、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改管理员密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
+部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。代理按用途分键：`WEBTOOL_PROXY_URL` 只用于本机开发，不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 会被映射为服务器的 `WEBTOOL_PROXY_URL`。生产 API 在容器内运行，代理地址必须是 `host.docker.internal` 等容器可达地址，loopback 会被部署拒绝。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改管理员密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
 
 ```bash
 npm run deploy                       # 同步、构建、迁移、刷新管理员密码、健康检查后退出

@@ -60,12 +60,26 @@ export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
     ...env,
     APP_ENV: 'development',
     APP_URL: `http://localhost:${webPort}`,
-    LOG_LEVEL: env.LOG_LEVEL || 'INFO',
     DATABASE_URL: sqliteUrl(join(dataDir, 'dev.db')),
     DATA_DIR: dataDir,
     INITIAL_ADMIN_USERNAME: admin.username,
     INITIAL_ADMIN_PASSWORD: admin.password,
   };
+}
+
+/**
+ * The backend reads .env.local itself in development, so runtime settings (proxy,
+ * search/fetch budgets, limits) apply without restarting uvicorn. Only startup-only
+ * values are copied into the child environment; copying runtime keys here would freeze
+ * them and keep overriding the file after an edit.
+ */
+export function devBackendEnv({ env = {}, local = {}, dataDir = devDataDir(), webPort, envFile }) {
+  const environment = devEnvironment({ env, dataDir, webPort });
+  const admin = devAdminCredentials(local);
+  environment.INITIAL_ADMIN_USERNAME = admin.username;
+  environment.INITIAL_ADMIN_PASSWORD = admin.password;
+  if (envFile) environment.MATRIUS_DEV_ENV_FILE = resolve(envFile);
+  return environment;
 }
 
 /**
@@ -235,14 +249,12 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     return;
   }
 
-  const backendEnv = devEnvironment({ env: local, dataDir, webPort });
-  // Process environment is needed for PATH/PATH-like settings, but development
-  // must never inherit a production DATABASE_URL or DATA_DIR from .env.local.
-  Object.assign(backendEnv, {
-    DATABASE_URL: sqliteUrl(join(dataDir, 'dev.db')),
-    DATA_DIR: dataDir,
-    APP_ENV: 'development',
-    APP_URL: `http://localhost:${webPort}`,
+  // Runtime settings stay in .env.local and are hot-read by the backend. Only
+  // startup-only values (database location, admin bootstrap, env-file path) are copied
+  // into the process environment; fixing DATABASE_URL/DATA_DIR here also keeps a
+  // production path in .env.local from leaking into local development.
+  const backendEnv = devBackendEnv({
+    env, local, dataDir, webPort, envFile: join(root, '.env.local'),
   });
 
   const abort = new AbortController();

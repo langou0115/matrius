@@ -79,8 +79,36 @@ export async function createArchive(directory, files, current, destination) {
 export const APP_ENV_KEYS = [
   'AUTH_SESSION_TTL_SECONDS', 'MAX_UPLOAD_BYTES', 'STORAGE_QUOTA_BYTES',
   'FETCH_MAX_CHARS', 'SQLITE_BUSY_TIMEOUT_MS', 'CACHE_MAX_ENTRIES', 'CACHE_MAX_BYTES',
-  'SEARCH_TIMEOUT_SECONDS', 'SEARCH_MAX_BYTES', 'FETCH_MAX_BYTES', 'WEBTOOL_PROXY_URL', 'LOG_LEVEL',
+  'SEARCH_TIMEOUT_SECONDS', 'SEARCH_DDGS_TIMEOUT_SECONDS', 'SEARCH_MAX_ATTEMPTS',
+  'SEARCH_FALLBACK', 'SEARCH_BREAKER_FAILURES', 'SEARCH_BREAKER_COOLDOWN_SECONDS',
+  'SEARCH_MAX_BYTES', 'FETCH_TIMEOUT_SECONDS', 'FETCH_MAX_ATTEMPTS', 'FETCH_MAX_BYTES',
+  'WEBTOOL_PROXY_URL', 'LOG_LEVEL',
 ];
+
+// The local development proxy (WEBTOOL_PROXY_URL) is never uploaded. The server receives
+// this value under the same WEBTOOL_PROXY_URL name, so the container cannot accidentally
+// inherit a 127.0.0.1 address that only exists on the development PC.
+export const PRODUCTION_PROXY_KEY = 'WEBTOOL_PROXY_URL_PRODUCTION';
+
+export function validateProductionProxy(value) {
+  const proxy = (value || '').trim();
+  if (!proxy) return '';
+  let url;
+  try { url = new URL(proxy); }
+  catch { throw new Error(`${PRODUCTION_PROXY_KEY} must be a valid proxy URL.`); }
+  if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(url.protocol)) {
+    throw new Error(`${PRODUCTION_PROXY_KEY} must use http, https, socks5 or socks5h.`);
+  }
+  const host = url.hostname.replace(/^\[|\]$/gu, '').toLowerCase();
+  // WHATWG URL normalizes IPv4-mapped IPv6 addresses to hex (::ffff:7f00:1).
+  const loopback = host === 'localhost' || host === '::1' || host === '0.0.0.0'
+    || /^127\./u.test(host) || /^::ffff:(?:127\.|7f00:)/u.test(host);
+  if (!host || loopback) {
+    throw new Error(`${PRODUCTION_PROXY_KEY} cannot use a loopback address: the API runs inside a container. `
+      + 'Use host.docker.internal or another container-reachable address.');
+  }
+  return proxy;
+}
 
 export async function readEnvFile(path) {
   try { return parseEnv(await readFile(path, 'utf8')); }
@@ -154,9 +182,10 @@ export function validateConfig(env) {
   const appPort = readPort('APP_PORT');
   const apiPort = readPort('API_PORT');
   const httpsPort = readPort('APP_HTTPS_PORT');
+  const productionProxy = validateProductionProxy(env[PRODUCTION_PROXY_KEY]);
   return { ...env, envFile, workspace, remoteSsh: `${user}@${host}`,
     url: `http://${host}:${appPort || '16666'}`, adminUser, adminPassword,
-    appPort, apiPort, httpsPort };
+    appPort, apiPort, httpsPort, productionProxy };
 }
 
 export async function main({ args: cliArgs = process.argv.slice(2), env = process.env } = {}) {
@@ -178,7 +207,12 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
     ...localEnv,
   };
   const config = validateConfig({ ...fileEnv, ...env });
-  const appEnv = appEnvOverrides({ ...localEnv, ...env });
+  // Local development reads WEBTOOL_PROXY_URL directly. Production must use the explicit
+  // production key, otherwise a 127.0.0.1 proxy would be written into the API container.
+  const sharedEnv = { ...localEnv, ...env };
+  delete sharedEnv.WEBTOOL_PROXY_URL;
+  if (config.productionProxy) sharedEnv.WEBTOOL_PROXY_URL = config.productionProxy;
+  const appEnv = appEnvOverrides(sharedEnv);
   const current = await snapshot(root);
   for (const required of ['package.json', 'package-lock.json', 'Dockerfile.web',
     'docker-compose/docker-compose.yml', 'docker-compose/Caddyfile', 'server/app/main.py',

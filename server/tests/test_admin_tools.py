@@ -4,8 +4,11 @@ from app.admin import router as admin_router_module
 async def test_admin_can_test_web_search(client, create_user, monkeypatch):
     calls = []
 
-    async def fake_search(query, limit):
+    async def fake_search(query, limit, *, trace=None):
         calls.append((query, limit))
+        if trace is not None:
+            trace.update({"provider": "duckduckgo", "status": "ok", "attempts": 1,
+                          "elapsedMs": 12, "fallback": False, "fallbackStatus": None})
         return [{
             "title": "Example",
             "url": "https://example.com/page",
@@ -31,14 +34,21 @@ async def test_admin_can_test_web_search(client, create_user, monkeypatch):
     assert result["results"][0]["url"] == "https://example.com/page"
     assert result["tookMs"] >= 0
     assert result["proxy"] is False
+    assert result["diagnostics"] == {
+        "provider": "duckduckgo", "status": "ok", "attempts": 1,
+        "elapsedMs": 12, "fallback": False, "fallbackStatus": None,
+    }
     assert calls == [("python docs", 8)]
 
 
 async def test_admin_can_test_web_fetch(client, create_user, monkeypatch):
     calls = []
 
-    async def fake_fetch(url, mode):
+    async def fake_fetch(url, mode, *, trace=None):
         calls.append((url, mode))
+        if trace is not None:
+            trace.update({"attempts": 1, "contentType": "text/html",
+                          "finalUrl": url, "truncated": False, "extractor": "trafilatura"})
         return {
             "title": "Example page",
             "url": "https://example.com/page",
@@ -62,6 +72,10 @@ async def test_admin_can_test_web_fetch(client, create_user, monkeypatch):
         "kind": "fetch",
         "tookMs": result["tookMs"],
         "proxy": False,
+        "diagnostics": {
+            "attempts": 1, "contentType": "text/html",
+            "finalUrl": "https://example.com/page", "truncated": False, "extractor": "trafilatura",
+        },
         "title": "Example page",
         "url": "https://example.com/page",
         "text": "Readable body",

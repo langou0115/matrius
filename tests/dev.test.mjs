@@ -10,8 +10,8 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devDataDir, devEnvironment, devPorts, resetDatabase,
-  resetTargets, sqliteUrl, supervise,
+  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devBackendEnv, devDataDir, devEnvironment, devPorts,
+  resetDatabase, resetTargets, sqliteUrl, supervise,
 } from '../scripts/dev.mjs';
 const { handleDevApi } = createRequire(import.meta.url)('../scripts/dev-api-proxy.cjs');
 
@@ -45,6 +45,30 @@ test('development environment is local-only and never inherits production data l
   assert.equal(env.INITIAL_ADMIN_USERNAME, 'prod-admin');
   assert.equal(env.INITIAL_ADMIN_PASSWORD, 'production');
   assert.equal(devDataDir('/repo'), join('/repo', 'server', '.data'));
+});
+
+test('development backend reads runtime settings from the env file instead of freezing them', () => {
+  const envFile = resolve('repo', '.env.local');
+  const env = devBackendEnv({
+    env: { PATH: '/bin' },
+    local: {
+      WEBTOOL_PROXY_URL: 'http://127.0.0.1:7890',
+      LOG_LEVEL: 'DEBUG',
+      INITIAL_ADMIN_USERNAME: 'alice',
+      INITIAL_ADMIN_PASSWORD: 'local-secret',
+    },
+    dataDir: '/repo/server/.data',
+    webPort: 8081,
+    envFile,
+  });
+  assert.equal(env.MATRIUS_DEV_ENV_FILE, envFile);
+  assert.equal(env.INITIAL_ADMIN_USERNAME, 'alice');
+  assert.equal(env.INITIAL_ADMIN_PASSWORD, 'local-secret');
+  assert.equal(env.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/dev.db');
+  assert.equal(env.DATA_DIR, '/repo/server/.data');
+  // Runtime keys stay in .env.local; copying them here would override every later edit.
+  assert.equal(env.WEBTOOL_PROXY_URL, undefined);
+  assert.equal(env.LOG_LEVEL, undefined);
 });
 
 test('development API watches application code and isolates Windows console signals', () => {

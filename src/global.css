@@ -644,6 +644,10 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .admin-tool-error > svg { flex: none; margin-top: 1px; }
 .admin-tool-result-header { display: flex; align-items: center; gap: 8px; color: var(--primary); font-size: var(--text-caption); }
 .admin-tool-duration { color: var(--muted-text); }
+.admin-tool-diagnostics { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--soft); font-size: var(--text-caption); }
+.admin-tool-diagnostics > div { display: flex; gap: 6px; min-width: 0; }
+.admin-tool-diagnostics dt { flex: none; color: var(--muted-text); }
+.admin-tool-diagnostics dd { margin: 0; overflow-wrap: anywhere; color: var(--foreground); }
 .admin-tool-results { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .admin-tool-result { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .admin-tool-result-title { color: var(--foreground); font-size: var(--text-small); font-family: var(--font-medium); line-height: 1.5; }

@@ -219,11 +219,13 @@ DELETE /api/files/{id}
 POST /api/tools/search { query, limit? (1-20, 默认 10) }
 ```
 
-- 优先请求 DuckDuckGo HTML（失败或无结果回退 Lite，HTML 阶段最多占一半来源超时）；仅当 DuckDuckGo 失败或没有有效结果时请求 Bing RSS，不混合两家的结果。验证码/异常页按上游失败处理，无可用结果且有来源失败时返回 502。
+- 主来源是 `ddgs` 的 `duckduckgo` 后端；只有失败、超时、被限流或零结果时才在剩余预算内回退 Bing RSS，不混合两家的结果。整次搜索上限 `SEARCH_TIMEOUT_SECONDS`（默认 8 秒），单次 ddgs 上限 `SEARCH_DDGS_TIMEOUT_SECONDS`（默认 4 秒），为回退预留约 2 秒。DuckDuckGo 的 HTML 接口改用 GET：不少代理出口会对 POST 返回 HTTP 202 验证页，而同一地址仍接受 GET；202/403/429 归类为 `blocked`。
+- 快速传输失败最多尝试 `SEARCH_MAX_ATTEMPTS`（默认 2）次；超出预算、被限流或耗时超过 2 秒的失败不重试，避免遗留后台请求。Bing 回退同样最多尝试 2 次，只重试超时或传输错误，并复用进程内的长连接以减少代理 TLS 握手开销。连续失败 `SEARCH_BREAKER_FAILURES`（默认 3）次后熔断 `SEARCH_BREAKER_COOLDOWN_SECONDS`（默认 60 秒），期间直接走 Bing；`0` 可关闭熔断，`SEARCH_FALLBACK=false` 可只保留 DuckDuckGo。
+- 可达来源返回零结果时响应 `200 []`，不缓存；只有实际尝试的所有来源都失败才返回 502 `upstream_error`。这修复了旧逻辑中「DuckDuckGo 失败 + Bing 成功但零结果」被误报为 502 的问题。
 - 服务端规范化 URL、移除跟踪参数、去重，按查询关键词与标题/域名/摘要的相关性排序，再优先保证域名多样性；标题截断 280 字符，摘要 640 字符。相关性只是词面匹配，不等于事实核实。
-- 非空结果缓存在进程内 5 分钟，空结果不缓存；并发 4，单来源超时 `SEARCH_TIMEOUT_SECONDS`（默认 15 秒），响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。
+- 非空结果缓存在进程内 5 分钟；并发 4，Bing RSS 响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。
 - 相同查询使用 single-flight 合并并发请求；每个账号最多 4 个在途搜索，超出立即返回 429。
-- `WEBTOOL_PROXY_URL` 同时用于搜索和网页读取的上游连接；留空时直连。
+- `WEBTOOL_PROXY_URL` 同时用于搜索和网页读取的上游连接；配置后始终走代理，没有直连兜底。生产值只来自 `.env.local` 的 `WEBTOOL_PROXY_URL_PRODUCTION`，开发机的 `WEBTOOL_PROXY_URL` 不会同步到服务器。
 
 ### 网页读取
 
@@ -233,8 +235,10 @@ POST /api/tools/fetch { url, mode? (fast|full) }
 
 - 先做 SSRF 校验：仅 http/https、禁止 URL 凭据、禁止 localhost/私网/链路本地/ULA/组播，DNS 解析后要求所有地址 `is_global`。
 - 手动跟随最多 5 次重定向，每一跳都用 `urljoin` 后重新校验，防止重定向到内网；非文本类型返回 422。
-- 整次 45 秒截止时间覆盖排队、跳转、响应体下载和提取；流式读取按 `FETCH_MAX_BYTES`（默认 5 MiB）截断。优先接受 Markdown/纯文本，非 HTML 的 JSON/XML/代码等原样保留结构。HTML 由 `trafilatura` 转为带链接与表格的 Markdown（`fast` 偏 precision，`full` 偏 recall），失败时使用 `html_markdown.py` 结构化回退。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`；text 字段可包含 Markdown。缓存版本随提取格式更新，避免复用旧版扁平正文。
-- 404/410 返回 422 `fetch_not_found`；401/403 和验证页返回 422 `fetch_blocked`；纯 JavaScript 空壳返回 422 `fetch_requires_browser`。上游 429 返回 503 `fetch_rate_limited` 并传递 Retry-After，下载超时为 504 `fetch_timeout`，网络失败为 502 `fetch_network_error`。无浏览器渲染、登录或验证码处理能力；这些页面不会冒充成功读取。
+- 整次 `FETCH_TIMEOUT_SECONDS`（默认 45 秒）截止时间覆盖排队、跳转、响应体下载和提取；流式读取按 `FETCH_MAX_BYTES`（默认 5 MiB）截断。下载失败只在超时、传输错误、5xx 或 `Retry-After <= 5` 秒的 429 时重试，最多 `FETCH_MAX_ATTEMPTS`（默认 2）次，剩余时间不足 5 秒不再重试。
+- content-type 明确为文本时直接接受；明确为图片、音视频、字体、PDF、压缩包或 Office 文档时直接拒绝。缺失、`application/octet-stream` 或未知类型时读取前 4 KiB 嗅探：NUL、二进制魔数或大量不可打印字符拒绝；HTML / JSON / 纯文本按实际内容处理。非 HTML 的 JSON、XML、代码、纯文本和 Markdown 原样保留结构。
+- HTML 的提取链是 `trafilatura`（`fast` 先 precision、`full` 先 recall，结果为空时换另一种偏向重试）→ `html_markdown.py` → lxml 纯文本。提取前清理 NUL 和 C0 控制字符；`html_markdown` 返回空字符串时继续降级到 lxml。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`；text 字段可包含 Markdown。缓存版本随提取格式更新，避免复用旧版扁平正文。
+- 404/410 返回 422 `fetch_not_found`；401/403 和验证页返回 422 `fetch_blocked`；纯 JavaScript 空壳返回 422 `fetch_requires_browser`。上游 429 返回 503 `fetch_rate_limited` 并传递 Retry-After，下载超时为 504 `fetch_timeout`，代理失败为 502 `fetch_proxy_error`，网络失败为 502 `fetch_network_error`。无浏览器渲染、登录或验证码处理能力；这些页面不会冒充成功读取。
 - 相同 URL + 模式使用 single-flight 合并并发请求，结果缓存 10 分钟（`FETCH_CACHE_TTL_SECONDS`）；全局抓取并发 4，每个账号最多 4 个在途读取。
 - `WEBTOOL_PROXY_URL` 同样作用于抓取请求；URL 与每一跳重定向仍在本地校验，代理不会跳过 SSRF 检查。
 - 生产环境仍建议在主机或云防火墙限制 API 容器的出站网段，缩小 SSRF 与 DNS 重绑定的残余风险。
@@ -248,7 +252,7 @@ POST /api/admin/tools/test
 ```
 
 - 仅接受 admin scope 会话，与聊天流量分开限流（每账号 20 次/分钟），并复用真实搜索、抓取、缓存与代理路径。
-- 返回结果包含 `tookMs` 与 `proxy`（是否配置了 `WEBTOOL_PROXY_URL`）；搜索返回规范化结果，读取返回 title/url/text/truncated/chars。失败沿用统一 `{"error":{"code","message"}}` 响应。
+- 返回结果包含 `tookMs`、`proxy`（是否配置了 `WEBTOOL_PROXY_URL`）和 `diagnostics`。搜索诊断包含 provider / status / attempts / elapsedMs / fallback / fallbackStatus 等；读取诊断包含 extractor / attempts / contentType / finalUrl / truncated。失败沿用统一 `{"error":{"code","message"}}` 响应。
 
 ### 文件读取
 
