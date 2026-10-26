@@ -60,7 +60,7 @@
     "export:web": "expo export --platform web",
     "serve": "node scripts/server.mjs",
     "lint": "expo lint",
-    "test:rendering": "node --import ./tests/register.mjs --test --test-isolation=none tests/message-content.test.mjs tests/markdown-robustness.test.mjs tests/formula-layout.test.mjs tests/chat-scroll.test.mjs",
+    "test:rendering": "node --import ./tests/register.mjs --test --test-isolation=none tests/message-content.test.mjs tests/markdown-robustness.test.mjs tests/formula-layout.test.mjs tests/chat-scroll.test.mjs tests/dialog.test.mjs tests/hmr-watchdog.test.mjs",
     "assets:katex": "node scripts/sync-katex.mjs",
     "postinstall": "node scripts/sync-katex.mjs",
     "test:models": "node --import ./tests/register.mjs --test --test-isolation=none tests/model-runtime.test.mjs tests/model-storage.test.mjs"

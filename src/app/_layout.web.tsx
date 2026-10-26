@@ -7,8 +7,13 @@ import { Workspace } from '@/components/web/workspace';
 import { LocalWorkspace } from '@/components/web/local-workspace';
 import { BackgroundNotifications } from '@/features/chat/components/background-notifications.web';
 import { AuthProvider } from '@/features/auth/auth-state.web';
+import { startDevelopmentHmrRecovery } from '@/core/platform/hmr-watchdog.web';
 import '@/global.css';
 import { version as katexVersion } from 'katex';
+
+// Metro never reconnects its HMR socket, so a restarted dev server leaves the
+// open tab stale until it is refreshed by hand.
+if (__DEV__) startDevelopmentHmrRecovery();
 
 export default function WebLayout() {
   const pathname = usePathname().replace(/\/$/, '');

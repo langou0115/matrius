@@ -6,6 +6,7 @@ type Props = PropsWithChildren<{ title: string; onClose: () => void; className?:
 
 export function Dialog({ title, onClose, className = '', children }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
+  const backdropPress = useRef(false);
   const titleId = useId();
   useEffect(() => {
     const previousFocus = document.activeElement;
@@ -24,7 +25,16 @@ export function Dialog({ title, onClose, className = '', children }: Props) {
       className={`dialog ${className}`}
       aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); onClose(); }}
-      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      // Close only when the press both starts and ends on the backdrop. A click event
+      // fires on the common ancestor of pointer-down and pointer-up, so selecting text
+      // in a field and releasing outside would otherwise close the dialog mid-selection.
+      onPointerDown={(event) => { backdropPress.current = event.target === event.currentTarget; }}
+      onPointerUp={(event) => {
+        const closes = backdropPress.current && event.target === event.currentTarget;
+        backdropPress.current = false;
+        if (closes) onClose();
+      }}
+      onPointerCancel={() => { backdropPress.current = false; }}>
       <div className="dialog-panel">
         <header className="dialog-header">
           <h2 id={titleId}>{title}</h2>

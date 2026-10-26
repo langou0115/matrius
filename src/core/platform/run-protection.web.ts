@@ -1,5 +1,12 @@
 type RefreshClient = { disable(): void; enable(): void };
 
+let activeRuns = 0;
+
+/** Whether a live generation still needs this page to stay mounted. */
+export function hasActiveBrowserRun() {
+  return activeRuns > 0;
+}
+
 /** Keep code edits and accidental navigation from silently destroying a live request. */
 export function createRunProtection({ target, refresh, resumeDelayMs = 1500 }: {
   target?: Pick<Window, 'addEventListener' | 'removeEventListener'>;
@@ -31,6 +38,7 @@ export function createRunProtection({ target, refresh, resumeDelayMs = 1500 }: {
     setActive(value: boolean) {
       if (value === active) return;
       active = value;
+      activeRuns += value ? 1 : -1;
       clearTimeout(resumeTimer);
       if (active && refresh && !paused) {
         try { refresh.disable(); paused = true; }
@@ -38,6 +46,7 @@ export function createRunProtection({ target, refresh, resumeDelayMs = 1500 }: {
       } else if (!active) resumeLater();
     },
     dispose() {
+      if (active) activeRuns = Math.max(0, activeRuns - 1);
       active = false;
       target?.removeEventListener('beforeunload', beforeUnload);
       clearTimeout(resumeTimer);

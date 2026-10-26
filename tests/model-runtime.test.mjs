@@ -16,7 +16,7 @@ import { defaultPersonalization, readPersonalization } from '../src/features/set
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
 import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
 import { createWebTools, getWebActivityEnd } from '../src/core/agent/web-tools.ts';
-import { createRunProtection } from '../src/core/platform/run-protection.web.ts';
+import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.web.ts';
 import { ApiError } from '../src/core/api/auth-session.ts';
 import { syncAccount } from '../src/features/auth/account-sync.web.ts';
 
@@ -105,7 +105,9 @@ test('live replies pause development updates and protect navigation until every 
   listeners.get('beforeunload')(event);
   assert.equal(prevented, true);
   assert.equal(pauses, 1);
+  assert.equal(hasActiveBrowserRun(), true);
   protection.setActive(false);
+  assert.equal(hasActiveBrowserRun(), false);
   protection.setActive(true);
   await new Promise((accept) => setTimeout(accept, 30));
   assert.equal(resumes, 0, 'a new run cancels the pending update release');
