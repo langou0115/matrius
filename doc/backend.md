@@ -23,7 +23,7 @@
 - API 必须以**单个 uvicorn worker** 运行：缓存和限流是进程内状态，多 worker 会各自计数。单进程不妨碍并发，模型代理、搜索与抓取都是 async I/O。
 - 服务端保存账号数据，供登录后的后台双向同步；客户端 IndexedDB 仍是实时数据源，断网时可继续使用。
 - 云端模式（服务端唯一事实源、客户端不再写本地）尚未实现。
-- 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；原生端使用 Bearer token。
+- 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；Web 使用 HttpOnly Cookie，原生端使用 Bearer token。
 
 ## 目录职责
 
@@ -33,7 +33,7 @@ app/config.py           pydantic-settings
 app/db.py               async engine / get_db / SQLite PRAGMA
 app/cache.py            进程内缓存、滑动窗口限流、登录锁定
 app/storage.py          本地文件存储（DATA_DIR/files）
-app/auth/               密码哈希、Bearer 会话、鉴权依赖、普通登录
+app/auth/               密码哈希、Cookie/Bearer 会话、鉴权依赖、普通登录
 app/admin/              管理员登录与用户管理
 app/conversations/      会话、消息、已读状态、keyset 分页
 app/account/            偏好、画像、画像字段、记忆、账号导入与合并
@@ -56,8 +56,9 @@ POST /api/auth/login  { username, password }
 ```
 
 - token 为 `secrets.token_urlsafe(32)`，数据库只保存 SHA-256。
-- 请求使用 `Authorization: Bearer <token>`。
-- `auth_sessions` 保存 `scope`（`user` / `admin`）、过期时间、最后访问时间、撤销时间。
+- 浏览器同时收到 HttpOnly、SameSite=Lax 的持久 Cookie（`matrius_session` / `matrius_admin_session`，Max-Age 400 天，HTTPS 下加 Secure，`/me` 校验时滑动续期），Web 端不保存 token。
+- 原生端使用 `Authorization: Bearer <token>`；Cookie 与 Bearer 同时存在时 Bearer 优先。
+- `auth_sessions` 保存 `scope`（`user` / `admin`）、最后访问时间、撤销时间；新会话不设自动过期时间，退出或撤销后立即失效。
 - 管理员使用独立入口 `POST /api/admin/auth/login`，只能签发 admin scope；普通接口同时接受 user 与 admin token，管理员接口要求 admin scope。
 - `must_change_password=true` 时只有 `me`、改密和登出可用，其余接口返回 403。
 - 密码使用 Argon2id，允许 1–256 个字符；新密码不能与当前密码相同。
@@ -141,7 +142,8 @@ PATCH  /api/messages/{id}
 DELETE /api/messages/{id}?baseRevision=
 ```
 
-- 字段：`role`（`user|assistant`）、`content`、`quote`、`reasoning`、`thinkingMs`、`status`（`complete|stopped|error`）、`error`、`feedback`（`good|bad`）、`fileIds`、服务端 `position`。
+- 字段：`role`（`user|assistant`）、`content`、`steering`（用户补充消息）、`quote`、`reasoning`、`thinkingMs`、`status`（`complete|stopped|error`）、`error`、`feedback`（`good|bad`）、`fileIds`、服务端 `position`。
+- `steering=true` 只用于真正注入当前 run 的用户补充/纠正；服务端只接受用户消息上的该标记。`position` 仍按追加顺序分配，客户端加载时依据该标记把消息显示在被插话的助手回复之前。回复正文已开始后发送的消息作为下一轮普通用户消息保存，不带该标记，位置就在已完成的回复之后。
 - `status=streaming` 返回 422；用户消息固定 `complete`。
 - `position` 在锁定会话行后取 `max(position)+1`，多设备并发追加不会重号。
 - 工作流：先 POST 用户消息，回复结束后再 POST 助手消息；流式文本只存在客户端内存。页面中途关闭只会留下用户消息。

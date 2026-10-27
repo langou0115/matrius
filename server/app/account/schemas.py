@@ -56,6 +56,7 @@ class ImportMessage(BaseModel):
     id: str | None = Field(default=None, max_length=128)
     role: Literal["user", "assistant"]
     content: str = Field(default="", max_length=1_000_000)
+    steering: bool = False
     quote: str | None = Field(default=None, max_length=1_000_000)
     feedback: Literal["good", "bad"] | None = None
     reasoning: str | None = Field(default=None, max_length=1_000_000)

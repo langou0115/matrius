@@ -13,6 +13,7 @@ import {
   assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devBackendEnv, devDataDir, devEnvironment, devPorts,
   resetDatabase, resetTargets, sqliteUrl, supervise,
 } from '../scripts/dev.mjs';
+import { migrationEnvironment } from '../scripts/db-migrate.mjs';
 const { handleDevApi } = createRequire(import.meta.url)('../scripts/dev-api-proxy.cjs');
 
 test('development ports validate overrides', () => {
@@ -69,6 +70,19 @@ test('development backend reads runtime settings from the env file instead of fr
   // Runtime keys stay in .env.local; copying them here would override every later edit.
   assert.equal(env.WEBTOOL_PROXY_URL, undefined);
   assert.equal(env.LOG_LEVEL, undefined);
+});
+
+test('db:migrate targets the development database even when production paths are set', () => {
+  const { dataDir, environment } = migrationEnvironment({
+    directory: '/repo',
+    env: { DATABASE_URL: 'postgresql+asyncpg://prod', DATA_DIR: '/data' },
+    local: { DEV_WEB_PORT: '8082' },
+  });
+  assert.equal(dataDir, join('/repo', 'server', '.data'));
+  assert.equal(environment.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/dev.db');
+  assert.equal(environment.DATA_DIR, dataDir);
+  assert.equal(environment.APP_URL, 'http://localhost:8082');
+  assert.equal(environment.MATRIUS_DEV_ENV_FILE, '/repo/.env.local');
 });
 
 test('development API watches application code and isolates Windows console signals', () => {

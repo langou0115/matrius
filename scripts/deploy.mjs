@@ -77,7 +77,7 @@ export async function createArchive(directory, files, current, destination) {
 // Application settings that are shared by local development and production.
 // When present in .env.local, deploy writes them into the server's production.env.
 export const APP_ENV_KEYS = [
-  'AUTH_SESSION_TTL_SECONDS', 'MAX_UPLOAD_BYTES', 'STORAGE_QUOTA_BYTES',
+  'AUTH_COOKIE_SECONDS', 'MAX_UPLOAD_BYTES', 'STORAGE_QUOTA_BYTES',
   'FETCH_MAX_CHARS', 'SQLITE_BUSY_TIMEOUT_MS', 'CACHE_MAX_ENTRIES', 'CACHE_MAX_BYTES',
   'SEARCH_TIMEOUT_SECONDS', 'SEARCH_DDGS_TIMEOUT_SECONDS', 'SEARCH_MAX_ATTEMPTS',
   'SEARCH_FALLBACK', 'SEARCH_BREAKER_FAILURES', 'SEARCH_BREAKER_COOLDOWN_SECONDS',

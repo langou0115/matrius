@@ -1,6 +1,7 @@
 import { readWorkspace } from '@/core/database/browser-store.web';
 import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
+import { orderSteeringMessages } from '@/features/chat/message-order';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
 import { readPersonalization, type PersonalizationPreferences } from '@/features/settings/personalization';
@@ -89,6 +90,7 @@ function readMessage(value: unknown): Message {
   const activities = value.role === 'assistant' ? readActivities(value.activities) : undefined;
   const process = value.role === 'assistant' ? readProcess(value.process) : undefined;
   return { id: value.id, role: value.role, content: value.content,
+    ...(value.role === 'user' && value.steering === true ? { steering: true as const } : {}),
     ...(typeof value.quote === 'string' ? { quote: value.quote } : {}),
     ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
@@ -108,7 +110,7 @@ function readConversation(value: unknown): Conversation {
   return { id: value.id, title: value.title, pinned: value.pinned, updatedAt: value.updatedAt,
     ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
     ...(titleSource ? { titleSource } : {}),
-    messages: value.messages.map(readMessage),
+    messages: orderSteeringMessages(value.messages.map(readMessage)),
     ...(value.errorReadAt !== undefined ? { errorReadAt: value.errorReadAt as number | null } : {}),
     ...(value.completedReadAt !== undefined ? { completedReadAt: value.completedReadAt as number | null } : {}) };
 }

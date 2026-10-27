@@ -87,6 +87,7 @@ def _message_client_id(raw: str | None) -> str | None:
 def _message_values(message: ImportMessage) -> dict[str, Any]:
     return {
         "content": message.content,
+        "steering": message.steering and message.role == "user",
         "quote": message.quote,
         "feedback": message.feedback,
         "reasoning": message.reasoning,
@@ -207,6 +208,7 @@ async def _create_conversation(
                 position=index,
                 role=message.role,
                 content=message.content,
+                steering=message.steering and message.role == "user",
                 quote=message.quote,
                 feedback=message.feedback,
                 reasoning=message.reasoning,
@@ -253,6 +255,7 @@ async def _merge_conversation(
                 position=next_position,
                 role=message.role,
                 content=message.content,
+                steering=message.steering and message.role == "user",
                 quote=message.quote,
                 feedback=message.feedback,
                 reasoning=message.reasoning,

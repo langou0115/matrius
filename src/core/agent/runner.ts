@@ -4,9 +4,9 @@ import type { AssistantMessage } from '@mariozechner/pi-ai';
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, ProcessActivity, ReplyUpdate, ReplyResult, WebActivity } from './types';
+import type { Message, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, WebActivity } from './types';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
-import { buildContext } from './context';
+import { buildContext, buildSteeringMessage } from './context';
 import { getWebActivityEnd, getWebActivityStart } from './web-tools';
 
 function getErrorSignal(value: unknown, seen = new Set<object>(), depth = 0): string {
@@ -94,6 +94,10 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   let finalMessage: AssistantMessage | undefined;
   let unsupportedTool = false;
   let reasoningActive = false;
+  // Run-wide latch: once the visible answer starts, later supplements wait for the next turn.
+  // A new assistant message does not reopen steering; only a tool call clears it, because text
+  // before a tool is usually a transition rather than the answer.
+  let answerStarted = false;
   // A tool-using run produces several assistant messages. Keep the visible answer cumulative
   // instead of letting each new message erase the text that introduced its tool call.
   const contentTurns: string[] = [];
@@ -169,7 +173,15 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         const type = event.assistantMessageEvent.type;
         if (type === 'thinking_start' || type === 'thinking_delta') reasoningActive = true;
         else if (type === 'thinking_end' || type === 'text_start' || type === 'text_delta') reasoningActive = false;
-      } else if (event.type === 'message_end') reasoningActive = false;
+        if (type === 'text_start' || type === 'text_delta') answerStarted = true;
+        else if (type === 'toolcall_start') answerStarted = false;
+      } else if (event.type === 'message_end') {
+        reasoningActive = false;
+        // Text that introduced a tool call is not the final answer, so steering stays open
+        // while the tool runs. A text-only turn is the answer.
+        if (message.content.some((block) => block.type === 'toolCall')) answerStarted = false;
+        else if (message.content.some((block) => block.type === 'text' && block.text.trim())) answerStarted = true;
+      }
       message.content.forEach((block, index) => {
         if (block.type !== 'thinking') return;
         const id = `thinking:${assistantIndex}:${index}`;
@@ -196,12 +208,29 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   });
   return {
     abort() { stopped = true; agent.abort(); },
+    /** Queue a supplement for the current run. pi-agent injects it after the active turn. */
+    steer(message: Message): SteerOutcome {
+      if (message.role !== 'user' || stopped) return false;
+      if (!message.content.trim() && !message.quote?.trim() && !message.images?.length) return false;
+      // Defer instead of merging into a reply whose visible text has already begun.
+      if (answerStarted) return 'deferred';
+      agent.steer(buildSteeringMessage(message));
+      resetIdleTimer();
+      return 'steered';
+    },
     async start(): Promise<ReplyResult> {
       if (stopped) { unsubscribe(); return { status: 'stopped' }; }
       resetIdleTimer();
       const deadline = setTimeout(() => { timedOut = true; durationExceeded = true; agent.abort(); }, maxDurationMs);
       try {
         await agent.continue();
+        // A steer can land while the loop is deciding to stop. Continue from the queued
+        // message instead of dropping it or making the caller start a second run.
+        while (!stopped && !timedOut && !unsupportedTool
+          && finalMessage?.stopReason !== 'error' && finalMessage?.stopReason !== 'aborted'
+          && agent.hasQueuedMessages()) {
+          await agent.continue();
+        }
         if (timedOut) return { status: 'error', error: timeoutError() };
         if (unsupportedTool) return { status: 'error', error: '当前本地模式仅支持文本对话，模型请求了不可用的工具。' };
         if (stopped || finalMessage?.stopReason === 'aborted') return { status: 'stopped' };

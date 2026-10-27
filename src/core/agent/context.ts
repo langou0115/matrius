@@ -15,6 +15,26 @@ function toImageBlock(image: MessageImage) {
   return { type: 'image' as const, data: image.dataUrl.slice(image.dataUrl.indexOf(',') + 1), mimeType: image.mimeType };
 }
 
+const STEERING_MESSAGE_PREFIX = [
+  '<user_steering_message>',
+  'This message was sent while you were generating the previous answer. It is a supplement or correction to the current turn, not a new independent request.',
+  'Incorporate it into the current task, correct your direction when needed, and do not mention this wrapper.',
+  '用户在上一条回复生成过程中发送了补充或纠正。它属于当前任务，不是新的独立问题。请吸收并据此调整后续回复，不要提及此标记。',
+].join('\n');
+const STEERING_MESSAGE_SUFFIX = '</user_steering_message>';
+
+/** Keep persisted text clean; the wrapper only exists when the message enters model context. */
+function markSteeringText(text: string): string {
+  return `${STEERING_MESSAGE_PREFIX}\n${text}\n${STEERING_MESSAGE_SUFFIX}`;
+}
+
+/** Build the live injection message for `agent.steer()` from the stored user message. */
+export function buildSteeringMessage(message: Message): AgentMessage {
+  const text = markSteeringText(getRequestText(message));
+  const images = (message.images ?? []).map(toImageBlock);
+  return { role: 'user', content: images.length ? [...images, { type: 'text' as const, text }] : text, timestamp: Date.now() };
+}
+
 function getFeedbackText(message: Message): string {
   if (message.role !== 'assistant' || !message.feedback) return '';
   return message.feedback === 'good'
@@ -46,7 +66,8 @@ export function buildContext(messages: Message[], config: ModelConfig): AgentMes
       continue;
     }
     const images = (message.images ?? []).map(toImageBlock);
-    const text = getRequestText(message);
+    const requestText = getRequestText(message);
+    const text = message.steering ? markSteeringText(requestText) : requestText;
     context.push({ role: 'user', content: images.length ? [...images, ...(text.trim() ? [{ type: 'text' as const, text }] : [])] : text, timestamp: Date.now() });
   }
   return context;

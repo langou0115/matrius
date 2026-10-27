@@ -320,6 +320,7 @@ async def create_message(
         position=next_position,
         role=payload.role,
         content=payload.content,
+        steering=payload.steering and payload.role == "user",
         quote=payload.quote,
         feedback=payload.feedback,
         reasoning=payload.reasoning,

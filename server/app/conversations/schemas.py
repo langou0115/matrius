@@ -38,6 +38,7 @@ class MessageCreate(BaseModel):
     clientId: str | None = None
     role: Literal["user", "assistant"]
     content: str = Field(default="", max_length=1_000_000)
+    steering: bool = False
     quote: str | None = Field(default=None, max_length=1_000_000)
     reasoning: str | None = Field(default=None, max_length=1_000_000)
     thinkingMs: int | None = Field(default=None, ge=0)

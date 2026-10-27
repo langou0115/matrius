@@ -37,6 +37,7 @@ def message_out(message: Message) -> dict[str, Any]:
         "position": message.position,
         "role": message.role,
         "content": message.content,
+        "steering": message.steering,
         "quote": message.quote,
         "feedback": message.feedback,
         "reasoning": message.reasoning,

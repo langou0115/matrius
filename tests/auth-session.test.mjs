@@ -116,22 +116,51 @@ test('the account category belongs to its own group', () => {
   assert(!visibleSettings([], true, true).some((item) => item.id === 'account'));
 });
 
-test('admin sessions use admin-scoped endpoints and never touch the user session', async () => {
+test('admin sessions use admin-scoped cookie endpoints and never touch the user session', async () => {
   const store = storage();
   const calls = [];
   const auth = createAdminSession(store, async (url, init) => {
     calls.push(url);
+    assert.equal(init.credentials, 'include');
+    assert.equal(init.headers.get('Authorization'), null);
     if (url === '/api/admin/auth/login') {
       return response({ token: 'admin-token', user: { ...account('admin'), isAdmin: true } });
     }
-    assert.equal(init.headers.get('Authorization'), 'Bearer admin-token');
     return response({ password: 'bob@123' }, 201);
   });
   await auth.login('admin', 'password');
-  assert.equal(store.read(), 'admin-token');
+  assert.equal(store.read(), null, 'the HttpOnly token must not be readable from JS');
   const created = await auth.request('/api/admin/users', { method: 'POST', body: '{"username":"bob"}' });
   assert.deepEqual(created, { password: 'bob@123' });
   assert.deepEqual(calls, ['/api/admin/auth/login', '/api/admin/users']);
+});
+
+test('cookie sessions restore through /me, log out through the server and treat a missing cookie as anonymous', async () => {
+  const calls = [];
+  let authenticated = false;
+  const auth = createAuthSession(storage(), async (url, init) => {
+    calls.push(url);
+    assert.equal(init.credentials, 'include');
+    assert.equal(init.headers.get('Authorization'), null);
+    if (url === '/api/auth/logout') return response({ ok: true });
+    return authenticated ? response(account('alice')) : response(
+      { error: { code: 'unauthorized', message: '请重新登录。' } }, 401,
+    );
+  }, { cookieAuth: true });
+
+  assert.equal(auth.getSnapshot().status, 'checking');
+  await auth.refresh();
+  assert.equal(auth.getSnapshot().status, 'anonymous');
+  assert.equal(auth.getSnapshot().error, null, 'a first visit is not an error');
+
+  authenticated = true;
+  await auth.refresh();
+  assert.equal(auth.getSnapshot().status, 'authenticated');
+  assert.equal(auth.getSnapshot().user.id, 'alice');
+
+  await auth.logout();
+  assert.deepEqual(calls, ['/api/auth/me', '/api/auth/me', '/api/auth/logout']);
+  assert.equal(auth.getSnapshot().status, 'anonymous');
 });
 
 test('changing the initial password refreshes capabilities without storing credentials', async () => {

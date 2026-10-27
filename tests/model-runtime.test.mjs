@@ -19,6 +19,7 @@ import { createWebTools, getWebActivityEnd } from '../src/core/agent/web-tools.t
 import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.web.ts';
 import { ApiError } from '../src/core/api/auth-session.ts';
 import { syncAccount } from '../src/features/auth/account-sync.web.ts';
+import { parseWorkspace } from '../src/features/workspace/workspace-repository.web.ts';
 
 test('account sync sends persistent deletions before uploads and excludes remote tombstones across pages', async () => {
   const calls = [];
@@ -217,6 +218,48 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+// Minimal pi-ai stream: content blocks are only in the final result. The callbacks run after
+// the loop consumed the preceding event, so they observe the same timing as a live stream.
+function assistantStream({ thinking = '', text = '', toolStart = false, afterThinking, afterText, afterToolStart }) {
+  const content = [
+    ...(thinking ? [{ type: 'thinking', thinking }] : []),
+    ...(text ? [{ type: 'text', text }] : []),
+  ];
+  const final = {
+    role: 'assistant', content, api: 'completion', provider: 'test', model: 'test-model',
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: 'stop', timestamp: Date.now(),
+  };
+  const partial = { ...final, content: [] };
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: 'start', partial };
+      let index = 0;
+      if (thinking) {
+        yield { type: 'thinking_start', contentIndex: index, partial };
+        afterThinking?.();
+        yield { type: 'thinking_delta', contentIndex: index, delta: thinking, partial };
+        yield { type: 'thinking_end', contentIndex: index, content: thinking, partial };
+        index++;
+      }
+      if (text) {
+        yield { type: 'text_start', contentIndex: index, partial };
+        afterText?.();
+        yield { type: 'text_delta', contentIndex: index, delta: text, partial };
+        yield { type: 'text_end', contentIndex: index, content: text, partial };
+        index++;
+      }
+      if (toolStart) {
+        yield { type: 'toolcall_start', contentIndex: index, partial };
+        afterToolStart?.();
+        yield { type: 'toolcall_delta', contentIndex: index, delta: '{}', partial };
+      }
+      yield { type: 'done', reason: 'stop', message: final };
+    },
+    async result() { return final; },
+  };
+}
+
 test('shared runtime works without a UI, freezes request inputs and preserves partial replies on cancellation', async () => {
   const completion = deferred();
   const loaded = deferred();
@@ -332,6 +375,189 @@ test('shared runtime runs different conversations concurrently and stops them by
   runtime.dispose();
 });
 
+test('steering text is wrapped in context and injected between turns of the same run', async () => {
+  const context = buildContext([
+    { id: 'u1', role: 'user', content: '原始问题' },
+    { id: 's1', role: 'user', content: '请改成英文', steering: true },
+    { id: 'a1', role: 'assistant', content: '回答' },
+  ], config);
+  assert.match(context[1].content, /<user_steering_message>/);
+  assert.match(context[1].content, /请改成英文/);
+  assert.ok(!JSON.stringify(context[0]).includes('<user_steering_message>'), 'normal user messages are untouched');
+
+  const calls = [];
+  const updates = [];
+  const outcomes = [];
+  let run;
+  run = createReplyRun({
+    config, apiKey: 'test-key',
+    messages: [{ id: 'u1', role: 'user', content: '原始问题' }],
+    onUpdate: (value) => updates.push(value),
+    streamFn: (_model, requestContext) => {
+      const call = calls.length;
+      calls.push(requestContext);
+      return assistantStream({
+        thinking: call === 0 ? '先想一想' : '',
+        text: call === 0 ? '先回答第一段' : '再补充第二段',
+        afterThinking: call === 0
+          ? () => outcomes.push(run.steer({ id: 's1', role: 'user', content: '请改成英文', steering: true }))
+          : undefined,
+      });
+    },
+  });
+  const result = await run.start();
+  assert.equal(result.status, 'complete');
+  assert.deepEqual(outcomes, ['steered'], 'thinking still accepts a supplement');
+  assert.equal(calls.length, 2, 'the queued steering message starts another assistant turn');
+  const second = JSON.stringify(calls[1].messages);
+  assert.match(second, /<user_steering_message>/);
+  assert.match(second, /请改成英文/);
+  assert.equal(updates.at(-1).content, '先回答第一段\n\n再补充第二段', 'both turns stay in one visible reply');
+});
+
+test('a supplement is deferred once the answer text starts streaming', async () => {
+  const calls = [];
+  const updates = [];
+  const outcomes = [];
+  let run;
+  run = createReplyRun({
+    config, apiKey: 'test-key',
+    messages: [{ id: 'u1', role: 'user', content: '原始问题' }],
+    onUpdate: (value) => updates.push(value),
+    streamFn: (_model, requestContext) => {
+      calls.push(requestContext);
+      return assistantStream({
+        text: '最终回答',
+        afterText: () => outcomes.push(run.steer({ id: 's1', role: 'user', content: '换个说法' })),
+      });
+    },
+  });
+  const result = await run.start();
+  assert.equal(result.status, 'complete');
+  assert.deepEqual(outcomes, ['deferred'], 'visible text closes the current run to steering');
+  assert.equal(calls.length, 1, 'the deferred message does not start another turn in this run');
+  assert.equal(updates.at(-1).content, '最终回答');
+});
+
+test('text that only introduces a tool call lets steering resume during the tool phase', async () => {
+  const calls = [];
+  const outcomes = [];
+  let run;
+  run = createReplyRun({
+    config, apiKey: 'test-key',
+    messages: [{ id: 'u1', role: 'user', content: '原始问题' }],
+    onUpdate() {},
+    streamFn: (_model, requestContext) => {
+      const call = calls.length;
+      calls.push(requestContext);
+      return assistantStream({
+        text: call === 0 ? '我先查一下' : '查到了',
+        toolStart: call === 0,
+        afterToolStart: call === 0 ? () => outcomes.push(run.steer({ id: 's1', role: 'user', content: '顺带查另一个' })) : undefined,
+      });
+    },
+  });
+  const result = await run.start();
+  assert.equal(result.status, 'complete');
+  assert.deepEqual(outcomes, ['steered'], 'the tool phase reopens steering');
+  assert.equal(calls.length, 2);
+  assert.match(JSON.stringify(calls[1].messages), /<user_steering_message>/);
+});
+
+test('a second assistant turn does not reopen steering after the answer began', async () => {
+  const calls = [];
+  const outcomes = [];
+  let run;
+  run = createReplyRun({
+    config, apiKey: 'test-key',
+    messages: [{ id: 'u1', role: 'user', content: '原始问题' }],
+    onUpdate() {},
+    streamFn: (_model, requestContext) => {
+      const call = calls.length;
+      calls.push(requestContext);
+      return assistantStream({
+        thinking: call === 0 ? '第一次思考' : '第二次思考',
+        text: call === 0 ? '第一段正文' : '补充正文',
+        afterThinking: call === 0 ? () => { run.steer({ id: 's1', role: 'user', content: '第一处补充' }); }
+          : () => outcomes.push(run.steer({ id: 's2', role: 'user', content: '第二处补充' })),
+      });
+    },
+  });
+  const result = await run.start();
+  assert.equal(result.status, 'complete');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(outcomes, ['deferred'], 'message_start must not reset the run-wide answer latch');
+});
+
+test('runtime buffers steering until the lazy runner loads and rejects it after the run', async () => {
+  const loader = deferred();
+  const completion = deferred();
+  const steered = [];
+  const runtime = createAgentRuntime({
+    onReply() {},
+    loadRunner: () => loader.promise,
+  });
+  const request = { conversationId: 'chat', replyId: 'reply', config, apiKey: 'key', messages: history };
+  assert.equal(runtime.start(request), true);
+  const message = { id: 's1', role: 'user', content: '补充' };
+  assert.equal(runtime.steer('chat', message), 'steered', 'accepted while the runner is loading');
+  assert.equal(runtime.steer('missing', message), false);
+  loader.resolve({ createReplyRun() {
+    return { steer(value) { steered.push(value); return true; }, abort() {}, start: () => completion.promise };
+  } });
+  for (let i = 0; i < 50 && steered.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.deepEqual(steered, [message]);
+  completion.resolve({ status: 'complete' });
+  for (let i = 0; i < 50 && Object.keys(runtime.getSnapshot().runs).length; i++) await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.deepEqual(runtime.getSnapshot().runs, {});
+  assert.equal(runtime.steer('chat', message), false, 'a finished run falls back to a normal send');
+  runtime.dispose();
+});
+
+test('runtime forwards the runner deferred outcome unchanged', async () => {
+  const loaded = deferred();
+  const completion = deferred();
+  const runtime = createAgentRuntime({
+    onReply() {},
+    loadRunner: async () => ({ createReplyRun() {
+      loaded.resolve();
+      return { steer: () => 'deferred', abort() {}, start: () => completion.promise };
+    } }),
+  });
+  const request = { conversationId: 'chat', replyId: 'reply', config, apiKey: 'key', messages: history };
+  assert.equal(runtime.start(request), true);
+  await loaded.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(runtime.steer('chat', { id: 's1', role: 'user', content: '正文阶段' }), 'deferred');
+  completion.resolve({ status: 'complete' });
+  for (let i = 0; i < 50 && runtime.getSnapshot().runs.chat; i++) await new Promise((resolve) => setTimeout(resolve, 2));
+  runtime.dispose();
+});
+
+test('steering messages parse from storage and move back before the reply they interrupted', () => {
+  const parsed = parseWorkspace({
+    schemaVersion: 1,
+    chat: {
+      conversations: [{
+        id: 'c1', title: 'c1', pinned: false, updatedAt: 1,
+        messages: [
+          { id: 'u1', role: 'user', content: '问题' },
+          { id: 'a1', role: 'assistant', content: '回答', status: 'complete' },
+          { id: 's1', role: 'user', content: '补充', steering: true },
+          { id: 'u2', role: 'user', content: '正文开始后的下一轮' },
+        ],
+      }],
+      activeId: 'c1', sidebarOpen: true,
+    },
+    appearance: { themeId: 'twitter', mode: 'system' },
+  });
+  const messages = parsed.data.chat.conversations[0].messages;
+  assert.deepEqual(messages.map((message) => message.id), ['u1', 's1', 'a1', 'u2']);
+  assert.equal(messages[1].steering, true);
+  assert.ok(!('steering' in messages[2]), 'assistant messages never keep the flag');
+  assert.ok(!('steering' in messages[3]), 'deferred messages stay behind the reply they followed');
+});
+
 test('agent core has no UI, feature-module or browser dependencies', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
   const ts = (await import('typescript')).default;
@@ -419,6 +645,20 @@ function response(protocol, signal, hang = false) {
       for (let offset = 0; offset < bytes.length; offset += 7) controller.enqueue(bytes.slice(offset, offset + 7));
       if (hang) signal.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')), { once: true });
       else controller.close();
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } });
+}
+/** Emit the first SSE event immediately, then wait so a test can steer while text is visible. */
+function gatedResponse(protocol, gate) {
+  const source = events(protocol).map((event) => `${event.type ? `event: ${event.type}\n` : ''}data: ${JSON.stringify(event)}\n\n`).join('');
+  const head = new TextEncoder().encode(source.slice(0, source.indexOf('\n\n') + 2));
+  const tail = new TextEncoder().encode(source.slice(source.indexOf('\n\n') + 2));
+  return new Response(new ReadableStream({
+    async start(controller) {
+      controller.enqueue(head);
+      await gate.promise;
+      controller.enqueue(tail);
+      controller.close();
     },
   }), { headers: { 'content-type': 'text/event-stream' } });
 }
@@ -580,6 +820,52 @@ test('sending after a failure preserves the question and partial reply on screen
       chat.dispatch({ type: 'merge-sync', conversations: [{ ...stale, updatedAt: 0 }] });
     });
     assert.equal(chat.conversations[0].messages.at(-1).content, 'finished answer', 'a late old response cannot roll back the completed reply');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('a steering message is inserted before the streaming reply it supplements', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  let chat;
+  const initialState = {
+    conversations: [{
+      id: 'c1', title: 'c1', pinned: false, updatedAt: 0, completedReadAt: null,
+      messages: [
+        { id: 'u1', role: 'user', content: 'question' },
+        { id: 'a1', role: 'assistant', content: 'streaming answer', status: 'streaming' },
+      ],
+    }],
+    activeId: 'c1', sidebarOpen: true,
+  };
+  function Harness() { chat = useChat(); return null; }
+  try {
+    await act(async () => { root.render(createElement(ChatProvider, { initialState }, createElement(Harness))); });
+    await act(async () => {
+      chat.dispatch({ type: 'steer', conversationId: 'c1', replyId: 'a1', message: { id: 's1', role: 'user', content: '补充', steering: true } });
+    });
+    assert.deepEqual(chat.conversations[0].messages.map((message) => message.id), ['u1', 's1', 'a1']);
+    assert.equal(chat.conversations[0].messages[1].steering, true);
+    assert.equal(chat.activeId, 'c1', 'steering does not switch conversations');
+    await act(async () => {
+      chat.dispatch({ type: 'steer', conversationId: 'c1', message: { id: 's2', role: 'user', content: '稍后', steering: true } });
+    });
+    assert.deepEqual(chat.conversations[0].messages.map((message) => message.id), ['u1', 's1', 'a1', 's2'], 'without a live reply the message appends');
+    await act(async () => {
+      chat.dispatch({ type: 'append-user', conversationId: 'c1', message: { id: 'd1', role: 'user', content: '正文后的下一轮' } });
+    });
+    assert.deepEqual(chat.conversations[0].messages.map((message) => message.id), ['u1', 's1', 'a1', 's2', 'd1']);
+    assert.ok(!('steering' in chat.conversations[0].messages.at(-1)), 'deferred messages carry no steering flag');
+    assert.equal(chat.activeId, 'c1', 'appending a deferred message does not switch conversations');
+    assert.equal(chat.conversations[0].completedReadAt, null, 'appending preserves unread markers');
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
@@ -993,6 +1279,73 @@ test('background replies in separate conversations run together, stay unread and
     await until(() => runtime.notifications.length === 0);
     assert.equal(runtime.notifications.length, 0);
   } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('a supplement sent after the answer text starts becomes a separate follow-up turn', async () => {
+  const { createElement, act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { parseHTML } = await import('linkedom');
+  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const gates = [];
+  const requestBodies = [];
+  let replyCalls = 0;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) return response('completion', init.signal);
+    requestBodies.push(body);
+    replyCalls++;
+    if (replyCalls === 1) {
+      const gate = deferred();
+      gates.push(gate);
+      return gatedResponse('completion', gate);
+    }
+    return response('completion', init.signal);
+  };
+  let chat, models, runtime;
+  function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
+  async function until(predicate) {
+    for (let i = 0; i < 200 && !predicate(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+    assert.ok(predicate(), 'expected runtime transition');
+  }
+  const conversation = (id) => chat.conversations.find((item) => item.id === id);
+  try {
+    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(ChatRuntimeProvider, null, createElement(Harness)))))))); });
+    await act(async () => { await models.save(config, 'key'); });
+
+    await act(async () => { assert.equal(runtime.send('first question', null), true); });
+    const id = chat.activeId;
+    await until(() => replyCalls === 1 && conversation(id)?.messages.some((message) => message.role === 'assistant' && message.content.includes('你好')));
+
+    let outcome;
+    await act(async () => { outcome = runtime.steer('补充一下', id); });
+    assert.equal(outcome, 'deferred', 'visible answer text defers the supplement');
+    assert.equal(runtime.pendingMessages(id).length, 1, 'the supplement is shown from memory');
+    assert.ok(!conversation(id).messages.some((message) => message.content === '补充一下'), 'it is not saved before the run ends');
+    assert.equal(replyCalls, 1, 'no second request starts while the first reply is still streaming');
+
+    await act(async () => { gates[0].resolve(); });
+    await until(() => replyCalls === 2);
+    await until(() => conversation(id)?.messages.length === 4 && conversation(id).messages.at(-1).status !== 'streaming');
+    const messages = conversation(id).messages;
+    assert.deepEqual(messages.map((message) => message.role), ['user', 'assistant', 'user', 'assistant'],
+      'the supplement moves below the finished reply and gets its own answer');
+    assert.equal(messages[2].content, '补充一下');
+    assert.ok(!('steering' in messages[2]), 'deferred messages persist without the steering flag');
+    assert.equal(runtime.pendingMessages(id).length, 0, 'the queue is drained after starting the next turn');
+    const nextRequest = JSON.stringify(requestBodies[1]);
+    assert.ok(nextRequest.includes('补充一下'), 'the next request carries the supplement');
+    assert.ok(!nextRequest.includes('<user_steering_message>'), 'it is a normal user turn, not an injected steer');
+  } finally {
+    gates.forEach((gate) => gate.resolve());
     await act(async () => { root.unmount(); });
     globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
   }

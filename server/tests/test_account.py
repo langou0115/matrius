@@ -120,6 +120,37 @@ async def test_import_is_idempotent(client, create_user):
     assert profile["customInstructions"] == "Be brief"
 
 
+async def test_import_preserves_user_steering_flags(client, create_user):
+    _, headers = await create_user()
+    conversation_id = str(uuid.uuid4())
+    payload = {
+        "schemaVersion": 1,
+        "chat": {
+            "conversations": [{
+                "id": conversation_id,
+                "title": "Steering",
+                "updatedAt": 1760000000000,
+                "messages": [
+                    {"id": str(uuid.uuid4()), "role": "user", "content": "question"},
+                    {"id": str(uuid.uuid4()), "role": "user", "content": "supplement", "steering": True},
+                    {"id": str(uuid.uuid4()), "role": "assistant", "content": "answer"},
+                    {"id": str(uuid.uuid4()), "role": "assistant", "content": "not steering", "steering": True},
+                ],
+            }]
+        },
+    }
+
+    imported = await client.post("/api/account/import", headers=headers, json=payload)
+    assert imported.status_code == 200, imported.text
+
+    listing = (await client.get("/api/conversations", headers=headers)).json()["items"]
+    assert [item["clientId"] for item in listing] == [conversation_id]
+    detail = (
+        await client.get(f"/api/conversations/{listing[0]['id']}", headers=headers)
+    ).json()
+    assert [item["steering"] for item in detail["messages"]] == [False, True, False, False]
+
+
 async def test_import_merges_new_messages_and_settings(client, create_user):
     _, headers = await create_user()
     conversation_id = str(uuid.uuid4())

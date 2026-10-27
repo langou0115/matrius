@@ -19,6 +19,71 @@ async def test_logout_revokes_token(client, create_user):
     assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
 
 
+async def test_browser_login_uses_a_persistent_http_only_cookie(client, create_user):
+    await create_user()
+    client.cookies.clear()
+    login = await client.post(
+        "/api/auth/login", json={"username": "alice", "password": "password123"}
+    )
+    assert login.status_code == 200
+    cookie = login.headers.get("set-cookie", "").lower()
+    assert "matrius_session=" in cookie
+    assert "httponly" in cookie
+    assert "samesite=lax" in cookie
+    assert "max-age=" in cookie
+
+    # No Authorization header: the cookie alone restores the account.
+    me = await client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["username"] == "alice"
+    assert "matrius_session=" in me.headers.get("set-cookie", ""), "the cookie slides on each check"
+
+    logout = await client.post("/api/auth/logout")
+    assert logout.status_code == 200
+    assert "matrius_session=" in logout.headers.get("set-cookie", "")
+    assert (await client.get("/api/auth/me")).status_code == 401
+
+
+async def test_admin_login_sets_a_separate_cookie(client, create_user):
+    await create_user(username="admin", is_admin=True)
+    client.cookies.clear()
+    login = await client.post(
+        "/api/admin/auth/login", json={"username": "admin", "password": "password123"}
+    )
+    assert login.status_code == 200
+    assert "matrius_admin_session=" in login.headers.get("set-cookie", "")
+    me = await client.get("/api/admin/auth/me")
+    assert me.status_code == 200
+    assert "matrius_admin_session=" in me.headers.get("set-cookie", "")
+
+
+async def test_account_and_admin_cookies_coexist_and_logout_independently(client, create_user):
+    await create_user("alice")
+    await create_user("admin", is_admin=True)
+    # Both cookies are present; each route picks its own scope.
+    assert (await client.get("/api/admin/auth/me")).status_code == 200
+    assert (await client.get("/api/auth/me")).json()["username"] == "alice"
+
+    assert (await client.post("/api/auth/logout")).status_code == 200
+    assert (await client.get("/api/auth/me")).status_code == 401
+    assert (await client.get("/api/admin/auth/me")).status_code == 200
+
+    assert (await client.post("/api/admin/auth/logout")).status_code == 200
+    assert (await client.get("/api/admin/auth/me")).status_code == 401
+
+
+async def test_new_sessions_have_no_expiry(client, create_user, session_factory):
+    from sqlalchemy import select
+
+    from app.models import AuthSession
+
+    await create_user()
+    async with session_factory() as session:
+        rows = (await session.execute(select(AuthSession))).scalars().all()
+    assert rows
+    assert all(row.expires_at is None for row in rows)
+
+
 async def test_must_change_password_accepts_short_password_and_unblocks_data(client, create_user):
     _, headers = await create_user(must_change_password=True)
     blocked = await client.get("/api/conversations", headers=headers)

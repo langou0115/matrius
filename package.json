@@ -53,6 +53,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "dev": "node scripts/dev.mjs",
+    "db:migrate": "node scripts/db-migrate.mjs",
     "deploy": "node scripts/deploy.mjs",
     "test:deploy": "node --test --test-isolation=none tests/deploy.test.mjs tests/compose.test.mjs",
     "test:dev": "node --test --test-isolation=none tests/dev.test.mjs",

@@ -31,7 +31,10 @@ class AuthSession(Base):
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     scope: Mapped[str] = mapped_column(String(16), default="user", nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    # Null means the session does not expire on its own; logout or revocation still ends it.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -31,15 +31,25 @@ export type AuthSessionOptions = {
   /** Admin sessions log in through the admin-scoped endpoint. */
   loginPath?: string;
   mePath?: string;
+  logoutPath?: string;
+  /**
+   * The server keeps the session in an HttpOnly cookie, so the browser cannot read
+   * the token. Restore the account through /me on load instead of checking a stored token.
+   */
+  cookieAuth?: boolean;
 };
 
 /** No React, DOM or platform storage. Late requests cannot restore an older account. */
 export function createAuthSession(store: SessionStore, fetcher: typeof fetch = fetch, options: AuthSessionOptions = {}) {
   const loginPath = options.loginPath ?? '/api/auth/login';
   const mePath = options.mePath ?? '/api/auth/me';
-  let token = store.read();
+  const logoutPath = options.logoutPath ?? '/api/auth/logout';
+  const cookieAuth = options.cookieAuth === true;
+  let token = cookieAuth ? null : store.read();
   let generation = 0;
-  let state: AuthState = { status: token ? 'checking' : 'anonymous', user: null, error: null };
+  let state: AuthState = {
+    status: token || cookieAuth ? 'checking' : 'anonymous', user: null, error: null,
+  };
   const listeners = new Set<() => void>();
   const update = (next: AuthState) => { state = next; listeners.forEach((listener) => listener()); };
   const saveToken = (next: string | null) => { token = next; store.write(next); };
@@ -51,7 +61,12 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
     else headers.delete('Authorization');
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     let response: Response;
-    try { response = await fetcher(path, { ...init, headers, credentials: 'omit', cache: 'no-store', redirect: 'error' }); }
+    try {
+      response = await fetcher(path, {
+        ...init, headers, credentials: cookieAuth ? 'include' : 'omit',
+        cache: 'no-store', redirect: 'error',
+      });
+    }
     catch (error) {
       if (init.signal?.aborted) throw error;
       throw new ApiError(0, 'unavailable', '无法连接服务器，请稍后重试。');
@@ -63,7 +78,9 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
       throw new ApiError(response.status, 'invalid_response', '服务器响应无效，请稍后重试。');
     }
     if (!response.ok) {
-      if (response.status === 401 && authToken && token === authToken) {
+      if (response.status === 401 && (
+        authToken ? token === authToken : cookieAuth && state.status === 'authenticated'
+      )) {
         generation += 1;
         saveToken(null);
         update({ status: 'anonymous', user: null, error: '登录已失效，请重新登录。' });
@@ -82,13 +99,19 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
 
   async function refresh() {
     const version = ++generation;
-    if (!token) { update({ status: 'anonymous', user: null, error: null }); return; }
+    if (!token && !cookieAuth) { update({ status: 'anonymous', user: null, error: null }); return; }
     update({ status: 'checking', user: state.user, error: null });
     try {
       const user = parseAccount(await request(mePath));
       if (version === generation) update({ status: 'authenticated', user, error: null });
     } catch (error) {
       if (version !== generation) return;
+      // A missing or revoked cookie is normal for first-time visitors.
+      if (error instanceof ApiError && error.status === 401) {
+        saveToken(null);
+        update({ status: 'anonymous', user: null, error: null });
+        return;
+      }
       update({ status: 'unavailable', user: null, error: error instanceof Error ? error.message : '无法验证账号。' });
     }
   }
@@ -108,7 +131,8 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
       const user = parseAccount(result.user);
       if (typeof result.token !== 'string' || !result.token) throw new Error('登录响应无效。');
       if (version !== generation) return;
-      saveToken(result.token);
+      // The browser relies on the HttpOnly cookie set by this response.
+      if (!cookieAuth) saveToken(result.token);
       update({ status: 'authenticated', user, error: null });
       return user;
     } catch (error) {
@@ -123,7 +147,10 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
     generation += 1;
     saveToken(null);
     update({ status: 'anonymous', user: null, error: null });
-    if (previous) await request('/api/auth/logout', { method: 'POST' }, previous);
+    // The request clears the HttpOnly cookie on the server, so it must run in cookie mode too.
+    if (previous || cookieAuth) {
+      await request(logoutPath, { method: 'POST' }, previous);
+    }
   }
 
   return {
@@ -139,10 +166,12 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
   };
 }
 
-/** Admin tokens are separate from the current-tab user session and require admin scope. */
+/** Admin sessions use a separate HttpOnly cookie and require admin scope. */
 export function createAdminSession(store: SessionStore, fetcher: typeof fetch = fetch) {
   return createAuthSession(store, fetcher, {
+    cookieAuth: true,
     loginPath: '/api/admin/auth/login',
     mePath: '/api/admin/auth/me',
+    logoutPath: '/api/admin/auth/logout',
   });
 }

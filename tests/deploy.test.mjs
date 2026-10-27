@@ -37,13 +37,13 @@ test('deployment settings come from .env.production with .env.local as an overri
   assert.deepEqual(await loadDeployEnv(dir), {});
   await mkdir(join(dir, 'docker-compose'));
   await writeFile(join(dir, 'docker-compose/.env.production'),
-    'REMOTE_USER=deploy\nREMOTE_HOST=203.0.113.10\nAPP_PORT=16666\nAUTH_SESSION_TTL_SECONDS=100\n');
+    'REMOTE_USER=deploy\nREMOTE_HOST=203.0.113.10\nAPP_PORT=16666\nAUTH_COOKIE_SECONDS=100\n');
   assert.equal((await loadDeployEnv(dir)).APP_PORT, '16666');
   await writeFile(join(dir, '.env.local'), 'APP_PORT=3000\nINITIAL_ADMIN_USERNAME=admin\n');
   const merged = await loadDeployEnv(dir);
   assert.equal(merged.APP_PORT, '3000');
   assert.equal(merged.REMOTE_HOST, '203.0.113.10');
-  assert.equal(merged.AUTH_SESSION_TTL_SECONDS, '100');
+  assert.equal(merged.AUTH_COOKIE_SECONDS, '100');
   assert.equal(merged.INITIAL_ADMIN_USERNAME, 'admin');
 });
 

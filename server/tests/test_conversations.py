@@ -71,6 +71,27 @@ async def test_message_positions_and_read_state(client, create_user):
     assert stale.json()["error"]["current"]["revision"] == body["revision"]
 
 
+async def test_steering_flag_round_trips_and_is_limited_to_user_messages(client, create_user):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+
+    await _post_message(client, headers, conversation["id"], "user", "question")
+    reply = await _post_message(client, headers, conversation["id"], "assistant", "answer")
+    steering = await _post_message(
+        client, headers, conversation["id"], "user", "please adjust", steering=True
+    )
+    assistant_steering = await _post_message(
+        client, headers, conversation["id"], "assistant", "next", steering=True
+    )
+
+    assert reply.json()["steering"] is False
+    assert steering.json()["steering"] is True
+    assert assistant_steering.json()["steering"] is False
+
+    detail = (await client.get(f"/api/conversations/{conversation['id']}", headers=headers)).json()
+    assert [item["steering"] for item in detail["messages"]] == [False, False, True, False]
+
+
 async def test_list_pagination(client, create_user):
     _, headers = await create_user()
     for index in range(3):

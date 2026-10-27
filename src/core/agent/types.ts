@@ -45,6 +45,9 @@ export type Message = {
   content: string;
   quote?: string;
   feedback?: MessageFeedback;
+  /** Injected into the still-running reply. Messages queued after its answer text starts keep
+      no flag: they are sent later as an ordinary turn. */
+  steering?: true;
   images?: MessageImage[];
   reasoning?: string;
   reasoningActive?: boolean;
@@ -69,5 +72,7 @@ export type ReplyUpdate = {
 };
 export type ReplyResult = { status: 'complete' | 'stopped' | 'error'; error?: string };
 export type RuntimeRun = { conversationId: string; replyId: string; startedAt: number };
+/** `steered` joins the current run; `deferred` waits for the next turn; `false` has no run. */
+export type SteerOutcome = 'steered' | 'deferred' | false;
 /** Requests are tracked per conversation so independent chats can generate at the same time. */
 export type RuntimeSnapshot = { runs: Record<string, RuntimeRun>; error: string | null };

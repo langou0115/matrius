@@ -4,7 +4,7 @@ import type { ModelConfig } from '@/core/llm/model-config';
 import { validateAgentRequest } from './context';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, ProcessActivity, RuntimeSnapshot, WebActivity } from './types';
+import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, WebActivity } from './types';
 import type { createReplyRun } from './runner';
 
 export type AgentRequest = {
@@ -44,7 +44,8 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
   let snapshot: RuntimeSnapshot = { runs: {}, error: null };
   const listeners = new Set<() => void>();
   // Keyed by conversation: separate chats run concurrently, while a chat cannot start twice.
-  const active = new Map<string, { abort: () => void }>();
+  type ActiveRun = { abort: () => void; steer: (message: Message) => SteerOutcome };
+  const active = new Map<string, ActiveRun>();
   let disposed = false;
 
   function update(patch: Partial<RuntimeSnapshot>) {
@@ -66,6 +67,11 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       if (conversationId === undefined) { active.forEach((marker) => marker.abort()); return; }
       active.get(conversationId)?.abort();
     },
+    /** Queue a supplement into the active run. False means the caller should send normally. */
+    steer(conversationId: string, message: Message): SteerOutcome {
+      if (disposed) return false;
+      return active.get(conversationId)?.steer(message) ?? false;
+    },
     dispose() {
       disposed = true;
       active.forEach((marker) => marker.abort());
@@ -84,13 +90,22 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       let latest: Message = { id: replyId, role: 'assistant', content: '', status: 'streaming' };
       let run: ReturnType<typeof createReplyRun> | undefined;
       let cancelled = false;
+      // Steering can arrive before the lazy-loaded runner exists; queue it against the run.
+      let pendingSteers: Message[] = [];
       let timer: ReturnType<typeof setTimeout> | undefined;
       const flush = () => {
         if (timer) clearTimeout(timer);
         timer = undefined;
         if (!disposed) onReply(conversationId, { ...latest });
       };
-      const marker = { abort() { cancelled = true; run?.abort(); } };
+      const marker: ActiveRun = {
+        abort() { cancelled = true; pendingSteers = []; run?.abort(); },
+        steer(message: Message): SteerOutcome {
+          if (cancelled) return false;
+          if (!run) { pendingSteers.push(message); return 'steered'; }
+          return run.steer(message);
+        },
+      };
       active.set(conversationId, marker);
       update({ runs: { ...snapshot.runs, [conversationId]: { conversationId, replyId, startedAt } }, error: null });
 
@@ -102,6 +117,9 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
           latest = { ...latest, ...value, thinkingMs: Math.max(0, Date.now() - startedAt) };
           if (!timer) timer = setTimeout(flush, 50);
         } });
+        // Injected before `start()`, so pi-agent sees them before the first model call.
+        for (const message of pendingSteers) run.steer(message);
+        pendingSteers = [];
         return run.start();
       }).then((result) => {
         const activities = settleActivities(latest.activities, cancelled || result.status === 'stopped');

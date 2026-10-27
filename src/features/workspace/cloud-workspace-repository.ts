@@ -23,6 +23,7 @@ const messageBody = (value: Message) => ({
   role: value.role, content: value.content, quote: value.quote ?? null, reasoning: value.reasoning ?? null,
   thinkingMs: value.thinkingMs ?? null, feedback: value.feedback ?? null,
   status: value.status === 'streaming' ? 'stopped' : value.status ?? 'complete', error: value.error ?? null,
+  ...(value.role === 'user' && value.steering ? { steering: true } : {}),
 });
 
 /** An account-scoped, memory-only REST repository. It never reads or writes IndexedDB.

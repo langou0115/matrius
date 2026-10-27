@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
-import { useChat, type MessageImage } from './chat-state';
+import { useChat, type Message, type MessageImage } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
 import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom.web';
@@ -23,6 +23,19 @@ import { QuoteCard } from './components/quote-card.web';
 import { ConversationNavigator } from './components/conversation-navigator.web';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+
+function UserMessage({ message, pending = false }: { message: Message; pending?: boolean }) {
+  return <article className="user-message" data-user-message-id={pending ? undefined : message.id}
+    data-steering={message.steering ? 'true' : undefined} data-pending={pending ? 'true' : undefined}
+    aria-label={pending ? '等待发送的消息' : message.steering ? '你的补充消息' : '你的消息'}>
+    {!!message.images?.length && <MessageAttachments images={message.images} />}
+    {(message.quote || message.content.trim()) && <div className="user-message-content">
+      {message.quote && <QuoteCard content={message.quote} />}
+      {message.content.trim() ? <CollapsibleMessageContent content={message.content} /> : null}
+    </div>}
+    {pending ? null : <MessageActions message={message} />}
+  </article>;
+}
 
 export default function ChatScreen() {
   const { conversations, activeId, sidebarOpen, dispatch } = useChat();
@@ -50,6 +63,8 @@ export default function ChatScreen() {
   // Keep each disclosure independent through completion, new replies and conversation switches.
   const [reasoningOpen, setReasoningOpen] = useState<Record<string, boolean>>({});
   const messages = conversation?.messages ?? [];
+  // Messages sent after the answer text started: shown here until this run ends, then saved.
+  const pending = runtime.pendingMessages(activeId);
   const draftKey = activeId ?? 'new';
   const draft = drafts[draftKey] ?? '';
   const quote = quotes[draftKey] ?? '';
@@ -90,10 +105,14 @@ export default function ChatScreen() {
     const content = draft.trim();
     if (!content && !images.length && !quote.trim()) return false;
     const conversationId = activeId ?? createId();
-    const sent = runtime.send(content, conversationId, images, quote);
+    // Thinking/tool phases take the message as a correction; after the answer text starts it
+    // is deferred to a new turn; otherwise this starts an ordinary new run.
+    const outcome = runtime.steer(content, conversationId, images, quote);
+    const sent = outcome === false ? runtime.send(content, conversationId, images, quote) : true;
     if (sent) {
       setDraft(draftKey, '');
       setQuote(draftKey, '');
+      if (outcome === 'deferred') setNotice('回复已开始，这条消息将在本轮结束后发送。');
       // Sending is an explicit request to see the conversation continue, so bring
       // the reader back even when they had scrolled up to read older messages.
       followLatest();
@@ -121,15 +140,8 @@ export default function ChatScreen() {
             const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length || !!message.process?.length
               || reasoningOpen[message.id] === true
               || (live && message.status === 'streaming' && !message.content.trim());
-            return message.role === 'user'
-              ? <article className="user-message" key={message.id} data-user-message-id={message.id} aria-label="你的消息">
-                {!!message.images?.length && <MessageAttachments images={message.images} />}
-                {(message.quote || message.content.trim()) && <div className="user-message-content">
-                  {message.quote && <QuoteCard content={message.quote} />}
-                  {message.content.trim() ? <CollapsibleMessageContent content={message.content} /> : null}
-                </div>}
-                <MessageActions message={message} />
-              </article>
+            const block = message.role === 'user'
+              ? <UserMessage key={message.id} message={message} />
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} process={message.process} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} open={reasoningOpen[message.id] ?? false} onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [message.id]: open }))} />}
               <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
@@ -142,7 +154,13 @@ export default function ChatScreen() {
                 router.push(conversationHref(forkId, preview));
               }} />}
             </article>;
+            // A deferred supplement stays under the previous user message, i.e. in front of
+            // the reply that is still streaming, until that run ends and saves it below.
+            return live && pending.length
+              ? <Fragment key={message.id}>{pending.map((item) => <UserMessage key={item.id} message={item} pending />)}{block}</Fragment>
+              : block;
           })}
+          {!liveReply && pending.map((item) => <UserMessage key={item.id} message={item} pending />)}
           {awaitingReply && conversationRun && <ReasoningBlock state="running" startedAt={liveStartedAt}
             open={reasoningOpen[conversationRun.replyId] ?? false}
             onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [conversationRun.replyId]: open }))} />}

@@ -1,8 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type PropsWithChildren } from 'react';
+import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState, useSyncExternalStore, type PropsWithChildren } from 'react';
 
 import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
 import { generateConversationTitle } from '@/core/agent/title';
+import type { SteerOutcome } from '@/core/agent/types';
 import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
@@ -14,6 +15,8 @@ import { useNetworkTools } from '@/features/auth/network-tools-state.web';
 import { deriveConversationTitle, useChat, type Message, type MessageImage } from './chat-state';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+// Stable empty value so rendering never sees a fresh array on every call.
+const NO_MESSAGES: Message[] = [];
 
 type ModelsApi = ReturnType<typeof useModels>;
 
@@ -47,6 +50,10 @@ function useRuntime() {
   const titleControllers = useRef(new Map<string, AbortController>());
   // Guards against two synchronous sends from the same empty screen creating two chats.
   const newConversationLock = useRef(false);
+  // Supplements sent after the answer started streaming. They stay here, not in the
+  // conversation, until the run ends and they become the next ordinary turn.
+  const pendingSends = useRef(new Map<string, Message[]>());
+  const [pendingVersion, pendingChanged] = useReducer((value: number) => value + 1, 0);
 
   function requestTitle(conversationId: string, content: string, quote: string | undefined, config: ModelConfig | undefined, from: string) {
     if (!config || titleControllers.current.has(conversationId)) return;
@@ -102,6 +109,27 @@ function useRuntime() {
   }));
   const { runs, error } = useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
 
+  // A conversation keeps the model it was started with. If that model has since been removed,
+  // fall back to the most recently used one instead of failing the request.
+  const start = useCallback((conversationId: string, history: Message[], replyId: string, modelId?: string) => {
+    const config = pickModel(models, modelId);
+    // Cloud tools require a usable account. The server enforces the same rule; this keeps an
+    // anonymous or not-yet-ready session from advertising tools the model cannot call.
+    const useWebTools = Boolean(auth.user && !auth.user.mustChangePassword
+      && networkTools.ready && networkTools.enabled);
+    const started = agent.start({
+      conversationId, replyId, messages: history, config,
+      apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
+      // Thinking depth belongs to the model, so the bound model carries its own depth.
+      thinkingEffort: config?.thinkingEffort ?? 'default',
+      systemPrompt: useWebTools
+        ? `${buildSystemPrompt(preferences)}\n\n${webToolsSystemPrompt()}`
+        : buildSystemPrompt(preferences),
+      ...(useWebTools ? { tools: createWebTools(auth.request) } : {}),
+    });
+    return started ? config : undefined;
+  }, [agent, auth, models, networkTools, preferences]);
+
   useEffect(() => {
     const protection = protectBrowserRun();
     const update = () => protection.setActive(Object.keys(agent.getSnapshot().runs).length > 0);
@@ -149,32 +177,32 @@ function useRuntime() {
       controller.abort();
       titleControllers.current.delete(conversationId);
     }
+    for (const conversationId of [...pendingSends.current.keys()]) {
+      if (!existing.has(conversationId)) pendingSends.current.delete(conversationId);
+    }
   }, [agent, conversations, runs]);
-
-  // A conversation keeps the model it was started with. If that model has since been removed,
-  // fall back to the most recently used one instead of failing the request.
-  function resolveModel(modelId?: string) {
-    return pickModel(models, modelId);
-  }
-
-  function start(conversationId: string, history: Message[], replyId: string, modelId?: string) {
-    const config = resolveModel(modelId);
-    // Cloud tools require a usable account. The server enforces the same rule; this keeps an
-    // anonymous or not-yet-ready session from advertising tools the model cannot call.
-    const useWebTools = Boolean(auth.user && !auth.user.mustChangePassword
-      && networkTools.ready && networkTools.enabled);
-    const started = agent.start({
-      conversationId, replyId, messages: history, config,
-      apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
-      // Thinking depth belongs to the model, so the bound model carries its own depth.
-      thinkingEffort: config?.thinkingEffort ?? 'default',
-      systemPrompt: useWebTools
-        ? `${buildSystemPrompt(preferences)}\n\n${webToolsSystemPrompt()}`
-        : buildSystemPrompt(preferences),
-      ...(useWebTools ? { tools: createWebTools(auth.request) } : {}),
-    });
-    return started ? config : undefined;
-  }
+  // A queued supplement starts its own run once the previous one ends. Writing it to the
+  // conversation only now keeps the saved order as [finished reply, supplement].
+  useEffect(() => {
+    if (!models.ready) return;
+    let changed = false;
+    for (const [conversationId, pending] of pendingSends.current) {
+      if (!pending.length) continue;
+      // The rendered snapshot and the runtime can disagree for one tick; check both so a
+      // supplement never starts a second concurrent run.
+      if (runs[conversationId] || agent.getSnapshot().runs[conversationId]) continue;
+      const conversation = conversations.find((item) => item.id === conversationId);
+      if (!conversation) { pendingSends.current.delete(conversationId); changed = true; continue; }
+      // Drop the queue before starting: a rejected start must not retry forever.
+      pendingSends.current.delete(conversationId);
+      changed = true;
+      const replyId = createId();
+      const config = start(conversationId, [...conversation.messages, ...pending], replyId, conversation.modelId);
+      for (const message of pending) dispatch({ type: 'append-user', conversationId, message });
+      if (config) dispatch({ type: 'reply', conversationId, message: { id: replyId, role: 'assistant', content: '', status: 'streaming' } });
+    }
+    if (changed) pendingChanged();
+  }, [agent, conversations, dispatch, models.ready, pendingVersion, runs, start]);
 
   // Stable so each card's auto-dismiss timer is not restarted by unrelated stream updates.
   const dismissNotification = useCallback((id: string) => {
@@ -191,15 +219,24 @@ function useRuntime() {
       if (existingId === null && newConversationLock.current) return false;
       const conversationId = existingId ?? createId();
       const current = conversations.find((item) => item.id === conversationId);
+      // A manual send can beat the effect that drains the queue after a run ends. Carry those
+      // messages into the same request so their order and context stay correct.
+      const queued = (existingId ? pendingSends.current.get(existingId) : undefined) ?? NO_MESSAGES;
       // The real UI always passes a fresh id for a new chat, so use the history rather than
       // `existingId === null` to recognise the first message.
       const isFirstMessage = !current || current.messages.length === 0;
       const message: Message = { id: createId(), role: 'user', content, ...(images.length ? { images } : {}), ...(quote?.trim() ? { quote: quote.trim() } : {}) };
       // start schedules work on a microtask; dispatch user before any reply update.
       // Keep the user's question and partial reply available for follow-ups such as “continue”.
-      const config = start(conversationId, [...(current?.messages ?? []), message], createId(), current?.modelId);
+      const config = start(conversationId, [...(current?.messages ?? []), ...queued, message], createId(), current?.modelId);
       if (!config) return false;
       if (existingId === null) newConversationLock.current = true;
+      if (queued.length) {
+        pendingSends.current.delete(conversationId);
+        // Append in send order before the new message, which the `send` action adds last.
+        for (const item of queued) dispatch({ type: 'append-user', conversationId, message: item });
+        pendingChanged();
+      }
       // Record the model on the conversation, so reopening it restores the same one. New
       // conversations bind to whichever model was used most recently.
       dispatch({ type: 'send', conversationId, message, modelId: config.id });
@@ -210,6 +247,26 @@ function useRuntime() {
           models.titleModel ?? config, deriveConversationTitle(message));
       }
       return true;
+    },
+    pendingMessages(conversationId: string | null | undefined): Message[] {
+      return (conversationId ? pendingSends.current.get(conversationId) : undefined) ?? NO_MESSAGES;
+    },
+    /** Adds a supplement to the active run. False means there is no run to steer. */
+    steer(content: string, conversationId: string, images: MessageImage[] = [], quote?: string): SteerOutcome {
+      const message: Message = { id: createId(), role: 'user', content,
+        ...(images.length ? { images } : {}), ...(quote?.trim() ? { quote: quote.trim() } : {}) };
+      const outcome = agent.steer(conversationId, message);
+      if (!outcome) return false;
+      if (outcome === 'deferred') {
+        // Keep it out of the conversation until the run ends, but show it immediately above
+        // the streaming reply through `pendingMessages`.
+        pendingSends.current.set(conversationId, [...(pendingSends.current.get(conversationId) ?? NO_MESSAGES), message]);
+        pendingChanged();
+        return outcome;
+      }
+      const replyId = agent.getSnapshot().runs[conversationId]?.replyId;
+      dispatch({ type: 'steer', conversationId, message: { ...message, steering: true }, ...(replyId ? { replyId } : {}) });
+      return outcome;
     },
     retry(conversationId: string) {
       const conversation = conversations.find((item) => item.id === conversationId);

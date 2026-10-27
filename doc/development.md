@@ -79,7 +79,8 @@ Windows、macOS、Linux 使用同一入口。本机只需 Node.js 24、npm 和 [
 ```bash
 npm ci
 npm run dev -- --check       # 校验工具、端口与路径，不启动服务
-npm run dev                  # 常驻：FastAPI reload + Expo Web
+npm run dev                  # 常驻：迁移数据库 + FastAPI reload + Expo Web
+npm run db:migrate           # 只迁移 server/.data/dev.db，不启动服务
 npm run web                  # 仅本机前端与模型中继
 ```
 
@@ -96,7 +97,7 @@ server/.data/
 
 启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo Web。
 
-API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启；数据库迁移也需手动重启。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
+API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启。`npm run dev` 每次启动都会自动迁移；服务已在运行时单独执行 `npm run db:migrate` 即可升级同一个 `server/.data/dev.db`，不必重启开发会话。该命令固定使用开发数据库，不会读取 shell 或 `.env.local` 里的生产 `DATABASE_URL` / `DATA_DIR`。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
 
 开发管理员和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
 
@@ -149,7 +150,7 @@ npm run test:auth
 
 所有新增可见功能先登记到 `server/app/features/registry.py`（默认 preview），UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。用 `admin_test` 在本机页面验证，也可部署候选包到正式地址继续验证。验证后只把指定条目改为 stable，再通过手动 CD 或 `npm run deploy` 发布；部署成功后这些功能即对所有账号开放。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
 
-账号登录并完成首次改密后使用云端 REST 仓储，不读取或写入浏览器本地工作区；退出恢复本地数据，不自动上传或合并。模型配置与 API key 始终保存在本机并共用。登录会话仅保留在当前标签页，Mock 不使用真实账号。`test:auth` 包含工作区模式隔离与云端 REST 增删改、版本冲突回归。
+账号登录并完成首次改密后使用云端 REST 仓储，不读取或写入浏览器本地工作区；退出恢复本地数据，不自动上传或合并。模型配置与 API key 始终保存在本机并共用。浏览器登录态由 HttpOnly Cookie 维持，关闭标签页或重启浏览器后仍有效；Mock 不使用真实账号。`test:auth` 包含工作区模式隔离与云端 REST 增删改、版本冲突回归。
 
 ## 后端与基础设施
 

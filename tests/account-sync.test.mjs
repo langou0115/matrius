@@ -24,14 +24,24 @@ test('login and account changes isolate workspaces while models and keys stay lo
   const response = data => new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
   const user = id => ({ id, username: id, isAdmin: false, mustChangePassword: false, features: [] });
   const calls = [];
+  // The web client authenticates with an HttpOnly cookie. This mock keeps the session
+  // out of JS, mirroring what the browser would send back on each same-origin request.
+  let signedIn = null;
+  const unauthorized = () => new Response(
+    JSON.stringify({ error: { code: 'unauthorized', message: '请重新登录。' } }),
+    { status: 401, headers: { 'Content-Type': 'application/json' } },
+  );
   globalThis.fetch = async (path, init) => {
     calls.push({ path, init });
-    const id = new Headers(init.headers).get('Authorization')?.replace('Bearer ', '');
+    assert.equal(init.credentials, 'include');
+    assert.equal(new Headers(init.headers).get('Authorization'), null);
     if (path === '/api/auth/login') {
-      const name = JSON.parse(init.body).username;
-      return response({ token: name, user: user(name) });
+      signedIn = JSON.parse(init.body).username;
+      return response({ token: signedIn, user: user(signedIn) });
     }
-    if (path === '/api/auth/logout') return response({ ok: true });
+    if (path === '/api/auth/logout') { signedIn = null; return response({ ok: true }); }
+    if (!signedIn) return unauthorized();
+    const id = signedIn;
     if (path === '/api/auth/me') return response(user(id));
     if (path === '/api/preferences') return response({ themeId: 'twitter', mode: 'system', revision: 1 });
     if (path === '/api/profile') return response({ revision: 1 });

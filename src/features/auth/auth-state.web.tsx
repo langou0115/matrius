@@ -7,8 +7,11 @@ import { browserSessionStore } from '@/core/platform/auth-session.web';
 const AuthContext = createContext<ReturnType<typeof createAuthSession> | null>(null);
 
 export function AuthProvider({ children, preview }: PropsWithChildren<{ preview: boolean }>) {
-  const [session] = useState(() => createAuthSession(preview
-    ? { read: () => null, write: () => {} } : browserSessionStore()));
+  const [session] = useState(() => createAuthSession(
+    preview ? { read: () => null, write: () => {} } : browserSessionStore(),
+    fetch,
+    { cookieAuth: !preview },
+  ));
   useEffect(() => {
     if (preview) return;
     void session.refresh();

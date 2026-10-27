@@ -188,7 +188,9 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   }
 
   async function submit() {
-    if (blocked || preparing.current || (!value.trim() && !attachments.length && !quote?.trim())) return;
+    // While a reply is streaming the same submit path becomes a steer, so it stays enabled
+    // as long as there is something to send.
+    if (preparing.current || (!value.trim() && !attachments.length && !quote?.trim())) return;
     if (!models.ready || !models.selected) { onNotice(models.error ?? '请先在设置 → 模型服务中添加并选择模型。'); return; }
     const unsupported = attachments.find(({ file }) => !IMAGE_TYPES.includes(file.type));
     if (unsupported) { onNotice(`暂不支持文件「${unsupported.file.name}」，目前仅支持 PNG、JPEG、WebP 或 GIF 图片。`); return; }
@@ -373,8 +375,10 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           {models.selected && <span className="model-picker-thinking-value">{effortLabel}</span>}
           <Icon name="chevron" size={18} className="model-picker-chevron" />
         </button>
-        {running ? <button type="button" className="send-button" onClick={() => runtime.stop(activeId ?? undefined)} aria-label="停止生成"><span className="stop-generation-icon" /></button>
-          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length && !quote?.trim()) || blocked || sending} aria-label="发送消息"><Icon name="arrow" size={21} /></button>}
+        {running && !value.trim() && !attachments.length && !quote?.trim()
+          ? <button type="button" className="send-button" onClick={() => runtime.stop(activeId ?? undefined)} aria-label="停止生成"><span className="stop-generation-icon" /></button>
+          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length && !quote?.trim()) || sending}
+            aria-label={running ? '发送补充或纠正' : '发送消息'} title={running ? '发送补充或纠正' : undefined}><Icon name="arrow" size={21} /></button>}
       </div>
     </form>
     {modelPopover}

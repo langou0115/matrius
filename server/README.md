@@ -86,17 +86,17 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `FETCH_TIMEOUT_SECONDS` | `45` | 整次网页读取截止时间（含排队与提取） |
 | `FETCH_MAX_ATTEMPTS` | `2` | 下载最多尝试次数；仅超时/传输错误/5xx/短 429 重试 |
 | `FETCH_MAX_BYTES` | `5242880` | 网页读取响应体上限（5 MiB） |
-| `AUTH_SESSION_TTL_SECONDS` | `604800` | 登录会话有效期 |
+| `AUTH_COOKIE_SECONDS` | `34560000` | 浏览器会话 Cookie 有效期（400 天；服务端会话不过期） |
 | `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | 空 | 空库创建管理员；已有用户时按当前值更新密码 |
 | `MAX_UPLOAD_BYTES` | `20971520` | 单文件上限（20 MiB） |
 | `STORAGE_QUOTA_BYTES` | `536870912` | 每用户存储配额（512 MiB） |
 | `FETCH_MAX_CHARS` | `50000` | 单次网页读取最大字符数 |
 
-生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；开发时后端会在文件变化后自动重新读取运行时设置，生产容器仍只使用部署时写入的环境变量。其中登录有效期、限额、`LOG_LEVEL` 等通用项会在部署时写入服务器的 `production.env`。代理分两个键：`WEBTOOL_PROXY_URL` 只用于本机开发、不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 在部署时映射为服务器的 `WEBTOOL_PROXY_URL`，必须是容器可达地址（如 `host.docker.internal`，loopback 会被拒绝）。不要把真实密钥提交到仓库。
+生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；开发时后端会在文件变化后自动重新读取运行时设置，生产容器仍只使用部署时写入的环境变量。其中浏览器 Cookie 有效期、限额、`LOG_LEVEL` 等通用项会在部署时写入服务器的 `production.env`。代理分两个键：`WEBTOOL_PROXY_URL` 只用于本机开发、不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 在部署时映射为服务器的 `WEBTOOL_PROXY_URL`，必须是容器可达地址（如 `host.docker.internal`，loopback 会被拒绝）。不要把真实密钥提交到仓库。
 
 ## API 概览
 
-所有业务接口位于 `/api`，除登录和健康检查外都需要 `Authorization: Bearer <token>`。
+所有业务接口位于 `/api`，除登录和健康检查外都需要 Web 会话 Cookie 或 `Authorization: Bearer <token>`。
 
 ```text
 POST   /api/auth/login | /api/admin/auth/login

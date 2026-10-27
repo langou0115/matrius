@@ -84,7 +84,9 @@ class Settings(BaseSettings):
     # Per-account in-flight cap for each web tool, on top of the global provider semaphore.
     tool_user_concurrency: int = 4
 
-    auth_session_ttl_seconds: int = 604800
+    # Browser sessions stay signed in until logout/revocation. Browsers cap persistent
+    # cookies (Chrome at 400 days), so refresh the cookie with this Max-Age on login.
+    auth_cookie_seconds: int = 400 * 24 * 60 * 60
     initial_admin_username: str = ""
     initial_admin_password: str = ""
     preview_username: str = "admin_test"

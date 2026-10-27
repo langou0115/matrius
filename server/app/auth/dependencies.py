@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.cookies import ADMIN_SESSION_COOKIE, USER_SESSION_COOKIE
 from app.auth.security import hash_token
 from app.cache import enforce_rate_limit
 from app.db import get_db
@@ -33,10 +34,24 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AuthContext:
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    if credentials is not None:
+        if credentials.scheme.lower() != "bearer":
+            raise unauthorized()
+        token = credentials.credentials
+    else:
+        # The web client relies on the HttpOnly cookie; native clients keep using Bearer.
+        # Keep the two browser sessions isolated: an admin console login must not also
+        # sign the chat UI in as that admin, and vice versa.
+        cookie = (
+            ADMIN_SESSION_COOKIE
+            if request.url.path.startswith("/api/admin/")
+            else USER_SESSION_COOKIE
+        )
+        token = request.cookies.get(cookie)
+    if not token:
         raise unauthorized()
 
-    token_hash = hash_token(credentials.credentials)
+    token_hash = hash_token(token)
     row = (
         await db.execute(
             select(AuthSession, User)
@@ -49,7 +64,9 @@ async def get_current_user(
 
     session, user = row
     now = utcnow()
-    if session.revoked_at is not None or ensure_aware(session.expires_at) <= now:
+    if session.revoked_at is not None or (
+        session.expires_at is not None and ensure_aware(session.expires_at) <= now
+    ):
         raise unauthorized("登录已失效，请重新登录。")
     if user.disabled_at is not None:
         raise unauthorized("账号已被停用。")

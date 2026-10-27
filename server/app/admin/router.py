@@ -5,21 +5,22 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.cookies import ADMIN_SESSION_COOKIE, clear_session_cookie, set_session_cookie
 from app.auth.dependencies import AuthContext, client_ip, require_admin
 from app.auth.router import _authenticate, _issue_session, user_out
 from app.auth.schemas import LoginRequest, LoginResponse, UserOut
-from app.auth.security import hash_password
+from app.auth.security import hash_password, hash_token
 from app.cache import concurrency_limit, enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError, invalid, not_found
-from app.models import User
+from app.models import AuthSession, User
 from app.tools.search import web_search
 from app.tools.web_fetch import web_fetch
 from app.utils import utcnow
@@ -89,17 +90,44 @@ async def _get_user(db: AsyncSession, user_id: uuid.UUID) -> User:
 
 @router.post("/auth/login", response_model=LoginResponse)
 async def admin_login(
-    payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
     await enforce_rate_limit("login_ip", client_ip(request), 10, fail_closed=True)
     user = await _authenticate(payload.username, payload.password, admin_only=True, db=db)
     token = await _issue_session(user, scope="admin", db=db)
+    set_session_cookie(request, response, token, scope="admin")
     return LoginResponse(token=token, user=user_out(user))
 
 
 @router.get("/auth/me", response_model=UserOut)
-async def admin_me(ctx: AuthContext = Depends(require_admin)) -> UserOut:
+async def admin_me(
+    request: Request,
+    response: Response,
+    ctx: AuthContext = Depends(require_admin),
+) -> UserOut:
+    cookie = request.cookies.get(ADMIN_SESSION_COOKIE)
+    if cookie and hash_token(cookie) == ctx.session.token_hash:
+        set_session_cookie(request, response, cookie, scope="admin")
     return user_out(ctx.user)
+
+
+@router.post("/auth/logout")
+async def admin_logout(
+    request: Request,
+    response: Response,
+    ctx: AuthContext = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    # get_current_user closes its session, so ctx.session is detached: re-load before mutating.
+    session = await db.get(AuthSession, ctx.session.id)
+    if session is not None:
+        session.revoked_at = utcnow()
+        await db.commit()
+    clear_session_cookie(request, response, scope="admin")
+    return {"ok": True}
 
 
 @router.get("/users", response_model=AdminUserList)

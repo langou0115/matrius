@@ -1,25 +1,14 @@
 import type { SessionStore } from '@/core/api/auth-session';
 
-const key = 'matrius.auth-session';
-const adminKey = 'matrius.admin-session';
+/** The server keeps browser sessions in HttpOnly cookies, so there is no token for JS
+    to read or persist. This store exists only to satisfy the shared session contract. */
+const cookieOnly: SessionStore = { read: () => null, write: () => {} };
 
 export function browserSessionStore(): SessionStore {
-  return {
-    read() { try { return sessionStorage.getItem(key); } catch { return null; } },
-    write(token) {
-      try { if (token) sessionStorage.setItem(key, token); else sessionStorage.removeItem(key); }
-      catch { /* Memory still works when browser session storage is disabled. */ }
-    },
-  };
+  return cookieOnly;
 }
 
-/** Admin login is independent from the account session used by the chat UI. */
+/** Admin login uses its own HttpOnly cookie; the account session stays untouched. */
 export function browserAdminSessionStore(): SessionStore {
-  return {
-    read() { try { return sessionStorage.getItem(adminKey); } catch { return null; } },
-    write(token) {
-      try { if (token) sessionStorage.setItem(adminKey, token); else sessionStorage.removeItem(adminKey); }
-      catch { /* Memory still works when browser session storage is disabled. */ }
-    },
-  };
+  return cookieOnly;
 }

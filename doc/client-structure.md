@@ -137,7 +137,7 @@ src/
 ## 账号与功能开关
 
 - `core/api/auth-session.ts`：无 DOM / React 的会话状态、同源 API 请求与过期处理；拒绝迟到请求覆盖新账号。
-- `core/platform/auth-session.web.ts`：当前标签页 token 存储适配，不持久化账号权限。
+- `core/platform/auth-session.web.ts`：浏览器 Cookie 会话模式下的空 token 适配；账号权限不落本地。
 - `core/features/capabilities.ts`：统一判断服务端授予的功能。
 - `features/auth/auth-state.web.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。
 - `features/auth/account-screen.web.tsx`：设置账号页、登录、改密与退出；根工作区按认证状态切换数据源。

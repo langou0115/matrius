@@ -29,6 +29,8 @@ export type PersistedChatState = Omit<ChatState, 'chatVisible'>;
 type Action =
   | { type: 'select'; id: string | null }
   | { type: 'send'; conversationId: string; message: Message; modelId?: string }
+  | { type: 'steer'; conversationId: string; message: Message; replyId?: string }
+  | { type: 'append-user'; conversationId: string; message: Message }
   | { type: 'bind-model'; conversationId: string; modelId: string }
   | { type: 'reply'; conversationId: string; message: Message }
   | { type: 'feedback'; conversationId: string; messageId: string; feedback?: MessageFeedback }
@@ -179,6 +181,25 @@ function reducer(state: ChatState, action: Action): ChatState {
       };
       return { ...state, activeId: branch.id, conversations: [branch, ...state.conversations] };
     }
+    case 'steer':
+      return { ...state, conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== action.conversationId) return conversation;
+        // The reply is already visible while streaming, so the supplement belongs in front
+        // of it. If it has not arrived yet, appending is the same visual order.
+        const index = action.replyId
+          ? conversation.messages.findIndex((message) => message.id === action.replyId)
+          : -1;
+        const messages = index < 0
+          ? [...conversation.messages, action.message]
+          : [...conversation.messages.slice(0, index), action.message, ...conversation.messages.slice(index)];
+        return { ...conversation, messages, updatedAt: Date.now() };
+      }) };
+    case 'append-user':
+      return { ...state, conversations: state.conversations.map((conversation) => conversation.id === action.conversationId
+        // A queued message is already being carried into a new run: append it after the finished
+        // reply without changing the active chat or the unread markers.
+        ? { ...conversation, messages: [...conversation.messages, action.message], updatedAt: Date.now() }
+        : conversation) };
     case 'send': {
       const current = state.conversations.find((item) => item.id === action.conversationId);
       const modelId = action.modelId ?? current?.modelId;

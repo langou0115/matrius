@@ -21,8 +21,8 @@
 - 保存按操作顺序排队，以数据库事务完成作为成功。读取和写入均检查版本；其他标签页改写后，本页后续保存会提示冲突，不静默覆盖。当前不提供多标签页自动合并。
 - v2 升级迁移在 `core/database/browser-store.web.ts` 的 `onupgradeneeded` 中创建 `messages` store；旧版快照保留可读，在下一次保存事务中原子转换。流式正文按独立消息增量写入，元数据和消息共享 workspace revision 校验。这些记录仅服务本地模式。
 - App 的手机本地数据库尚未接入，后续优先评估 [Expo SQLite（SDK 57）](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/)。平台适配与 Web 实现分离，页面不直接访问数据库。
-- 旧版账号的同步范围选择保存在 `state.account-sync-preferences`，以 `users[userId]` 区分账号，记录聊天记录、已读和未读、个人设置、界面外观四类的布尔值；与工作区一样走 revision 校验和写队列，冲突时重读后重试一次。旧版最后同步时间保存在 `state.account-sync-state`，同样按账号区分。登录令牌仍按标签页隔离，不同步。
-- 模型 API key 与认证令牌通过安全存储适配层管理，不存入普通业务表或同步载荷。Web 把它们单独写入 `state.model-credentials` 记录（未加密，与 `model-preferences` 分离）；App 后续交给手机本地数据库。浏览器端限制见[客户端约定](client.md)。
+- 旧版账号的同步范围选择保存在 `state.account-sync-preferences`，以 `users[userId]` 区分账号，记录聊天记录、已读和未读、个人设置、界面外观四类的布尔值；与工作区一样走 revision 校验和写队列，冲突时重读后重试一次。旧版最后同步时间保存在 `state.account-sync-state`，同样按账号区分。登录状态由服务端 HttpOnly Cookie 维持，跨标签页共享，不写入工作区或同步载荷。
+- 模型 API key 通过安全存储适配层管理，不存入普通业务表或同步载荷。Web 把它单独写入 `state.model-credentials` 记录（未加密，与 `model-preferences` 分离）；App 后续交给手机本地数据库。浏览器登录令牌不落 JS 存储，由服务端 HttpOnly Cookie 保存。浏览器端限制见[客户端约定](client.md)。
 - 不自动导入旧工程设备数据库或历史用户数据；后续如需导入，单独定义导出格式、版本映射与回滚流程。
 
 ## 本地与云端隔离
@@ -110,5 +110,6 @@ DATA_DIR/files
 
 - `state.model-preferences` 独立保存经过白名单校验的 Provider 配置、其模型元数据、当前模型选择与可选 `titleModelId`，带独立 revision；`titleModelId` 为 `null` 时标题跟随会话模型，指向已删除或未知模型时加载归一为 `null`。API key 不在这个记录或工作区记录中，按 Provider ID 存在旁边的 `state.model-credentials`，两份记录各有 revision，写入冲突按现有约定提示而不合并。读取旧版扁平模型项时按协议、Base URL 和鉴权要求迁移为 Provider 分组。Mock 使用独立内存配置，不读取正式模型配置与 key。
 - 工作区元数据、变化的消息正文与已删除消息的清理在同一事务内提交。停止或错误时保留部分正文；恢复 streaming 消息时标记为 stopped，不自动继续请求。流式保存合并到约 300ms 一次，退出页面前尚未完成的写入不承诺保存。
+- 用户消息可带 `steering: true`，表示它是在上一轮回复生成期间被注入当前 run 的补充或纠正。该字段随消息正文一起保存，读取时只接受用户消息上的 `true`；加载工作区时把这类消息移到被插话的助手回复之前。服务端 `position` 仍按写入顺序分配，因此顺序还原依赖这个标记而不是位置。回复正文已开始后发送的消息属于下一轮普通消息，按正常追加顺序保存，不带该标记。
 - 助手消息另外记录 `thinkingMs`（发送到最后一个思考 token 的毫秒数），用于刷新后仍能在思考区显示耗时。没有思考内容的消息不带这个字段；它随消息正文一起存储，读取时按白名单校验，非法值直接丢弃而不是让整条工作区加载失败。
 - 本地模式删除消息会移除本地正文。云端模式的删除走服务端 API，不使用本地记录；两种模式不要互相推断。

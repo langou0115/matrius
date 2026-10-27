@@ -21,7 +21,8 @@ Matrius 是 Expo + React Native（Web 优先）前端与 FastAPI 后端的自部
 
 ```bash
 npm ci
-npm run dev                 # 本机 Expo + FastAPI 热更新，SQLite 与文件都在 server/.data
+npm run dev                 # 本机迁移 + Expo + FastAPI 热更新，SQLite 与文件都在 server/.data
+npm run db:migrate          # 只迁移本机开发库，不启动服务
 npm run web                 # Web 开发（Metro，可访问 /mock）
 npx expo start              # Metro 开发服务
 npx expo lint
@@ -70,10 +71,10 @@ uv run --no-sync pytest
 ## 部署
 
 - 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
-- `npm run dev` 完全在本机常驻运行 Expo 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`。
+- `npm run dev` 完全在本机常驻运行 Expo 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
 - 部署成功后，代码中 stage=stable 的功能立即对所有账号开放。
 - 生产只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite + 上传文件）。`npm run deploy` 没有子命令：首次执行自动初始化，之后每次都会备份数据库、应用迁移、刷新管理员密码、更新 Web/API 与 Caddy；`--remove-orphans` 会清理旧拓扑遗留容器。
-- `.env.local` 管本地开发与通用应用设置：`DEV_WEB_PORT` / `DEV_API_PORT`、`INITIAL_ADMIN_*`、`AUTH_SESSION_TTL_SECONDS` 等。服务器相关内容放在 `docker-compose/.env.production`（SSH 目标、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`），`npm run deploy` 从该文件读取；`.env.local` 只作覆盖。`.env.local` 中的通用应用项（`AUTH_SESSION_TTL_SECONDS`、限额、`LOG_LEVEL` 等）会在部署时写入服务器 `production.env`。本机代理写 `WEBTOOL_PROXY_URL`，只在开发时使用、不会上传；生产代理写 `WEBTOOL_PROXY_URL_PRODUCTION`，部署时映射为服务器的 `WEBTOOL_PROXY_URL`，且必须是容器可达地址（`host.docker.internal` 等，loopback 会被拒绝）。`INITIAL_ADMIN_*` 同时用于开发库和正式服务器；示例密码 `change-me` 会被 `npm run dev` 和 `npm run deploy` 拒绝，必须先改成真实密码。正式库的管理员密码以最近一次部署为准：每次部署都会把 `INITIAL_ADMIN_*` 应用到该账号；两个值留空则不改动现有密码。`dev` 不连接服务器，也不读取 `docker-compose/.env.production`；开发模式下后端直接读取 `.env.local`，代理、搜索/抓取预算等运行时设置保存后自动生效，端口、数据库路径和管理员初始化仍需重启。
+- `.env.local` 管本地开发与通用应用设置：`DEV_WEB_PORT` / `DEV_API_PORT`、`INITIAL_ADMIN_*`、`AUTH_COOKIE_SECONDS` 等。服务器相关内容放在 `docker-compose/.env.production`（SSH 目标、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`），`npm run deploy` 从该文件读取；`.env.local` 只作覆盖。`.env.local` 中的通用应用项（`AUTH_COOKIE_SECONDS`、限额、`LOG_LEVEL` 等）会在部署时写入服务器 `production.env`。本机代理写 `WEBTOOL_PROXY_URL`，只在开发时使用、不会上传；生产代理写 `WEBTOOL_PROXY_URL_PRODUCTION`，部署时映射为服务器的 `WEBTOOL_PROXY_URL`，且必须是容器可达地址（`host.docker.internal` 等，loopback 会被拒绝）。`INITIAL_ADMIN_*` 同时用于开发库和正式服务器；示例密码 `change-me` 会被 `npm run dev` 和 `npm run deploy` 拒绝，必须先改成真实密码。正式库的管理员密码以最近一次部署为准：每次部署都会把 `INITIAL_ADMIN_*` 应用到该账号；两个值留空则不改动现有密码。`dev` 不连接服务器，也不读取 `docker-compose/.env.production`；开发模式下后端直接读取 `.env.local`，代理、搜索/抓取预算等运行时设置保存后自动生效，端口、数据库路径和管理员初始化仍需重启。
 - 不在本机对服务器执行迁移；`docker compose down` 永远不加 `-v`。
 - 不配置自动 CI；CD 手动触发并复用 `npm run deploy`。
 

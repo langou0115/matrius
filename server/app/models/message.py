@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -39,6 +40,8 @@ class Message(RevisionMixin, TimestampMixin, Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # User supplement sent while the preceding reply was still streaming.
+    steering: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     quote: Mapped[str | None] = mapped_column(Text, nullable=True)
     feedback: Mapped[str | None] = mapped_column(String(8), nullable=True)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)

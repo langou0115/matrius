@@ -28,6 +28,8 @@ async def test_preview_is_granted_by_authenticated_account_not_admin_role(client
     assert enabled.status_code == 200
     assert enabled.json()["features"][0]["stage"] == "preview"
     assert enabled.headers["cache-control"] == "no-store"
+    # Browser logins now leave a session cookie behind; drop it to check the anonymous case.
+    client.cookies.clear()
     assert (await client.get("/api/features/labs")).status_code == 401
 
 

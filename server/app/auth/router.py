@@ -1,9 +1,8 @@
-from datetime import timedelta
-
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.cookies import USER_SESSION_COOKIE, clear_session_cookie, set_session_cookie
 from app.auth.dependencies import AuthContext, client_ip, get_current_user
 from app.auth.schemas import ChangePasswordRequest, LoginRequest, LoginResponse, UserOut
 from app.auth.security import (
@@ -19,7 +18,6 @@ from app.cache import (
     enforce_rate_limit,
     record_login_failure,
 )
-from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError, unauthorized
 from app.features.registry import enabled_features
@@ -69,13 +67,12 @@ async def _authenticate(
 
 async def _issue_session(user: User, *, scope: str, db: AsyncSession) -> str:
     token = generate_token()
-    settings = get_settings()
     db.add(
         AuthSession(
             user_id=user.id,
             token_hash=hash_token(token),
             scope=scope,
-            expires_at=utcnow() + timedelta(seconds=settings.auth_session_ttl_seconds),
+            expires_at=None,
         )
     )
     await db.commit()
@@ -83,25 +80,46 @@ async def _issue_session(user: User, *, scope: str, db: AsyncSession) -> str:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)) -> LoginResponse:
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> LoginResponse:
     await enforce_rate_limit("login_ip", client_ip(request), 10, fail_closed=True)
     user = await _authenticate(payload.username, payload.password, admin_only=False, db=db)
     token = await _issue_session(user, scope="user", db=db)
+    set_session_cookie(request, response, token, scope="user")
     return LoginResponse(token=token, user=user_out(user))
 
 
 @router.get("/me", response_model=UserOut)
-async def me(ctx: AuthContext = Depends(get_current_user)) -> UserOut:
+async def me(
+    request: Request,
+    response: Response,
+    ctx: AuthContext = Depends(get_current_user),
+) -> UserOut:
+    # Slide the browser cookie forward on each account check so an active user is not
+    # signed out when the original Max-Age elapses.
+    cookie = request.cookies.get(USER_SESSION_COOKIE)
+    if cookie and hash_token(cookie) == ctx.session.token_hash:
+        set_session_cookie(request, response, cookie, scope="user")
     return user_out(ctx.user)
 
 
 @router.post("/logout")
-async def logout(ctx: AuthContext = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, bool]:
+async def logout(
+    request: Request,
+    response: Response,
+    ctx: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
     # get_current_user closes its session, so ctx.session is detached: re-load before mutating.
     session = await db.get(AuthSession, ctx.session.id)
     if session is not None:
         session.revoked_at = utcnow()
         await db.commit()
+    clear_session_cookie(request, response, scope=ctx.session.scope)
     return {"ok": True}
 
 
