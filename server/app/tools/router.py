@@ -49,6 +49,8 @@ async def read_file(
 ) -> dict[str, Any]:
     await enforce_rate_limit("tool_file_read", str(ctx.user.id), 60)
     stored = await get_owned_file(db, ctx.user.id, payload.fileId)
+    # Extraction can take seconds; do not pin a pool connection to it.
+    await db.close()
     max_chars = min(payload.maxChars, get_settings().fetch_max_chars)
     return await read_file_text(stored, payload.start, payload.end, max_chars)
 
@@ -61,4 +63,6 @@ async def grep_file(
 ) -> dict[str, Any]:
     await enforce_rate_limit("tool_file_grep", str(ctx.user.id), 60)
     stored = await get_owned_file(db, ctx.user.id, payload.fileId)
+    # RegExp scanning and extraction run outside the DB; release the connection first.
+    await db.close()
     return await grep_file_text(stored, payload.pattern, payload.context, payload.maxMatches)

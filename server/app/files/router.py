@@ -129,6 +129,9 @@ async def upload_file(
         if used + len(data) > settings.storage_quota_bytes:
             raise AppError(413, "quota_exceeded", "存储空间已用尽。")
 
+        # Everything below is storage I/O and needs no DB state; free the connection
+        # so a slow upload does not pin one of the two SQLite pool slots.
+        await db.close()
         stored_id = uuid.uuid4()
         content_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         object_key = f"users/{ctx.user.id}/{stored_id}/{filename}"
@@ -195,6 +198,8 @@ async def download_file(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     stored = await get_owned_file(db, ctx.user.id, file_id)
+    # Read from disk after the row is loaded; the connection is not needed for the bytes.
+    await db.close()
     data = await load_file_bytes(stored)
     disposition = "inline" if stored.content_type.startswith("image/") else "attachment"
     headers = {
@@ -212,6 +217,7 @@ async def delete_file(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
     stored = await get_owned_file(db, ctx.user.id, file_id)
+    await db.close()
     await asyncio.to_thread(delete_object, stored.object_key)
     await db.delete(stored)
     await db.commit()

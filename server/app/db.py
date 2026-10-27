@@ -13,7 +13,32 @@ _connect_args = (
     {"timeout": settings.sqlite_busy_timeout_ms / 1000} if _is_sqlite else {}
 )
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True, connect_args=_connect_args)
+_sqlite_file = _is_sqlite and ":memory:" not in settings.database_url
+if _sqlite_file:
+    # Small pools win for SQLite in this process model: every extra aiosqlite worker
+    # thread competes for the GIL while sqlite3 hands it back once per fetched row, so
+    # 5+ concurrent readers can be an order of magnitude slower than 2. Two connections
+    # also leave one free while a slow upload/download holds the other.
+    _pool_args = {
+        "pool_size": 2 if settings.db_pool_size is None else settings.db_pool_size,
+        "max_overflow": 0 if settings.db_max_overflow is None else settings.db_max_overflow,
+    }
+elif settings.db_pool_size is not None or settings.db_max_overflow is not None:
+    _pool_args = {
+        "pool_size": 5 if settings.db_pool_size is None else settings.db_pool_size,
+        "max_overflow": 10 if settings.db_max_overflow is None else settings.db_max_overflow,
+    }
+else:
+    _pool_args = {}
+
+# pre_ping is a no-op waste for a local file (and an extra query per checkout);
+# keep it for network databases where the connection can die.
+engine = create_async_engine(
+    settings.database_url,
+    pool_pre_ping=not _is_sqlite,
+    connect_args=_connect_args,
+    **_pool_args,
+)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 if _is_sqlite:

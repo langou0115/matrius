@@ -59,6 +59,13 @@ async def get_current_user(
         await db.commit()
 
     request.state.user_id = str(user.id)
+    # Auth is its own unit of work. Release the pooled connection before the route runs:
+    # otherwise a long web search/fetch keeps it checked out for up to fetch_timeout_seconds,
+    # and a small SQLite pool (where a single connection is fastest, see
+    # doc/performance-multiaccount.md)
+    # would serialise every other request behind it. The returned objects are detached but
+    # their column values are already loaded; routes that mutate them re-load by id first.
+    await db.close()
     return AuthContext(user=user, session=session)
 
 

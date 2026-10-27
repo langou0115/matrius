@@ -164,7 +164,7 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest
 ```
 
-本机容量测试：在 `server/` 运行 `uv run --no-sync python scripts/benchmark.py`；仓库根目录运行 `node scripts/benchmark-relay.mjs` 测量模型 SSE 中继。前者创建隔离的临时 SQLite 并执行真实迁移，以单 worker Uvicorn 和真实 HTTP 测试认证后读写，保留限流；结束后清理测试库，不读取开发库或连接正式服务器。可用 `--seconds 30 --levels 1 10 25 50` 调整单档时长与并发。结果写入 `doc/benchmark-results.json`，中继结果写入 `doc/benchmark-relay-results.json`。中继使用真实生产模块及本地模拟上游，仅在隔离测试环境替换出站网络，不改动生产目标校验。测试条件、已知瓶颈和用户数换算见[容量报告](performance.md)。短时间本机压测不能作为生产 SLA。
+本机容量测试：在 `server/` 运行 `uv run --no-sync python scripts/benchmark.py`；仓库根目录运行 `node scripts/benchmark-relay.mjs` 测量模型 SSE 中继。前者创建隔离的临时 SQLite 并执行真实迁移，以单 worker Uvicorn 和真实 HTTP 测试认证后读写，保留限流；结束后清理测试库，不读取开发库或连接正式服务器。可用 `--seconds 30 --levels 1 10 25 50` 调整单档时长与并发。多账户场景使用 `--mode pinned --matrix "200:1,5;500:1" --target-rates read=120,mixed=100,write=60`：每个虚拟账户绑定自己的令牌、独立限速并可设置每账户并发，另含公平性、健康探测、跨租户隔离和进程 CPU/RSS/WAL 采样。结果写入 `doc/benchmark-results.json`，中继结果写入 `doc/benchmark-relay-results.json`。中继使用真实生产模块及本地模拟上游，仅在隔离测试环境替换出站网络，不改动生产目标校验。单账户并发与已知瓶颈见[容量报告](performance.md)，多账户稳定点、上限和服务器配置见[多账户容量报告](performance-multiaccount.md)。短时间本机压测不能作为生产 SLA。
 
 修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在临时空 SQLite 上验证全部迁移可执行（`server/tests/test_migrations.py` 覆盖这一点）。SQLite 的 `ALTER TABLE` 能力有限，Alembic 已启用 `render_as_batch`；重命名、删除列和收紧约束应拆成小步。仓库不配置自动 CI；日常部署用 `npm run deploy`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
 

@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     data_dir: str = "./.data"
     sqlite_busy_timeout_ms: int = 30000
 
+    # Queue pool sizing. Keep this a knob because the effective read ceiling depends
+    # on the host: CPython's GIL plus sqlite3's per-row hand-off makes many in-process
+    # SQLite readers slower than a small number on some kernels/VMs. Unset means
+    # "SQLite: 2/0, other databases: 5/10"; set both to override.
+    db_pool_size: int | None = None
+    db_max_overflow: int | None = None
+
     # In-process cache and rate limiting. Exactly one uvicorn worker may run,
     # because this state is not shared between processes.
     cache_max_entries: int = 10000

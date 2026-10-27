@@ -97,8 +97,11 @@ async def me(ctx: AuthContext = Depends(get_current_user)) -> UserOut:
 
 @router.post("/logout")
 async def logout(ctx: AuthContext = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, bool]:
-    ctx.session.revoked_at = utcnow()
-    await db.commit()
+    # get_current_user closes its session, so ctx.session is detached: re-load before mutating.
+    session = await db.get(AuthSession, ctx.session.id)
+    if session is not None:
+        session.revoked_at = utcnow()
+        await db.commit()
     return {"ok": True}
 
 
@@ -108,12 +111,16 @@ async def change_password(
     ctx: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
-    if not verify_password(ctx.user.password_hash, payload.currentPassword):
+    # get_current_user closes its session, so ctx.user is detached: re-load before mutating.
+    user = await db.get(User, ctx.user.id)
+    if user is None:
+        raise unauthorized("登录已失效，请重新登录。")
+    if not verify_password(user.password_hash, payload.currentPassword):
         raise unauthorized("当前密码不正确。")
     if payload.currentPassword == payload.newPassword:
         raise AppError(422, "invalid", "新密码不能与当前密码相同。")
-    ctx.user.password_hash = hash_password(payload.newPassword)
-    ctx.user.must_change_password = False
-    ctx.user.updated_at = utcnow()
+    user.password_hash = hash_password(payload.newPassword)
+    user.must_change_password = False
+    user.updated_at = utcnow()
     await db.commit()
     return {"ok": True}
