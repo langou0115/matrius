@@ -7,7 +7,6 @@ import { useModels } from '@/features/models/model-state';
 import { personalizationLimits } from './personalization';
 import { usePersonalization } from './personalization-state';
 import { SettingsPage } from './settings-page.web';
-import { useIsPreview } from '@/features/workspace/preview-context';
 
 function fitTextarea(element: HTMLTextAreaElement) {
   element.style.height = 'auto';
@@ -38,7 +37,6 @@ function AutoSizeTextarea(props: ComponentProps<'textarea'>) {
 export default function PersonalizationSettingsScreen() {
   const { preferences, update } = usePersonalization();
   const models = useModels();
-  const preview = useIsPreview();
   const [modelError, setModelError] = useState<string | null>(null);
   return <SettingsPage title="个性化" description="告诉模型你希望它如何回答，以及需要了解的个人信息。">
     <section className="settings-section" aria-labelledby="title-model-heading">
@@ -63,7 +61,6 @@ export default function PersonalizationSettingsScreen() {
         />
       </div>
       {modelError && <p className="settings-footnote" role="alert">{modelError}</p>}
-      <p className="settings-footnote">AI 会在新对话发送首条消息后生成简短标题。请求失败时先保留消息开头的临时标题，并在之后的回复成功后再次尝试；手动重命名不会被覆盖。</p>
     </section>
     <section className="settings-section" aria-labelledby="instructions-heading">
       <h2 id="instructions-heading">自定义指令</h2>
@@ -83,6 +80,5 @@ export default function PersonalizationSettingsScreen() {
         <label className="personalization-field" htmlFor="about-more"><span>更多关于你</span><AutoSizeTextarea id="about-more" className="text-field" rows={1} maxLength={personalizationLimits.aboutMore} value={preferences.aboutMore} placeholder="可填写你的兴趣、背景或需要模型考虑的其他信息。" onChange={(event) => update({ aboutMore: event.target.value })} /><small>{preferences.aboutMore.length.toLocaleString()} / {personalizationLimits.aboutMore.toLocaleString()}</small></label>
       </div>
     </section>
-    <p className="settings-footnote">{preview ? '修改仅在本次预览中生效，刷新后重置。' : '修改会自动保存在当前浏览器中。'}填写的内容会随对话请求发送给你选择的模型服务商。</p>
   </SettingsPage>;
 }

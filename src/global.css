@@ -458,6 +458,9 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .mode-switch button { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 7px 12px; border-radius: 8px; font-size: var(--text-caption); color: var(--muted-text); }
 .mode-switch button[aria-pressed='true'] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 4px #0000000a; }
 .mode-switch button:hover { color: var(--foreground); }
+.settings-mode-row { padding: 22px 0 4px; }
+.settings-mode-switch { width: 100%; max-width: 460px; }
+.settings-mode-switch button { flex: 1; justify-content: center; }
 .theme-heading { margin-bottom: 18px; }
 .theme-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .theme-card { text-align: left; padding: 6px; border: 1px solid var(--border); border-radius: 13px; min-width: 0; transition: border-color 140ms; }
@@ -696,12 +699,12 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
   .matrius-app .personalization-textarea { scrollbar-width: auto; }
 }
 .personalization-field small { align-self: flex-end; color: var(--muted-text); font-size: var(--text-caption); }
-.about-card { display: flex; align-items: center; gap: 13px; padding: 23px 0 18px; }
+.about-card { display: flex; align-items: center; gap: 13px; margin-top: 22px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--soft); }
 .about-logo { display: grid; place-items: center; width: 45px; height: 45px; border-radius: 15px; background: var(--soft); color: var(--primary); }
 .about-card h3 { font-size: 17px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.5px; }
 .about-card p { font-size: var(--text-caption); color: var(--muted-text); margin-top: 3px; }
 .version-label { margin-left: auto; font-size: var(--text-caption); color: var(--muted-text); font-family: var(--font-mono); }
-.about-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; font-size: var(--text-caption); border-top: 1px solid var(--border); }
+.about-row { display: flex; align-items: center; justify-content: space-between; padding: 16px 2px 0; font-size: var(--text-caption); }
 .about-row > span:last-child { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-text); }
 
 /* Mock index */
@@ -853,6 +856,11 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .model-section-heading h2 { font-size: var(--text-body); font-family: var(--font-medium); font-weight: 400; }
 .model-section-heading .secondary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
 .provider-list { display: flex; flex-direction: column; gap: 12px; }
+.provider-empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 48px 24px; border: 1px dashed color-mix(in srgb, var(--foreground) 16%, transparent); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--foreground) 2%, transparent); text-align: center; }
+.provider-empty-icon { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 6px; border-radius: 15px; background: var(--soft); color: var(--primary); }
+.provider-empty-state strong { font-size: var(--text-body); font-family: var(--font-medium); font-weight: 400; }
+.provider-empty-state p { color: var(--muted-text); font-size: var(--text-caption); }
+.provider-empty-state .primary-button { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; }
 .provider-card { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); }
 /* Everything about a provider sits on one row — name, state, badges and all four actions — so
    the expanded card opens straight onto its models with no band of controls in between. */

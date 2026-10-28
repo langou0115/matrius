@@ -1,4 +1,4 @@
-import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Pencil, Plus, Server, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
@@ -146,8 +146,8 @@ export default function ModelSettingsScreen() {
 
     <section className="settings-section" aria-labelledby="providers-heading">
       <div className="model-section-heading">
-        <div><h2 id="providers-heading">服务商</h2><p className="settings-footnote">一个服务商配置可以包含多个模型。</p></div>
-        <button className="secondary-button" disabled={disabled} onClick={() => editProvider(null)}><Plus size={16} strokeWidth={1.75} aria-hidden="true" />添加服务商</button>
+        <h2 id="providers-heading">服务商</h2>
+        {models.providers.length > 0 && <button className="secondary-button" disabled={disabled} onClick={() => editProvider(null)}><Plus size={16} strokeWidth={1.75} aria-hidden="true" />添加服务商</button>}
       </div>
 
       {models.providers.length ? <div className="provider-list">{models.providers.map((provider) => {
@@ -195,12 +195,16 @@ export default function ModelSettingsScreen() {
             </div> : <p className="provider-empty">还没有添加模型。</p>}
           </div>
         </article>;
-      })}</div> : <p className="settings-footnote">还没有配置服务商。添加服务商后即可获取或手动添加模型。</p>}
+      })}</div> : <div className="provider-empty-state">
+        <span className="provider-empty-icon"><Server size={22} strokeWidth={1.6} aria-hidden="true" /></span>
+        <strong>还没有服务商</strong>
+        <p>添加服务商后，即可获取或手动添加模型。</p>
+        <button className="primary-button" disabled={disabled} onClick={() => editProvider(null)}><Plus size={16} strokeWidth={1.75} aria-hidden="true" />添加服务商</button>
+      </div>}
     </section>
 
     {failure && <p className="model-form-error" role="alert">{failure}</p>}
     {feedback && <p className="settings-footnote" role="status">{feedback}</p>}
-    <p className="settings-footnote">模型请求及目录获取均经本站服务器同源转发，请求内容只发送给你填写的服务商。</p>
 
     {providerForm && <Dialog title={providerFormEditing ? '编辑服务商' : '添加服务商'} onClose={closeProviderForm} className="model-form-dialog">
       <form className="provider-edit-form" onSubmit={(event) => {
