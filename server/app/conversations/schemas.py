@@ -1,7 +1,53 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
+from pydantic_core import PydanticCustomError
+
+
+def _http_url(value: str) -> str:
+    if not value.startswith(("http://", "https://")):
+        # A plain ValueError would put a non-serialisable object in `ctx` and break the
+        # shared 422 handler.
+        raise PydanticCustomError("invalid_url", "URL must use http or https.")
+    return value
+
+
+HttpUrl = Annotated[str, Field(min_length=1, max_length=2_000), AfterValidator(_http_url)]
+
+
+class WebSearchResult(BaseModel):
+    """One source shown under a search step. Snippets stay out of the synced payload."""
+
+    title: str = Field(default="", max_length=300)
+    url: HttpUrl
+    domain: str = Field(default="", max_length=300)
+    rank: int = Field(default=0, ge=0)
+
+
+class WebActivity(BaseModel):
+    """A web search or page read made while composing a reply.
+
+    Shape mirrors the client's `WebActivity`; `process` stays local-only and is rebuilt
+    from `reasoning` plus these entries when the history is opened.
+    """
+
+    id: str = Field(min_length=1, max_length=128)
+    kind: Literal["search", "fetch"]
+    status: Literal["running", "complete", "stopped", "error"]
+    query: str | None = Field(default=None, max_length=500)
+    results: list[WebSearchResult] = Field(default_factory=list, max_length=20)
+    url: HttpUrl | None = None
+    urls: list[HttpUrl] = Field(default_factory=list, max_length=4)
+    title: str | None = Field(default=None, max_length=300)
+    tookMs: int | None = Field(default=None, ge=0)
+    error: str | None = Field(default=None, max_length=1_000)
+    startedAt: int | None = Field(default=None, ge=0)
+    endedAt: int | None = Field(default=None, ge=0)
+
+
+def activities_payload(values: list[WebActivity] | None) -> list[dict[str, Any]] | None:
+    return [value.model_dump(exclude_none=True, exclude_defaults=True) for value in values] if values else None
 
 
 class ReadMarker(BaseModel):
@@ -55,6 +101,7 @@ class MessageCreate(BaseModel):
     error: str | None = Field(default=None, max_length=10_000)
     feedback: Literal["good", "bad"] | None = None
     fileIds: list[uuid.UUID] = Field(default_factory=list)
+    activities: list[WebActivity] = Field(default_factory=list, max_length=50)
 
 
 class MessagePatch(BaseModel):
@@ -66,3 +113,4 @@ class MessagePatch(BaseModel):
     status: Literal["complete", "stopped", "error"] | None = None
     error: str | None = Field(default=None, max_length=10_000)
     feedback: Literal["good", "bad"] | None = None
+    activities: list[WebActivity] | None = Field(default=None, max_length=50)

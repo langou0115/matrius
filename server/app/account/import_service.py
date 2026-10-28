@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.account.schemas import ImportConversation, ImportMessage, ImportReadState, ImportRequest
+from app.conversations.schemas import activities_payload
 from app.errors import invalid
 from app.models import Conversation, ConversationDeletion, Message, UserPreference, UserProfile
 from app.utils import to_ms, utcnow, validate_client_id
@@ -91,6 +92,7 @@ def _message_values(message: ImportMessage) -> dict[str, Any]:
         "quote": message.quote,
         "feedback": message.feedback,
         "reasoning": message.reasoning,
+        "activities": activities_payload(message.activities),
         "thinking_ms": message.thinkingMs,
         "status": "complete" if message.role == "user" else message.status,
         "error": message.error,
@@ -214,6 +216,7 @@ async def _create_conversation(
                 quote=message.quote,
                 feedback=message.feedback,
                 reasoning=message.reasoning,
+                activities=activities_payload(message.activities),
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,
@@ -261,6 +264,7 @@ async def _merge_conversation(
                 quote=message.quote,
                 feedback=message.feedback,
                 reasoning=message.reasoning,
+                activities=activities_payload(message.activities),
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,

@@ -36,7 +36,7 @@ function readSearchResult(value: unknown): WebSearchResult[] {
 }
 /** Tool activity is optional decoration for an already-saved reply. A malformed entry is
     dropped rather than failing the whole workspace load. */
-function readActivities(value: unknown): WebActivity[] | undefined {
+export function readActivities(value: unknown): WebActivity[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const activities: WebActivity[] = [];
   for (const item of value.slice(-50)) {

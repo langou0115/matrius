@@ -1,5 +1,7 @@
+import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
 import type { Conversation, Message } from '@/features/chat/chat-state';
+import { readActivities } from '@/features/workspace/workspace-repository.web';
 import type { PersonalizationPreferences } from '@/features/settings/personalization';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { readLocalValue, writeLocalValue } from '@/core/database/browser-store.web';
@@ -43,6 +45,7 @@ type RemoteMessage = {
   quote?: unknown;
   feedback?: unknown;
   reasoning?: unknown;
+  activities?: unknown;
   thinkingMs?: unknown;
   status?: unknown;
   error?: unknown;
@@ -55,6 +58,7 @@ type ImportMessagePayload = {
   quote?: string;
   feedback?: 'good' | 'bad';
   reasoning?: string;
+  activities?: unknown[];
   thinkingMs?: number;
   status?: 'complete' | 'stopped' | 'error';
   error?: string;
@@ -120,6 +124,7 @@ function toLocalMessage(value: RemoteMessage): Message | null {
   if (typeof id !== 'string' || !id) return null;
   const status = value.status === 'complete' || value.status === 'stopped' || value.status === 'error'
     ? value.status : undefined;
+  const activities = value.role === 'assistant' ? readActivities(value.activities) : undefined;
   return {
     id,
     role: value.role,
@@ -127,6 +132,7 @@ function toLocalMessage(value: RemoteMessage): Message | null {
     ...(typeof value.quote === 'string' ? { quote: value.quote } : {}),
     ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
+    ...(activities ? { activities } : {}),
     ...(typeof value.thinkingMs === 'number' && Number.isFinite(value.thinkingMs) ? { thinkingMs: value.thinkingMs } : {}),
     ...(status ? { status } : {}),
     ...(typeof value.error === 'string' ? { error: value.error } : {}),
@@ -134,6 +140,7 @@ function toLocalMessage(value: RemoteMessage): Message | null {
 }
 
 function toImportMessage(message: Message): ImportMessagePayload {
+  const activities = message.role === 'assistant' ? compactActivities(message.activities) : undefined;
   return {
     id: message.id,
     role: message.role,
@@ -141,6 +148,7 @@ function toImportMessage(message: Message): ImportMessagePayload {
     ...(message.quote ? { quote: message.quote } : {}),
     ...(message.role === 'assistant' && message.feedback ? { feedback: message.feedback } : {}),
     ...(message.reasoning ? { reasoning: message.reasoning } : {}),
+    ...(activities ? { activities } : {}),
     ...(typeof message.thinkingMs === 'number' ? { thinkingMs: message.thinkingMs } : {}),
     ...(message.status && message.status !== 'streaming' ? { status: message.status } : {}),
     ...(message.error ? { error: message.error } : {}),

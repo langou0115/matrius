@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from app.conversations.schemas import ContextSummary
+from app.conversations.schemas import ContextSummary, WebActivity
 
 MemoryType = Literal["identity", "workflow", "voice", "instruction"]
 MemorySource = Literal["manual", "tool", "extracted"]
@@ -65,6 +65,7 @@ class ImportMessage(BaseModel):
     thinkingMs: int | None = Field(default=None, ge=0)
     status: Literal["complete", "stopped", "error"] = "complete"
     error: str | None = Field(default=None, max_length=10_000)
+    activities: list[WebActivity] = Field(default_factory=list, max_length=50)
 
 
 class ImportReadMarker(BaseModel):

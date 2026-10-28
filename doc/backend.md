@@ -142,7 +142,7 @@ PATCH  /api/messages/{id}
 DELETE /api/messages/{id}?baseRevision=
 ```
 
-- 字段：`role`（`user|assistant`）、`content`、`steering`（用户补充消息）、`quote`、`reasoning`、`thinkingMs`、`status`（`complete|stopped|error`）、`error`、`feedback`（`good|bad`）、`fileIds`、服务端 `position`。
+- 字段：`role`（`user|assistant`）、`content`、`steering`（用户补充消息）、`quote`、`reasoning`、`activities`（联网搜索/读取步骤，客户端上传前去掉 snippet/engine）、`thinkingMs`、`status`（`complete|stopped|error`）、`error`、`feedback`（`good|bad`）、`fileIds`、服务端 `position`。
 - `steering=true` 只用于真正注入当前 run 的用户补充/纠正；服务端只接受用户消息上的该标记。`position` 仍按追加顺序分配，客户端加载时依据该标记把消息显示在被插话的助手回复之前。回复正文已开始后发送的消息作为下一轮普通用户消息保存，不带该标记，位置就在已完成的回复之后。
 - `status=streaming` 返回 422；用户消息固定 `complete`。
 - `position` 在锁定会话行后取 `max(position)+1`，多设备并发追加不会重号。

@@ -14,6 +14,7 @@ from app.conversations.schemas import (
     ConversationPatch,
     MessageCreate,
     MessagePatch,
+    activities_payload,
 )
 from app.conversations.serializers import conversation_out, message_out
 from app.db import get_db
@@ -330,6 +331,7 @@ async def create_message(
         quote=payload.quote,
         feedback=payload.feedback,
         reasoning=payload.reasoning,
+        activities=activities_payload(payload.activities),
         thinking_ms=payload.thinkingMs,
         status=status,
         error=payload.error,
@@ -390,6 +392,8 @@ async def update_message(
         if name == "status" and message.role == "user" and payload.status != "complete":
             raise invalid("用户消息状态必须为 complete。")
         setattr(message, _snake(name), fields[name])
+    if "activities" in fields:
+        message.activities = activities_payload(payload.activities)
 
     message.revision += 1
     message.updated_at = utcnow()

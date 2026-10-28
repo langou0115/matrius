@@ -42,6 +42,7 @@ def message_out(message: Message) -> dict[str, Any]:
         "quote": message.quote,
         "feedback": message.feedback,
         "reasoning": message.reasoning,
+        "activities": message.activities,
         "thinkingMs": message.thinking_ms,
         "status": message.status,
         "error": message.error,

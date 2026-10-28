@@ -51,7 +51,8 @@ export type Message = {
   images?: MessageImage[];
   reasoning?: string;
   reasoningActive?: boolean;
-  /** Web tool calls made while composing this reply. Local-only: not part of account sync. */
+  /** Web tool calls made while composing this reply. Synced without snippets; `process`
+      is rebuilt from these plus `reasoning` when cloud history is loaded. */
   activities?: WebActivity[];
   /** Ordered thinking and tool segments, retained in the local workspace. */
   process?: ProcessActivity[];

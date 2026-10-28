@@ -1,3 +1,4 @@
+import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
 import type { ApiRequest } from '@/features/auth/account-sync.web';
 import type { Conversation, Message } from '@/features/chat/chat-state';
@@ -27,6 +28,7 @@ const messageBody = (value: Message) => ({
   thinkingMs: value.thinkingMs ?? null, feedback: value.feedback ?? null,
   status: value.status === 'streaming' ? 'stopped' : value.status ?? 'complete', error: value.error ?? null,
   ...(value.role === 'user' && value.steering ? { steering: true } : {}),
+  ...(value.role === 'assistant' ? { activities: compactActivities(value.activities) } : {}),
 });
 
 /** An account-scoped, memory-only REST repository. It never reads or writes IndexedDB.

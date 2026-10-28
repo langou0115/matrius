@@ -256,3 +256,40 @@ async def test_message_patch_can_clear_optional_fields(client, create_user):
             json={"baseRevision": cleared.json()["revision"], key: None},
         )
         assert invalid.status_code == 422, invalid.text
+
+
+async def test_web_activity_steps_round_trip_and_clear(client, create_user):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+    activities = [{
+        "id": "call-1", "kind": "search", "status": "complete", "query": "资料",
+        "results": [{"title": "A", "url": "https://a.test/x", "domain": "a.test", "rank": 1}],
+        "tookMs": 12,
+    }]
+    created = await _post_message(
+        client, headers, conversation["id"], "assistant", "answer", activities=activities
+    )
+    assert created.status_code == 201, created.text
+    message = created.json()
+    assert message["activities"] == activities
+
+    detail = (await client.get(f"/api/conversations/{conversation['id']}", headers=headers)).json()
+    assert detail["messages"][0]["activities"] == activities
+
+    cleared = await client.patch(
+        f"/api/messages/{message['id']}", headers=headers,
+        json={"baseRevision": message["revision"], "activities": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["activities"] is None
+
+
+async def test_web_activity_urls_must_be_http(client, create_user):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+    response = await _post_message(
+        client, headers, conversation["id"], "assistant", "answer",
+        activities=[{"id": "call-1", "kind": "fetch", "status": "complete",
+                     "url": "javascript:alert(1)"}],
+    )
+    assert response.status_code == 422, response.text
