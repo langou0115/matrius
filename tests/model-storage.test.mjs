@@ -47,6 +47,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     IDBObjectStore.prototype.put = function (...args) { if (this.name === 'messages') messageWrites++; return originalPut.apply(this, args); };
     const next = structuredClone(initial);
     next.chat.conversations[0].messages[0].quote = '引用的原文\n跨段落内容';
+    next.chat.conversations[0].contextSummary = { coveredUntilMessageId: 'u', summary: '早期要点' };
     next.personalization = { customInstructions: '先给结论', aboutName: '小林', occupation: '设计师', aboutMore: '学习编程' };
     next.chat.conversations[0].messages.push({ id: 'a', role: 'assistant', content: 'partial', reasoning: 'visible provider reasoning', thinkingMs: 4200, status: 'streaming', feedback: 'bad',
       activities: [{ id: 'search', kind: 'search', status: 'running', query: 'Python' }],
@@ -62,6 +63,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     assert.equal(messageWrites, 1, 'unchanged user message must not be rewritten');
     const restored = await loadWorkspace();
     assert.equal(restored.data.chat.conversations[0].messages[0].quote, '引用的原文\n跨段落内容', 'quotes survive a database reload');
+    assert.deepEqual(restored.data.chat.conversations[0].contextSummary, { coveredUntilMessageId: 'u', summary: '早期要点' }, 'the rolling summary survives a database reload');
     assert.deepEqual(restored.data.personalization, next.personalization, 'all personalization fields survive reloading from IndexedDB');
     assert.equal(restored.data.chat.conversations[0].messages[1].content, 'partial reply');
     assert.equal(restored.data.chat.conversations[0].messages[1].status, 'stopped');

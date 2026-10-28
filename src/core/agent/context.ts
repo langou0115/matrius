@@ -35,7 +35,7 @@ export function buildSteeringMessage(message: Message): AgentMessage {
   return { role: 'user', content: images.length ? [...images, { type: 'text' as const, text }] : text, timestamp: Date.now() };
 }
 
-function getFeedbackText(message: Message): string {
+export function getFeedbackText(message: Message): string {
   if (message.role !== 'assistant' || !message.feedback) return '';
   return message.feedback === 'good'
     ? '用户对紧接上一条助手回复的反馈：赞（有帮助）。后续回答请参考这一反馈；用户没有提供更具体的原因。'
@@ -51,13 +51,29 @@ export function buildRetryHistory(messages: Message[]): Message[] {
   return [...history, { id: `retry-${last.id}`, role: 'user', content: '请结合我对上一条回复的反馈，重新回答之前的问题。' }];
 }
 
+// An interrupted reply must close its turn. Saying only "not finished" invites the model to
+// resume the abandoned task, so the note also states that the next user message is a new request.
+const INCOMPLETE_REPLY_NOTE = '[这条回复没有正常完成，未完成部分已作废；后续用户消息是新的独立请求。除非用户明确要求继续或重做，否则不要续写或补全这条回复。]';
+const STOPPED_EMPTY_REPLY = '[用户已终止这条回复，回答未完成且没有生成正文；后续用户消息是新的独立请求。除非用户明确要求继续或重做，否则不要补全这条回复。]';
+
+/** Keep compaction and context assembly on exactly the same set of visible messages. */
+export function isContextMessage(message: Message): boolean {
+  if (message.role === 'assistant') {
+    // An empty failed placeholder carries no content; an empty stopped reply still closes its turn.
+    if (message.status === 'error' && !message.content.trim()) return false;
+    if (message.status === 'stopped') return true;
+  }
+  return Boolean(message.content.trim() || message.quote?.trim() || message.images?.length);
+}
+
 export function buildContext(messages: Message[], config: ModelConfig): AgentMessage[] {
   const model = createAgentModel(config);
   const context: AgentMessage[] = [];
-  for (const message of withoutFailedReplies(messages).filter((message) => message.content.trim() || message.quote?.trim() || message.images?.length)) {
+  for (const message of messages.filter(isContextMessage)) {
     if (message.role === 'assistant') {
       const content = message.status === 'stopped' || message.status === 'error'
-        ? `${message.content}\n\n[这条回复在此中断，尚未完成。]` : message.content;
+        ? (message.content.trim() ? `${message.content}\n\n${INCOMPLETE_REPLY_NOTE}` : STOPPED_EMPTY_REPLY)
+        : message.content;
       context.push({ role: 'assistant', content: [{ type: 'text', text: content }], api: model.api, provider: model.provider, model: model.id,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'stop', timestamp: Date.now() });
@@ -73,11 +89,53 @@ export function buildContext(messages: Message[], config: ModelConfig): AgentMes
   return context;
 }
 
-export function validateAgentRequest(config: ModelConfig, apiKey: string, messages: Message[], systemPrompt: string): string | null {
+/** Reserved for output/rounding; compaction keeps the same headroom so its result also validates. */
+export const CONTEXT_SAFETY_TOKENS = 2048;
+const MESSAGE_OVERHEAD_TOKENS = 8;
+// Provider image tokenization is model-specific. Reserve a full-size image rather than guessing.
+const IMAGE_TOKENS = 4096;
+
+/**
+ * Conservative estimate: ASCII is about four characters per token, while CJK, emoji and
+ * other non-ASCII text cost up to 1.5 tokens per character. UTF-8 byte length is the proxy.
+ */
+export function estimateTextTokens(text: string): number {
+  let ascii = 0;
+  let wide = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) ascii++;
+    else if (code < 0x800) wide += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length
+      && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) { wide += 4; index++; }
+    else wide += 3;
+  }
+  return Math.ceil(ascii / 4 + wide / 2);
+}
+
+export function estimateMessageTokens(message: Message): number {
+  const body = message.role === 'user' ? getRequestText(message) : message.content;
+  const incomplete = message.role === 'assistant' && (message.status === 'stopped' || message.status === 'error') ? 40 : 0;
+  return MESSAGE_OVERHEAD_TOKENS + estimateTextTokens(body) + estimateTextTokens(getFeedbackText(message)) + incomplete
+    + (message.images?.length ?? 0) * IMAGE_TOKENS;
+}
+
+export function estimateContextTokens(messages: Message[], systemPrompt: string): number {
+  return estimateTextTokens(systemPrompt) + messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+}
+
+export function validateContextSize(config: Pick<ModelConfig, 'contextWindow' | 'maxOutput'>, messages: Message[], systemPrompt: string): string | null {
+  const reservedOutput = Math.min(config.maxOutput, Math.floor(config.contextWindow * 0.5));
+  const size = estimateContextTokens(withoutFailedReplies(messages), systemPrompt);
+  return size > config.contextWindow - reservedOutput - CONTEXT_SAFETY_TOKENS
+    ? '对话可能超出上下文窗口，请新建对话或在模型设置中调整窗口。' : null;
+}
+
+export function validateAgentRequest(config: ModelConfig, apiKey: string, messages: Message[], systemPrompt: string, checkContext = true): string | null {
   const history = withoutFailedReplies(messages);
   if (!config.supportsImage && history.some((message) => message.images?.length)) return '当前模型不支持此对话中的图片，请切换支持图片的模型。';
   if (config.requiresApiKey && !apiKey) return '请在模型服务中填写当前服务商的 API key。';
-  // Conservative character estimate; reserve output and system prompt space, and count an image as 4000 characters.
-  const size = history.reduce((sum, message) => sum + getRequestText(message).length + getFeedbackText(message).length + (message.images?.length ?? 0) * 4000 + 32, systemPrompt.length);
-  return size > config.contextWindow - config.maxOutput - 256 ? '对话可能超出上下文窗口，请新建对话或在模型设置中调整窗口。' : null;
+  // The runtime checks the size only after silent compaction; standalone callers can still
+  // validate the raw history synchronously.
+  return checkContext ? validateContextSize(config, history, systemPrompt) : null;
 }

@@ -1,3 +1,4 @@
+import type { ConversationSummary } from '@/core/agent/compaction';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import type { PersonalizationPreferences } from '@/features/settings/personalization';
 import type { AppearancePreferences } from '@/theme/appearance';
@@ -29,6 +30,7 @@ type RemoteConversation = {
   pinned?: unknown;
   modelId?: unknown;
   titleSource?: unknown;
+  contextSummary?: unknown;
   updatedAt?: unknown;
   readState?: { completed?: RemoteReadMarker; error?: RemoteReadMarker };
 };
@@ -65,6 +67,7 @@ type ImportConversationPayload = {
   updatedAt: number;
   modelId?: string;
   titleSource?: 'auto' | 'ai' | 'manual';
+  contextSummary?: ConversationSummary;
   readState?: { completed: ImportReadMarker; error: ImportReadMarker };
   messages: ImportMessagePayload[];
 };
@@ -95,6 +98,13 @@ function markerValue(marker: RemoteReadMarker | undefined): number | null | unde
   if (marker?.state === 'unread') return null;
   if (marker?.state === 'absent') return undefined;
   return undefined;
+}
+
+/** Summaries are derived context: ignore malformed copies instead of failing the whole pull. */
+function readContextSummary(value: unknown): ConversationSummary | undefined {
+  if (!isRecord(value) || typeof value.coveredUntilMessageId !== 'string' || !value.coveredUntilMessageId
+    || typeof value.summary !== 'string' || !value.summary.trim()) return undefined;
+  return { coveredUntilMessageId: value.coveredUntilMessageId, summary: value.summary };
 }
 
 function readMarker(value: number | null | undefined): ImportReadMarker {
@@ -145,6 +155,7 @@ function conversationPayload(conversation: Conversation, includeReadState: boole
     updatedAt: conversation.updatedAt,
     ...(conversation.modelId ? { modelId: conversation.modelId } : {}),
     ...(conversation.titleSource ? { titleSource: conversation.titleSource } : {}),
+    ...(conversation.contextSummary ? { contextSummary: conversation.contextSummary } : {}),
     ...(includeReadState ? {
       readState: {
         completed: readMarker(conversation.completedReadAt),
@@ -294,8 +305,10 @@ function remoteConversationToLocal(
   const remoteTitleSource = remote.titleSource === 'auto' || remote.titleSource === 'ai' || remote.titleSource === 'manual'
     ? remote.titleSource : undefined;
   const remoteModelId = typeof remote.modelId === 'string' ? remote.modelId : undefined;
+  const remoteContextSummary = readContextSummary(remote.contextSummary);
   const titleSource = base ? base.titleSource : remoteTitleSource;
   const modelId = base ? base.modelId : remoteModelId;
+  const contextSummary = base ? base.contextSummary : remoteContextSummary;
   const completed = base ? base.completedReadAt : markerValue(remote.readState?.completed);
   const error = base ? base.errorReadAt : markerValue(remote.readState?.error);
 
@@ -310,6 +323,7 @@ function remoteConversationToLocal(
     updatedAt: Math.max(local?.updatedAt ?? 0, remote.updatedAt),
     ...(modelId ? { modelId } : {}),
     ...(titleSource ? { titleSource } : {}),
+    ...(contextSummary ? { contextSummary } : {}),
     ...(completed !== undefined ? { completedReadAt: completed } : {}),
     ...(error !== undefined ? { errorReadAt: error } : {}),
     messages,

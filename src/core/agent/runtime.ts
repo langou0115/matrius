@@ -1,7 +1,8 @@
 import type { AgentTool } from '@mariozechner/pi-agent-core';
 
 import type { ModelConfig } from '@/core/llm/model-config';
-import { validateAgentRequest } from './context';
+import { validateAgentRequest, validateContextSize } from './context';
+import type { ConversationSummary } from './compaction';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import type { ThinkingEffort } from './thinking-effort';
 import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, WebActivity } from './types';
@@ -15,6 +16,8 @@ export type AgentRequest = {
   apiKey: string;
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
+  /** Rolling summary persisted with the conversation; empty means no earlier history is summarized. */
+  contextSummary?: ConversationSummary;
   /** Cloud tools available to this run; omitted or empty keeps the text-only local mode. */
   tools?: AgentTool[];
 };
@@ -35,12 +38,18 @@ function settleProcess(process: ProcessActivity[] | undefined, stopped: boolean)
 
 type RuntimeOptions = {
   onReply: (conversationId: string, message: Message) => void;
+  /** Persists the rolling summary, or clears it when compaction no longer applies. */
+  onSummary?: (conversationId: string, summary: ConversationSummary | undefined) => void;
   /** The default lazily loads pi-agent. Other clients/tests can supply a compatible runner. */
   loadRunner?: () => Promise<{ createReplyRun: typeof createReplyRun }>;
+  /** The default lazily loads silent history compaction. */
+  loadCompactor?: () => Promise<{ prepareHistory: typeof import('./compaction').prepareHistory }>;
 };
 
 /** Platform-independent runtime: one active request per conversation, no React, storage or DOM. */
-export function createAgentRuntime({ onReply, loadRunner = () => import('./runner') }: RuntimeOptions) {
+export function createAgentRuntime({
+  onReply, onSummary, loadRunner = () => import('./runner'), loadCompactor = () => import('./compaction'),
+}: RuntimeOptions) {
   let snapshot: RuntimeSnapshot = { runs: {}, error: null };
   const listeners = new Set<() => void>();
   // Keyed by conversation: separate chats run concurrently, while a chat cannot start twice.
@@ -79,9 +88,11 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       snapshot = { runs: {}, error: null };
       listeners.clear();
     },
-    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), tools }: AgentRequest): boolean {
+    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), contextSummary, tools }: AgentRequest): boolean {
       if (disposed || active.has(conversationId)) return false;
-      const error = config ? validateAgentRequest(config, apiKey, messages, systemPrompt) : '请先在设置 → 模型服务中添加并选择模型。';
+      // The size check runs after silent compaction, so an over-window history can still be
+      // reduced instead of failing before the request starts.
+      const error = config ? validateAgentRequest(config, apiKey, messages, systemPrompt, false) : '请先在设置 → 模型服务中添加并选择模型。';
       if (error || !config) { update({ error }); return false; }
       // Freeze the request so subsequent UI/model edits apply to the next run only.
       const requestConfig = { ...config };
@@ -90,6 +101,9 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       let latest: Message = { id: replyId, role: 'assistant', content: '', status: 'streaming' };
       let run: ReturnType<typeof createReplyRun> | undefined;
       let cancelled = false;
+      // A silent compaction request belongs to this run: stopping the reply also stops the
+      // auxiliary model call instead of letting it finish in the background.
+      const runAbort = new AbortController();
       // Steering can arrive before the lazy-loaded runner exists; queue it against the run.
       let pendingSteers: Message[] = [];
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -99,7 +113,7 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
         if (!disposed) onReply(conversationId, { ...latest });
       };
       const marker: ActiveRun = {
-        abort() { cancelled = true; pendingSteers = []; run?.abort(); },
+        abort() { cancelled = true; pendingSteers = []; runAbort.abort(); run?.abort(); },
         steer(message: Message): SteerOutcome {
           if (cancelled) return false;
           if (!run) { pendingSteers.push(message); return 'steered'; }
@@ -110,13 +124,29 @@ export function createAgentRuntime({ onReply, loadRunner = () => import('./runne
       update({ runs: { ...snapshot.runs, [conversationId]: { conversationId, replyId, startedAt } }, error: null });
 
       // Defer all runner work until the caller has recorded the outgoing user message.
-      void Promise.resolve().then(loadRunner).then(async ({ createReplyRun }) => {
+      void Promise.all([loadRunner(), loadCompactor()]).then(async ([{ createReplyRun }, { prepareHistory }]) => {
         if (cancelled) return { status: 'stopped' as const };
-        run = createReplyRun({ config: requestConfig, apiKey, messages: history, thinkingEffort, systemPrompt, tools, onUpdate(value) {
-          if (disposed || cancelled) return;
-          latest = { ...latest, ...value, thinkingMs: Math.max(0, Date.now() - startedAt) };
-          if (!timer) timer = setTimeout(flush, 50);
-        } });
+        const prepared = await prepareHistory({
+          messages: history, config: requestConfig, apiKey, systemPrompt,
+          ...(contextSummary ? { previous: contextSummary } : {}),
+          signal: runAbort.signal,
+        });
+        if (cancelled) return { status: 'stopped' as const };
+        // Persist the coverage marker with the conversation so a reload resumes from the same
+        // point. `undefined` clears a summary that no longer matches the stored history.
+        if (onSummary && JSON.stringify(prepared.summary) !== JSON.stringify(contextSummary)) {
+          onSummary(conversationId, prepared.summary);
+        }
+        const overflow = validateContextSize(requestConfig, prepared.messages, prepared.systemPrompt);
+        if (overflow) return { status: 'error' as const, error: overflow };
+        run = createReplyRun({
+          config: requestConfig, apiKey, messages: prepared.messages, thinkingEffort,
+          systemPrompt: prepared.systemPrompt, tools, onUpdate(value) {
+            if (disposed || cancelled) return;
+            latest = { ...latest, ...value, thinkingMs: Math.max(0, Date.now() - startedAt) };
+            if (!timer) timer = setTimeout(flush, 50);
+          },
+        });
         // Injected before `start()`, so pi-agent sees them before the first model call.
         for (const message of pendingSteers) run.steer(message);
         pendingSteers = [];

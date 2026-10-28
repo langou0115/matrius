@@ -6,8 +6,9 @@ import { workspaceScope } from '../src/features/workspace/workspace-mode.ts';
 
 const profile = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' };
 const appearance = { themeId: 'twitter', mode: 'system' };
+const contextSummary = { coveredUntilMessageId: 'old-client-m', summary: '云端摘要' };
 const conversation = { id: 'server-c', clientId: 'old-client-c', revision: 3, title: 'Cloud only', pinned: false,
-  updatedAt: 20, readState: { completed: { state: 'unread' }, error: { state: 'absent' } } };
+  contextSummary, updatedAt: 20, readState: { completed: { state: 'unread' }, error: { state: 'absent' } } };
 const message = { id: 'server-m', clientId: 'old-client-m', revision: 4, role: 'assistant', content: 'cloud reply', status: 'complete', feedback: 'good' };
 function fixture({ fail } = {}) {
   const calls = [];
@@ -59,6 +60,7 @@ test('cloud reads only REST, retains imported identities, and unchanged data cau
   assert.equal(data.chat.conversations[0].messages[0].id, 'old-client-m');
   assert.equal(data.chat.conversations[0].completedReadAt, null);
   assert.equal(data.chat.conversations[0].messages[0].content, 'cloud reply');
+  assert.deepEqual(data.chat.conversations[0].contextSummary, contextSummary);
   calls.length = 0;
   await repo.save(data);
   assert.deepEqual(calls, []);
@@ -70,6 +72,7 @@ test('cloud edits, streaming, feedback removal and preferences use REST revision
   calls.length = 0;
   const c = data.chat.conversations[0];
   c.title = 'Renamed';
+  c.contextSummary = { coveredUntilMessageId: 'old-client-m', summary: '更新后的摘要' };
   c.messages[0].content = 'partial reply';
   c.messages[0].status = 'streaming';
   delete c.messages[0].feedback;
@@ -80,7 +83,9 @@ test('cloud edits, streaming, feedback removal and preferences use REST revision
   assert.equal(patch.body.baseRevision, 4);
   assert.equal(patch.body.feedback, null);
   assert.equal(patch.body.status, 'stopped', 'reload never restores a live stream');
-  assert.equal(calls.find((call) => call.path === '/api/conversations/server-c').body.baseRevision, 3);
+  const conversationPatch = calls.find((call) => call.path === '/api/conversations/server-c').body;
+  assert.equal(conversationPatch.baseRevision, 3);
+  assert.deepEqual(conversationPatch.contextSummary, c.contextSummary, 'the rolling summary syncs with metadata');
   assert.equal(calls.find((call) => call.path === '/api/preferences').body.baseRevision, 2);
   assert.equal(calls.find((call) => call.path === '/api/profile').body.baseRevision, 5);
   assert.ok(calls.every((call) => !call.path.includes('/import')));

@@ -1,4 +1,5 @@
 import { readWorkspace } from '@/core/database/browser-store.web';
+import type { ConversationSummary } from '@/core/agent/compaction';
 import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
 import { orderSteeringMessages } from '@/features/chat/message-order';
@@ -102,14 +103,22 @@ function readMessage(value: unknown): Message {
       : typeof value.error === 'string' ? { error: value.error } : {}),
   };
 }
+/** A summary is a cache of derived context: malformed or stale data is dropped and rebuilt. */
+function readContextSummary(value: unknown): ConversationSummary | undefined {
+  if (!isRecord(value) || typeof value.coveredUntilMessageId !== 'string' || !value.coveredUntilMessageId
+    || typeof value.summary !== 'string' || !value.summary.trim()) return undefined;
+  return { coveredUntilMessageId: value.coveredUntilMessageId, summary: value.summary };
+}
 function readConversation(value: unknown): Conversation {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.pinned !== 'boolean' || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) || !Array.isArray(value.messages)) throw new Error('Invalid stored conversation');
   if (value.errorReadAt !== undefined && value.errorReadAt !== null && (typeof value.errorReadAt !== 'number' || !Number.isFinite(value.errorReadAt))) throw new Error('Invalid stored conversation error status');
   if (value.completedReadAt !== undefined && value.completedReadAt !== null && (typeof value.completedReadAt !== 'number' || !Number.isFinite(value.completedReadAt))) throw new Error('Invalid stored conversation completion status');
   const titleSource = value.titleSource === 'auto' || value.titleSource === 'ai' || value.titleSource === 'manual' ? value.titleSource : undefined;
+  const contextSummary = readContextSummary(value.contextSummary);
   return { id: value.id, title: value.title, pinned: value.pinned, updatedAt: value.updatedAt,
     ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
     ...(titleSource ? { titleSource } : {}),
+    ...(contextSummary ? { contextSummary } : {}),
     messages: orderSteeringMessages(value.messages.map(readMessage)),
     ...(value.errorReadAt !== undefined ? { errorReadAt: value.errorReadAt as number | null } : {}),
     ...(value.completedReadAt !== undefined ? { completedReadAt: value.completedReadAt as number | null } : {}) };

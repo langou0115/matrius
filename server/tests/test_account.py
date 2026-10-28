@@ -85,6 +85,10 @@ async def test_import_is_idempotent(client, create_user):
                     "id": conversation_id,
                     "title": "Imported",
                     "updatedAt": 1760000000000,
+                    "contextSummary": {
+                        "coveredUntilMessageId": "older-message",
+                        "summary": "Imported rolling summary",
+                    },
                     "messages": [
                         {"id": str(uuid.uuid4()), "role": "user", "content": "hi"},
                         {"id": str(uuid.uuid4()), "role": "assistant", "content": "hello"},
@@ -113,6 +117,10 @@ async def test_import_is_idempotent(client, create_user):
     listing = (await client.get("/api/conversations", headers=headers)).json()
     assert len(listing["items"]) == 1
     assert listing["items"][0]["clientId"] == conversation_id
+    assert listing["items"][0]["contextSummary"] == {
+        "coveredUntilMessageId": "older-message",
+        "summary": "Imported rolling summary",
+    }
 
     preferences = (await client.get("/api/preferences", headers=headers)).json()
     assert preferences["themeId"] == "catppuccin"

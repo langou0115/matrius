@@ -12,7 +12,7 @@ import { buildSystemPrompt } from '@/core/agent/system-prompt';
 import { protectBrowserRun } from '@/core/platform/run-protection.web';
 import { useAuth } from '@/features/auth/auth-state.web';
 import { useNetworkTools } from '@/features/auth/network-tools-state.web';
-import { deriveConversationTitle, useChat, type Message, type MessageImage } from './chat-state';
+import { deriveConversationTitle, useChat, type Conversation, type Message, type MessageImage } from './chat-state';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 // Stable empty value so rendering never sees a fresh array on every call.
@@ -73,6 +73,8 @@ function useRuntime() {
   }
   // eslint-disable-next-line react-hooks/refs -- the callback reads these refs when a reply arrives, not during render
   const [agent] = useState(() => createAgentRuntime({
+    // Compaction is invisible, so the summary only travels into the conversation record.
+    onSummary: (conversationId, summary) => dispatch({ type: 'context-summary', conversationId, summary }),
     onReply: (conversationId, message) => {
       dispatch({ type: 'reply', conversationId, message });
       // The first title attempt may have failed with the first reply. `titleSource` stays
@@ -111,7 +113,8 @@ function useRuntime() {
 
   // A conversation keeps the model it was started with. If that model has since been removed,
   // fall back to the most recently used one instead of failing the request.
-  const start = useCallback((conversationId: string, history: Message[], replyId: string, modelId?: string) => {
+  const start = useCallback((conversationId: string, history: Message[], replyId: string, modelId?: string,
+    contextSummary?: Conversation['contextSummary']) => {
     const config = pickModel(models, modelId);
     // Cloud tools require a usable account. The server enforces the same rule; this keeps an
     // anonymous or not-yet-ready session from advertising tools the model cannot call.
@@ -119,6 +122,7 @@ function useRuntime() {
       && networkTools.ready && networkTools.enabled);
     const started = agent.start({
       conversationId, replyId, messages: history, config,
+      ...(contextSummary ? { contextSummary } : {}),
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
       // Thinking depth belongs to the model, so the bound model carries its own depth.
       thinkingEffort: config?.thinkingEffort ?? 'default',
@@ -197,7 +201,8 @@ function useRuntime() {
       pendingSends.current.delete(conversationId);
       changed = true;
       const replyId = createId();
-      const config = start(conversationId, [...conversation.messages, ...pending], replyId, conversation.modelId);
+      const config = start(conversationId, [...conversation.messages, ...pending], replyId, conversation.modelId,
+        conversation.contextSummary);
       for (const message of pending) dispatch({ type: 'append-user', conversationId, message });
       if (config) dispatch({ type: 'reply', conversationId, message: { id: replyId, role: 'assistant', content: '', status: 'streaming' } });
     }
@@ -228,7 +233,8 @@ function useRuntime() {
       const message: Message = { id: createId(), role: 'user', content, ...(images.length ? { images } : {}), ...(quote?.trim() ? { quote: quote.trim() } : {}) };
       // start schedules work on a microtask; dispatch user before any reply update.
       // Keep the user's question and partial reply available for follow-ups such as “continue”.
-      const config = start(conversationId, [...(current?.messages ?? []), ...queued, message], createId(), current?.modelId);
+      const config = start(conversationId, [...(current?.messages ?? []), ...queued, message], createId(),
+        current?.modelId, current?.contextSummary);
       if (!config) return false;
       if (existingId === null) newConversationLock.current = true;
       if (queued.length) {
@@ -275,7 +281,7 @@ function useRuntime() {
       if ((last.role === 'assistant' ? conversation.messages.at(-2) : last)?.role !== 'user') return;
       const history = buildRetryHistory(conversation.messages);
       const replyId = last.role === 'assistant' ? last.id : createId();
-      const config = start(conversationId, history, replyId, conversation.modelId);
+      const config = start(conversationId, history, replyId, conversation.modelId, conversation.contextSummary);
       if (config) dispatch({ type: 'reply', conversationId,
         message: { id: replyId, role: 'assistant', content: '', status: 'streaming' } });
       if (config && conversation.modelId !== config.id) dispatch({ type: 'bind-model', conversationId, modelId: config.id });

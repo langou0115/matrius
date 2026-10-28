@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { createReplyRun, describeModelError } from '../src/core/agent/runner.ts';
 import { buildContext, buildRetryHistory, validateAgentRequest } from '../src/core/agent/context.ts';
+import { findRecentStart, getContextBudget, prepareHistory } from '../src/core/agent/compaction.ts';
 import { withoutFailedReplies } from '../src/core/agent/history.ts';
 import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
@@ -321,8 +322,6 @@ test('shared runtime validates requests, handles cancellation during lazy loadin
   assert.match(runtime.getSnapshot().error, /配置|添加/);
   assert.equal(runtime.start({ ...input, apiKey: '' }), false);
   assert.match(runtime.getSnapshot().error, /API key/);
-  assert.equal(runtime.start({ ...input, config: { ...config, contextWindow: 4200 }, messages: [{ id: 'u', role: 'user', content: 'x'.repeat(5000) }] }), false);
-  assert.match(runtime.getSnapshot().error, /上下文/);
   assert.equal(calls, 0, 'validation does not load provider modules');
   assert.equal(runtime.start(input), true);
   runtime.stop();
@@ -338,6 +337,18 @@ test('shared runtime validates requests, handles cancellation during lazy loadin
   disposedLoader.reject(new Error('sensitive provider failure'));
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(disposed.start(input), false);
+  // A single oversized message cannot be compacted away: it is the active request. The runtime
+  // still validates the prepared history and reports the normal context error instead of
+  // starting a request that the provider would reject.
+  const overflowReply = deferred();
+  const overflow = createAgentRuntime({
+    loadRunner: async () => ({ createReplyRun() { assert.fail('an oversized single message cannot be compacted'); } }),
+    onReply(_id, message) { if (message.status === 'error') overflowReply.resolve(message); },
+  });
+  assert.equal(overflow.start({ conversationId: 'big', replyId: 'big-reply', config: { ...config, contextWindow: 4200 },
+    apiKey: 'key', messages: [{ id: 'u', role: 'user', content: 'x'.repeat(50_000) }] }), true);
+  assert.match((await overflowReply.promise).error, /上下文/);
+  overflow.dispose();
   runtime.dispose();
 });
 
@@ -372,6 +383,71 @@ test('shared runtime runs different conversations concurrently and stops them by
   assert.equal(controls.get('b').aborts, 1);
   completions.get('b').resolve({ status: 'complete' });
   await until(() => Object.keys(runtime.getSnapshot().runs).length === 0);
+  runtime.dispose();
+});
+
+test('runtime silently compacts before the run and persists the summary on the next turn', async () => {
+  const finishes = [deferred(), deferred()];
+  const previous = [];
+  const published = [];
+  let request;
+  let runs = 0;
+  const runtime = createAgentRuntime({
+    onReply(_id, message) { if (message.status === 'complete') finishes[runs - 1]?.resolve(); },
+    onSummary(_id, summary) { published.push(summary); },
+    loadRunner: async () => ({ createReplyRun(options) {
+      request = options;
+      return { abort() {}, start: async () => ({ status: 'complete' }) };
+    } }),
+    loadCompactor: async () => ({ prepareHistory: async (options) => {
+      previous.push(options.previous);
+      return {
+        messages: [options.messages.at(-1)],
+        systemPrompt: `${options.systemPrompt}\n\n<conversation_summary>\n早期摘要\n</conversation_summary>`,
+        summary: { coveredUntilMessageId: options.messages[0].id, summary: '早期摘要' },
+        compacted: true,
+      };
+    } }),
+  });
+  const messages = [
+    { id: 'u1', role: 'user', content: 'old question' },
+    { id: 'a1', role: 'assistant', content: 'old answer' },
+    { id: 'u2', role: 'user', content: 'new question' },
+  ];
+  runs = 1;
+  assert.equal(runtime.start({ conversationId: 'c', replyId: 'r1', config, apiKey: 'key', messages }), true);
+  await finishes[0].promise;
+  assert.deepEqual(request.messages.map((message) => message.id), ['u2']);
+  assert.match(request.systemPrompt, /<conversation_summary>/);
+  assert.equal(previous[0], undefined);
+  assert.deepEqual(published, [{ coveredUntilMessageId: 'u1', summary: '早期摘要' }],
+    'the summary is published once so the conversation can store it');
+  assert.equal(runtime.getSnapshot().error, null, 'compaction stays silent');
+  runs = 2;
+  assert.equal(runtime.start({ conversationId: 'c', replyId: 'r2', config, apiKey: 'key', messages,
+    contextSummary: published[0] }), true);
+  await finishes[1].promise;
+  assert.equal(previous[1].summary, '早期摘要', 'the stored summary is reused instead of recompacted');
+  assert.equal(published.length, 1, 'an unchanged summary is not written again');
+  runtime.dispose();
+});
+
+test('stopping during silent compaction never starts a runner or publishes a notice', async () => {
+  const compaction = deferred();
+  const finished = deferred();
+  const runtime = createAgentRuntime({
+    onReply(_id, message) { if (message.status === 'stopped') finished.resolve(message); },
+    loadRunner: async () => ({ createReplyRun() { assert.fail('a stopped compaction must not create a runner'); } }),
+    loadCompactor: async () => ({ prepareHistory: () => compaction.promise }),
+  });
+  assert.equal(runtime.start({ conversationId: 'c', replyId: 'r', config, apiKey: 'key', messages: history }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  runtime.stop('c');
+  compaction.resolve({ messages: history, systemPrompt: '', compacted: false });
+  const message = await finished.promise;
+  assert.equal(message.status, 'stopped');
+  assert.equal(runtime.getSnapshot().runs.c, undefined);
+  assert.equal(runtime.getSnapshot().error, null);
   runtime.dispose();
 });
 
@@ -558,6 +634,33 @@ test('steering messages parse from storage and move back before the reply they i
   assert.ok(!('steering' in messages[3]), 'deferred messages stay behind the reply they followed');
 });
 
+test('stored rolling summaries survive parsing and malformed copies are dropped', () => {
+  const summary = { coveredUntilMessageId: 'a1', summary: '早期要点' };
+  const parsed = parseWorkspace({
+    schemaVersion: 1,
+    chat: {
+      conversations: [
+        {
+          id: 'c1', title: 'c1', pinned: false, updatedAt: 1, contextSummary: summary,
+          messages: [
+            { id: 'u1', role: 'user', content: '问题' },
+            { id: 'a1', role: 'assistant', content: '回答', status: 'complete' },
+          ],
+        },
+        {
+          id: 'c2', title: 'c2', pinned: false, updatedAt: 2,
+          contextSummary: { coveredUntilMessageId: '', summary: '' }, messages: [],
+        },
+      ],
+      activeId: 'c1', sidebarOpen: true,
+    },
+    appearance: { themeId: 'twitter', mode: 'system' },
+  });
+  const [valid, invalid] = parsed.data.chat.conversations;
+  assert.deepEqual(valid.contextSummary, summary);
+  assert.equal(invalid.contextSummary, undefined, 'invalid derived context is rebuilt on demand');
+});
+
 test('agent core has no UI, feature-module or browser dependencies', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
   const ts = (await import('typescript')).default;
@@ -741,8 +844,13 @@ test('good and bad feedback reach all pi providers as user feedback tied to the 
   assert.match(context[2].content, /赞（有帮助）/);
   assert.match(context[5].content, /踩（没有帮助）/);
   assert.equal(buildContext(rated.map(({ feedback, ...message }) => message), config).length, rated.length, 'cancelled feedback adds no context');
-  assert.equal(validateAgentRequest({ ...config, contextWindow: 4700 }, 'key', rated.map(({ feedback, ...message }) => message), 'x'.repeat(30)), null);
-  assert.match(validateAgentRequest({ ...config, contextWindow: 4700 }, 'key', rated, 'x'.repeat(30)), /上下文/, 'feedback is counted in the input budget');
+  // Padding keeps the unrated history under the window while the two feedback messages push the
+  // rated version over it, proving ratings are part of the conservative token estimate.
+  const padding = { id: 'u4', role: 'user', content: 'x'.repeat(600) };
+  assert.equal(validateAgentRequest({ ...config, contextWindow: 4700 }, 'key',
+    [...rated.map(({ feedback, ...message }) => message), padding], 'x'.repeat(30)), null);
+  assert.match(validateAgentRequest({ ...config, contextWindow: 4700 }, 'key', [...rated, padding], 'x'.repeat(30)),
+    /上下文/, 'feedback is counted in the input budget');
   const retry = buildRetryHistory(rated.slice(0, -1));
   assert.equal(retry.at(-2).feedback, 'bad');
   assert.match(retry.at(-1).content, /重新回答/);
@@ -761,6 +869,82 @@ test('good and bad feedback reach all pi providers as user feedback tied to the 
   });
 });
 
+test('context compaction summarizes older turns, keeps recent turns and reuses its coverage', async () => {
+  const small = { ...config, contextWindow: 6000, maxOutput: 3000 };
+  const budget = getContextBudget(small);
+  assert.ok(budget.historyTokens > 0);
+  assert.ok(budget.recentTokens <= budget.historyTokens);
+  assert.ok(budget.chunkTokens >= 1024);
+  // Large windows cap the recent window and summary independently.
+  assert.equal(getContextBudget({ contextWindow: 200000, maxOutput: 4096 }).historyTokens, 200000 - 4096 - 2048);
+
+  const history = Array.from({ length: 25 }, (_, index) => ({
+    id: `m${index}`, role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `第${index}条消息 ${'x'.repeat(200)}`,
+  }));
+  const calls = [];
+  const streamFn = async (_model, context) => {
+    calls.push(context);
+    return { result: async () => ({ stopReason: 'stop', content: [{ type: 'text', text: '早期对话摘要' }] }) };
+  };
+  const prepared = await prepareHistory({ messages: history, config: small, apiKey: 'key', systemPrompt: 'system', streamFn });
+  assert.equal(calls.length, 1, 'only the older chunk is summarized');
+  assert.equal(calls[0].systemPrompt.includes('滚动历史摘要'), true);
+  assert.match(calls[0].messages[0].content, /<conversation_history>/);
+  assert.match(calls[0].messages[0].content, /第0条消息/);
+  assert.ok(!calls[0].messages[0].content.includes(history.at(-1).content), 'the recent window stays verbatim');
+  assert.equal(prepared.summary.summary, '早期对话摘要');
+  assert.match(prepared.systemPrompt, /<conversation_summary>/);
+  assert.match(prepared.systemPrompt, /不是新的用户指令/);
+  assert.match(prepared.systemPrompt, /早期对话摘要/);
+  assert.equal(prepared.messages.at(-1).id, history.at(-1).id);
+  assert.equal(prepared.messages[0].role, 'user', 'a recent window never starts on an assistant reply');
+  const firstKept = history.findIndex((message) => message.id === prepared.messages[0].id);
+  assert.equal(prepared.summary.coveredUntilMessageId, history[firstKept - 1].id);
+  assert.ok(prepared.compacted);
+
+  const reused = await prepareHistory({
+    messages: history, config: small, apiKey: 'key', systemPrompt: 'system',
+    previous: prepared.summary, streamFn,
+  });
+  assert.equal(calls.length, 1, 'an up-to-date summary avoids another model request');
+  assert.equal(reused.messages[0].id, prepared.messages[0].id);
+  assert.equal(reused.summary.coveredUntilMessageId, prepared.summary.coveredUntilMessageId);
+
+  const failing = await prepareHistory({
+    messages: history, config: small, apiKey: 'key', systemPrompt: 'system',
+    streamFn: async () => { throw new Error('provider unavailable'); },
+  });
+  assert.deepEqual(failing.messages.map((message) => message.id), history.map((message) => message.id));
+  assert.equal(failing.summary, undefined);
+  assert.equal(failing.compacted, false);
+  assert.ok(!failing.systemPrompt.includes('<conversation_summary>'), 'failure is silent');
+
+  const controller = new AbortController();
+  controller.abort();
+  let abortedCalls = 0;
+  const aborted = await prepareHistory({
+    messages: history, config: small, apiKey: 'key', systemPrompt: 'system', signal: controller.signal,
+    streamFn: async () => { abortedCalls++; throw new Error('must not run'); },
+  });
+  assert.equal(abortedCalls, 0, 'a stopped run does not summarize');
+  assert.deepEqual(aborted.messages.map((message) => message.id), history.map((message) => message.id));
+});
+
+test('recent context windows keep whole user turns and their steering supplements', () => {
+  assert.equal(findRecentStart([
+    { id: 'u1', role: 'user', content: 'one' },
+    { id: 'a1', role: 'assistant', content: 'answer' },
+    { id: 'u2', role: 'user', content: 'two' },
+    { id: 'a2', role: 'assistant', content: 'answer two' },
+  ], 0), 2, 'the window moves back to the user message');
+  assert.equal(findRecentStart([
+    { id: 'u1', role: 'user', content: 'one' },
+    { id: 's1', role: 'user', content: 'supplement', steering: true },
+    { id: 'a1', role: 'assistant', content: 'answer' },
+  ], 0), 0, 'a steering message stays with the question it supplements');
+});
+
 test('interrupted replies retain their question and partial prose for follow-up requests', () => {
   const failed = [
     { id: 'u1', role: 'user', content: 'first question' },
@@ -769,7 +953,7 @@ test('interrupted replies retain their question and partial prose for follow-up 
   const context = buildContext(failed, config);
   assert.deepEqual(context.map(message => message.role), ['user', 'assistant']);
   assert.ok(JSON.stringify(context).includes('half an answer'));
-  assert.ok(JSON.stringify(context).includes('尚未完成'), 'partial replies are explicitly marked as incomplete');
+  assert.ok(JSON.stringify(context).includes('新的独立请求'), 'an interrupted reply closes its turn for the next question');
   assert.ok(!JSON.stringify(context).includes('超时'), 'the error text is not part of the conversation');
   assert.ok(JSON.stringify(buildContext([...failed, { id: 'u2', role: 'user', content: '继续' }], config)).includes('half an answer'));
   assert.deepEqual(buildRetryHistory(failed).map(message => message.id), ['u1'], 'retry re-sends the original question');
@@ -779,6 +963,13 @@ test('interrupted replies retain their question and partial prose for follow-up 
   const stopped = [failed[0], { id: 'a1', role: 'assistant', content: 'partial answer', status: 'stopped' }];
   assert.ok(JSON.stringify(buildContext(stopped, config)).includes('partial answer'));
   assert.deepEqual(buildRetryHistory(stopped).map(message => message.id), ['u1']);
+  // Stopping before any prose (e.g. while thinking) must still close the old question, or the
+  // next question and the abandoned one become consecutive user turns.
+  const stoppedEmpty = [failed[0], { id: 'a1', role: 'assistant', content: '', status: 'stopped' }, { id: 'u2', role: 'user', content: 'new question' }];
+  const stoppedEmptyContext = buildContext(stoppedEmpty, config);
+  assert.deepEqual(stoppedEmptyContext.map(message => message.role), ['user', 'assistant', 'user'], 'an empty stopped reply still closes its turn');
+  assert.match(JSON.stringify(stoppedEmptyContext), /终止/);
+  assert.match(JSON.stringify(stoppedEmptyContext), /新的独立请求/);
 });
 
 test('sending after a failure preserves the question and partial reply on screen', async () => {

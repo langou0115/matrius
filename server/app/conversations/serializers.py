@@ -18,6 +18,7 @@ def conversation_out(conversation: Conversation) -> dict[str, Any]:
         "pinned": conversation.pinned,
         "modelId": conversation.model_id,
         "titleSource": conversation.title_source,
+        "contextSummary": conversation.context_summary,
         "clientUpdatedAt": conversation.client_updated_at_ms,
         "readState": {
             "completed": read_state(conversation.completed_state, conversation.completed_read_at_ms),

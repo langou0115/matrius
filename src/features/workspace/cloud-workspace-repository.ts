@@ -1,3 +1,4 @@
+import type { ConversationSummary } from '@/core/agent/compaction';
 import type { ApiRequest } from '@/features/auth/account-sync.web';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
@@ -5,7 +6,8 @@ import { parseWorkspace, type WorkspaceData } from './workspace-repository.web';
 
 type RecordVersion = { id: string; revision: number; clientId?: string | null };
 type Marker = { state: 'absent' | 'unread' | 'read'; readAt?: number };
-type RemoteConversation = RecordVersion & Omit<Conversation, 'messages' | 'completedReadAt' | 'errorReadAt'> & {
+type RemoteConversation = RecordVersion & Omit<Conversation, 'messages' | 'completedReadAt' | 'errorReadAt' | 'contextSummary'> & {
+  contextSummary?: ConversationSummary | null;
   readState: { completed: Marker; error: Marker };
 };
 type RemoteMessage = RecordVersion & Message;
@@ -17,6 +19,7 @@ const marker = (value: number | null | undefined): Marker => value === undefined
 const markerValue = (value: Marker) => value.state === 'read' ? value.readAt : value.state === 'unread' ? null : undefined;
 const metadata = (value: Conversation) => ({
   title: value.title, pinned: value.pinned, modelId: value.modelId ?? null, titleSource: value.titleSource ?? null,
+  contextSummary: value.contextSummary ?? null,
   readState: { completed: marker(value.completedReadAt), error: marker(value.errorReadAt) },
 });
 const messageBody = (value: Message) => ({
@@ -66,6 +69,7 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
           id, title: remote.title, pinned: remote.pinned, updatedAt: remote.updatedAt,
           ...(remote.modelId ? { modelId: remote.modelId } : {}),
           ...(remote.titleSource ? { titleSource: remote.titleSource } : {}),
+          ...(remote.contextSummary ? { contextSummary: remote.contextSummary } : {}),
           completedReadAt: markerValue(remote.readState.completed), errorReadAt: markerValue(remote.readState.error),
           messages: pages.flat(),
         };

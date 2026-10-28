@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from app.conversations.schemas import ContextSummary
+
 MemoryType = Literal["identity", "workflow", "voice", "instruction"]
 MemorySource = Literal["manual", "tool", "extracted"]
 MemoryScope = Literal["global", "conversation"]
@@ -82,6 +84,7 @@ class ImportConversation(BaseModel):
     updatedAt: int | None = None
     modelId: str | None = Field(default=None, max_length=200)
     titleSource: Literal["auto", "ai", "manual"] | None = None
+    contextSummary: ContextSummary | None = None
     readState: ImportReadState | None = None
     messages: list[ImportMessage] = Field(default_factory=list)
 

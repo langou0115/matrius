@@ -154,6 +154,7 @@ async def _create_conversation_record(
         pinned=payload.pinned,
         model_id=payload.modelId,
         title_source=payload.titleSource,
+        context_summary=payload.contextSummary.model_dump() if payload.contextSummary else None,
         client_updated_at_ms=payload.updatedAt,
     )
     db.add(conversation)
@@ -220,6 +221,11 @@ async def update_conversation(
         changed = True
     if "titleSource" in fields:
         conversation.title_source = payload.titleSource
+        changed = True
+    if "contextSummary" in fields:
+        conversation.context_summary = (
+            payload.contextSummary.model_dump() if payload.contextSummary is not None else None
+        )
         changed = True
 
     if payload.readState is not None:

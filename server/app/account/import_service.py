@@ -135,6 +135,7 @@ def _apply_metadata(conversation: Conversation, item: ImportConversation) -> boo
         "pinned": item.pinned,
         "model_id": item.modelId,
         "title_source": item.titleSource,
+        "context_summary": item.contextSummary.model_dump() if item.contextSummary else None,
     }
     for name, value in values.items():
         if getattr(conversation, name) != value:
@@ -193,6 +194,7 @@ async def _create_conversation(
         pinned=item.pinned,
         model_id=item.modelId,
         title_source=item.titleSource,
+        context_summary=item.contextSummary.model_dump() if item.contextSummary else None,
         client_updated_at_ms=item.updatedAt,
         updated_at=_client_time(item.updatedAt),
     )

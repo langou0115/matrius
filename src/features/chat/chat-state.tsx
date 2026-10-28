@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
+import type { ConversationSummary } from '@/core/agent/compaction';
 import type { Message, MessageFeedback } from '@/core/agent/types';
 import { normalizeConversationTitle } from '@/core/agent/title';
 export type { Message, MessageImage } from '@/core/agent/types';
@@ -15,6 +16,8 @@ export type Conversation = {
   completedReadAt?: number | null;
   /** `auto` waits for an AI title, `ai` already has one, `manual` must never be overwritten. */
   titleSource?: 'auto' | 'ai' | 'manual';
+  /** Rolling summary of older turns, persisted with the conversation and synced with it. */
+  contextSummary?: ConversationSummary;
   messages: Message[];
 };
 
@@ -33,6 +36,7 @@ type Action =
   | { type: 'append-user'; conversationId: string; message: Message }
   | { type: 'bind-model'; conversationId: string; modelId: string }
   | { type: 'reply'; conversationId: string; message: Message }
+  | { type: 'context-summary'; conversationId: string; summary?: ConversationSummary }
   | { type: 'feedback'; conversationId: string; messageId: string; feedback?: MessageFeedback }
   | { type: 'rename'; id: string; title: string }
   | { type: 'auto-title'; conversationId: string; title: string; from: string }
@@ -78,6 +82,14 @@ function reducer(state: ChatState, action: Action): ChatState {
           delete next.completedReadAt;
         }
         return next;
+      }) };
+    case 'context-summary':
+      return { ...state, conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== action.conversationId) return conversation;
+        if (JSON.stringify(conversation.contextSummary) === JSON.stringify(action.summary)) return conversation;
+        // The summary is metadata, not a new turn: keep `updatedAt` for message ordering.
+        const { contextSummary, ...rest } = conversation;
+        return action.summary ? { ...rest, contextSummary: action.summary } : rest;
       }) };
     case 'select':
       return { ...state, activeId: action.id,

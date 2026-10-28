@@ -92,6 +92,46 @@ async def test_steering_flag_round_trips_and_is_limited_to_user_messages(client,
     assert [item["steering"] for item in detail["messages"]] == [False, False, True, False]
 
 
+async def test_context_summary_round_trips_and_can_be_cleared(client, create_user):
+    _, headers = await create_user()
+    summary = {"coveredUntilMessageId": "message-1", "summary": "Older turns in brief"}
+    created = await client.post(
+        "/api/conversations",
+        headers=headers,
+        json={"clientId": str(uuid.uuid4()), "title": "Summarized", "contextSummary": summary},
+    )
+    assert created.status_code == 201, created.text
+    conversation = created.json()
+    assert conversation["contextSummary"] == summary
+
+    updated_summary = {"coveredUntilMessageId": "message-3", "summary": "Updated brief"}
+    updated = await client.patch(
+        f"/api/conversations/{conversation['id']}",
+        headers=headers,
+        json={"baseRevision": conversation["revision"], "contextSummary": updated_summary},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["contextSummary"] == updated_summary
+
+    cleared = await client.patch(
+        f"/api/conversations/{conversation['id']}",
+        headers=headers,
+        json={"baseRevision": updated.json()["revision"], "contextSummary": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["contextSummary"] is None
+
+    empty = await client.patch(
+        f"/api/conversations/{conversation['id']}",
+        headers=headers,
+        json={
+            "baseRevision": cleared.json()["revision"],
+            "contextSummary": {"coveredUntilMessageId": "", "summary": ""},
+        },
+    )
+    assert empty.status_code == 422, empty.text
+
+
 async def test_list_pagination(client, create_user):
     _, headers = await create_user()
     for index in range(3):

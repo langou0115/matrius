@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, RevisionMixin, TimestampMixin
@@ -28,6 +39,9 @@ class Conversation(RevisionMixin, TimestampMixin, Base):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     model_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     title_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Client-generated rolling summary: {coveredUntilMessageId, summary}. It is derived
+    # context, so a missing or stale value only costs one extra compaction request.
+    context_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     client_updated_at_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     completed_state: Mapped[str] = mapped_column(String(16), default="absent", nullable=False)

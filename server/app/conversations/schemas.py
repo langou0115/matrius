@@ -14,6 +14,13 @@ class ReadStateUpdate(BaseModel):
     error: ReadMarker | None = None
 
 
+class ContextSummary(BaseModel):
+    """The client's rolling summary of turns before `coveredUntilMessageId`."""
+
+    coveredUntilMessageId: str = Field(min_length=1, max_length=128)
+    summary: str = Field(min_length=1, max_length=100_000)
+
+
 class ConversationCreate(BaseModel):
     id: uuid.UUID | None = None
     clientId: str | None = None
@@ -21,6 +28,7 @@ class ConversationCreate(BaseModel):
     pinned: bool = False
     modelId: str | None = Field(default=None, max_length=200)
     titleSource: Literal["auto", "ai", "manual"] | None = None
+    contextSummary: ContextSummary | None = None
     updatedAt: int | None = None
 
 
@@ -30,6 +38,7 @@ class ConversationPatch(BaseModel):
     pinned: bool | None = None
     modelId: str | None = Field(default=None, max_length=200)
     titleSource: Literal["auto", "ai", "manual"] | None = None
+    contextSummary: ContextSummary | None = None
     readState: ReadStateUpdate | None = None
 
 

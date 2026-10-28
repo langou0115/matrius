@@ -36,7 +36,8 @@
 src/core/agent/
 ├── runtime.ts         # createAgentRuntime：校验、运行状态、批量回复、取消与资源释放
 ├── runner.ts          # pi-agent 创建、流式事件、超时与错误处理
-├── context.ts         # 引用、图片、历史上下文与请求长度检查
+├── context.ts         # 引用、图片、历史上下文与保守 token 预算检查
+├── compaction.ts      # 静默上下文压缩：预算、最近轮次与滚动摘要
 ├── types.ts           # Message、MessageImage、AgentProfile 与运行状态契约
 ├── system-prompt.ts   # 基础系统提示与用户偏好组装
 ├── title.ts           # 独立的一次性会话标题请求与规范化
@@ -44,8 +45,8 @@ src/core/agent/
 ```
 
 - 模型传输与协议解码放在 `src/core/llm/`，Runtime 不与某一种模型协议耦合。
-- `createAgentRuntime({ onReply })` 返回 `start(request)`、`stop(conversationId?)`、`getSnapshot()`、`subscribe(listener)`、`clearError()` 和 `dispose()`；每个工作区独立创建实例。运行状态按会话记录（`runs: Record<conversationId, RuntimeRun>`）：同一会话只允许一个活动请求，不同会话可以并发；`stop(id)` 只取消指定会话，无参调用取消全部（仅用于工作区卸载）。`start` 接收模型配置、临时凭据、消息、会话/回复 ID、系统提示与思考强度；请求开始时复制输入，后续 UI 修改不改变正在运行的请求。凭据不进入可订阅状态或消息存储。运行失败写入对应助手消息（`status: 'error'`）而不是工作区级 `error`，避免后台失败串到当前打开的会话；`error` 仅承载发送前的配置/凭据/上下文校验错误。
-- Runtime 默认延迟加载 `runner.ts`，也可通过 `loadRunner` 注入兼容实现。`core/llm/direct-stream.ts` 负责三种协议的流式传输；平台差异留在传输、凭据和存储适配层，不引入核心依赖。
+- `createAgentRuntime({ onReply, onSummary })` 返回 `start(request)`、`stop(conversationId?)`、`getSnapshot()`、`subscribe(listener)`、`clearError()` 和 `dispose()`；每个工作区独立创建实例。`onSummary` 在静默压缩产生或清除滚动摘要时回调，由适配层写入会话记录。运行状态按会话记录（`runs: Record<conversationId, RuntimeRun>`）：同一会话只允许一个活动请求，不同会话可以并发；`stop(id)` 只取消指定会话，无参调用取消全部（仅用于工作区卸载）。`start` 接收模型配置、临时凭据、消息、会话/回复 ID、系统提示与思考强度；请求开始时复制输入，后续 UI 修改不改变正在运行的请求。凭据不进入可订阅状态或消息存储。运行失败写入对应助手消息（`status: 'error'`）而不是工作区级 `error`，避免后台失败串到当前打开的会话；`error` 仅承载发送前的配置/凭据/上下文校验错误。
+- Runtime 默认延迟加载 `runner.ts` 与 `compaction.ts`，也可通过 `loadRunner` / `loadCompactor` 注入兼容实现。`core/llm/direct-stream.ts` 负责三种协议的流式传输；平台差异留在传输、凭据和存储适配层，不引入核心依赖。
 - `features/chat/chat-runtime.tsx` 是 React 聊天适配层，只读取当前模型/凭据与偏好、处理发送/重试、把核心回复写入会话状态；通过 `useSyncExternalStore` 订阅核心状态。删除运行中的对话只取消该会话的请求，卸载工作区取消全部；切换设置或其他会话不改变生成所属会话。后台回复完成且用户不在该会话（或处于设置等全页路由）时，会话写入 `completedReadAt: null` 并在适配层生成最多 3 条临时通知卡片；打开会话后清除未读。复制文本、选区和导航继续属于聊天 UI。
 - 会话标题由 `core/agent/title.ts` 通过默认 `directStream` 单独请求生成，不经过 `createAgentRuntime`：不创建运行记录、不占用会话运行槽、不被正在生成的回复阻塞，也不会写入会话历史或触发后台通知。首条消息发送后与回复并行发起，只读取首条用户消息（含引用，正文 4000、引用 2000 字符上限）；请求默认 20 秒超时并可随会话删除或工作区卸载取消。标题请求单独使用 low 思考强度并预留最多 512 输出 token，不改聊天模型的思考选择。输出经 `normalizeConversationTitle` 取首行、去掉 Markdown/“标题：”前缀与成对引号；中文等 CJK 标题最多 16 个字形，英文最多 6 词、32 字形，尽量不切断单词。备用标题使用相同限制。失败、超时、缺 key 或空输出静默返回 `null`，保留备用标题；后续回复成功后由聊天适配层重试。生成结果只替换带 `titleSource: 'auto'` 且标题仍等于请求时快照的会话，手动重命名与分支永不被覆盖。
 
@@ -165,8 +166,8 @@ execute()
 - `core/agent/runner.ts` 创建真实 pi Agent；`core/llm/model-config.ts` 映射模型元数据；`features/chat/chat-runtime.tsx` 连接当前工作区、上下文、生命周期与消息状态。Thinking Effort 支持 Default、Low、Medium、High，由 pi-agent-core 映射到模型请求；每个会话独立保存设置，新会话沿用最近选择，旧会话读取时默认为 Default，重试沿用会话设置。一个工作区同时生成一条回复，切换聊天或进入设置不卸载 Runtime，删除正在生成的会话会取消，不重建已删会话。
 - `features/models/model-settings-screen.web.tsx` 管理 Provider 与其模型；模型目录由 `core/llm/provider-catalog.web.ts` 从服务商直接获取。API key 按 Provider ID 单独存储，持久化的模型配置只保存字段白名单。
 - 输入校验通过后才提交消息并清空草稿；未配置模型或缺 key 时保留草稿。流式界面约 50ms 合并一次更新；存储约 300ms 写入最新正文，结束时立即提交最终状态。停止和错误保留收到的文本；刷新时将 streaming 状态恢复为 stopped，不自动继续付费请求。
-- 上下文包含当前会话已有文本，不混入其他会话或隐藏思考；使用保守字符预算检查并预留输出窗口，超限提示新建对话。默认空闲超时 120 秒，思考/正文增量和工具开始/结束均重置计时；独立总时限为 15 分钟。持续有输出的长回复不会因为达到两分钟被切断。本地模式不执行模型返回的工具调用。
-- Web 密钥按工作区独立存放，与模型元数据分表，不写日志或同步；模型请求走同源中继，原生直连。错误归一为安全、可操作的提示，不持久化 SDK 原始响应。末条失败回复下将错误和重试放在同一个紧凑提示容器内；点击后立即进入 streaming，不重复提交用户问题。发送新消息或已有回复运行时，旧回复的重试按钮隐藏，历史错误说明保留。主动停止为中性提示，不提供该错误重试按钮。后续消息保留原问题和半截回复；模型上下文把半截回复明确标为未完成，仅排除空错误占位和错误元数据。手动刷新恢复 streaming 为 stopped，并停止在途工具指示，不自动重新请求模型。同步的迟到快照不能覆盖正在生成或已更新的本地消息。
+- 上下文包含当前会话已有文本，不混入其他会话或隐藏思考。输入接近窗口时，Runtime 在对话请求创建前按 OpenStudio 的预算静默压缩较早历史：按 UTF-8 字节保守估算 token，预留输出、系统提示和安全余量，保留最近完整轮次原文（不切断用户轮次或补充消息），把更早内容分批合并为滚动摘要，再以 `<conversation_summary>` 参考块加入系统提示。摘要作为会话的 `contextSummary` 元数据随本地工作区持久化，并随工作区同步到云端（服务端 `conversations.context_summary` 列）；刷新、重新登录或换设备后继续复用，不会重新压缩。摘要不属于消息历史，不改变消息顺序、未读状态或会话更新时间；分支、删除等导致覆盖标记失效时自动丢弃并重新压缩。旧数据没有该字段时按需生成。压缩请求失败、超时、缺少凭据或用户停止时静默回退，不显示压缩状态、提示或错误；只有压缩后仍超出窗口（例如单条消息本身过大）才显示原有的上下文超限提示。默认空闲超时 120 秒，思考/正文增量和工具开始/结束均重置计时；独立总时限为 15 分钟。持续有输出的长回复不会因为达到两分钟被切断。本地模式不执行模型返回的工具调用。
+- Web 密钥按工作区独立存放，与模型元数据分表，不写日志或同步；模型请求走同源中继，原生直连。错误归一为安全、可操作的提示，不持久化 SDK 原始响应。末条失败回复下将错误和重试放在同一个紧凑提示容器内；点击后立即进入 streaming，不重复提交用户问题。发送新消息或已有回复运行时，旧回复的重试按钮隐藏，历史错误说明保留。主动停止为中性提示，不提供该错误重试按钮。后续消息保留原问题和半截回复；模型上下文把中断回复标为已结束，并明确后续用户消息是新的独立请求，只有用户要求继续时才续写。没有正文的中断回复也保留为中断占位（例如在思考阶段停止），避免旧问题与新问题变成两段连续的用户消息；仅排除空错误占位和错误元数据。手动刷新恢复 streaming 为 stopped，并停止在途工具指示，不自动重新请求模型。同步的迟到快照不能覆盖正在生成或已更新的本地消息。
 - `core/platform/run-protection.web.ts` 在运行期间保护离开/刷新操作，并暂停 SDK 57 的开发 HMR；所有会话都空闲后等待 1.5 秒，让最终状态提交再恢复热更新。`dev-refresh-client.web.js` 隔离 Expo 私有开发 API 与其原生类型依赖，升级 SDK 时需验证。真实整页刷新仍会销毁客户端 Runtime，不能假装请求继续运行。
 - 旧 pi 的聚合入口含 Metro 不支持的动态 Node 导入。`metro.config.js` 在 Web 中把 pi-ai 聚合入口映射为 `pi-agent-bridge.ts` 的官方事件/校验工具导出，并把 Node 环境密钥发现映射为 `pi-browser-credentials.ts`；请求由显式 streamFn 只加载三种协议，未改写依赖文件。升级 pi 时需同时检查这些固定版本的内部工具路径。
 
