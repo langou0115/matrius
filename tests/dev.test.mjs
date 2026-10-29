@@ -10,7 +10,8 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devBackendEnv, devDataDir, devEnvironment, devPorts,
+  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devApiBaseUrl, devApiHost, devBackendEnv, devDataDir,
+  devEnvironment, devExpoArgs, devPorts, lanAddress, parseDevArgs, probeHost,
   resetDatabase, resetTargets, sqliteUrl, supervise,
 } from '../scripts/dev.mjs';
 import { migrationEnvironment } from '../scripts/db-migrate.mjs';
@@ -92,8 +93,63 @@ test('development API watches application code and isolates Windows console sign
     const args = devApiArgs(8000, platform);
     assert.equal(args[args.indexOf('--reload-dir') + 1], 'app');
     assert.equal(args[args.indexOf('--port') + 1], '8000');
+    assert.equal(args[args.indexOf('--host') + 1], '127.0.0.1');
     if (platform !== 'win32') assert.equal(args[2], 'uvicorn');
   }
+  const bound = devApiArgs(8000, 'linux', '0.0.0.0');
+  assert.equal(bound[bound.indexOf('--host') + 1], '0.0.0.0');
+});
+
+test('iOS binds the API for the phone while readiness probes loopback', () => {
+  assert.equal(devApiHost({}, 'web'), '127.0.0.1');
+  assert.equal(devApiHost({}, 'ios'), '0.0.0.0');
+  assert.equal(devApiHost({ DEV_API_HOST: '192.168.1.5' }, 'ios'), '192.168.1.5');
+  assert.equal(devApiHost({ DEV_API_HOST: ' 127.0.0.2 ' }, 'web'), '127.0.0.2');
+  for (const host of ['0.0.0.0', '::', '[::]', ' 0.0.0.0 ']) assert.equal(probeHost(host), '127.0.0.1');
+  for (const host of ['127.0.0.1', '192.168.1.5', '::1']) assert.equal(probeHost(host), host);
+});
+
+test('Expo arguments differ by target and host platform', () => {
+  assert.deepEqual(devExpoArgs({ target: 'web', port: 8081 }), ['start', '--web', '--port', '8081']);
+  assert.deepEqual(devExpoArgs({ target: 'ios', platform: 'darwin', port: 8081 }),
+    ['start', '--ios', '--port', '8081']);
+  assert.deepEqual(devExpoArgs({ target: 'ios', platform: 'linux', port: 8081 }),
+    ['start', '--lan', '--port', '8081']);
+  assert.deepEqual(devExpoArgs({ target: 'ios', platform: 'win32', port: 8081, host: 'LAN' }),
+    ['start', '--lan', '--port', '8081']);
+  assert.deepEqual(devExpoArgs({ target: 'ios', platform: 'linux', port: 8081, host: 'localhost' }),
+    ['start', '--localhost', '--port', '8081']);
+  assert.deepEqual(devExpoArgs({ target: 'ios', platform: 'linux', port: 8081, host: 'tunnel' }),
+    ['start', '--tunnel']);
+});
+
+test('CLI options select one target and reject unknown flags', () => {
+  assert.deepEqual(parseDevArgs([]), { target: 'web', check: false, resetDb: false, help: false });
+  assert.equal(parseDevArgs(['--ios']).target, 'ios');
+  assert.equal(parseDevArgs(['--web']).target, 'web');
+  assert.deepEqual(parseDevArgs(['--ios', '--check', '--reset-db']),
+    { target: 'ios', check: true, resetDb: true, help: false });
+  assert.equal(parseDevArgs(['--help']).help, true);
+  assert.throws(() => parseDevArgs(['--web', '--ios']), /either/);
+  assert.throws(() => parseDevArgs(['--android']), /Unknown option/);
+});
+
+test('the phone API base prefers explicit configuration and otherwise uses a LAN address', () => {
+  const interfaces = {
+    lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+    eth0: [
+      { address: 'fe80::1', family: 'IPv6', internal: false },
+      { address: '192.168.1.23', family: 'IPv4', internal: false },
+    ],
+  };
+  assert.equal(lanAddress(interfaces), '192.168.1.23');
+  assert.equal(lanAddress({ lo: interfaces.lo }), null);
+  assert.equal(lanAddress({ eth0: [{ address: '10.0.0.2', family: 4, internal: false }] }), '10.0.0.2');
+  assert.equal(devApiBaseUrl({ apiPort: 8000, target: 'ios', interfaces }), 'http://192.168.1.23:8000');
+  assert.equal(devApiBaseUrl({ apiPort: 8000, target: 'ios', interfaces: {} }), 'http://127.0.0.1:8000');
+  assert.equal(devApiBaseUrl({ apiPort: 8000, target: 'web', interfaces }), 'http://127.0.0.1:8000');
+  assert.equal(devApiBaseUrl({ apiPort: 8000, target: 'ios', interfaces,
+    env: { EXPO_PUBLIC_API_BASE_URL: ' https://api.example.com/ ' } }), 'https://api.example.com');
 });
 
 test('development admin credentials use INITIAL_ADMIN_* and local defaults', () => {

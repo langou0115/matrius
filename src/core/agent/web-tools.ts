@@ -66,9 +66,31 @@ type FetchDetails = {
   warning?: string;
 };
 
+/** Hermes exposes neither `DOMException` nor `AbortSignal.throwIfAborted` on every runtime. */
+function abortError(message = '请求已取消。') {
+  if (typeof DOMException === 'function') return new DOMException(message, 'AbortError');
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal | null) {
+  if (signal?.aborted) throw abortError();
+}
+
+function queryTerms(query: string): string[] {
+  const normalized = query.normalize('NFKC').toLocaleLowerCase();
+  if (typeof Intl.Segmenter === 'function') {
+    return [...new Intl.Segmenter(undefined, { granularity: 'word' }).segment(normalized)]
+      .filter((part) => part.isWordLike && part.segment.length > 1)
+      .map((part) => part.segment);
+  }
+  return normalized.split(/[^\p{L}\p{N}]+/u).filter((term) => term.length > 1);
+}
+
 function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new DOMException('请求已取消。', 'AbortError')); };
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(abortError()); };
     const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
     if (signal?.aborted) abort();
     else signal?.addEventListener('abort', abort, { once: true });
@@ -78,7 +100,7 @@ function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
 /** Retry a transient, read-only tool request once; never retry auth, unsafe URLs or cancellation. */
 async function requestWebTool<T>(request: WebRequest, path: string, init: RequestInit): Promise<T> {
   for (let attempt = 0; ; attempt++) {
-    init.signal?.throwIfAborted();
+    throwIfAborted(init.signal);
     try { return await request<T>(path, init); }
     catch (error) {
       const retryAfter = error instanceof ApiError ? error.retryAfterMs : undefined;
@@ -154,9 +176,7 @@ function searchResultText(query: string, results: WebSearchResult[]): string {
   if (!results.length) {
     return `No web results found for: ${query}. This does not prove the subject does not exist; say the evidence is insufficient instead of inventing an answer.`;
   }
-  const terms = [...new Intl.Segmenter(undefined, { granularity: 'word' }).segment(query.normalize('NFKC').toLocaleLowerCase())]
-    .filter((part) => part.isWordLike && part.segment.length > 1)
-    .map((part) => part.segment);
+  const terms = queryTerms(query);
   const weakMatch = terms.length > 1 && results.every((result) => {
     const text = `${result.title} ${result.snippet}`.normalize('NFKC').toLocaleLowerCase();
     return terms.filter((term) => text.includes(term)).length < terms.length / 2;

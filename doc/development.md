@@ -12,6 +12,8 @@ npx expo start                 # Metro 开发服务
 npm run android                # 打开 Android 开发目标
 npm run ios                    # 打开 iOS 开发目标
 npm run web                    # Web 开发
+npm run dev                    # 本机全栈（后端 + Expo Web），等价于 npm run dev:web
+npm run dev:ios                # 同一后端 + Expo iOS 目标（模拟器或 Expo Go）
 npx expo start --port 8082      # 端口占用时换端口
 npx expo lint                  # 使用仓库 ESLint 配置检查
 npx tsc --noEmit               # TypeScript 类型检查
@@ -80,9 +82,21 @@ Windows、macOS、Linux 使用同一入口。本机只需 Node.js 24、npm 和 [
 npm ci
 npm run dev -- --check       # 校验工具、端口与路径，不启动服务
 npm run dev                  # 常驻：迁移数据库 + FastAPI reload + Expo Web
+npm run dev:web              # 同上
+npm run dev:ios -- --check   # 校验 iOS 目标的 Expo 参数、API 地址与端口
+npm run dev:ios              # 常驻：同一后端 + Expo iOS 目标
 npm run db:migrate           # 只迁移 server/.data/dev.db，不启动服务
 npm run web                  # 仅本机前端与模型中继
 ```
+
+`npm run dev` 与 `npm run dev:web` 完全等价；`npm run dev:ios` 复用同一套迁移、管理员初始化、健康检查与进程清理，只替换 Expo 子进程参数：
+
+- macOS：`expo start --ios`，打开 iOS Simulator。
+- Windows / Linux / WSL：`expo start --lan`，终端输出 Expo Go 二维码；手机与电脑需在同一网络。
+- `DEV_EXPO_HOST=tunnel` 改为 `expo start --tunnel`（只隧道 Metro，不隧道 API）；`DEV_EXPO_HOST=localhost` 适用于本机模拟器。
+- API 默认绑定 `0.0.0.0`（可由 `DEV_API_HOST` 覆盖），使手机能直接访问；就绪探测仍走回环地址。
+- 手机无法使用 Web 开发代理，Expo Go 直接请求 API。脚本默认使用本机非回环 IPv4 拼出 `EXPO_PUBLIC_API_BASE_URL`，并在启动日志打印实际地址与可达性提示；`.env.local` 中显式设置的值优先。
+- WSL2 的 `0.0.0.0` 只暴露虚拟网卡；真机访问需要 Windows 端口转发/镜像网络，或设置手机可达的 `EXPO_PUBLIC_API_BASE_URL`。脚本只提示，不自动配置。
 
 开发数据全部落在仓库内，且已被 `.gitignore` 排除：
 
@@ -95,7 +109,7 @@ server/.data/
 
 浏览器自己的 IndexedDB 仍由浏览器管理，与 `server/.data` 是两套数据。
 
-启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo Web。
+启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo（Web 或 `--ios` 目标）。
 
 API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启。`npm run dev` 每次启动都会自动迁移；服务已在运行时单独执行 `npm run db:migrate` 即可升级同一个 `server/.data/dev.db`，不必重启开发会话。该命令固定使用开发数据库，不会读取 shell 或 `.env.local` 里的生产 `DATABASE_URL` / `DATA_DIR`。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
 
@@ -109,7 +123,7 @@ npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再
 
 `--reset-db` 只删除 `server/.data/dev.db*` 和 `server/.data/files/`，不会碰其他文件。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
 
-默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`。端口被占用时失败退出，不自动切换。Metro 先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置。脚本不自动打开浏览器。
+默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`；`DEV_API_HOST` 控制 API 绑定地址，`DEV_EXPO_HOST` 控制非 macOS 上 Expo 的局域网/tunnel/localhost 模式，`EXPO_PUBLIC_API_BASE_URL` 供 Expo Go 直连 API。端口被占用时失败退出，不自动切换。Web 目标下 Metro 先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置；iOS 目标不使用该代理。脚本不自动打开浏览器。
 
 命令持续挂起，前后端保存即热更新。Ctrl+C 清理本机进程树；任何常驻子进程退出也会结束整个开发会话。服务器和正式数据不受影响。
 

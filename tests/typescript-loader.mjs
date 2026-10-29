@@ -9,7 +9,9 @@ export async function resolve(specifier, context, nextResolve) {
     ? pathToFileURL(resolvePath('src', specifier.slice(2)))
     : specifier.startsWith('.') && context.parentURL ? new URL(specifier, context.parentURL) : null;
   if (local?.protocol === 'file:' && !local.pathname.includes('/node_modules/')) {
-    for (const extension of ['', '.ts', '.tsx']) {
+    // Mirror Metro's web resolution: a platform-neutral import such as
+    // `@/features/auth/auth-state` must pick the `.web` implementation in these Node tests.
+    for (const extension of ['.web.ts', '.web.tsx', '', '.ts', '.tsx']) {
       const file = fileURLToPath(local) + extension;
       if (/\.tsx?$/.test(file) && existsSync(file)) return { url: pathToFileURL(file).href, shortCircuit: true };
     }

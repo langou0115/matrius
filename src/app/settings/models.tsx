@@ -1,1 +1,1 @@
-export { default } from '@/app/index';
+export { ModelsScreen as default } from '@/features/models/native/models-screen';

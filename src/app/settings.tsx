@@ -1,1 +1,1 @@
-export { default } from './index';
+export { SettingsListScreen as default } from '@/features/settings/native/settings-list-screen';

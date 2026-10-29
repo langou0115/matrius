@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
@@ -46,12 +47,73 @@ export function devPorts(env) {
   return ports;
 }
 
-export function devApiArgs(apiPort, platform = process.platform) {
+export function devApiArgs(apiPort, platform = process.platform, host = '127.0.0.1') {
   const launch = platform === 'win32'
     ? ['python', 'scripts/dev-api.py']
     : ['uvicorn'];
-  return ['run', '--no-sync', ...launch, 'app.main:app', '--host', '127.0.0.1',
+  return ['run', '--no-sync', ...launch, 'app.main:app', '--host', host,
     '--port', String(apiPort), '--reload', '--reload-dir', 'app'];
+}
+
+/** The API can bind all interfaces for a phone while readiness still probes loopback. */
+export function devApiHost(env = {}, target = 'web') {
+  const host = (env.DEV_API_HOST || '').trim();
+  if (host) return host;
+  return target === 'ios' ? '0.0.0.0' : '127.0.0.1';
+}
+
+export function probeHost(host = '127.0.0.1') {
+  const value = host.trim().toLowerCase();
+  if (value === '0.0.0.0' || value === '::' || value === '[::]') return '127.0.0.1';
+  return host.trim() || '127.0.0.1';
+}
+
+/** Expo CLI arguments for the web browser and for Expo Go on a phone or simulator. */
+export function devExpoArgs({ target = 'web', platform = process.platform, port = 8081, host = '' } = {}) {
+  if (target !== 'ios') return ['start', '--web', '--port', String(port)];
+  if (platform === 'darwin') return ['start', '--ios', '--port', String(port)];
+  const mode = host.trim().toLowerCase();
+  // Windows and WSL cannot open the iOS Simulator: print a QR code for Expo Go instead.
+  if (mode === 'tunnel') return ['start', '--tunnel'];
+  if (mode === 'localhost') return ['start', '--localhost', '--port', String(port)];
+  return ['start', '--lan', '--port', String(port)];
+}
+
+export function parseDevArgs(args = []) {
+  const allowed = new Set(['--web', '--ios', '--check', '--reset-db', '--help']);
+  const unknown = args.filter((arg) => !allowed.has(arg));
+  if (unknown.length) throw new Error(`Unknown option: ${unknown[0]}. Use --help.`);
+  const options = new Set(args);
+  if (options.has('--web') && options.has('--ios')) throw new Error('Choose either --web or --ios.');
+  return {
+    target: options.has('--ios') ? 'ios' : 'web',
+    check: options.has('--check'),
+    resetDb: options.has('--reset-db'),
+    help: options.has('--help'),
+  };
+}
+
+/** The first non-loopback IPv4 address, which is the one a phone on the LAN can reach. */
+export function lanAddress(interfaces = networkInterfaces()) {
+  for (const addresses of Object.values(interfaces ?? {})) {
+    for (const address of addresses ?? []) {
+      if ((address.family === 'IPv4' || address.family === 4) && !address.internal) return address.address;
+    }
+  }
+  return null;
+}
+
+/**
+ * Expo Go cannot use the web dev proxy, so the phone must call the API directly.
+ * An explicit value from .env.local always wins; otherwise use this machine's LAN address.
+ */
+export function devApiBaseUrl({ env = {}, apiPort, target = 'web', interfaces } = {}) {
+  const explicit = (env.EXPO_PUBLIC_API_BASE_URL || '').trim();
+  if (explicit) return explicit.replace(/\/+$/u, '');
+  const loopback = `http://127.0.0.1:${apiPort}`;
+  if (target !== 'ios') return loopback;
+  const ip = lanAddress(interfaces);
+  return ip ? `http://${ip}:${apiPort}` : loopback;
 }
 
 export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
@@ -212,18 +274,22 @@ async function ready(url, signal) {
 }
 
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
-  if (args.includes('--help')) {
-    console.log('npm run dev [-- --check | --reset-db]\n'
-      + 'Runs FastAPI + Expo Web entirely on this machine; no Docker, SSH or WSL required.\n'
+  const options = parseDevArgs(args);
+  if (options.help) {
+    console.log('npm run dev [-- --web | --ios] [--check] [--reset-db]\n'
+      + '--web (default) runs FastAPI + Expo Web on this machine.\n'
+      + '--ios runs the same backend and opens Expo for iOS (Simulator on macOS, Expo Go QR elsewhere).\n'
+      + 'Both targets run migrations, bootstrap the administrator and wait for /api/health/ready.\n'
       + 'Data lives in server/.data (SQLite + uploaded files) and is never synced to the server.\n'
       + 'Requires Node.js, npm ci and uv (uv installs Python 3.12 itself).\n'
-      + '--check validates local configuration, tools, ports and paths without starting services.\n'
+      + '--check validates local configuration, tools, ports, API address and paths without starting services.\n'
       + '--reset-db deletes server/.data/dev.db* and server/.data/files before migrating; stop the API first.\n'
+      + 'DEV_API_HOST, DEV_EXPO_HOST and EXPO_PUBLIC_API_BASE_URL in .env.local override defaults.\n'
       + 'The development administrator comes from INITIAL_ADMIN_* in .env.local\n'
       + '(defaults: admin / dev-password). Production env files are never read.');
     return;
   }
-  if (args.some((arg) => !['--check', '--reset-db'].includes(arg))) throw new Error('Unknown option. Use --help.');
+  const target = options.target;
   const readEnv = async (file) => {
     try { return parseEnv(await readFile(file, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; return {}; }
@@ -233,16 +299,25 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   const [webPort, apiPort] = devPorts(local);
   const dataDir = devDataDir();
   const { username: adminUser, password: adminPassword } = devAdminCredentials(local);
+  const apiHost = devApiHost(local, target);
+  const expoHost = (local.DEV_EXPO_HOST || '').trim();
+  const apiBase = devApiBaseUrl({ env: local, apiPort, target });
+  const expoArgs = devExpoArgs({ target, platform: process.platform, port: webPort, host: expoHost });
 
   await capture('uv', ['--version']).catch(() => {
     throw new Error('Install uv first: https://docs.astral.sh/uv/getting-started/installation/');
   });
   await readFile(join(root, 'node_modules/expo/bin/cli')).catch(() => { throw new Error('Run npm ci first.'); });
 
-  if (args.includes('--check')) {
+  if (options.check) {
     await availablePort(webPort);
     await availablePort(apiPort);
-    console.log(`Configuration and tools valid. Web: ${webPort}; API: ${apiPort}.\n`
+    console.log(`Configuration and tools valid. Target: ${target}; Expo port: ${webPort}; API: ${apiPort}.\n`
+      + `API bind: ${apiHost} (readiness probes ${probeHost(apiHost)}).\n`
+      + `Expo: ${expoArgs.join(' ')}.\n`
+      + (target === 'ios'
+        ? `Expo Go API base: ${apiBase}${local.EXPO_PUBLIC_API_BASE_URL ? ' (from .env.local)' : ''}.\n`
+        : '')
       + `Data: ${join(dataDir, 'dev.db')} (SQLite) and ${join(dataDir, 'files')}.\n`
       + `Development admin: ${adminUser} (INITIAL_ADMIN_* in .env.local; defaults admin/dev-password).\n`
       + 'No network connection will be made by npm run dev.');
@@ -272,7 +347,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
       { cwd: join(root, 'server') });
     if (await sync.done !== 0) throw new Error('uv sync failed.');
 
-    if (args.includes('--reset-db')) {
+    if (options.resetDb) {
       console.log(`Resetting ${dataDir}...`);
       await resetDatabase(dataDir);
     }
@@ -291,17 +366,38 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     }, abort.signal);
     abort.signal.throwIfAborted();
 
-    const api = runner.start('uv', devApiArgs(apiPort), { cwd: join(root, 'server'), env: backendEnv });
+    const api = runner.start('uv', devApiArgs(apiPort, process.platform, apiHost), { cwd: join(root, 'server'), env: backendEnv });
     runner.watch(api, 'FastAPI');
-    await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal);
+    await ready(`http://${probeHost(apiHost)}:${apiPort}/api/health/ready`, abort.signal);
     abort.signal.throwIfAborted();
 
-    const expo = runner.start(process.execPath, [join(root, 'node_modules/expo/bin/cli'), 'start', '--web',
-      '--port', String(webPort)], { cwd: root, env: { ...env, MATRIUS_DEV_API_URL: `http://127.0.0.1:${apiPort}`,
-        EXPO_NO_DOTENV: '1', BROWSER: 'none' } });
+    const publicEnv = Object.fromEntries(Object.entries(local).filter(([key]) => key.startsWith('EXPO_PUBLIC_')));
+    const expoEnv = {
+      ...env, ...publicEnv,
+      MATRIUS_DEV_API_URL: `http://127.0.0.1:${apiPort}`,
+      EXPO_NO_DOTENV: '1', BROWSER: 'none',
+    };
+    if (target === 'ios') expoEnv.EXPO_PUBLIC_API_BASE_URL = apiBase;
+    const expo = runner.start(process.execPath, [join(root, 'node_modules/expo/bin/cli'), ...expoArgs],
+      { cwd: root, env: expoEnv });
     runner.watch(expo, 'Expo');
-    console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
-      + `sign in as ${adminUser}. Ctrl+C stops local services only.`);
+    if (target === 'ios') {
+      console.log(`Expo iOS: ${expoArgs.join(' ')}. API base for the phone: ${apiBase}.`);
+      if (local.EXPO_PUBLIC_API_BASE_URL) {
+        console.log('Using EXPO_PUBLIC_API_BASE_URL from .env.local.');
+      } else if (expoHost.toLowerCase() === 'tunnel') {
+        console.log('Expo tunnel only tunnels Metro. Set EXPO_PUBLIC_API_BASE_URL to an API address the phone can reach.');
+      } else if (expoHost.toLowerCase() === 'localhost') {
+        console.log('A phone cannot reach localhost. Use --lan or set EXPO_PUBLIC_API_BASE_URL.');
+      } else if (apiBase.startsWith('http://127.0.0.1')) {
+        console.log('No LAN IPv4 address found. Set EXPO_PUBLIC_API_BASE_URL to an API address the phone can reach.');
+      } else {
+        console.log(`Scan the QR code with Expo Go; the phone must reach ${apiBase}. `
+          + 'WSL2 users may need Windows port forwarding for the API port.');
+      }
+    }
+    console.log(`Development: ${target === 'ios' ? `Expo iOS (API ${apiBase})` : `http://localhost:${webPort}`}. `
+      + `Data stays in ${dataDir}; sign in as ${adminUser}. Ctrl+C stops local services only.`);
 
     const code = await runner.finished;
     if (code) throw new Error('Development service stopped unexpectedly.');

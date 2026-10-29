@@ -1,1 +1,5 @@
-export { default } from '@/app/index';
+import { Redirect } from 'expo-router';
+
+export default function DisplaySettingsRedirect() {
+  return <Redirect href="/settings/appearance" />;
+}
