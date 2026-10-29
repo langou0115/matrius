@@ -2,19 +2,19 @@
 
 [文档索引](README.md) · [UI 风格规范](ui-style.md) · [迁移记录](migration.md)
 
-当前只实现 Web 端，使用 Expo Router。路由页面以 `.web.tsx` 结尾（`mock/_layout.tsx` 是统一开发守卫例外）；共享状态与配色不依赖 DOM。
+当前只实现 Web 端，使用 Expo Router。路由页面使用普通 `.tsx`；只有平台适配实现保留 `.web.tsx` 后缀。共享状态与配色不依赖 DOM。
 
 ## 当前结构
 
 ```text
 src/
 ├── app/
-│   ├── _layout.web.tsx                 Web Provider、应用框架与路由插槽
-│   ├── index.web.tsx                   聊天路由
-│   ├── c/[conversationId].web.tsx      已有对话的独立 URL
+│   ├── _layout.tsx                     Web Provider、应用框架与路由插槽
+│   ├── index.tsx                       聊天路由
+│   ├── c/[conversationId].tsx          已有对话的独立 URL
 │   ├── mock/                          开发预览路由（索引页与各项测试）
-│   ├── settings.web.tsx                设置路由
-│   └── admin.web.tsx                   管理员页面
+│   ├── settings.tsx                    设置路由
+│   └── admin.tsx                       管理员页面
 ├── components/web/
 │   ├── link-anchor.tsx                 Expo Router 链接的 DOM 属性适配
 │   ├── app-frame.tsx                   配色变量、系统明暗模式

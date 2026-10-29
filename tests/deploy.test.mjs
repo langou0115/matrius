@@ -27,7 +27,7 @@ test('source selection rejects secrets, traversal, generated files and unsafe fi
     '../outside', '/absolute', 'a/../outside', 'a\\b', 'a\nb', '.remote-sync-manifest']) {
     assert.equal(canSync(path), false, path);
   }
-  for (const path of ['src/app/index.web.tsx', 'server/app/main.py', '.env.local.example',
+  for (const path of ['src/app/index.tsx', 'server/app/main.py', '.env.local.example',
     'docker-compose/.env.production.example', 'assets/a b.png']) assert.equal(canSync(path), true, path);
 });
 
