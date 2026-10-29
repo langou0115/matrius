@@ -4,9 +4,10 @@ import type { AssistantMessage } from '@mariozechner/pi-ai';
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, WebActivity } from './types';
+import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, WebActivity } from './types';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import { buildContext, buildSteeringMessage } from './context';
+import { collectGeneratedFiles, getFileActivityEnd, getFileActivityStart } from './file-tools';
 import { getWebActivityEnd, getWebActivityStart } from './web-tools';
 
 function getErrorSignal(value: unknown, seen = new Set<object>(), depth = 0): string {
@@ -104,6 +105,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   const reasoningTurns: string[] = [];
   let activities: WebActivity[] = [];
   let process: ProcessActivity[] = [];
+  let generatedFiles: MessageFile[] = [];
   let assistantIndex = 0;
 
   function setLast(target: string[], value: string) {
@@ -117,11 +119,13 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       reasoning: reasoningTurns.filter(Boolean).join('\n\n'),
       activities,
       process,
+      ...(generatedFiles.length ? { files: generatedFiles } : {}),
     });
   }
 
   function startTool(event: { toolCallId: string; toolName: string; args: unknown }) {
-    const activity = getWebActivityStart(event.toolName, event.toolCallId, event.args);
+    const activity = getWebActivityStart(event.toolName, event.toolCallId, event.args)
+      ?? getFileActivityStart(event.toolName, event.toolCallId, event.args);
     if (!activity) return;
     const now = Date.now();
     const started = { ...activity, startedAt: now };
@@ -133,7 +137,13 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
 
   function endTool(event: { toolCallId: string; toolName: string; result: unknown; isError: boolean }) {
     const previous = activities.find((activity) => activity.id === event.toolCallId);
-    const ended = getWebActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous);
+    const ended = getWebActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous)
+      ?? getFileActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous);
+    if (!event.isError) {
+      for (const file of collectGeneratedFiles(event.result)) {
+        if (!generatedFiles.some((item) => item.id === file.id)) generatedFiles = [...generatedFiles, file];
+      }
+    }
     const endedAt = Date.now();
     activities = activities.map((activity) => {
       if (activity.id !== event.toolCallId) return activity;
@@ -153,7 +163,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     if (event.type === 'tool_execution_end') { endTool(event); return; }
     if (event.type === 'tool_execution_update') {
       const previous = activities.find((activity) => activity.id === event.toolCallId);
-      const updated = getWebActivityEnd(event.toolName, event.toolCallId, event.partialResult, false, previous);
+      const updated = getWebActivityEnd(event.toolName, event.toolCallId, event.partialResult, false, previous)
+        ?? getFileActivityEnd(event.toolName, event.toolCallId, event.partialResult, false, previous);
       if (updated) {
         const next = { ...updated, status: 'running' as const, startedAt: previous?.startedAt };
         activities = activities.map((activity) => activity.id === event.toolCallId ? next : activity);
@@ -211,7 +222,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     /** Queue a supplement for the current run. pi-agent injects it after the active turn. */
     steer(message: Message): SteerOutcome {
       if (message.role !== 'user' || stopped) return false;
-      if (!message.content.trim() && !message.quote?.trim() && !message.images?.length) return false;
+      if (!message.content.trim() && !message.quote?.trim() && !message.images?.length
+        && !message.fileIds?.length && !message.files?.length) return false;
       // Defer instead of merging into a reply whose visible text has already begun.
       if (answerStarted) return 'deferred';
       agent.steer(buildSteeringMessage(message));

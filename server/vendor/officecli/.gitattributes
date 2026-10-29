@@ -1,0 +1,4 @@
+# Never let line-ending conversion or text diffs touch the binaries: their SHA-256
+# checksums are verified at runtime.
+linux-x64/officecli binary
+win-x64/officecli.exe binary

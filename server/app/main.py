@@ -16,6 +16,8 @@ from app.cache import close_cache
 from app.config import get_settings
 from app.conversations.router import router as conversations_router
 from app.db import dispose_engine, ensure_data_dir
+from app.documents.drafts import drafts as document_drafts
+from app.documents.router import router as documents_router
 from app.errors import AppError, app_error_handler, validation_error_handler
 from app.features.router import router as features_router
 from app.files.router import router as files_router
@@ -35,6 +37,10 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(ensure_data_dir)
     except Exception:  # noqa: BLE001 - readiness reports the failure
         logger.warning("Data directory is not available at startup", exc_info=True)
+    try:
+        await document_drafts.reset_on_startup()
+    except Exception:  # noqa: BLE001 - leftover drafts are best-effort cleanup
+        logger.warning("Failed to clear leftover document drafts", exc_info=True)
     yield
     await close_cache()
     await close_bing_client()
@@ -113,6 +119,7 @@ def create_app() -> FastAPI:
     app.include_router(account_router)
     app.include_router(files_router)
     app.include_router(tools_router)
+    app.include_router(documents_router)
     app.include_router(features_router)
     return app
 

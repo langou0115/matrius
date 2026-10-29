@@ -118,6 +118,16 @@ npm run deploy
 
 API 容器入口会在 uvicorn 启动前执行 `alembic upgrade head`、`alembic check` 和 `bootstrap`，因此每次部署都会应用最新迁移。运行时 `/api/health` 与 `/api/health/ready` 也会校验版本，不一致返回 503。
 
+### 文档处理依赖
+
+API 镜像内置 Linux x64 版 OfficeCLI（`server/vendor/officecli/linux-x64/officecli`），并安装 `libreoffice-writer`、`libreoffice-calc`、`libreoffice-impress` 与 `fonts-noto-cjk`：
+
+- 首次构建更慢、镜像明显变大，属于单容器自部署的取舍；Windows 二进制已从 Docker 上下文排除，只供本机开发。
+- `OFFICECLI_PATH` 与 `LIBREOFFICE_PATH` 已写入镜像和 compose，不需要手工配置。升级 OfficeCLI 时同步更新 `server/vendor/officecli/` 下的 `VERSION`、`SHA256SUMS` 和 README，`binaries.py` 会在运行时校验 SHA-256。
+- 旧版 DOC/XLS/PPT 的转换需要 `/tmp` 空间；compose 将 `/tmp` 设为 512 MiB tmpfs，不要改回 64 MiB。
+- 文档草稿是进程内状态，容器重启后失效；已保存到资料库（`/data/files`）的文件不受影响。API 必须保持单 uvicorn worker。
+- macOS 不内置引擎；本机开发需设置 `OFFICECLI_PATH` 指向官方 macOS 构建，否则文档工具返回 503。缺少 LibreOffice 时仅旧版 Office 转换失败。
+
 ### 前端如何找到 Web 工具接口
 
 前端不保存 API 地址，也不读取部署域名。`web_search` / `web_fetch` 与其它云端接口一样，用相对路径请求同源的 `/api/tools/search`、`/api/tools/fetch`：
@@ -172,7 +182,7 @@ APP_HTTPS_PORT=8443  # 预留 HTTPS
 npm run deploy
 ```
 
-部署成功即生效：代码中 `stage="stable"` 的功能在健康检查通过后对所有账号开放；`preview` 仍只对 `admin_test` 开放。
+部署成功即生效：`registry.py` 中登记的功能在健康检查通过后对所有完成首次改密的账号开放。
 
 部署中断或失败时，直接重新执行 `npm run deploy`。
 

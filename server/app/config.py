@@ -89,11 +89,25 @@ class Settings(BaseSettings):
     auth_cookie_seconds: int = 400 * 24 * 60 * 60
     initial_admin_username: str = ""
     initial_admin_password: str = ""
-    preview_username: str = "admin_test"
-
     max_upload_bytes: int = 20 * 1024 * 1024
     storage_quota_bytes: int = 512 * 1024 * 1024
     fetch_max_chars: int = 50000
+
+    # Document engine. Empty paths mean "auto-detect the vendored binary for this
+    # platform". The engine is optional: chat, uploads and text files keep working
+    # when OfficeCLI or LibreOffice is missing.
+    officecli_path: str = ""
+    libreoffice_path: str = ""
+    officecli_timeout_seconds: int = 60
+    officecli_max_output_bytes: int = 16 * 1024 * 1024
+    legacy_conversion_timeout_seconds: int = 60
+    document_tool_timeout_seconds: int = 120
+    document_tool_user_concurrency: int = 2
+    document_draft_ttl_seconds: int = 30 * 60
+    document_draft_max_per_user: int = 10
+    document_draft_user_bytes: int = 60 * 1024 * 1024
+    document_read_calls_per_minute: int = 60
+    document_write_calls_per_minute: int = 20
 
     @property
     def cors_origin_list(self) -> list[str]:

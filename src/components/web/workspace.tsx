@@ -22,7 +22,9 @@ export function Workspace({ children }: PropsWithChildren) {
 
   return <div className={`app-shell ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
     <a className="skip-link" href="#main-content">跳到主要内容</a>
-    {sidebarOpen && <Sidebar onSearch={openSearch} />}
+    {/* Keep the sidebar mounted so collapse and expand can animate; `inert` removes the
+        hidden copy from focus order and pointer interaction. */}
+    <Sidebar onSearch={openSearch} collapsed={!sidebarOpen} />
     <div className="workspace-content">{children}</div>
     {searchOpen && <SearchDialog onClose={() => setSearchOpen(false)} />}
   </div>;

@@ -1,5 +1,24 @@
 import asyncio
 import uuid
+from types import SimpleNamespace
+
+import pytest
+
+from app import storage
+
+
+@pytest.fixture(autouse=True)
+def data_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "get_settings", lambda: SimpleNamespace(data_dir=str(tmp_path)))
+    return tmp_path
+
+
+async def _upload(client, headers, name):
+    response = await client.post(
+        "/api/files", headers=headers, files={"file": (name, b"data", "text/plain")}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
 
 
 async def test_preferences_round_trip(client, create_user):
@@ -279,3 +298,50 @@ async def test_concurrent_imports_stay_idempotent(client, create_user):
         await client.get(f"/api/conversations/{listing[0]['id']}", headers=headers)
     ).json()
     assert [item["content"] for item in detail["messages"]] == ["hi", "hello"]
+
+
+async def test_import_keeps_only_file_ids_the_account_owns(client, create_user):
+    _, headers = await create_user()
+    _, other_headers = await create_user("other")
+    owned = await _upload(client, headers, "owned.txt")
+    foreign = await _upload(client, other_headers, "foreign.txt")
+    unknown = str(uuid.uuid4())
+    mine = str(uuid.uuid4())
+    theirs = str(uuid.uuid4())
+
+    payload = {
+        "schemaVersion": 1,
+        "chat": {
+            "conversations": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "title": "Imported files",
+                    "updatedAt": 1760000000000,
+                    "messages": [
+                        {
+                            "id": mine,
+                            "role": "user",
+                            "content": "mine",
+                            "fileIds": [owned["id"], foreign["id"], unknown],
+                        },
+                        {
+                            "id": theirs,
+                            "role": "assistant",
+                            "content": "theirs",
+                            "fileIds": [foreign["id"], unknown],
+                        },
+                    ],
+                }
+            ]
+        },
+    }
+    response = await client.post("/api/account/import", headers=headers, json=payload)
+    assert response.status_code == 200, response.text
+
+    conversation = (await client.get("/api/conversations", headers=headers)).json()["items"][0]
+    detail = (await client.get(f"/api/conversations/{conversation['id']}", headers=headers)).json()
+    by_content = {item["content"]: item for item in detail["messages"]}
+    assert by_content["mine"]["fileIds"] == [owned["id"]]
+    assert [item["filename"] for item in by_content["mine"]["files"]] == ["owned.txt"]
+    assert by_content["theirs"]["fileIds"] == []
+    assert by_content["theirs"]["files"] == []

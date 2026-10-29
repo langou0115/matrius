@@ -26,12 +26,28 @@ COPY app ./app
 COPY scripts/entrypoint.sh ./scripts/entrypoint.sh
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        gosu \
+        libreoffice-writer libreoffice-calc libreoffice-impress \
+        fonts-noto-cjk fontconfig ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 matrius \
-    && mkdir -p /data/files \
-    && chmod +x /app/scripts/entrypoint.sh \
+    && mkdir -p /data/files
+
+COPY vendor ./vendor
+
+RUN mkdir -p /usr/share/fonts/truetype/noto \
+    && cp /app/vendor/fonts/NotoSansSC.ttf /usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf \
+    && fc-cache -f \
+    && chmod +x /app/scripts/entrypoint.sh /app/vendor/officecli/linux-x64/officecli \
     && chown -R matrius:matrius /app /data
+
+# Linux x64 is the only bundled engine in production; Windows/macOS builds are for local development.
+ENV OFFICECLI_PATH=/app/vendor/officecli/linux-x64/officecli \
+    LIBREOFFICE_PATH=/usr/bin/libreoffice \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TMPDIR=/tmp
 
 # The entrypoint starts as root to fix volume ownership, then drops to matrius.
 EXPOSE 8000

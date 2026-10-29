@@ -65,6 +65,8 @@ class ImportMessage(BaseModel):
     thinkingMs: int | None = Field(default=None, ge=0)
     status: Literal["complete", "stopped", "error"] = "complete"
     error: str | None = Field(default=None, max_length=10_000)
+    # Cloud file ids only; local exports predate cloud storage and leave this empty.
+    fileIds: list[uuid.UUID] = Field(default_factory=list, max_length=20)
     activities: list[WebActivity] = Field(default_factory=list, max_length=50)
 
 

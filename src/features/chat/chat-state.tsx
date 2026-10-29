@@ -22,9 +22,9 @@ export type Conversation = {
 };
 
 /** The fallback shown until a title request succeeds, and the value a late result may replace. */
-export function deriveConversationTitle(message: Pick<Message, 'content' | 'images'>): string {
+export function deriveConversationTitle(message: Pick<Message, 'content' | 'images' | 'fileIds' | 'files'>): string {
   return normalizeConversationTitle(message.content.replace(/\s+/g, ' ').trim())
-    || (message.images?.length ? '图片对话' : '新对话');
+    || (message.images?.length ? '图片对话' : message.files?.length || message.fileIds?.length ? '文件对话' : '新对话');
 }
 export type ChatState = { conversations: Conversation[]; deletedConversationIds?: string[]; activeId: string | null; sidebarOpen: boolean; chatVisible: boolean };
 /** Visibility is a per-tab concern, so it is kept out of the persisted workspace. */

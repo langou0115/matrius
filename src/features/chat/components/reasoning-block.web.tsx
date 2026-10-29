@@ -1,8 +1,10 @@
-import { Check, ChevronRight, CircleAlert, FileText, Globe2, Search, Sparkles, Square } from 'lucide-react';
+import { Check, ChevronRight, CircleAlert, FilePenLine, FilePlus2, FileText, Globe2, Save, Search, Sparkles, Square } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 
 import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
+import { fileContentUrl } from '@/features/files/files-api.web';
 import type { Message } from '../chat-state';
+import { formatFileSize } from './attachment-list.web';
 import { MessageContent } from './message-content.web';
 
 export type ReasoningState = 'running' | 'complete' | 'stopped' | 'error';
@@ -36,6 +38,74 @@ function activityLabel(activity: WebActivity): string {
     return activity.status === 'error' ? '搜索失败' : activity.status === 'running' ? '正在搜索' : '已搜索';
   }
   return activity.status === 'error' ? '读取失败' : activity.status === 'running' ? '正在读取' : '已读取';
+}
+
+const FILE_OPERATION_NAMES: Record<string, string> = {
+  list: '浏览文件',
+  read: '读取文件',
+  grep: '搜索文件',
+  help: '查看文档帮助',
+  inspect: '查看文档结构',
+  create: '创建文档',
+  edit: '编辑文档',
+  save: '保存文件',
+};
+
+function fileOperationName(operation: string | undefined): string {
+  return FILE_OPERATION_NAMES[operation ?? ''] ?? '处理文件';
+}
+
+/** The row says what is happening; the filename sits beside it instead of in the label. */
+function fileActivityLabel(activity: WebActivity): string {
+  const name = fileOperationName(activity.operation);
+  if (activity.status === 'running') return `正在${name}`;
+  if (activity.status === 'error') return `${name}失败`;
+  if (activity.status === 'stopped') return `${name}已停止`;
+  return `已${name}`;
+}
+
+function FileActivityRow({ activity }: { activity: WebActivity }) {
+  const running = activity.status === 'running';
+  const failed = activity.status === 'error';
+  const finished = !running;
+  const [expansion, setExpansion] = useState<{ finished: boolean; open: boolean } | null>(null);
+  const open = expansion?.finished === finished ? expansion.open : !finished;
+  const bodyId = useId();
+  const name = fileOperationName(activity.operation);
+  const draft = !activity.savedFileId && activity.fileId?.startsWith('draft:') === true;
+  const Glyph = failed ? CircleAlert
+    : activity.operation === 'create' ? FilePlus2
+      : activity.operation === 'edit' ? FilePenLine
+        : activity.operation === 'save' ? Save : FileText;
+  return <div className={`web-activity file-activity is-${activity.status}`}>
+    <button type="button" className="web-activity-toggle" aria-expanded={open} aria-controls={bodyId}
+      onClick={() => setExpansion({ finished, open: !open })}>
+      <Glyph size={15} strokeWidth={1.75} className="web-activity-icon" aria-hidden="true" />
+      {activity.filename
+        ? <span className="web-activity-label file-activity-name" title={activity.filename}>{activity.filename}</span>
+        : <span className="web-activity-label">{name}</span>}
+      <span className={`web-activity-state${failed ? ' is-error' : ''}`}>{fileActivityLabel(activity)}</span>
+      {activity.tookMs !== undefined && !running
+        ? <span className="web-activity-time">{formatTook(activity.tookMs)}</span>
+        : null}
+      <ChevronRight size={14} className="web-activity-chevron" aria-hidden="true" />
+    </button>
+    <div className="web-activity-details" id={bodyId} hidden={!open}>
+      <span className="web-activity-subject">{name}{activity.filename ? ` · ${activity.filename}` : ''}</span>
+      {activity.size !== undefined && <span className="web-activity-empty">{formatFileSize(activity.size)}</span>}
+      {draft && <span className="web-activity-empty">草稿文件：保存后才会进入资料库。</span>}
+      {activity.savedFileId && <a className="web-activity-result file-activity-download"
+        href={fileContentUrl(activity.savedFileId)} download={activity.filename}>
+        <Save size={15} strokeWidth={1.75} aria-hidden="true" />
+        <span className="web-activity-result-copy">
+          <span className="web-activity-result-title">下载已保存的文件</span>
+          <span className="web-activity-result-domain">{activity.filename ?? activity.savedFileId}</span>
+        </span>
+      </a>}
+      {activity.warning && <span className="web-activity-empty">{activity.warning}</span>}
+      {activity.error && <span className={failed ? 'web-activity-error' : 'web-activity-empty'}>{activity.error}</span>}
+    </div>
+  </div>;
 }
 
 /** The site's own root favicon keeps requests on the result's domain; a 404 or a broken
@@ -179,7 +249,8 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     <div className="reasoning-body" id={bodyId} hidden={!open}>
       {open && visibleSteps.length ? <div className="reasoning-steps">{visibleSteps.map((step) => step.kind === 'thinking'
         ? <div className="reasoning-text reasoning-process-step" key={step.id}><MessageContent content={step.content} streaming={running && step.status === 'running'} /></div>
-        : <div className="reasoning-process-step" key={step.id}><WebActivityRow activity={step} /></div>)}</div> : null}
+        : <div className="reasoning-process-step" key={step.id}>{step.kind === 'file'
+          ? <FileActivityRow activity={step} /> : <WebActivityRow activity={step} />}</div>)}</div> : null}
     </div>
   </div>;
 }

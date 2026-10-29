@@ -23,8 +23,11 @@ src/
 │   ├── index.web.tsx                   聊天路由
 │   ├── index.tsx                       未适配平台的占位 fallback
 │   ├── c/[conversationId].web.tsx      已有对话的独立 URL
-│   ├── mock/                          开发预览路由（索引页与各项测试）
+│   ├── mock/                          开发预览路由（索引页、聊天与 500 文件资料库）
+│   ├── library.web.tsx                 资料库路由（保留侧栏）
+│   ├── library.tsx                     未适配平台的占位 fallback
 │   ├── settings.web.tsx                设置路由
+│   ├── settings/storage.*              存储设置（用量、文件与图像分类）
 │   └── admin.web.tsx                   管理员页面
 ├── components/web/
 │   ├── link-anchor.tsx                 Expo Router 链接的 DOM 属性适配
@@ -67,6 +70,15 @@ src/
 │   │       ├── file-type-icon.web.tsx   后缀匹配与本地 Material 专用文件图标
 │   │       ├── scroll-to-bottom.web.tsx  跟随滚动与回到最新消息按钮
 │   │       └── search-dialog.web.tsx   标题与正文搜索、结果片段
+│   ├── files/
+│   │   ├── files-api.web.ts            上传、列表、用量、重命名、批量删除与内容地址
+│   │   ├── use-file-library.ts          搜索防抖、筛选排序、游标分页、刷新时保留旧列表与多选状态
+│   │   ├── library-screen.web.tsx       资料库页面、门禁与空/错误状态
+│   │   ├── library-toolbar.web.tsx      搜索、筛选与排序
+│   │   ├── library-item.web.tsx         文件行、多选、重命名与下载
+│   │   ├── mock-library.ts              预览用 500 个文件与内存版 `/api/files`
+│   │   ├── storage-screen.web.tsx       存储设置页：用量、进度条与分类入口
+│   │   └── types.ts                     文件与列表响应契约
 │   ├── workspace/workspace-repository.web.ts  工作区存储结构校验
 │   ├── settings/settings-screen.web.tsx  独立全页设置
 │   └── mock/
@@ -75,7 +87,8 @@ src/
 ├── core/agent/
 │   ├── runtime.ts                     跨端运行入口、状态订阅、回复批处理与取消
 │   ├── runner.ts                      pi-agent 实例、流式事件与超时
-│   ├── context.ts                     引用、图片与历史上下文组装、请求校验
+│   ├── file-tools.ts                  通用 file 工具、预算、草稿与生成文件收集
+│   ├── context.ts                     引用、图片、附件与历史上下文组装、请求校验
 │   ├── types.ts                       共享消息、用户资料和运行状态契约
 │   ├── system-prompt.ts               用户资料与自定义指令的系统提示
 │   ├── title.ts                       独立会话标题请求、超时与标题规范化
@@ -94,6 +107,7 @@ src/
 - 模板 Explore、标签导航、启动动画组件和 reset-project 脚本已移除。
 - `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 9 个专项会话。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需加一个路由文件与一条清单记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；`src/app/mock/_layout.tsx` 用 `__DEV__` 统一保护所有子路由，生产模式跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
 - `/mock/process` 通过 `features/mock/process-preview.web.tsx` 复用思考折叠区、正文和中断提示；阶段切换保留展开状态及连续计时，包含等待、思考、搜索、读取、再次思考、回答和结束，可验证按发生顺序追加步骤及整轮完成状态。模拟数据位于 `dev/fixtures/process-preview.ts`，不调用模型或写入聊天记录。
+- `/mock/library` 直接复用 `features/files/library-screen.web.tsx`，由 `features/files/mock-library.ts` 提供 500 个内存文件（含 SVG 缩略图）与 `/api/files` 的列表、用量、重命名、删除实现；预览模式下 `enabled` 恒为真、不请求真实接口，侧栏“资料库”入口也指向该路由。
 - Web 会话与外观通过 IndexedDB 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过本地 Runtime 生成真实回复。
 - 新建对话首条消息发送后，`chat-runtime.tsx` 在回复之外并行调用 `core/agent/title.ts` 生成标题；`titleModelId` 已配置时使用该模型，否则跟随会话绑定的模型。生成失败保留首条消息截断标题，并在后续回复成功后重试；`titleSource` 防止迟到的结果覆盖手动重命名或分支标题。每个会话最多一个进行中的标题请求，删除会话或卸载工作区时取消。
 - 发送、置顶、重命名和删除会写回浏览器数据库；读取或保存失败有提示。当前会话、侧栏和外观状态也会恢复，草稿仅在本次页面会话中保留。
@@ -150,10 +164,11 @@ src/
 - `core/features/capabilities.ts`：统一判断服务端授予的功能。
 - `features/auth/auth-state.web.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。
 - `features/auth/account-screen.web.tsx`：设置账号页、登录、改密与退出；根工作区按认证状态切换数据源。
+- `features/files/storage-screen.web.tsx`：设置中的“存储”分类（位于账号下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
 - `features/admin/admin-screen.web.tsx`：`/admin` 管理页，管理员独立登录后按用户名创建用户，展示一次初始密码。
-- `features/settings/labs-screen.web.tsx`：受控实验页，路由和数据调用均需权限。
 - `settings-catalog.ts` / `settings-page.web.tsx`：分类与搜索按功能能力统一过滤。
-- `src/app/settings/account.*`、`labs.*`：Web 路由组装。
+- `src/app/settings/account.*`：账号设置路由组装。
+- `src/app/settings/storage.*`：存储设置路由组装，仅在账号具备 `files` 功能时出现在导航中。
 
 ## 开发与发布脚本
 

@@ -50,12 +50,18 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 
 
 async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    # Pydantic embeds the raised ``ValueError`` in ``ctx`` for custom validators;
+    # that object is not JSON-serialisable, so keep only the stable fields.
+    details = [
+        {key: item[key] for key in ("type", "loc", "msg") if key in item}
+        for item in exc.errors()
+    ]
     return JSONResponse(
         {
             "error": {
                 "code": "validation_error",
                 "message": "请求参数不合法。",
-                "details": exc.errors(),
+                "details": details,
             }
         },
         status_code=422,

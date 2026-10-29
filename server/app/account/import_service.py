@@ -12,7 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.account.schemas import ImportConversation, ImportMessage, ImportReadState, ImportRequest
 from app.conversations.schemas import activities_payload
 from app.errors import invalid
-from app.models import Conversation, ConversationDeletion, Message, UserPreference, UserProfile
+from app.models import (
+    Conversation,
+    ConversationDeletion,
+    Message,
+    StoredFile,
+    UserPreference,
+    UserProfile,
+)
 from app.utils import to_ms, utcnow, validate_client_id
 
 logger = logging.getLogger(__name__)
@@ -85,6 +92,10 @@ def _message_client_id(raw: str | None) -> str | None:
         return None
 
 
+def _file_ids(message: ImportMessage) -> list[str]:
+    return [str(value) for value in dict.fromkeys(message.fileIds)]
+
+
 def _message_values(message: ImportMessage) -> dict[str, Any]:
     return {
         "content": message.content,
@@ -96,6 +107,7 @@ def _message_values(message: ImportMessage) -> dict[str, Any]:
         "thinking_ms": message.thinkingMs,
         "status": "complete" if message.role == "user" else message.status,
         "error": message.error,
+        "file_ids": _file_ids(message),
     }
 
 
@@ -144,6 +156,35 @@ def _apply_metadata(conversation: Conversation, item: ImportConversation) -> boo
             setattr(conversation, name, value)
             changed = True
     return changed
+
+
+async def _keep_owned_file_ids(
+    db: AsyncSession, user_id: uuid.UUID, conversations: list[ImportConversation]
+) -> None:
+    """Drop file ids the account does not own instead of failing the whole import."""
+
+    requested = {
+        file_id
+        for item in conversations
+        for message in item.messages
+        for file_id in message.fileIds
+    }
+    if not requested:
+        return
+    owned = set(
+        (
+            await db.execute(
+                select(StoredFile.id).where(
+                    StoredFile.id.in_(requested), StoredFile.user_id == user_id
+                )
+            )
+        ).scalars().all()
+    )
+    for item in conversations:
+        for message in item.messages:
+            message.fileIds = [
+                file_id for file_id in dict.fromkeys(message.fileIds) if file_id in owned
+            ]
 
 
 async def _import_settings(db: AsyncSession, user_id: uuid.UUID, payload: ImportRequest) -> None:
@@ -220,6 +261,7 @@ async def _create_conversation(
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,
+                file_ids=_file_ids(message),
             )
         )
     if item.readState is not None:
@@ -268,6 +310,7 @@ async def _merge_conversation(
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,
+                file_ids=_file_ids(message),
             )
         )
         changed = True
@@ -303,6 +346,7 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
         raise invalid(f"单批最多导入 {MAX_CONVERSATIONS} 个对话。")
     if total_messages > MAX_MESSAGES:
         raise invalid(f"单批最多导入 {MAX_MESSAGES} 条消息。")
+    await _keep_owned_file_ids(db, user_id, conversations)
 
     imported_conversations = 0
     imported_messages = 0

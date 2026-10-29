@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
+import type { MessageFile } from '@/core/agent/types';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { Composer } from './components/composer.web';
 import { ConversationTitle } from './components/conversation-title.web';
@@ -28,7 +29,8 @@ function UserMessage({ message, pending = false }: { message: Message; pending?:
   return <article className="user-message" data-user-message-id={pending ? undefined : message.id}
     data-steering={message.steering ? 'true' : undefined} data-pending={pending ? 'true' : undefined}
     aria-label={pending ? '等待发送的消息' : message.steering ? '你的补充消息' : '你的消息'}>
-    {!!message.images?.length && <MessageAttachments images={message.images} />}
+    {!!(message.images?.length || message.files?.length || message.fileIds?.length) && <MessageAttachments
+      images={message.images} files={message.files} fileIds={message.fileIds} />}
     {(message.quote || message.content.trim()) && <div className="user-message-content">
       {message.quote && <QuoteCard content={message.quote} />}
       {message.content.trim() ? <CollapsibleMessageContent content={message.content} /> : null}
@@ -101,14 +103,14 @@ export default function ChatScreen() {
     if (!bound || bound === models.selectedId || !models.models.some((model) => model.id === bound)) return;
     void models.select(bound).catch(() => setNotice('恢复该对话的模型失败，请重试。'));
   }, [conversation, models]);
-  function send(images: MessageImage[]) {
+  function send(images: MessageImage[], files: MessageFile[] = []) {
     const content = draft.trim();
-    if (!content && !images.length && !quote.trim()) return false;
+    if (!content && !images.length && !files.length && !quote.trim()) return false;
     const conversationId = activeId ?? createId();
     // Thinking/tool phases take the message as a correction; after the answer text starts it
     // is deferred to a new turn; otherwise this starts an ordinary new run.
-    const outcome = runtime.steer(content, conversationId, images, quote);
-    const sent = outcome === false ? runtime.send(content, conversationId, images, quote) : true;
+    const outcome = runtime.steer(content, conversationId, images, quote, files);
+    const sent = outcome === false ? runtime.send(content, conversationId, images, quote, files) : true;
     if (sent) {
       setDraft(draftKey, '');
       setQuote(draftKey, '');
@@ -147,6 +149,7 @@ export default function ChatScreen() {
               <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
               <ReplyStatus message={message} onRetry={message.status === 'error' && message.id === lastMessage?.id && !generating
                 ? () => runtime.retry(conversation.id) : undefined} />
+              {!!message.files?.length && <MessageAttachments files={message.files} generated />}
               {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message}
                 onFeedback={(feedback) => dispatch({ type: 'feedback', conversationId: conversation.id, messageId: message.id, feedback })} onFork={() => {
                 const forkId = createId();

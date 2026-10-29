@@ -1,6 +1,6 @@
 import { readWorkspace } from '@/core/database/browser-store.web';
 import type { ConversationSummary } from '@/core/agent/compaction';
-import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
+import type { MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
 import { orderSteeringMessages } from '@/features/chat/message-order';
 import type { AppearancePreferences } from '@/theme/appearance';
@@ -41,9 +41,9 @@ export function readActivities(value: unknown): WebActivity[] | undefined {
   const activities: WebActivity[] = [];
   for (const item of value.slice(-50)) {
     if (!isRecord(item) || typeof item.id !== 'string' || !item.id) continue;
-    if (item.kind !== 'search' && item.kind !== 'fetch') continue;
+    if (item.kind !== 'search' && item.kind !== 'fetch' && item.kind !== 'file') continue;
     if (item.status !== 'running' && item.status !== 'complete' && item.status !== 'stopped' && item.status !== 'error') continue;
-    const results = Array.isArray(item.results)
+    const results = item.kind === 'search' && Array.isArray(item.results)
       ? item.results.slice(0, 20).flatMap(readSearchResult)
       : undefined;
     activities.push({
@@ -56,6 +56,12 @@ export function readActivities(value: unknown): WebActivity[] | undefined {
       ...(typeof item.url === 'string' ? { url: item.url } : {}),
       ...(Array.isArray(item.urls) && item.urls.every((url) => typeof url === 'string') ? { urls: item.urls.slice(0, 4) } : {}),
       ...(typeof item.title === 'string' ? { title: item.title } : {}),
+      ...(typeof item.operation === 'string' ? { operation: item.operation } : {}),
+      ...(typeof item.fileId === 'string' ? { fileId: item.fileId } : {}),
+      ...(typeof item.savedFileId === 'string' ? { savedFileId: item.savedFileId } : {}),
+      ...(typeof item.filename === 'string' ? { filename: item.filename } : {}),
+      ...(typeof item.size === 'number' && Number.isFinite(item.size) ? { size: item.size } : {}),
+      ...(typeof item.warning === 'string' ? { warning: item.warning } : {}),
       ...(typeof item.tookMs === 'number' && Number.isFinite(item.tookMs) ? { tookMs: item.tookMs } : {}),
       ...(typeof item.error === 'string' ? { error: item.error } : {}),
       ...(typeof item.startedAt === 'number' && Number.isFinite(item.startedAt) ? { startedAt: item.startedAt } : {}),
@@ -85,12 +91,37 @@ function readProcess(value: unknown): ProcessActivity[] | undefined {
   }
   return process.length ? process : undefined;
 }
+/** Stored file metadata is display-only; a malformed entry is dropped like a bad activity. */
+export function readMessageFiles(value: unknown): MessageFile[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const files: MessageFile[] = [];
+  for (const item of value.slice(0, 30)) {
+    if (!isRecord(item) || typeof item.id !== 'string' || !item.id || typeof item.filename !== 'string' || !item.filename) continue;
+    files.push({
+      id: item.id,
+      filename: item.filename,
+      contentType: typeof item.contentType === 'string' ? item.contentType : 'application/octet-stream',
+      size: typeof item.size === 'number' && Number.isFinite(item.size) ? item.size : 0,
+      ...(typeof item.revision === 'number' && Number.isFinite(item.revision) ? { revision: item.revision } : {}),
+    });
+  }
+  return files.length ? files : undefined;
+}
+export function readFileIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids = [...new Set(value.filter((id): id is string => typeof id === 'string' && !!id))].slice(0, 20);
+  return ids.length ? ids : undefined;
+}
 function readMessage(value: unknown): Message {
   if (!isRecord(value) || typeof value.id !== 'string' || (value.role !== 'user' && value.role !== 'assistant') || typeof value.content !== 'string') throw new Error('Invalid stored message');
   const status = value.status === 'streaming' ? 'stopped' : ['complete', 'stopped', 'error'].includes(String(value.status)) ? value.status as Message['status'] : undefined;
   const activities = value.role === 'assistant' ? readActivities(value.activities) : undefined;
   const process = value.role === 'assistant' ? readProcess(value.process) : undefined;
+  const fileIds = readFileIds(value.fileIds);
+  const files = readMessageFiles(value.files);
   return { id: value.id, role: value.role, content: value.content,
+    ...(fileIds ? { fileIds } : {}),
+    ...(files ? { files } : {}),
     ...(value.role === 'user' && value.steering === true ? { steering: true as const } : {}),
     ...(typeof value.quote === 'string' ? { quote: value.quote } : {}),
     ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),

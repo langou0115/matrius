@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.cache import check_cache
 from app.db import engine
+from app.documents.binaries import document_engine_status
 from app.schema import schema_status
 from app.storage import check_storage
 
@@ -56,7 +57,25 @@ async def readiness() -> JSONResponse:
         for name, outcome in zip(checks, outcomes, strict=True)
     }
     healthy = all(value == "ok" for value in results.values())
+
+    # Missing document engines only disable document tools; chat, uploads and text
+    # files keep working, so report them without failing readiness.
+    try:
+        documents = await asyncio.wait_for(asyncio.to_thread(document_engine_status), timeout=5)
+    except Exception:  # noqa: BLE001 - diagnostics must not break readiness
+        logger.warning("Document engine status check failed", exc_info=True)
+        documents = {"status": "error"}
+    else:
+        unavailable = {name: value for name, value in documents.items() if not value.startswith("ok:")}
+        if unavailable:
+            logger.warning("Document engines unavailable: %s", unavailable)
+
     return JSONResponse(
-        {"service": "matrius", "status": "ok" if healthy else "degraded", "checks": results},
+        {
+            "service": "matrius",
+            "status": "ok" if healthy else "degraded",
+            "checks": results,
+            "documents": documents,
+        },
         status_code=200 if healthy else 503,
     )

@@ -29,6 +29,8 @@ const messageBody = (value: Message) => ({
   status: value.status === 'streaming' ? 'stopped' : value.status ?? 'complete', error: value.error ?? null,
   ...(value.role === 'user' && value.steering ? { steering: true } : {}),
   ...(value.role === 'assistant' ? { activities: compactActivities(value.activities) } : {}),
+  // Image attachments contribute their cloud ids while only documents have metadata here.
+  fileIds: value.fileIds ?? value.files?.map((file) => file.id) ?? [],
 });
 
 /** An account-scoped, memory-only REST repository. It never reads or writes IndexedDB.
@@ -61,7 +63,8 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
             `/api/conversations/${encodeURIComponent(remote.id)}?messageLimit=100${before ? `&before=${encodeURIComponent(before)}` : ''}`,
           );
           pages.unshift(detail.messages.map((item) => {
-            const value: Message = { ...messageBody(item), id: item.clientId || item.id } as Message;
+            const value: Message = { ...messageBody(item), id: item.clientId || item.id,
+              ...(item.files?.length ? { files: item.files } : {}) } as Message;
             messages.set(JSON.stringify([id, value.id]), { remote: item, value });
             return value;
           }));

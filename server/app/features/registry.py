@@ -1,7 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
 
-from app.config import get_settings
 from app.models import User
 
 
@@ -10,22 +8,18 @@ class Feature:
     id: str
     name: str
     description: str
-    stage: Literal["preview", "stable"] = "preview"
 
 
-# Register new functionality here as preview. Promoting an entry to stable ships it
-# to every account with the next deployment.
+# Register gated functionality here. Every password-ready account receives every
+# entry; there is no preview allow-list. Keep the list intentional: a feature is
+# only added here when its API routes need `require_feature` and the client needs
+# `useFeature`.
 FEATURES = {
-    "labs": Feature("labs", "实验功能", "提前体验正在验证的新功能。"),
+    "files": Feature("files", "文件与资料库", "上传文档、让模型读取或生成 Office/PDF 文件。"),
 }
 
 
 def enabled_features(user: User) -> list[str]:
     if user.disabled_at is not None or user.must_change_password:
         return []
-    settings = get_settings()
-    preview_user = user.username.casefold() == settings.preview_username.casefold()
-    return [
-        key for key, feature in FEATURES.items()
-        if preview_user or feature.stage == "stable"
-    ]
+    return list(FEATURES)

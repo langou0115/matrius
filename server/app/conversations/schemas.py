@@ -26,20 +26,27 @@ class WebSearchResult(BaseModel):
 
 
 class WebActivity(BaseModel):
-    """A web search or page read made while composing a reply.
+    """A web search, page read or document operation made while composing a reply.
 
     Shape mirrors the client's `WebActivity`; `process` stays local-only and is rebuilt
     from `reasoning` plus these entries when the history is opened.
     """
 
     id: str = Field(min_length=1, max_length=128)
-    kind: Literal["search", "fetch"]
+    kind: Literal["search", "fetch", "file"]
     status: Literal["running", "complete", "stopped", "error"]
     query: str | None = Field(default=None, max_length=500)
     results: list[WebSearchResult] = Field(default_factory=list, max_length=20)
     url: HttpUrl | None = None
     urls: list[HttpUrl] = Field(default_factory=list, max_length=4)
     title: str | None = Field(default=None, max_length=300)
+    # Document operations. fileId may be a draft handle; savedFileId is a Library file.
+    operation: str | None = Field(default=None, max_length=40)
+    fileId: str | None = Field(default=None, max_length=80)
+    savedFileId: str | None = Field(default=None, max_length=80)
+    filename: str | None = Field(default=None, max_length=300)
+    size: int | None = Field(default=None, ge=0)
+    warning: str | None = Field(default=None, max_length=1_000)
     tookMs: int | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=1_000)
     startedAt: int | None = Field(default=None, ge=0)
@@ -113,4 +120,5 @@ class MessagePatch(BaseModel):
     status: Literal["complete", "stopped", "error"] | None = None
     error: str | None = Field(default=None, max_length=10_000)
     feedback: Literal["good", "bad"] | None = None
+    fileIds: list[uuid.UUID] | None = Field(default=None, max_length=20)
     activities: list[WebActivity] | None = Field(default=None, max_length=50)

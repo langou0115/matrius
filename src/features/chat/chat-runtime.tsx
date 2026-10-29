@@ -2,9 +2,12 @@ import { createContext, useCallback, useContext, useEffect, useReducer, useRef, 
 
 import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
+import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
 import { generateConversationTitle } from '@/core/agent/title';
-import type { SteerOutcome } from '@/core/agent/types';
+import type { MessageFile, SteerOutcome } from '@/core/agent/types';
 import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
+import type { AgentTool } from '@mariozechner/pi-agent-core';
+import { hasFeature } from '@/core/features/capabilities';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
@@ -17,6 +20,20 @@ import { deriveConversationTitle, useChat, type Conversation, type Message, type
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 // Stable empty value so rendering never sees a fresh array on every call.
 const NO_MESSAGES: Message[] = [];
+const MAX_ATTACHED_FILES = 30;
+
+/** Every file the conversation has referenced, newest last, for the model's `list`/read calls. */
+function collectAvailableFiles(messages: Message[]): MessageFile[] {
+  const byId = new Map<string, MessageFile>();
+  for (const message of messages) {
+    for (const file of message.files ?? []) {
+      const previous = byId.get(file.id);
+      // A later message may carry a newer revision of the same file.
+      byId.set(file.id, { ...previous, ...file });
+    }
+  }
+  return [...byId.values()].slice(-MAX_ATTACHED_FILES);
+}
 
 type ModelsApi = ReturnType<typeof useModels>;
 
@@ -85,7 +102,7 @@ function useRuntime() {
           // Only the conversation's opening message names it. An image-only opening keeps the
           // "图片对话" fallback instead of being retitled by a later text message.
           const first = conversation.messages.find((item) => item.role === 'user');
-          if (first && (first.content.trim() || first.quote?.trim())) requestTitle(conversationId, first.content, first.quote,
+          if (first && (first.content.trim() || first.quote?.trim() || first.files?.length)) requestTitle(conversationId, first.content, first.quote,
             modelsRef.current.titleModel ?? pickModel(modelsRef.current, conversation.modelId), deriveConversationTitle(first));
         }
       }
@@ -120,16 +137,25 @@ function useRuntime() {
     // anonymous or not-yet-ready session from advertising tools the model cannot call.
     const useWebTools = Boolean(auth.user && !auth.user.mustChangePassword
       && networkTools.ready && networkTools.enabled);
+    const useFileTools = hasFeature(auth.status === 'authenticated' ? auth.user : null, 'files');
+    const tools: AgentTool[] = [];
+    if (useWebTools) tools.push(...createWebTools(auth.request));
+    if (useFileTools) {
+      tools.push(createFileTool({
+        request: auth.request, conversationId, availableFiles: collectAvailableFiles(history),
+      }).tool);
+    }
+    const prompts = [buildSystemPrompt(preferences)];
+    if (useWebTools) prompts.push(webToolsSystemPrompt());
+    if (useFileTools) prompts.push(fileToolsSystemPrompt());
     const started = agent.start({
       conversationId, replyId, messages: history, config,
       ...(contextSummary ? { contextSummary } : {}),
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
       // Thinking depth belongs to the model, so the bound model carries its own depth.
       thinkingEffort: config?.thinkingEffort ?? 'default',
-      systemPrompt: useWebTools
-        ? `${buildSystemPrompt(preferences)}\n\n${webToolsSystemPrompt()}`
-        : buildSystemPrompt(preferences),
-      ...(useWebTools ? { tools: createWebTools(auth.request) } : {}),
+      systemPrompt: prompts.join('\n\n'),
+      ...(tools.length ? { tools } : {}),
     });
     return started ? config : undefined;
   }, [agent, auth, models, networkTools, preferences]);
@@ -220,7 +246,8 @@ function useRuntime() {
     isAnyRunning: Object.keys(runs).length > 0,
     stop: agent.stop,
     notifications, dismissNotification,
-    send(content: string, existingId: string | null, images: MessageImage[] = [], quote?: string) {
+    send(content: string, existingId: string | null, images: MessageImage[] = [], quote?: string,
+      files: MessageFile[] = []) {
       if (existingId === null && newConversationLock.current) return false;
       const conversationId = existingId ?? createId();
       const current = conversations.find((item) => item.id === conversationId);
@@ -230,7 +257,9 @@ function useRuntime() {
       // The real UI always passes a fresh id for a new chat, so use the history rather than
       // `existingId === null` to recognise the first message.
       const isFirstMessage = !current || current.messages.length === 0;
-      const message: Message = { id: createId(), role: 'user', content, ...(images.length ? { images } : {}), ...(quote?.trim() ? { quote: quote.trim() } : {}) };
+      const message: Message = { id: createId(), role: 'user', content, ...(images.length ? { images } : {}),
+        ...(files.length ? { files, fileIds: files.map((file) => file.id) } : {}),
+        ...(quote?.trim() ? { quote: quote.trim() } : {}) };
       // start schedules work on a microtask; dispatch user before any reply update.
       // Keep the user's question and partial reply available for follow-ups such as “continue”.
       const config = start(conversationId, [...(current?.messages ?? []), ...queued, message], createId(),
@@ -258,9 +287,12 @@ function useRuntime() {
       return (conversationId ? pendingSends.current.get(conversationId) : undefined) ?? NO_MESSAGES;
     },
     /** Adds a supplement to the active run. False means there is no run to steer. */
-    steer(content: string, conversationId: string, images: MessageImage[] = [], quote?: string): SteerOutcome {
+    steer(content: string, conversationId: string, images: MessageImage[] = [], quote?: string,
+      files: MessageFile[] = []): SteerOutcome {
       const message: Message = { id: createId(), role: 'user', content,
-        ...(images.length ? { images } : {}), ...(quote?.trim() ? { quote: quote.trim() } : {}) };
+        ...(images.length ? { images } : {}),
+        ...(files.length ? { files, fileIds: files.map((file) => file.id) } : {}),
+        ...(quote?.trim() ? { quote: quote.trim() } : {}) };
       const outcome = agent.steer(conversationId, message);
       if (!outcome) return false;
       if (outcome === 'deferred') {

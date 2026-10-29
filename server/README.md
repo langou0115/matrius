@@ -35,7 +35,7 @@ server/
 
 开发在仓库根目录执行 `npm run dev`：本机 uv 按锁文件安装依赖、启动 FastAPI 热重载，SQLite 数据库和上传文件都在 `server/.data`。全程不连接服务器，也不需要 Docker、SSH 或 `server/.env`；启动时自动迁移开发库并运行 `alembic check`。开发模式下后端直接读取仓库根目录的 `.env.local`，文件变化后代理、搜索/抓取预算、限流等运行时设置会在下一次请求生效，无需重启；端口、数据库路径、管理员初始化和日志级别仍需重启。
 
-正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，自动应用迁移并刷新管理员密码，健康检查后退出；不挂载源码、不热重载。部署成功后 stage=stable 的功能即对所有账号开放。完整说明见[开发与验证](../doc/development.md)。
+正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，自动应用迁移并刷新管理员密码，健康检查后退出；不挂载源码、不热重载。部署成功后功能清单中的能力即对所有账号开放。完整说明见[开发与验证](../doc/development.md)。
 
 本机单独安装后端测试依赖：
 
@@ -173,4 +173,4 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allo
 
 ## 测试账号与新功能开放
 
-preview 仅对 `admin_test` 开放，账号由已有管理员正常创建并完成首次改密；不自动创建测试账号或设置默认测试密码。新增功能在 `app/features/registry.py` 以 preview 登记，接口依赖 `require_feature(id)`；验证后只把指定条目标为 stable，再通过手动 CD 发布。`UserOut.features` 和 `/api/features` 返回当前账号能力，`/api/features/labs` 演示完整服务端校验。参考[认证规则](../doc/auth.md#同一地址的账号功能开关)。
+账号由已有管理员正常创建并完成首次改密；不自动创建测试账号或设置默认测试密码。新增功能在 `app/features/registry.py` 登记，接口依赖 `require_feature(id)`；登记项对所有完成首次改密且未停用的账号生效，在本机验证通过后通过手动 CD 发布。`UserOut.features` 和 `/api/features` 返回当前账号能力。参考[认证规则](../doc/auth.md#同一地址的账号功能开关)。

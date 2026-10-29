@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
+import type { MessageFile } from '@/core/agent/types';
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { Icon } from '@/components/web/icon';
 import { Paperclip } from 'lucide-react';
 import { useModels } from '@/features/models/model-state';
+import { useAuth, useFeature } from '@/features/auth/auth-state.web';
+import {
+  deleteFile, isAllowedAttachment, isImageAttachment,
+  MAX_UPLOAD_BYTES, MAX_UPLOADS, toMessageFile, uploadFile,
+} from '@/features/files/files-api.web';
 import { useChatRuntime } from '../chat-runtime';
 import { useChat, type MessageImage } from '../chat-state';
 import { ModelIcon } from './model-icon.web';
@@ -13,7 +19,7 @@ import { QuoteCard } from './quote-card.web';
 type Props = {
   value: string;
   onChange: (value: string) => void;
-  onSend: (images: MessageImage[]) => boolean;
+  onSend: (images: MessageImage[], files: MessageFile[]) => boolean;
   thinkingEffort: ThinkingEffort;
   onThinkingEffortChange: (value: ThinkingEffort) => void;
   /** Called after the model switch is stored, so the conversation can remember it. */
@@ -24,7 +30,6 @@ type Props = {
 };
 
 // Validate only on send; selecting an attachment never depends on the current model.
-const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -56,17 +61,64 @@ const PICKER_CARD_MAX_HEIGHT = 294;
 export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, onModelChange, quote, onRemoveQuote, onNotice }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Tracks an open native picker so the focus it returns can be handed back to the editor.
+  const picking = useRef(false);
   // Staged for the next message only. The parent keys this component by conversation, so a
   // switch remounts it and drops both the previews and any selection error.
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
+  const attachmentsRef = useRef<StagedAttachment[]>([]);
   const previewUrls = useRef(new Set<string>());
   const mounted = useRef(true);
   const preparing = useRef(false);
   const [sending, setSending] = useState(false);
+  const filesEnabled = useFeature('files');
+  const auth = useAuth();
+  // Kept in refs so the unmount cleanup does not re-run when the session object changes.
+  const filesEnabledRef = useRef(filesEnabled);
+  const requestRef = useRef(auth.request);
+  useEffect(() => {
+    filesEnabledRef.current = filesEnabled;
+    requestRef.current = auth.request;
+  }, [auth.request, filesEnabled]);
   useEffect(() => {
     mounted.current = true;
     const urls = previewUrls.current;
-    return () => { mounted.current = false; urls.forEach((url) => URL.revokeObjectURL(url)); urls.clear(); };
+    return () => {
+      mounted.current = false;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.clear();
+      // Abort in-flight uploads and drop files that never reached a message.
+      for (const attachment of attachmentsRef.current) {
+        attachment.controller?.abort();
+        if (attachment.consumed || !attachment.fileId || !filesEnabledRef.current) continue;
+        void deleteFile(requestRef.current, attachment.fileId).catch(() => {});
+      }
+    };
+  }, []);
+  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
+  useEffect(() => {
+    const node = fileInput.current;
+    if (!node) return;
+    // Closing the native picker without choosing a file leaves focus on the input (or on
+    // the document body), where typing does nothing. Clearing the value also lets the same
+    // file be picked again after a cancellation.
+    const reset = () => { node.value = ''; };
+    const restoreFocus = () => {
+      if (!picking.current) return;
+      picking.current = false;
+      window.setTimeout(() => {
+        if (!mounted.current) return;
+        if (document.activeElement === node || document.activeElement === document.body) {
+          input.current?.focus({ preventScroll: true });
+        }
+      }, 0);
+    };
+    node.addEventListener('cancel', reset);
+    window.addEventListener('focus', restoreFocus);
+    return () => {
+      node.removeEventListener('cancel', reset);
+      window.removeEventListener('focus', restoreFocus);
+    };
   }, []);
   const composing = useRef(false);
   const [showModels, setShowModels] = useState(false);
@@ -165,16 +217,61 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     element.style.height = `${Math.min(192, Math.max(58, element.scrollHeight))}px`;
   }, [value]);
 
-  function addImages(files: File[]) {
+  function startUpload(attachment: StagedAttachment) {
+    const controller = new AbortController();
+    setAttachments((current) => current.map((item) => item.id === attachment.id
+      ? { ...item, status: 'uploading', controller, error: undefined } : item));
+    void uploadFile(requestRef.current, attachment.file, {
+      clientId: attachment.id,
+      ...(activeId ? { conversationId: activeId } : {}),
+      signal: controller.signal,
+    }).then((server) => {
+      if (!mounted.current || controller.signal.aborted) return;
+      setAttachments((current) => current.map((item) => item.id === attachment.id
+        ? { ...item, status: 'ready', fileId: server.id, serverFile: server, controller: undefined } : item));
+    }).catch((reason) => {
+      if (!mounted.current || controller.signal.aborted) return;
+      const message = reason instanceof Error ? reason.message.trim() : '';
+      setAttachments((current) => current.map((item) => item.id === attachment.id
+        ? { ...item, status: 'error', error: message || '上传失败', controller: undefined } : item));
+    });
+  }
+
+  function addFiles(files: File[]) {
     if (!files.length) return;
     onNotice(null);
-    const next = files.map((file) => {
-      const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg|avif|bmp|ico)$/i.test(file.name);
-      const preview = isImage ? URL.createObjectURL(file) : null;
+    const slots = MAX_UPLOADS - attachmentsRef.current.length;
+    if (slots <= 0) { onNotice(`每条消息最多发送 ${MAX_UPLOADS} 个附件，请先移除部分附件。`); return; }
+    if (files.length > slots) onNotice(`每条消息最多发送 ${MAX_UPLOADS} 个附件，多余的已忽略。`);
+    const accepted: StagedAttachment[] = [];
+    for (const file of files.slice(0, slots)) {
+      const image = isImageAttachment(file);
+      if (!isAllowedAttachment(file.name)) { onNotice(`暂不支持文件「${file.name}」。`); continue; }
+      if (!image && !filesEnabled) { onNotice('登录后可使用文档附件与资料库。'); continue; }
+      const preview = image ? URL.createObjectURL(file) : null;
       if (preview) previewUrls.current.add(preview);
-      return { id: createId(), file, preview };
-    });
-    setAttachments((current) => [...current, ...next]);
+      accepted.push({ id: createId(), file, preview, ...(filesEnabled ? { status: 'uploading' as const } : {}) });
+    }
+    if (!accepted.length) return;
+    attachmentsRef.current = [...attachmentsRef.current, ...accepted];
+    setAttachments((current) => [...current, ...accepted]);
+    if (!filesEnabled) return;
+    for (const attachment of accepted) startUpload(attachment);
+  }
+
+  function removeAttachment(attachment: StagedAttachment) {
+    onNotice(null);
+    attachment.controller?.abort();
+    // The file already belongs to the Library; drop it unless it was sent.
+    if (attachment.fileId && !attachment.consumed && filesEnabled) {
+      void deleteFile(auth.request, attachment.fileId).catch(() => {});
+    }
+    if (attachment.preview) {
+      URL.revokeObjectURL(attachment.preview);
+      previewUrls.current.delete(attachment.preview);
+    }
+    attachmentsRef.current = attachmentsRef.current.filter((item) => item.id !== attachment.id);
+    setAttachments((current) => current.filter((item) => item.id !== attachment.id));
   }
 
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
@@ -184,7 +281,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       .filter((file): file is File => !!file);
     if (!files.length) return;
     event.preventDefault();
-    void addImages(files);
+    void addFiles(files);
   }
 
   async function submit() {
@@ -192,21 +289,33 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     // as long as there is something to send.
     if (preparing.current || (!value.trim() && !attachments.length && !quote?.trim())) return;
     if (!models.ready || !models.selected) { onNotice(models.error ?? '请先在设置 → 模型服务中添加并选择模型。'); return; }
-    const unsupported = attachments.find(({ file }) => !IMAGE_TYPES.includes(file.type));
-    if (unsupported) { onNotice(`暂不支持文件「${unsupported.file.name}」，目前仅支持 PNG、JPEG、WebP 或 GIF 图片。`); return; }
-    if (attachments.length > MAX_IMAGES) { onNotice(`每条消息最多发送 ${MAX_IMAGES} 张图片，请移除多余附件。`); return; }
-    const oversized = attachments.find(({ file }) => file.size > MAX_IMAGE_BYTES);
-    if (oversized) { onNotice(`图片「${oversized.file.name}」超过 10MB，请移除或压缩后重试。`); return; }
-    if (attachments.length && !models.selected.supportsImage) { onNotice('当前模型未开启图片输入，请切换支持图片的模型，或在模型设置中确认图片输入能力。'); return; }
+    if (attachments.some(({ status }) => status === 'uploading')) { onNotice('附件仍在上传，请稍候。'); return; }
+    const failed = attachments.find(({ status }) => status === 'error');
+    if (failed) { onNotice(`附件「${failed.file.name}」上传失败，请重试或移除。`); return; }
+    const imageAttachments = attachments.filter(({ preview }) => preview);
+    const documentAttachments = attachments.filter(({ preview }) => !preview);
+    if (imageAttachments.length > MAX_IMAGES) { onNotice(`每条消息最多发送 ${MAX_IMAGES} 张图片，请移除多余附件。`); return; }
+    const oversized = attachments.find(({ file, preview }) => file.size > (preview ? MAX_IMAGE_BYTES : MAX_UPLOAD_BYTES));
+    if (oversized) {
+      onNotice(`附件「${oversized.file.name}」超过 ${oversized.preview ? '10MB' : '20MB'}，请移除或压缩后重试。`);
+      return;
+    }
+    if (imageAttachments.length && !models.selected.supportsImage) { onNotice('当前模型未开启图片输入，请切换支持图片的模型，或在模型设置中确认图片输入能力。'); return; }
     preparing.current = true;
     setSending(true);
     try {
-      const images = await Promise.all(attachments.map(async ({ id, file }) => ({ id, name: file.name, mimeType: file.type, dataUrl: await readImageDataUrl(file), size: file.size })));
+      const images = await Promise.all(imageAttachments.map(async ({ id, file, fileId }) => ({
+        id, name: file.name, mimeType: file.type, dataUrl: await readImageDataUrl(file), size: file.size,
+        ...(fileId ? { fileId } : {}),
+      })));
       if (!mounted.current) return;
-      if (!onSend(images)) return;
-      const sentIds = new Set(attachments.map(({ id }) => id));
-      setAttachments((current) => current.filter(({ id }) => !sentIds.has(id)));
+      const files = documentAttachments.flatMap(({ serverFile }) => serverFile ? [toMessageFile(serverFile)] : []);
+      if (documentAttachments.length !== files.length) { onNotice('部分附件尚未上传完成，请重试。'); return; }
+      if (!onSend(images, files)) return;
+      // `onSend` took ownership; dropping the ref first keeps unmount cleanup from deleting them.
+      attachmentsRef.current = [];
       attachments.forEach(({ preview }) => { if (preview) { URL.revokeObjectURL(preview); previewUrls.current.delete(preview); } });
+      setAttachments([]);
       onNotice(null);
       input.current?.focus();
     } catch {
@@ -322,13 +431,11 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   return <>
     <form className="composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       {quote && <QuoteCard content={quote} onRemove={sending ? undefined : onRemoveQuote} />}
-      <input ref={fileInput} className="composer-file-input" type="file" multiple
-        onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addImages(files); }} />
-      {attachments.length > 0 && <AttachmentList attachments={attachments} removingDisabled={sending} onRemove={(attachment) => {
-        onNotice(null);
-        if (attachment.preview) { URL.revokeObjectURL(attachment.preview); previewUrls.current.delete(attachment.preview); }
-        setAttachments((current) => current.filter((item) => item.id !== attachment.id));
-      }} />}
+      <input ref={fileInput} className="composer-file-input" type="file" multiple tabIndex={-1}
+        accept={filesEnabled ? undefined : 'image/png,image/jpeg,image/webp,image/gif'}
+        onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addFiles(files); }} />
+      {attachments.length > 0 && <AttachmentList attachments={attachments} removingDisabled={sending}
+        onRemove={removeAttachment} onRetry={(attachment) => startUpload(attachment)} />}
       <textarea
         ref={input}
         aria-label="消息内容"
@@ -348,7 +455,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         }}
       />
       <div className="composer-toolbar">
-        <button type="button" className="composer-attach" onClick={() => { onNotice(null); fileInput.current?.click(); }}
+        <button type="button" className="composer-attach" onClick={() => { onNotice(null); picking.current = true; fileInput.current?.click(); }}
           aria-label="添加附件">
           <Paperclip size={22} strokeWidth={1.75} aria-hidden="true" />
         </button>
@@ -377,7 +484,8 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         </button>
         {running && !value.trim() && !attachments.length && !quote?.trim()
           ? <button type="button" className="send-button" onClick={() => runtime.stop(activeId ?? undefined)} aria-label="停止生成"><span className="stop-generation-icon" /></button>
-          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length && !quote?.trim()) || sending}
+          : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length && !quote?.trim())
+            || sending || attachments.some(({ status }) => status === 'uploading' || status === 'error')}
             aria-label={running ? '发送补充或纠正' : '发送消息'} title={running ? '发送补充或纠正' : undefined}><Icon name="arrow" size={21} /></button>}
       </div>
     </form>

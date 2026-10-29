@@ -1,11 +1,11 @@
-import { Link, router } from 'expo-router';
+import { Link, router, usePathname, type Href } from 'expo-router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useState } from 'react';
-import { SquarePen } from 'lucide-react';
+import { FolderOpen, SquarePen } from 'lucide-react';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
-import { useAuth } from '@/features/auth/auth-state.web';
+import { useAuth, useFeature } from '@/features/auth/auth-state.web';
 import { useChat, type Conversation } from '../chat-state';
 import { ConversationMenu } from './conversation-menu.web';
 import { ConversationSelect } from './conversation-select.web';
@@ -14,13 +14,17 @@ import { useChatRuntime } from '../chat-runtime';
 import { conversationHref } from '../conversation-href';
 import { forgetScrollPosition } from '../scroll-position.web';
 
-type Props = { onSearch: () => void };
+type Props = { onSearch: () => void; collapsed: boolean };
 
-export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
+export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarCollapsed }: Props) {
   const { conversations, activeId, dispatch } = useChat();
   const runtime = useChatRuntime();
   const preview = useIsPreview();
   const auth = useAuth();
+  const filesEnabled = useFeature('files');
+  const pathname = usePathname().replace(/\/$/, '');
+  const libraryHref = preview ? '/mock/library' : '/library';
+  const onLibrary = pathname === libraryHref;
   const homeHref = preview ? '/mock/chat' : '/';
   const [editing, setEditing] = useState<Conversation | null>(null);
   const [title, setTitle] = useState('');
@@ -38,7 +42,7 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
   }
 
   return (
-    <aside className="sidebar" aria-label="对话导航">
+    <aside className="sidebar" aria-label="对话导航" inert={sidebarCollapsed || undefined}>
       <div className="sidebar-header">
         <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => dispatch({ type: 'select', id: null })}>Matrius</LinkAnchor></Link>
         <div className="sidebar-header-actions">
@@ -47,7 +51,13 @@ export const Sidebar = memo(function Sidebar({ onSearch }: Props) {
         </div>
       </div>
       <nav className="sidebar-primary" aria-label="工作区">
-        <button className={`new-conversation ${activeId === null ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
+        <button className={`new-conversation ${activeId === null && !onLibrary ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
+        {(preview || filesEnabled) && <Link href={libraryHref as Href} asChild>
+          <LinkAnchor className={`new-conversation ${onLibrary ? 'is-active' : ''}`}
+            aria-current={onLibrary ? 'page' : undefined} aria-label="打开资料库">
+            <FolderOpen size={19} strokeWidth={1.75} aria-hidden="true" /><span>资料库</span>
+          </LinkAnchor>
+        </Link>}
       </nav>
       <nav className="conversation-list" aria-label="历史对话">
         {groups.map((group) => (

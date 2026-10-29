@@ -59,7 +59,10 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
     const headers = new Headers(init.headers);
     if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
     else headers.delete('Authorization');
-    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    // FormData needs the browser-generated multipart boundary; forcing JSON breaks uploads.
+    if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
     let response: Response;
     try {
       response = await fetcher(path, {

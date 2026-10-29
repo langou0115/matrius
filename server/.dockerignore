@@ -6,3 +6,7 @@ __pycache__
 .env
 .env.*
 tests
+.data
+# Production runs the Linux x64 engine; the Windows binary only ships for local development.
+vendor/officecli/win-x64
+vendor/officecli/win-x64/officecli.exe.partial

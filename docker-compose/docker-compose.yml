@@ -90,6 +90,15 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
       STORAGE_QUOTA_BYTES: ${STORAGE_QUOTA_BYTES:-536870912}
       FETCH_MAX_CHARS: ${FETCH_MAX_CHARS:-50000}
+      OFFICECLI_PATH: /app/vendor/officecli/linux-x64/officecli
+      LIBREOFFICE_PATH: /usr/bin/libreoffice
+      OFFICECLI_TIMEOUT_SECONDS: ${OFFICECLI_TIMEOUT_SECONDS:-60}
+      LEGACY_CONVERSION_TIMEOUT_SECONDS: ${LEGACY_CONVERSION_TIMEOUT_SECONDS:-60}
+      DOCUMENT_TOOL_TIMEOUT_SECONDS: ${DOCUMENT_TOOL_TIMEOUT_SECONDS:-120}
+      DOCUMENT_TOOL_USER_CONCURRENCY: ${DOCUMENT_TOOL_USER_CONCURRENCY:-2}
+      DOCUMENT_DRAFT_TTL_SECONDS: ${DOCUMENT_DRAFT_TTL_SECONDS:-1800}
+      DOCUMENT_DRAFT_MAX_PER_USER: ${DOCUMENT_DRAFT_MAX_PER_USER:-10}
+      DOCUMENT_DRAFT_USER_BYTES: ${DOCUMENT_DRAFT_USER_BYTES:-62914560}
     volumes:
       - api_data:/data
     # Lets WEBTOOL_PROXY_URL use host.docker.internal to reach a proxy on the Docker host.
@@ -109,8 +118,9 @@ services:
     init: true
     security_opt:
       - no-new-privileges:true
+    # LibreOffice needs room for its per-conversion profile plus input/output files.
     tmpfs:
-      - /tmp:size=64m,mode=1777
+      - /tmp:size=512m,mode=1777
     networks:
       - edge
     restart: unless-stopped

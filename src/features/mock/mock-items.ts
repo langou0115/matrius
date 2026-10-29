@@ -26,6 +26,12 @@ export const mockItems: readonly MockItem[] = [
     description: '109 个会话、1730 条消息，覆盖 Markdown、公式、代码高亮与长对话渲染。',
     icon: 'chat',
   },
+  {
+    href: '/mock/library',
+    title: '资料库渲染测试',
+    description: '500 个生成文件，覆盖搜索、图片/文件筛选、排序、分页、重命名与批量删除。',
+    icon: 'folder',
+  },
 ];
 
 /** 由当前路径反查所属测试项，子路径（如分支、滚动锚点）也算在该项内。 */

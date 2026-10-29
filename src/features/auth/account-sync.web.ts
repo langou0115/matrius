@@ -1,7 +1,7 @@
 import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
 import type { Conversation, Message } from '@/features/chat/chat-state';
-import { readActivities } from '@/features/workspace/workspace-repository.web';
+import { readActivities, readFileIds, readMessageFiles } from '@/features/workspace/workspace-repository.web';
 import type { PersonalizationPreferences } from '@/features/settings/personalization';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { readLocalValue, writeLocalValue } from '@/core/database/browser-store.web';
@@ -49,6 +49,8 @@ type RemoteMessage = {
   thinkingMs?: unknown;
   status?: unknown;
   error?: unknown;
+  fileIds?: unknown;
+  files?: unknown;
 };
 
 type ImportMessagePayload = {
@@ -62,6 +64,7 @@ type ImportMessagePayload = {
   thinkingMs?: number;
   status?: 'complete' | 'stopped' | 'error';
   error?: string;
+  fileIds?: string[];
 };
 type ImportReadMarker = { state: 'absent' | 'unread' | 'read'; readAt?: number };
 type ImportConversationPayload = {
@@ -125,10 +128,14 @@ function toLocalMessage(value: RemoteMessage): Message | null {
   const status = value.status === 'complete' || value.status === 'stopped' || value.status === 'error'
     ? value.status : undefined;
   const activities = value.role === 'assistant' ? readActivities(value.activities) : undefined;
+  const fileIds = readFileIds(value.fileIds);
+  const files = readMessageFiles(value.files);
   return {
     id,
     role: value.role,
     content: value.content,
+    ...(fileIds ? { fileIds } : {}),
+    ...(files ? { files } : {}),
     ...(typeof value.quote === 'string' ? { quote: value.quote } : {}),
     ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
@@ -152,6 +159,8 @@ function toImportMessage(message: Message): ImportMessagePayload {
     ...(typeof message.thinkingMs === 'number' ? { thinkingMs: message.thinkingMs } : {}),
     ...(message.status && message.status !== 'streaming' ? { status: message.status } : {}),
     ...(message.error ? { error: message.error } : {}),
+    ...((message.fileIds?.length || message.files?.length)
+      ? { fileIds: message.fileIds ?? message.files!.map((file) => file.id) } : {}),
   };
 }
 

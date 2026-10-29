@@ -147,7 +147,8 @@ DELETE /api/messages/{id}?baseRevision=
 - `status=streaming` 返回 422；用户消息固定 `complete`。
 - `position` 在锁定会话行后取 `max(position)+1`，多设备并发追加不会重号。
 - 工作流：先 POST 用户消息，回复结束后再 POST 助手消息；流式文本只存在客户端内存。页面中途关闭只会留下用户消息。
-- 图片先通过文件 API 上传，消息只保存 `fileId` 引用。
+- 图片和文档先通过文件 API 上传，消息只保存 `fileIds` 引用（最多 20 个，去重并校验归属）。列表与详情响应同时返回 `files: [{ id, filename, contentType, size, revision }]`，顺序与 `fileIds` 一致；已删除或不属于本人的 ID 不输出。`get_conversation` 对本页所有 `file_ids` 只查询一次文件表。
+- `PATCH /api/messages/{id}` 可传 `fileIds` 替换附件：未绑定会话的文件会绑定到当前会话，已属于其他会话的文件返回 422，传空数组表示清空。
 
 ### 账号数据
 
@@ -199,18 +200,25 @@ POST /api/account/import
 
 ```text
 POST   /api/files            multipart: file, conversationId?, clientId?
-GET    /api/files?conversationId=
+GET    /api/files?query=&kind=all|image|document|text&sort=created|name|size
+                  &order=asc|desc&conversationId=&cursor=&limit=1..200
+GET    /api/files/usage                        → { used, quota }
+POST   /api/files/bulk-delete { ids: [...] }   ≤100，去重
+PATCH  /api/files/{id}        { filename }     不允许改扩展名
 GET    /api/files/{id}
 GET    /api/files/{id}/content
 DELETE /api/files/{id}
 ```
 
 - 单文件默认 20 MiB，每用户默认 512 MiB；并发上传解析限制为 2。
-- 白名单：文本/代码/Markdown/CSV、图片、PDF、DOCX、XLSX、PPTX。
+- `conversationId` 同时接受会话主键和客户端的 `clientId`：聊天客户端只知道后者；服务端解析后统一写入主键，列表过滤也支持两种形式。
+- 白名单：文本/代码/Markdown/CSV、图片、PDF、DOCX、XLSX、PPTX，以及旧版 DOC/XLS/PPT。旧格式原样保存，读取时才转换。
+- 列表按 `(sort_value, id)` keyset 分页，返回 `{ items, nextCursor }`；文件名搜索转义 `%`/`_`/`\`；`kind=document` 同时匹配现代与旧版 Office。
 - 对象键 `users/{userId}/{fileId}/{safeName}`；内容写入 `DATA_DIR/files`（生产为 `/data/files`），先写文件再写数据库，数据库失败时补偿删除对象。写入使用临时文件 + `os.replace` 原子替换。
 - 下载先校验归属；设置 `X-Content-Type-Options: nosniff`，非图片使用 `Content-Disposition: attachment`。
-- 删除先删对象再删记录；文件随会话删除只置空 `conversation_id`。
-- 解析：PDF 用 pypdf；DOCX/XLSX/PPTX 用 python-docx/openpyxl/python-pptx；其他白名单文件按纯文本解码（UTF-8，失败时使用 charset-normalizer）。不做 OCR，不支持旧版 Office。
+- 单条删除先删对象再删记录；批量删除先提交数据库删除再 best-effort 删除对象（最坏留下孤儿对象，不会出现“对象没了但行还在”）。文件随会话删除只置空 `conversation_id`。
+- 重命名只改数据库文件名，不改对象键，`revision` 递增；空名或改扩展名返回 422。
+- 解析：PDF 用 pypdf；DOCX/XLSX/PPTX 用 python-docx/openpyxl/python-pptx；旧版 Office 先经 LibreOffice 转换；其他白名单文件按纯文本解码（UTF-8，失败时使用 charset-normalizer）。不做 OCR。
 - 单次提取上限 2,000,000 字符；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
 
 ## 云端工具
@@ -256,16 +264,27 @@ POST /api/admin/tools/test
 - 仅接受 admin scope 会话，与聊天流量分开限流（每账号 20 次/分钟），并复用真实搜索、抓取、缓存与代理路径。
 - 返回结果包含 `tookMs`、`proxy`（是否配置了 `WEBTOOL_PROXY_URL`）和 `diagnostics`。搜索诊断包含 provider / status / attempts / elapsedMs / fallback / fallbackStatus 等；读取诊断包含 extractor / attempts / contentType / finalUrl / truncated。失败沿用统一 `{"error":{"code","message"}}` 响应。
 
-### 文件读取
+### 统一文件工具
 
 ```text
-POST /api/tools/files/read { fileId, start?, end?, maxChars? }
-POST /api/tools/files/grep { fileId, pattern, context?, maxMatches? }
+POST /api/tools/file
+{
+  operation: list|read|grep|help|inspect|create|edit|save,
+  conversationId?, fileId?（UUID 或 draft:<uuid>）, filename?, format?,
+  element?, path?, commands?, pdfChanges?, save?, start?, end?, maxChars?,
+  pattern?, context?, maxMatches?
+}
 ```
 
-- 仅能读取本人文件。
-- read 按行返回，单次最多 50,000 字符，`truncated` 表示达到字符上限。
-- grep 最多 200 条匹配，返回行号、匹配行和上下文。
+- 仅对所有者为本人的文件可用，并要求账号具备 `files` 功能；响应为 `{ operation, file?, draft?, text?, truncated?, files? }`，`file` 复用 `file_out`。
+- 读类操作（list/read/grep/help/inspect）每账号 60 次/分钟，写类（create/edit/save）20 次/分钟；每账号最多 2 个在途文档操作。
+- 操作级校验在请求模型中完成：`create` 不能带 `fileId`，`edit` 必须提供与格式匹配的 `commands` 或 `pdfChanges`，`save` 只接受草稿，`read`/`grep` 必须有 `fileId`。PDF 拒绝 `commands`，Office 拒绝 `pdfChanges`。
+- Office 属性白名单、文档路径（必须以 `/` 开头，禁止 `..`/NUL/CRLF，≤500 字符）、命令与 PDF 变更均限最多 100 条；不接收 raw XML、任意 CLI 参数、图片导入或外部资源。
+- Office 操作经 vendored OfficeCLI 子进程执行，不使用 shell，环境变量白名单，超时杀进程组，stdout/stderr 累计超限即终止。PDF 使用 pypdf + reportlab，在 `asyncio.to_thread` 中运行。
+- 单次结果约 30,000 字符并标记 `truncated`；文档内容按不可信资料返回。
+- 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{userId}/{draftId}/`；TTL 默认 30 分钟，每用户最多 10 个、总计 60 MiB，跨用户 404。保存成功后删除草稿。
+- 保存编辑结果时检查 `StoredFile.revision == base_revision`，不一致返回 409；先写新对象再更新行，提交后 best-effort 删除旧对象。旧版 Office 编辑后的保存会新建文件，不改原件。
+- 兼容保留 `POST /api/tools/files/read|grep`：按行读取（单次最多 50,000 字符）与正则匹配（最多 200 条）。
 
 ## 限流
 
@@ -276,14 +295,15 @@ POST /api/tools/files/grep { fileId, pattern, context?, maxMatches? }
 | 会话/消息/账号读取 | 用户 240/分钟 |
 | 文件上传 | 用户 20/分钟，并发解析 2 |
 | 搜索/网页读取 | 用户 30/分钟，并发 4 |
-| 文件 read/grep | 用户 60/分钟 |
+| 文档工具读（list/read/grep/help/inspect） | 用户 60/分钟，并发 2 |
+| 文档工具写（create/edit/save） | 用户 20/分钟，并发 2 |
 
 计数保存在 API 进程内，重启后清零；只影响频率限制，不影响账号与数据隔离。
 
 ## 健康检查与日志
 
 - `GET /api/health`：数据库探活；成功 `{"service":"matrius","status":"ok"}`。远程发布与容器健康检查使用此接口。
-- `GET /api/health/ready`：并行检查 `database`、`schema`（数据库 revision 与镜像 head 一致）、`cache`、`storage`；任一失败返回 503 与 `checks`。
+- `GET /api/health/ready`：并行检查 `database`、`schema`（数据库 revision 与镜像 head 一致）、`cache`、`storage`；任一失败返回 503 与 `checks`。另在 `documents` 中报告 OfficeCLI/LibreOffice 的路径与哈希状态；缺失只记 warning，不改变 HTTP 状态，聊天、上传和文本文件仍可用。
 - 日志为 JSON，包含 request id、user id、方法、路径、状态、耗时；不记录 Authorization、token、消息正文或文件内容。
 - 响应头 `X-Request-ID` 可用于和服务端日志对照。
 
@@ -313,10 +333,9 @@ files
 
 ## 账号功能开关
 
-认证返回的 `UserOut` 增加 `features: string[]`，登录响应与 `/api/auth/me` 动态计算。清单位于 `app/features/registry.py`，preview 仅 `admin_test` 开放；stage 为 stable 的功能对所有已认证且完成首次改密的用户开放，部署成功后立即生效。`require_feature(id)` 必须用于新增受控接口，账号停用或会话撤销后不能继续调用。
+认证返回的 `UserOut` 增加 `features: string[]`，登录响应与 `/api/auth/me` 动态计算。清单位于 `app/features/registry.py`，登记的功能对所有已认证且完成首次改密、未停用的用户开放，部署成功后立即生效；没有预览名单。`require_feature(id)` 必须用于新增受控接口，账号停用或会话撤销后不能继续调用。
 
-- `GET /api/features`：返回当前账号可用的功能元数据。
-- `GET /api/features/labs`：受 labs 功能校验的实验页数据；匿名 401、无功能权限 403。
+- `GET /api/features`：返回当前账号可用的功能元数据；匿名 401。
 - 认证与功能响应禁止缓存；权限不接受客户端 username、header 或 query 覆盖。
 
-功能发布仅改变代码中的 stage，不修改用户数据或表结构；数据库迁移另行审查与执行。
+功能登记不修改用户数据或表结构；数据库迁移另行审查与执行。

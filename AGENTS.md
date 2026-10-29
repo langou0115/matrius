@@ -29,6 +29,7 @@ npx expo lint
 npx tsc --noEmit
 npm run test:rendering
 npm run test:models
+npm run test:files
 npm run test:auth
 npm run test:deploy
 npm run test:dev
@@ -58,23 +59,24 @@ uv run --no-sync pytest
 - 本地模式数据在 IndexedDB；云端模式服务端是唯一事实源，不做本地缓存或增量同步。
 - 模型密钥只存客户端，不写日志、不上传。
 - 云端资源按认证得到的 `userId` 隔离，写操作使用 `baseRevision` 乐观并发。
-- SQLite 存持久数据（单服务器、单实例、单 uvicorn worker），文件落在 `DATA_DIR/files`，限流与短期缓存只存在于 API 进程内存；结构变更走 Alembic，并确保能在空库执行。
+- SQLite 存持久数据（单服务器、单实例、单 uvicorn worker），文件落在 `DATA_DIR/files`，文档草稿落在 `DATA_DIR/drafts`（进程内元数据 + 文件系统，重启即失效），限流与短期缓存只存在于 API 进程内存；结构变更走 Alembic，并确保能在空库执行。
+- 文档引擎：`server/vendor/officecli` 内置 Linux x64 与 Windows x64 二进制，生产镜像固定使用 Linux 版；旧版 Office 转换依赖 LibreOffice。工具 API 在服务端无状态执行，Agent 仍在客户端。macOS 本机需设置 `OFFICECLI_PATH`。
 - 保持简单：不引入微服务、多 Agent 编排、RBAC、组织或租户。
 - 新增状态管理、网络或代码生成库前先与维护者确认。
 
 ## 功能开关
 
-- 新功能先在 `server/app/features/registry.py` 登记，默认 `preview`。
-- `preview` 仅认证后的 `admin_test` 可用，与 `isAdmin` 无关。
+- 新功能先在 `server/app/features/registry.py` 登记；登记后对所有完成首次改密且未停用的账号生效，没有预览白名单。
 - 前端统一用 `useFeature` / `FeatureGate`，后端用 `require_feature`，禁止按客户端用户名授权。
-- 验证通过后改为 `stable`；下次 `npm run deploy` 健康检查通过后即对所有账号开放。
+- 在本机 `npm run dev` 验证通过后再提交和部署；下次 `npm run deploy` 健康检查通过后即对所有账号开放。
 
 ## 部署
 
 - 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
 - `npm run dev` 完全在本机常驻运行 Expo 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
-- 部署成功后，代码中 stage=stable 的功能立即对所有账号开放。
-- 生产只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite + 上传文件）。`npm run deploy` 没有子命令：首次执行自动初始化，之后每次都会备份数据库、应用迁移、刷新管理员密码、更新 Web/API 与 Caddy；`--remove-orphans` 会清理旧拓扑遗留容器。
+- 部署成功后，`registry.py` 中登记的功能立即对所有账号开放。
+- 生产只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite + 上传文件）。API 镜像额外包含 Linux OfficeCLI、LibreOffice 与中文字体，镜像会明显增大；`/tmp` 使用 512 MiB tmpfs 供转换使用。
+- API 必须保持单 uvicorn worker：文档草稿与限流都在进程内，多 worker 会不可见且互相拆分限额。`npm run deploy` 没有子命令：首次执行自动初始化，之后每次都会备份数据库、应用迁移、刷新管理员密码、更新 Web/API 与 Caddy；`--remove-orphans` 会清理旧拓扑遗留容器。
 - `.env.local` 管本地开发与通用应用设置：`DEV_WEB_PORT` / `DEV_API_PORT`、`INITIAL_ADMIN_*`、`AUTH_COOKIE_SECONDS` 等。服务器相关内容放在 `docker-compose/.env.production`（SSH 目标、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`），`npm run deploy` 从该文件读取；`.env.local` 只作覆盖。`.env.local` 中的通用应用项（`AUTH_COOKIE_SECONDS`、限额、`LOG_LEVEL` 等）会在部署时写入服务器 `production.env`。本机代理写 `WEBTOOL_PROXY_URL`，只在开发时使用、不会上传；生产代理写 `WEBTOOL_PROXY_URL_PRODUCTION`，部署时映射为服务器的 `WEBTOOL_PROXY_URL`，且必须是容器可达地址（`host.docker.internal` 等，loopback 会被拒绝）。`INITIAL_ADMIN_*` 同时用于开发库和正式服务器；示例密码 `change-me` 会被 `npm run dev` 和 `npm run deploy` 拒绝，必须先改成真实密码。正式库的管理员密码以最近一次部署为准：每次部署都会把 `INITIAL_ADMIN_*` 应用到该账号；两个值留空则不改动现有密码。`dev` 不连接服务器，也不读取 `docker-compose/.env.production`；开发模式下后端直接读取 `.env.local`，代理、搜索/抓取预算等运行时设置保存后自动生效，端口、数据库路径和管理员初始化仍需重启。
 - 不在本机对服务器执行迁移；`docker compose down` 永远不加 `-v`。
 - 不配置自动 CI；CD 手动触发并复用 `npm run deploy`。

@@ -190,11 +190,34 @@ async def get_conversation(
     has_more = len(rows) > page_size
     rows = rows[:page_size]
     rows.reverse()
+    # One query for the whole page: a per-message lookup would multiply SQLite round trips.
+    files_by_id = await _load_files(
+        db, ctx.user.id, [file_id for item in rows for file_id in (item.file_ids or [])]
+    )
     return {
         "conversation": conversation_out(conversation),
-        "messages": [message_out(item) for item in rows],
+        "messages": [message_out(item, files_by_id) for item in rows],
         "nextCursor": encode_cursor(str(rows[0].position)) if has_more and rows else None,
     }
+
+
+async def _load_files(
+    db: AsyncSession, user_id: uuid.UUID, file_ids: list[str]
+) -> dict[str, StoredFile]:
+    parsed: list[uuid.UUID] = []
+    for raw in dict.fromkeys(file_ids):
+        try:
+            parsed.append(uuid.UUID(raw))
+        except ValueError:
+            continue
+    if not parsed:
+        return {}
+    files = (
+        await db.execute(
+            select(StoredFile).where(StoredFile.id.in_(parsed), StoredFile.user_id == user_id)
+        )
+    ).scalars().all()
+    return {str(item.id): item for item in files}
 
 
 @router.patch("/conversations/{conversation_id}")
@@ -272,7 +295,7 @@ async def delete_conversation(
 
 async def _attach_files(
     db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID, file_ids: list[uuid.UUID]
-) -> list[str]:
+) -> list[StoredFile]:
     unique_ids = list(dict.fromkeys(file_ids))
     if not unique_ids:
         return []
@@ -287,10 +310,15 @@ async def _attach_files(
     )
     if len(files) != len(unique_ids):
         raise invalid("文件不存在或不属于当前用户。")
-    for stored in files:
+    # Preserve the order the message declared rather than the database's.
+    by_id = {item.id: item for item in files}
+    ordered = [by_id[file_id] for file_id in unique_ids]
+    for stored in ordered:
         if stored.conversation_id is None:
             stored.conversation_id = conversation_id
-    return [str(stored.id) for stored in files]
+        elif stored.conversation_id != conversation_id:
+            raise invalid("文件属于其他对话。")
+    return ordered
 
 
 @router.post("/conversations/{conversation_id}/messages", status_code=201)
@@ -305,7 +333,7 @@ async def create_message(
     if existing is not None:
         if existing.conversation_id != conversation_id:
             raise conflict("消息标识已被其他对话使用。")
-        return message_out(existing)
+        return message_out(existing, await _load_files(db, ctx.user.id, existing.file_ids or []))
 
     conversation = await _get_conversation(db, ctx.user.id, conversation_id, lock=True)
 
@@ -317,7 +345,8 @@ async def create_message(
         )
     ).scalar_one() + 1
 
-    stored_file_ids = await _attach_files(db, ctx.user.id, conversation.id, payload.fileIds)
+    stored_files = await _attach_files(db, ctx.user.id, conversation.id, payload.fileIds)
+    stored_file_ids = [str(item.id) for item in stored_files]
     status = "complete" if payload.role == "user" else payload.status
     message = Message(
         id=payload.id or uuid.uuid4(),
@@ -354,9 +383,9 @@ async def create_message(
         await db.rollback()
         existing = await _find_by_id_or_client(db, Message, ctx.user.id, payload.id, client_id)
         if existing is not None:
-            return message_out(existing)
+            return message_out(existing, await _load_files(db, ctx.user.id, existing.file_ids or []))
         raise conflict("消息写入冲突，请重试。") from None
-    return message_out(message)
+    return message_out(message, {str(item.id): item for item in stored_files})
 
 
 async def _get_message(db: AsyncSession, user_id: uuid.UUID, message_id: uuid.UUID) -> Message:
@@ -395,10 +424,22 @@ async def update_message(
     if "activities" in fields:
         message.activities = activities_payload(payload.activities)
 
+    attached: list[StoredFile] = []
+    if "fileIds" in fields:
+        attached = await _attach_files(
+            db, ctx.user.id, message.conversation_id, payload.fileIds or []
+        )
+        message.file_ids = [str(item.id) for item in attached]
+
     message.revision += 1
     message.updated_at = utcnow()
     await db.commit()
-    return message_out(message)
+    files_by_id = (
+        {str(item.id): item for item in attached}
+        if attached
+        else await _load_files(db, ctx.user.id, message.file_ids or [])
+    )
+    return message_out(message, files_by_id)
 
 
 def _snake(name: str) -> str:

@@ -1,6 +1,23 @@
 /** Shared request and reply contracts for Web and native clients. */
-export type MessageImage = { id: string; name: string; mimeType: string; dataUrl: string; size?: number };
+export type MessageImage = {
+  id: string;
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+  size?: number;
+  /** Cloud copy created after login; the model still receives the data URL. */
+  fileId?: string;
+};
 export type MessageFeedback = 'good' | 'bad';
+
+/** Metadata for a file stored in the account's Library. */
+export type MessageFile = {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  revision?: number;
+};
 
 /** One normalized search hit, as returned by the server's tool API. */
 export type WebSearchResult = {
@@ -12,16 +29,23 @@ export type WebSearchResult = {
   rank: number;
 };
 
-/** A single web search or page read, rendered inside the reasoning disclosure. */
+/** A single web search, page read or document operation, rendered inside the reasoning disclosure. */
 export type WebActivity = {
   id: string;
-  kind: 'search' | 'fetch';
+  kind: 'search' | 'fetch' | 'file';
   status: 'running' | 'complete' | 'stopped' | 'error';
   query?: string;
   results?: WebSearchResult[];
   url?: string;
   urls?: string[];
   title?: string;
+  /** Document operations. `fileId` may be a draft handle; `savedFileId` is a Library file. */
+  operation?: string;
+  fileId?: string;
+  savedFileId?: string;
+  filename?: string;
+  size?: number;
+  warning?: string;
   tookMs?: number;
   error?: string;
   startedAt?: number;
@@ -49,6 +73,10 @@ export type Message = {
       no flag: they are sent later as an ordinary turn. */
   steering?: true;
   images?: MessageImage[];
+  /** Cloud file ids referenced by this message. Order follows the attachment list. */
+  fileIds?: string[];
+  /** Resolved metadata for `fileIds`, supplied by the conversation API. */
+  files?: MessageFile[];
   reasoning?: string;
   reasoningActive?: boolean;
   /** Web tool calls made while composing this reply. Synced without snippets; `process`
@@ -70,6 +98,8 @@ export type ReplyUpdate = {
   /** A stable array that only changes when a tool call starts or finishes. */
   activities?: WebActivity[];
   process?: ProcessActivity[];
+  /** Files saved to the Library during this reply, deduplicated by id. */
+  files?: MessageFile[];
 };
 export type ReplyResult = { status: 'complete' | 'stopped' | 'error'; error?: string };
 export type RuntimeRun = { conversationId: string; replyId: string; startedAt: number };

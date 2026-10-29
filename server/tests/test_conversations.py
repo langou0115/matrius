@@ -1,5 +1,28 @@
 import asyncio
 import uuid
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy import event
+
+from app import storage
+
+
+@pytest.fixture(autouse=True)
+def data_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "get_settings", lambda: SimpleNamespace(data_dir=str(tmp_path)))
+    return tmp_path
+
+
+async def _upload(client, headers, name, data=b"x", **form):
+    response = await client.post(
+        "/api/files",
+        headers=headers,
+        files={"file": (name, data, "text/plain")},
+        data=form,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
 
 
 async def _create_conversation(client, headers, *, client_id=None, title="Hello"):
@@ -293,3 +316,108 @@ async def test_web_activity_urls_must_be_http(client, create_user):
                      "url": "javascript:alert(1)"}],
     )
     assert response.status_code == 422, response.text
+
+
+async def test_message_file_metadata_round_trips(client, create_user):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+    first = await _upload(client, headers, "report.txt", b"hello world")
+    second = await _upload(client, headers, "chart.txt", b"data")
+
+    created = await _post_message(
+        client, headers, conversation["id"], "user", "see attached",
+        fileIds=[first["id"], second["id"]],
+    )
+    assert created.status_code == 201, created.text
+    message = created.json()
+    assert message["fileIds"] == [first["id"], second["id"]]
+    assert [item["filename"] for item in message["files"]] == ["report.txt", "chart.txt"]
+    assert [item["size"] for item in message["files"]] == [11, 4]
+    assert all(item["revision"] == 1 for item in message["files"])
+
+    # Attaching to a message binds unowned uploads to its conversation.
+    scoped = (
+        await client.get(f"/api/files?conversationId={conversation['id']}", headers=headers)
+    ).json()["items"]
+    assert {item["id"] for item in scoped} == {first["id"], second["id"]}
+
+    detail = (await client.get(f"/api/conversations/{conversation['id']}", headers=headers)).json()
+    assert detail["messages"][0]["files"] == message["files"]
+
+    # A missing file is filtered from `files` but the reference is preserved, so the
+    # client can render a "file deleted" placeholder instead of losing the id.
+    deleted = await client.delete(f"/api/files/{first['id']}", headers=headers)
+    assert deleted.status_code == 200
+    detail = (await client.get(f"/api/conversations/{conversation['id']}", headers=headers)).json()
+    assert detail["messages"][0]["fileIds"] == [first["id"], second["id"]]
+    assert [item["id"] for item in detail["messages"][0]["files"]] == [second["id"]]
+
+
+async def test_message_patch_replaces_files_and_checks_ownership(client, create_user):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+    other_conversation = await _create_conversation(client, headers, title="Other")
+    first = await _upload(client, headers, "one.txt")
+    second = await _upload(client, headers, "two.txt")
+    elsewhere = await _upload(client, headers, "elsewhere.txt", conversationId=other_conversation["id"])
+
+    created = await _post_message(
+        client, headers, conversation["id"], "assistant", "draft",
+        fileIds=[first["id"]],
+    )
+    message = created.json()
+
+    patched = await client.patch(
+        f"/api/messages/{message['id']}", headers=headers,
+        json={"baseRevision": message["revision"], "fileIds": [second["id"], second["id"]]},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["fileIds"] == [second["id"]]
+    assert [item["filename"] for item in patched.json()["files"]] == ["two.txt"]
+
+    cleared = await client.patch(
+        f"/api/messages/{message['id']}", headers=headers,
+        json={"baseRevision": patched.json()["revision"], "fileIds": []},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["fileIds"] == []
+    assert cleared.json()["files"] == []
+
+    wrong_conversation = await client.patch(
+        f"/api/messages/{message['id']}", headers=headers,
+        json={"baseRevision": cleared.json()["revision"], "fileIds": [elsewhere["id"]]},
+    )
+    assert wrong_conversation.status_code == 422
+
+    _, other_headers = await create_user("other")
+    foreign = await _upload(client, other_headers, "foreign.txt")
+    not_owned = await client.patch(
+        f"/api/messages/{message['id']}", headers=headers,
+        json={"baseRevision": cleared.json()["revision"], "fileIds": [foreign["id"]]},
+    )
+    assert not_owned.status_code == 422
+
+
+async def test_get_conversation_loads_files_once_per_page(client, create_user, engine):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+    first = await _upload(client, headers, "one.txt")
+    second = await _upload(client, headers, "two.txt")
+    for content, file_id in (("a", first["id"]), ("b", second["id"])):
+        response = await _post_message(
+            client, headers, conversation["id"], "user", content, fileIds=[file_id]
+        )
+        assert response.status_code == 201, response.text
+
+    statements: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "FROM files" in statement:
+            statements.append(statement)
+
+    detail = (await client.get(f"/api/conversations/{conversation['id']}", headers=headers)).json()
+    event.remove(engine.sync_engine, "before_cursor_execute", capture)
+
+    assert len(statements) == 1, statements
+    assert [item["files"][0]["filename"] for item in detail["messages"]] == ["one.txt", "two.txt"]

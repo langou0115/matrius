@@ -38,23 +38,23 @@ test('restoring a token hides features until the server validates the account', 
     return gate.promise;
   });
   const pending = auth.refresh();
-  assert.equal(hasFeature(auth.getSnapshot().user, 'labs'), false);
-  gate.resolve(response(account('admin_test', ['labs'])));
+  assert.equal(hasFeature(auth.getSnapshot().user, 'files'), false);
+  gate.resolve(response(account('alice', ['files'])));
   await pending;
-  assert.equal(hasFeature(auth.getSnapshot().user, 'labs'), true);
+  assert.equal(hasFeature(auth.getSnapshot().user, 'files'), true);
 });
 
 test('account switching and logout reject stale login results', async () => {
-  const preview = deferred();
+  const slow = deferred();
   const store = storage();
   const auth = createAuthSession(store, async (url, init) => {
     if (url.endsWith('/logout')) return response({ ok: true });
     const { username } = JSON.parse(init.body);
-    return username === 'admin_test' ? preview.promise : response({ token: 'regular-token', user: account('regular') });
+    return username === 'slow' ? slow.promise : response({ token: 'regular-token', user: account('regular') });
   });
-  const first = auth.login('admin_test', 'password');
+  const first = auth.login('slow', 'password');
   const regular = await auth.login('regular', 'password');
-  preview.resolve(response({ token: 'preview-token', user: account('admin_test', ['labs']) }));
+  slow.resolve(response({ token: 'slow-token', user: account('slow', ['files']) }));
   assert.equal(await first, undefined, 'a superseded login must not hand the caller a stale account');
   assert.equal(regular.id, 'regular', 'a successful login returns the authenticated account');
   assert.equal(auth.getSnapshot().user.id, 'regular');
@@ -70,7 +70,7 @@ test('network errors hide entitlements; expired tokens are cleared', async () =>
   const auth = createAuthSession(store, async () => {
     if (mode === 'offline') throw new Error('network internals must not leak');
     if (mode === 'expired') return response({ error: { code: 'unauthorized', message: '请重新登录。' } }, 401);
-    return response(account('admin_test', ['labs']));
+    return response(account('alice', ['files']));
   });
   await auth.refresh();
   mode = 'offline';
@@ -96,13 +96,11 @@ test('an older unauthorized response cannot log out a newly authenticated accoun
   assert.equal(auth.getSnapshot().user.id, 'regular');
 });
 
-test('catalogue and capability checks hide preview features for ordinary/anonymous/Mock users', () => {
-  assert(!visibleSettings([]).some((item) => item.id === 'labs'));
-  assert(visibleSettings(['labs']).some((item) => item.id === 'labs'));
-  assert(!visibleSettings(['labs'], true).some((item) => ['labs', 'account'].includes(item.id)));
-  assert.equal(hasFeature({ ...account('admin_test', ['labs']), mustChangePassword: true }, 'labs'), false);
-  assert.equal(hasFeature(account('admin_test'), 'labs'), false, 'a client-side username grants nothing');
-  assert.equal(hasFeature({ ...account('admin'), isAdmin: true }, 'labs'), false);
+test('capability checks trust the server feature list and nothing else', () => {
+  assert.equal(hasFeature(account('alice', ['files']), 'files'), true);
+  assert.equal(hasFeature({ ...account('alice', ['files']), mustChangePassword: true }, 'files'), false);
+  assert.equal(hasFeature(account('admin'), 'files'), false, 'a username grants nothing');
+  assert.equal(hasFeature({ ...account('admin'), isAdmin: true }, 'files'), false, 'the admin role grants nothing');
 });
 
 test('the account category belongs to its own group', () => {
@@ -114,6 +112,17 @@ test('the account category belongs to its own group', () => {
   assert(!authenticated.some((item) => item.id === 'sync'));
   assert(!authenticated.some((item) => item.group === '应用' && item.id === 'account'));
   assert(!visibleSettings([], true, true).some((item) => item.id === 'account'));
+});
+
+test('storage needs the files feature and a signed-in account', () => {
+  const storage = (features, authenticated) => visibleSettings(features, false, authenticated).find((item) => item.id === 'storage');
+  assert.equal(storage([], false), undefined, 'anonymous accounts get no storage category');
+  assert.equal(storage(['files'], false), undefined, 'features require an authenticated session');
+  assert.equal(storage([], true), undefined, 'the files feature is required');
+  assert.equal(storage(['files'], true)?.group, '账号');
+  assert.equal(storage(['files'], true)?.description.includes('已用空间'), true);
+  assert.equal(visibleSettings(['files'], true, true).some((item) => item.id === 'storage'), false,
+    'preview mode stays inside the mock settings catalogue');
 });
 
 test('admin sessions use admin-scoped cookie endpoints and never touch the user session', async () => {
@@ -169,16 +178,16 @@ test('changing the initial password refreshes capabilities without storing crede
   const auth = createAuthSession(store, async (url, init) => {
     calls.push(url);
     if (url.endsWith('/login')) return response({ token: 'session-only', user: {
-      ...account('admin_test'), mustChangePassword: true,
+      ...account('alice'), mustChangePassword: true,
     } });
     assert.equal(init.headers.get('Authorization'), 'Bearer session-only');
     if (url.endsWith('/change-password')) return response({ ok: true });
-    return response(account('admin_test', ['labs']));
+    return response(account('alice', ['files']));
   });
-  await auth.login('admin_test', 'initial-password');
-  assert.equal(hasFeature(auth.getSnapshot().user, 'labs'), false);
+  await auth.login('alice', 'initial-password');
+  assert.equal(hasFeature(auth.getSnapshot().user, 'files'), false);
   await auth.changePassword('initial-password', 'replacement-password');
-  assert.equal(hasFeature(auth.getSnapshot().user, 'labs'), true);
+  assert.equal(hasFeature(auth.getSnapshot().user, 'files'), true);
   assert.deepEqual(calls, ['/api/auth/login', '/api/auth/change-password', '/api/auth/me']);
   assert.equal(store.read(), 'session-only');
   assert(!JSON.stringify(auth.getSnapshot()).includes('password'));

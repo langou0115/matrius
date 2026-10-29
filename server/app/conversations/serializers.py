@@ -1,6 +1,7 @@
 from typing import Any
 
-from app.models import Conversation, Message
+from app.files.service import file_summary
+from app.models import Conversation, Message, StoredFile
 from app.utils import to_ms
 
 
@@ -30,7 +31,15 @@ def conversation_out(conversation: Conversation) -> dict[str, Any]:
     }
 
 
-def message_out(message: Message) -> dict[str, Any]:
+def message_out(
+    message: Message, files_by_id: dict[str, StoredFile] | None = None
+) -> dict[str, Any]:
+    files = []
+    if files_by_id:
+        for raw_id in message.file_ids or []:
+            stored = files_by_id.get(raw_id)
+            if stored is not None:
+                files.append(file_summary(stored))
     return {
         "id": str(message.id),
         "clientId": message.client_id,
@@ -47,6 +56,7 @@ def message_out(message: Message) -> dict[str, Any]:
         "status": message.status,
         "error": message.error,
         "fileIds": message.file_ids or [],
+        "files": files,
         "revision": message.revision,
         "createdAt": to_ms(message.created_at),
         "updatedAt": to_ms(message.updated_at),

@@ -2,7 +2,7 @@ import type { AgentMessage } from '@mariozechner/pi-agent-core';
 
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { withoutFailedReplies } from './history';
-import type { Message, MessageImage } from './types';
+import type { Message, MessageFile, MessageImage } from './types';
 
 /** Keep quoted history distinct from the user's new request in every model protocol. */
 export function getRequestText(message: Pick<Message, 'role' | 'content' | 'quote'>): string {
@@ -13,6 +13,34 @@ export function getRequestText(message: Pick<Message, 'role' | 'content' | 'quot
 /** pi-ai accepts raw base64; clients keep data URLs for their image previews. */
 function toImageBlock(image: MessageImage) {
   return { type: 'image' as const, data: image.dataUrl.slice(image.dataUrl.indexOf(',') + 1), mimeType: image.mimeType };
+}
+
+function formatFileSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+/** Only metadata enters the prompt; the model reads content through the file tool. */
+function attachmentNote(message: Pick<Message, 'role' | 'fileIds' | 'files'>): string {
+  const files = message.files ?? [];
+  if (files.length) {
+    const lines = files.map((file: MessageFile) =>
+      `- ${file.filename} (fileId: ${file.id}, ${formatFileSize(file.size)})`).join('\n');
+    return message.role === 'user'
+      ? `[附件] 用户上传了以下文件，可用 file 工具读取：\n${lines}`
+      : `[本轮已保存到资料库的文件]\n${lines}`;
+  }
+  if (message.fileIds?.length) {
+    return `[附件 fileId] ${message.fileIds.join(', ')}（文件元数据缺失，可能已删除）`;
+  }
+  return '';
+}
+
+function withAttachments(message: Message, text: string): string {
+  const note = attachmentNote(message);
+  if (!note) return text;
+  return text.trim() ? `${text}\n\n${note}` : note;
 }
 
 const STEERING_MESSAGE_PREFIX = [
@@ -30,7 +58,7 @@ function markSteeringText(text: string): string {
 
 /** Build the live injection message for `agent.steer()` from the stored user message. */
 export function buildSteeringMessage(message: Message): AgentMessage {
-  const text = markSteeringText(getRequestText(message));
+  const text = markSteeringText(withAttachments(message, getRequestText(message)));
   const images = (message.images ?? []).map(toImageBlock);
   return { role: 'user', content: images.length ? [...images, { type: 'text' as const, text }] : text, timestamp: Date.now() };
 }
@@ -63,7 +91,10 @@ export function isContextMessage(message: Message): boolean {
     if (message.status === 'error' && !message.content.trim()) return false;
     if (message.status === 'stopped') return true;
   }
-  return Boolean(message.content.trim() || message.quote?.trim() || message.images?.length);
+  return Boolean(
+    message.content.trim() || message.quote?.trim() || message.images?.length
+      || message.fileIds?.length || message.files?.length,
+  );
 }
 
 export function buildContext(messages: Message[], config: ModelConfig): AgentMessage[] {
@@ -71,9 +102,10 @@ export function buildContext(messages: Message[], config: ModelConfig): AgentMes
   const context: AgentMessage[] = [];
   for (const message of messages.filter(isContextMessage)) {
     if (message.role === 'assistant') {
-      const content = message.status === 'stopped' || message.status === 'error'
+      const baseContent = message.status === 'stopped' || message.status === 'error'
         ? (message.content.trim() ? `${message.content}\n\n${INCOMPLETE_REPLY_NOTE}` : STOPPED_EMPTY_REPLY)
         : message.content;
+      const content = withAttachments(message, baseContent);
       context.push({ role: 'assistant', content: [{ type: 'text', text: content }], api: model.api, provider: model.provider, model: model.id,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'stop', timestamp: Date.now() });
@@ -82,7 +114,7 @@ export function buildContext(messages: Message[], config: ModelConfig): AgentMes
       continue;
     }
     const images = (message.images ?? []).map(toImageBlock);
-    const requestText = getRequestText(message);
+    const requestText = withAttachments(message, getRequestText(message));
     const text = message.steering ? markSteeringText(requestText) : requestText;
     context.push({ role: 'user', content: images.length ? [...images, ...(text.trim() ? [{ type: 'text' as const, text }] : [])] : text, timestamp: Date.now() });
   }
@@ -117,7 +149,7 @@ export function estimateMessageTokens(message: Message): number {
   const body = message.role === 'user' ? getRequestText(message) : message.content;
   const incomplete = message.role === 'assistant' && (message.status === 'stopped' || message.status === 'error') ? 40 : 0;
   return MESSAGE_OVERHEAD_TOKENS + estimateTextTokens(body) + estimateTextTokens(getFeedbackText(message)) + incomplete
-    + (message.images?.length ?? 0) * IMAGE_TOKENS;
+    + estimateTextTokens(attachmentNote(message)) + (message.images?.length ?? 0) * IMAGE_TOKENS;
 }
 
 export function estimateContextTokens(messages: Message[], systemPrompt: string): number {
