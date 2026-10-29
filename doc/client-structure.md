@@ -2,7 +2,7 @@
 
 [文档索引](README.md) · [UI 风格规范](ui-style.md) · [迁移记录](migration.md)
 
-当前优先实现 Web 端，使用 Expo Router 的平台文件解析。`.web.tsx` 承载浏览器界面，普通路由文件提供原生说明页；共享状态与配色不依赖 DOM。
+当前只实现 Web 端，使用 Expo Router。路由页面以 `.web.tsx` 结尾（`mock/_layout.tsx` 是统一开发守卫例外）；共享状态与配色不依赖 DOM。
 
 ## 当前结构
 
@@ -10,13 +10,11 @@
 src/
 ├── app/
 │   ├── _layout.web.tsx                 Web Provider、应用框架与路由插槽
-│   ├── _layout.tsx                     原生路由插槽
 │   ├── index.web.tsx                   聊天路由
 │   ├── c/[conversationId].web.tsx      已有对话的独立 URL
 │   ├── mock/                          开发预览路由（索引页与各项测试）
 │   ├── settings.web.tsx                设置路由
-│   ├── index.tsx                       移动端待适配说明页
-│   └── settings.tsx                    原生设置说明页
+│   └── admin.web.tsx                   管理员页面
 ├── components/web/
 │   ├── link-anchor.tsx                 Expo Router 链接的 DOM 属性适配
 │   ├── app-frame.tsx                   配色变量、系统明暗模式
@@ -95,14 +93,14 @@ src/
 
 | 功能 | 目标位置 |
 | --- | --- |
-| 手机本地数据库、实体仓储与后续迁移 | `src/core/database/` |
+| 本地数据库、实体仓储与后续迁移 | `src/core/database/` |
 | 本地 Agent Runtime、上下文与云端工具调度 | `src/core/agent/` |
 | 模型直连 / 代理传输、SSE、解码器 | `src/core/llm/` |
 | 安全存储、文件、剪贴板等平台适配 | `src/core/platform/` |
 | 云端模式 REST 客户端、认证、409 冲突与错误映射 | `src/core/api/` |
-| 更多消息格式与原生富文本适配 | 聊天模块内的消息渲染组件 |
+| 更多消息格式适配 | 聊天模块内的消息渲染组件 |
 | 记忆、文件、认证、管理员 | `src/features/<module>/` |
-| 原生界面 | 保持共享状态与契约，后续增加 React Native 页面与组件 |
+| 移动 Web 响应式布局 | 保持共享状态与契约，后续按窄屏、软键盘与安全区适配 |
 
 其中模型直连与本地 Runtime 已有最小实现，其余目录随功能创建。
 
@@ -130,7 +128,7 @@ src/
 - `features/models/model-settings-screen.web.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型、删除确认四类对话框；`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.web.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.web.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
 - `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现。
 - `core/agent/runtime.ts`：无 React/DOM 依赖的共享运行入口，按会话持有一组活动请求（`runs`）、批量回复和运行状态；同一会话不可重复启动，不同会话可并发，`stop(id)` 只取消对应会话。`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
-- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。未来原生页面复用同一 Agent 核心，凭据、存储和流式传输环境单独适配。
+- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。
 
 - 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部本地用户行；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读 check（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。
 
@@ -144,7 +142,7 @@ src/
 - `features/admin/admin-screen.web.tsx`：`/admin` 管理页，管理员独立登录后按用户名创建用户，展示一次初始密码。
 - `features/settings/labs-screen.web.tsx`：受控实验页，路由和数据调用均需权限。
 - `settings-catalog.ts` / `settings-page.web.tsx`：分类与搜索按功能能力统一过滤。
-- `src/app/settings/account.*`、`labs.*`：Web 路由组装；原生仍使用待适配说明页。
+- `src/app/settings/account.*`、`labs.*`：Web 路由组装。
 
 ## 开发与发布脚本
 

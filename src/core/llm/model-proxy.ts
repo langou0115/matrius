@@ -21,7 +21,7 @@ function isLocalHost(hostname: string) {
  * preflight. When the user opts into the network compatibility mode, keep the provider's
  * path untouched and swap only the origin for the same-origin relay.
  *
- * Returns null outside the browser (native builds have no CORS) and for local endpoints,
+ * Returns null outside the browser (no page origin to rewrite) and for local endpoints,
  * which should never be routed through the server.
  */
 export function resolveModelProxyRoute(baseUrl: string): ModelProxyRoute | null {

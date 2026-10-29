@@ -1,6 +1,6 @@
 # Matrius
 
-轻量、多用户、可自行部署的 AI 对话应用。当前以 Web 为主，移动端后续适配。
+轻量、多用户、可自行部署的 AI 对话应用。当前只提供 Web 版本，移动 Web 响应式适配后续再做。
 
 ## 特性
 
@@ -11,6 +11,7 @@
 - **账号与灰度**：管理员建号、首次改密；新功能先在测试账号验证，再按账号发布
 - **自部署后端**：FastAPI + SQLite + 本地文件存储 + 进程内缓存，Caddy 统一入口
 - **远程发布**：本机一条命令，服务器构建并运行 Caddy / Web / API 三个容器
+- **可安装 Web 应用**：提供 PWA manifest 与 service worker，安装后可离线打开应用外壳
 
 > 未登录读写本机 IndexedDB，登录后读写账号云端数据，二者独立、不自动导入或合并。模型配置与 API key 始终保存在本机，登录前后共用。
 
@@ -18,7 +19,7 @@
 
 | 部分 | 选型 |
 | --- | --- |
-| 客户端 | Expo SDK 57、React Native、React、TypeScript |
+| 客户端 | Expo SDK 57、Expo Router、React Native Web、React、TypeScript |
 | 路由 | Expo Router（`src/app/`） |
 | 后端 | Python 3.12、FastAPI、SQLite、SQLAlchemy、Alembic |
 | 运行时能力 | 进程内缓存/限流、本地文件存储、DuckDuckGo 优先（Bing 回退）搜索、trafilatura 正文提取 |
@@ -33,11 +34,10 @@
 
 ```bash
 npm ci
-npm run dev        # 等价于 npm run dev:web
-npm run dev:ios    # 同一后端 + Expo iOS 目标（macOS 模拟器，其他平台用 Expo Go 扫码）
+npm run dev
 ```
 
-打开 `http://localhost:8081`，在「设置 → 模型服务」添加服务商和模型后即可对话。`npm run dev:ios` 会照常迁移数据库、启动 FastAPI 并等待健康检查，然后用 Expo 打开 iOS 目标；Windows / Linux / WSL 下输出 Expo Go 二维码，手机与电脑需在同一网络。API 默认绑定 `0.0.0.0` 供手机访问，实际使用的地址会在启动日志中打印；网络不直通时可在 `.env.local` 设置 `DEV_API_HOST`、`DEV_EXPO_HOST` 或 `EXPO_PUBLIC_API_BASE_URL`。iOS 与 Android 共用同一套原生界面与交互。
+打开 `http://localhost:8081`，在「设置 → 模型服务」添加服务商和模型后即可对话。
 
 `npm run dev` 完全在本机运行 Expo、FastAPI 与 SQLite：数据保存在 `server/.data/dev.db` 和 `server/.data/files`（已加入 `.gitignore`），不连接服务器。前后端保存后热更新，Ctrl+C 一并停止本机进程。启动时会自动迁移开发库；开发会话已在运行时，可用 `npm run db:migrate` 单独升级同一个开发库而不重启服务。开发管理员使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，未设置时回退到 `admin` / `dev-password`；密码仍是 `change-me` 时拒绝启动。`npm run dev` 不读取 `docker-compose/.env.production`。已有开发管理员会在启动时同步为当前配置的密码。`npm run dev -- --reset-db` 会清空本地开发数据后重新迁移。
 

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Matrius 是 Expo + React Native（Web 优先）前端与 FastAPI 后端的自部署 AI 对话应用。
+Matrius 是 Expo Web（React Native Web）前端与 FastAPI 后端的自部署 AI 对话应用。
 
 ## 开始前
 
@@ -21,9 +21,7 @@ Matrius 是 Expo + React Native（Web 优先）前端与 FastAPI 后端的自部
 
 ```bash
 npm ci
-npm run dev                 # 本机迁移 + Expo Web + FastAPI 热更新，SQLite 与文件都在 server/.data
-npm run dev:web             # 同上
-npm run dev:ios             # 同一后端 + Expo iOS 目标（Expo Go 扫码或 macOS 模拟器）
+npm run dev                 # 本机迁移 + Expo + FastAPI 热更新，SQLite 与文件都在 server/.data
 npm run db:migrate          # 只迁移本机开发库，不启动服务
 npm run web                 # Web 开发（Metro，可访问 /mock）
 npx expo start              # Metro 开发服务
@@ -49,8 +47,9 @@ uv run --no-sync pytest
 ## Expo 约定
 
 - 路由只用 Expo Router，页面在 `src/app/`，组件和 hooks 放在路由目录外。
-- 不手改 `ios/`、`android/`；原生配置写在 app config 或 config plugin。
-- 新增原生库后需要 development build；Expo Go 不包含第三方原生模块。
+- 只维护 Web 构建：不添加原生依赖、`ios/` / `android/` 工程或 EAS 配置。
+- 页面与组件使用 `.web.tsx`；共享状态与业务契约不直接依赖 DOM。
+- 生产 Web 支持 PWA：`public/manifest.json`、`public/sw.js` 与导出后注入逻辑 `scripts/inject-pwa.mjs`。
 
 ## 架构与边界
 
@@ -73,11 +72,10 @@ uv run --no-sync pytest
 ## 部署
 
 - 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
-- `npm run dev`（等价于 `npm run dev:web`）完全在本机常驻运行 Expo Web 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
-- `npm run dev:ios` 复用同一后端流程，只把 Expo 换成 iOS 目标：macOS 打开 Simulator，其他平台输出 Expo Go 二维码。API 默认绑定 `0.0.0.0`，手机通过 `EXPO_PUBLIC_API_BASE_URL`（默认取本机局域网 IPv4）直连；`DEV_API_HOST`、`DEV_EXPO_HOST` 可覆盖。WSL2 真机访问可能需要额外端口转发。
+- `npm run dev` 完全在本机常驻运行 Expo 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
 - 部署成功后，代码中 stage=stable 的功能立即对所有账号开放。
 - 生产只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite + 上传文件）。`npm run deploy` 没有子命令：首次执行自动初始化，之后每次都会备份数据库、应用迁移、刷新管理员密码、更新 Web/API 与 Caddy；`--remove-orphans` 会清理旧拓扑遗留容器。
-- `.env.local` 管本地开发与通用应用设置：`DEV_WEB_PORT` / `DEV_API_PORT`、`DEV_API_HOST` / `DEV_EXPO_HOST` / `EXPO_PUBLIC_API_BASE_URL`（原生目标与 Expo Go）、`INITIAL_ADMIN_*`、`AUTH_COOKIE_SECONDS` 等。服务器相关内容放在 `docker-compose/.env.production`（SSH 目标、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`），`npm run deploy` 从该文件读取；`.env.local` 只作覆盖。`.env.local` 中的通用应用项（`AUTH_COOKIE_SECONDS`、限额、`LOG_LEVEL` 等）会在部署时写入服务器 `production.env`。本机代理写 `WEBTOOL_PROXY_URL`，只在开发时使用、不会上传；生产代理写 `WEBTOOL_PROXY_URL_PRODUCTION`，部署时映射为服务器的 `WEBTOOL_PROXY_URL`，且必须是容器可达地址（`host.docker.internal` 等，loopback 会被拒绝）。`INITIAL_ADMIN_*` 同时用于开发库和正式服务器；示例密码 `change-me` 会被 `npm run dev` 和 `npm run deploy` 拒绝，必须先改成真实密码。正式库的管理员密码以最近一次部署为准：每次部署都会把 `INITIAL_ADMIN_*` 应用到该账号；两个值留空则不改动现有密码。`dev` 不连接服务器，也不读取 `docker-compose/.env.production`；开发模式下后端直接读取 `.env.local`，代理、搜索/抓取预算等运行时设置保存后自动生效，端口、数据库路径和管理员初始化仍需重启。
+- `.env.local` 管本地开发与通用应用设置：`DEV_WEB_PORT` / `DEV_API_PORT`、`INITIAL_ADMIN_*`、`AUTH_COOKIE_SECONDS` 等。服务器相关内容放在 `docker-compose/.env.production`（SSH 目标、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`），`npm run deploy` 从该文件读取；`.env.local` 只作覆盖。`.env.local` 中的通用应用项（`AUTH_COOKIE_SECONDS`、限额、`LOG_LEVEL` 等）会在部署时写入服务器 `production.env`。本机代理写 `WEBTOOL_PROXY_URL`，只在开发时使用、不会上传；生产代理写 `WEBTOOL_PROXY_URL_PRODUCTION`，部署时映射为服务器的 `WEBTOOL_PROXY_URL`，且必须是容器可达地址（`host.docker.internal` 等，loopback 会被拒绝）。`INITIAL_ADMIN_*` 同时用于开发库和正式服务器；示例密码 `change-me` 会被 `npm run dev` 和 `npm run deploy` 拒绝，必须先改成真实密码。正式库的管理员密码以最近一次部署为准：每次部署都会把 `INITIAL_ADMIN_*` 应用到该账号；两个值留空则不改动现有密码。`dev` 不连接服务器，也不读取 `docker-compose/.env.production`；开发模式下后端直接读取 `.env.local`，代理、搜索/抓取预算等运行时设置保存后自动生效，端口、数据库路径和管理员初始化仍需重启。
 - 不在本机对服务器执行迁移；`docker compose down` 永远不加 `-v`。
 - 不配置自动 CI；CD 手动触发并复用 `npm run deploy`。
 

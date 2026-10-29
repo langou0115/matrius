@@ -1,10 +1,9 @@
 import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
-import type { ApiRequest } from '@/core/api/api-request';
+import type { ApiRequest } from '@/features/auth/account-sync.web';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
-import { cloneJson } from '@/core/platform/clone';
-import { parseWorkspace, type WorkspaceData } from './workspace-schema';
+import { parseWorkspace, type WorkspaceData } from './workspace-repository.web';
 
 type RecordVersion = { id: string; revision: number; clientId?: string | null };
 type Marker = { state: 'absent' | 'unread' | 'read'; readAt?: number };
@@ -85,8 +84,8 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
       schemaVersion: 1, chat: { conversations: values, activeId: null, sidebarOpen: true },
       appearance: preferences, personalization: profile,
     });
-    appearance = cloneJson(result.data.appearance);
-    personalization = cloneJson(result.data.personalization ?? defaultPersonalization);
+    appearance = structuredClone(result.data.appearance);
+    personalization = structuredClone(result.data.personalization ?? defaultPersonalization);
     appearanceRevision = preferences.revision;
     profileRevision = profile.revision;
     loaded = true;
@@ -127,7 +126,7 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
           method: old ? 'PATCH' : 'POST',
           body: JSON.stringify({ ...body, ...(old ? { baseRevision: old.remote.revision } : { clientId: message.id }) }),
         });
-        messages.set(key, { remote, value: cloneJson(message) });
+        messages.set(key, { remote, value: structuredClone(message) });
       }
       // Message appends set read markers on the server, so always restore the UI's markers
       // after a changed message list (including when the user is watching the conversation).
@@ -137,14 +136,14 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
         });
         previous.remote = remote;
       }
-      previous.value = cloneJson(value);
+      previous.value = structuredClone(value);
     }
     if (!same(appearance, data.appearance)) {
       const remote = await request<{ revision: number }>('/api/preferences', {
         method: 'PUT', body: JSON.stringify({ ...data.appearance, baseRevision: appearanceRevision }),
       });
       appearanceRevision = remote.revision;
-      appearance = cloneJson(data.appearance);
+      appearance = structuredClone(data.appearance);
     }
     const nextProfile = data.personalization ?? { ...defaultPersonalization };
     if (!same(personalization, nextProfile)) {
@@ -152,7 +151,7 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
         method: 'PUT', body: JSON.stringify({ ...nextProfile, baseRevision: profileRevision }),
       });
       profileRevision = remote.revision;
-      personalization = cloneJson(nextProfile);
+      personalization = structuredClone(nextProfile);
     }
   }
   return { load, save };

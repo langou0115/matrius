@@ -7,7 +7,7 @@
 保持项目简单。
 
 ```text
-React Native + Expo 客户端（Android / iOS / Web）
+Expo Web 客户端（React Native Web）
 ├── 本地模式：浏览器 IndexedDB 保存对话、消息、设置
 └── 本地 Agent Runtime：上下文、Agent Loop、流式事件、工具调度、取消
     ├── 本地模式 → 用户自带 key → 模型服务商（不注册云端工具）

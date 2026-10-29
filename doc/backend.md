@@ -23,7 +23,7 @@
 - API 必须以**单个 uvicorn worker** 运行：缓存和限流是进程内状态，多 worker 会各自计数。单进程不妨碍并发，模型代理、搜索与抓取都是 async I/O。
 - 服务端保存账号数据，供登录后的后台双向同步；客户端 IndexedDB 仍是实时数据源，断网时可继续使用。
 - 云端模式（服务端唯一事实源、客户端不再写本地）尚未实现。
-- 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；Web 使用 HttpOnly Cookie，原生端使用 Bearer token。
+- 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；Web 使用 HttpOnly Cookie，服务端同时接受 Bearer token。
 
 ## 目录职责
 
@@ -57,7 +57,7 @@ POST /api/auth/login  { username, password }
 
 - token 为 `secrets.token_urlsafe(32)`，数据库只保存 SHA-256。
 - 浏览器同时收到 HttpOnly、SameSite=Lax 的持久 Cookie（`matrius_session` / `matrius_admin_session`，Max-Age 400 天，HTTPS 下加 Secure，`/me` 校验时滑动续期），Web 端不保存 token。
-- 原生端使用 `Authorization: Bearer <token>`；Cookie 与 Bearer 同时存在时 Bearer 优先。
+- 非浏览器客户端可使用 `Authorization: Bearer <token>`；Cookie 与 Bearer 同时存在时 Bearer 优先。
 - `auth_sessions` 保存 `scope`（`user` / `admin`）、最后访问时间、撤销时间；新会话不设自动过期时间，退出或撤销后立即失效。
 - 管理员使用独立入口 `POST /api/admin/auth/login`，只能签发 admin scope；普通接口同时接受 user 与 admin token，管理员接口要求 admin scope。
 - `must_change_password=true` 时只有 `me`、改密和登出可用，其余接口返回 403。

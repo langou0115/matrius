@@ -129,7 +129,7 @@ API 容器入口会在 uvicorn 启动前执行 `alembic upgrade head`、`alembic
     └── 其它路径            → Caddy → web:8081（静态前端）
 ```
 
-因此浏览器访问哪个地址，工具请求就发到同一个地址，由 Caddy 分流到 API 容器；换服务器、换端口或换域名都不需要改前端配置。API 容器再按部署时写入的 `WEBTOOL_PROXY_URL` 决定直连还是经上游代理访问搜索与网页；该生产值来自 `.env.local` 的 `WEBTOOL_PROXY_URL_PRODUCTION`，容器可通过 compose 的 `host.docker.internal:host-gateway` 访问宿主机代理。只有原生端或其他跨源调用才需要显式 API 地址与 `CORS_ORIGINS`。
+因此浏览器访问哪个地址，工具请求就发到同一个地址，由 Caddy 分流到 API 容器；换服务器、换端口或换域名都不需要改前端配置。API 容器再按部署时写入的 `WEBTOOL_PROXY_URL` 决定直连还是经上游代理访问搜索与网页；该生产值来自 `.env.local` 的 `WEBTOOL_PROXY_URL_PRODUCTION`，容器可通过 compose 的 `host.docker.internal:host-gateway` 访问宿主机代理。只有跨源调用（例如脚本或第三方客户端）才需要显式 API 地址与 `CORS_ORIGINS`。
 
 日常开发使用本机 `npm run dev`，完全在本机运行，不影响服务器；详见[开发与验证](development.md#本机全栈开发npm-run-dev)。
 
@@ -316,7 +316,7 @@ GitHub Actions → **Deploy Production** → **Run workflow**，只接受手动�
 
 ## 目前不支持 HTTPS
 
-当前只支持 `IP + HTTP`，公网地址固定按 `http://REMOTE_HOST:APP_PORT` 生成。域名和证书以后再做；移动端上线前必须补上。
+当前只支持 `IP + HTTP`，公网地址固定按 `http://REMOTE_HOST:APP_PORT` 生成。域名和证书以后再做；对外开放自定义域名前必须补上。
 
 ---
 

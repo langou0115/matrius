@@ -117,8 +117,8 @@ export function flattenProviderModels(providers: ProviderConfig[]): ModelConfig[
 
 const protocolToApi = { completion: 'openai-completions', responses: 'openai-responses', message: 'anthropic-messages' } as const;
 export function createAgentModel(config: ModelConfig): Model<Api> {
-  // Web builds always use the same-origin relay; native builds have no page
-  // origin, so resolveModelProxyRoute returns null and they connect directly.
+  // Web builds use the same-origin relay; outside a browser there is no page
+  // origin, so resolveModelProxyRoute returns null and requests connect directly.
   const proxy = resolveModelProxyRoute(config.baseUrl);
   return {
     api: protocolToApi[config.protocol], baseUrl: proxy?.baseUrl ?? config.baseUrl,

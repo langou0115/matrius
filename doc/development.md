@@ -8,12 +8,8 @@
 
 ```bash
 npm ci                         # 根据锁文件安装依赖，生成 KaTeX 本地资源
-npx expo start                 # Metro 开发服务
-npm run android                # 打开 Android 开发目标
-npm run ios                    # 打开 iOS 开发目标
+npx expo start                 # Metro 开发服务（项目只构建 Web）
 npm run web                    # Web 开发
-npm run dev                    # 本机全栈（后端 + Expo Web），等价于 npm run dev:web
-npm run dev:ios                # 同一后端 + Expo iOS 目标（模拟器或 Expo Go）
 npx expo start --port 8082      # 端口占用时换端口
 npx expo lint                  # 使用仓库 ESLint 配置检查
 npx tsc --noEmit               # TypeScript 类型检查
@@ -29,8 +25,8 @@ npm run export:web             # 同上
 npm run serve                  # 托管 dist/ 并提供同源模型中继（默认 8081）
 ```
 
-- `npm run android` / `ios` 启动开发目标，不是生产构建。Android 模拟器需要 Android SDK；本机 iOS 模拟器需要 macOS 与 Xcode。
-- Windows / WSL 开发时，确保真机或宿主机能访问 Metro 输出的地址；端口和网络以实际输出为准。不要沿用旧版 Flutter Web Server 命令。
+- 只构建 Web，不提供 Android / iOS 开发目标或 EAS 构建。
+- Windows / WSL 开发时，端口以 Metro 实际输出为准。不要沿用旧版 Flutter Web Server 命令。
 - `npm ci` 的 postinstall 从安装的 KaTeX 生成同版本 CSS、WOFF2 字体和许可证到 `public/vendor/katex/<版本>/`；Expo 从 public 提供这些资源，避免 CSS 相对字体 URL 在 Metro 中失效。禁用安装脚本或升级 KaTeX 后运行 `npm run assets:katex`。
 - 已提供 `eslint.config.js`、ESLint 与 Expo lint 配置，`npm ci` 后可直接执行 lint。消息渲染回归使用 Node 内置测试运行器、TypeScript 加载器和 LinkeDOM，不启动浏览器。
 - 模板的 `reset-project` 脚本与命令已移除，避免重置业务页面。
@@ -56,21 +52,9 @@ app.use((req, res, next) => {
 
 静态页面也可由该进程托管，或交给 Nginx/CDN；只要页面与 `/api/model-proxy` 保持同源，浏览器就不会遇到 CORS。
 
-使用 [EAS Build](https://docs.expo.dev/build/introduction/) 构建和签名，EAS Submit 提交商店，EAS Update 发布兼容的 OTA 更新。
+生产发布只通过 `npm run deploy` 构建 Web 静态产物；仓库不包含 EAS、原生工程或应用商店发布流程。
 
-以下为后续配置流程，当前尚无 `eas.json`、EAS 项目关联或 Updates 配置，不代表现在可直接发布：
-
-```bash
-npx eas-cli@latest build:configure
-npx eas-cli@latest build --platform android
-npx eas-cli@latest build --platform ios
-npx eas-cli@latest submit --platform android
-npx eas-cli@latest submit --platform ios
-```
-
-开发客户端需先安装 `expo-dev-client` 并配置 development profile，再运行 `npx eas-cli@latest build --profile development --platform android` 或 iOS 对应命令。OTA 更新需先配置 EAS Update 与运行时兼容策略；新增原生模块或更改原生配置后需要新的二进制构建。
-
-当前原生目录由 CNG 生成，原生行为通过 app config / config plugins 配置，不手工创建或修改 `ios/`、`android/`。
+`npm run export:web` 在导出后由 `scripts/inject-pwa.mjs` 向 `dist/index.html` 注入 `manifest`、主题色与触摸图标元数据。`public/manifest.json` 声明可安装应用信息，`public/sw.js` 预缓存应用外壳并在导航时使用网络优先策略，离线时回退到缓存的 SPA 入口。`scripts/server.mjs` 对 `/sw.js`、`/manifest.json` 和 SPA 入口返回 `Cache-Control: no-cache`，确保新构建能被及时获取；`/_expo/static` 继续使用长缓存。修改 service worker 的缓存策略时需同步递增 `CACHE_NAME`。
 
 ## 本机全栈开发：npm run dev
 
@@ -82,21 +66,9 @@ Windows、macOS、Linux 使用同一入口。本机只需 Node.js 24、npm 和 [
 npm ci
 npm run dev -- --check       # 校验工具、端口与路径，不启动服务
 npm run dev                  # 常驻：迁移数据库 + FastAPI reload + Expo Web
-npm run dev:web              # 同上
-npm run dev:ios -- --check   # 校验 iOS 目标的 Expo 参数、API 地址与端口
-npm run dev:ios              # 常驻：同一后端 + Expo iOS 目标
 npm run db:migrate           # 只迁移 server/.data/dev.db，不启动服务
 npm run web                  # 仅本机前端与模型中继
 ```
-
-`npm run dev` 与 `npm run dev:web` 完全等价；`npm run dev:ios` 复用同一套迁移、管理员初始化、健康检查与进程清理，只替换 Expo 子进程参数：
-
-- macOS：`expo start --ios`，打开 iOS Simulator。
-- Windows / Linux / WSL：`expo start --lan`，终端输出 Expo Go 二维码；手机与电脑需在同一网络。
-- `DEV_EXPO_HOST=tunnel` 改为 `expo start --tunnel`（只隧道 Metro，不隧道 API）；`DEV_EXPO_HOST=localhost` 适用于本机模拟器。
-- API 默认绑定 `0.0.0.0`（可由 `DEV_API_HOST` 覆盖），使手机能直接访问；就绪探测仍走回环地址。
-- 手机无法使用 Web 开发代理，Expo Go 直接请求 API。脚本默认使用本机非回环 IPv4 拼出 `EXPO_PUBLIC_API_BASE_URL`，并在启动日志打印实际地址与可达性提示；`.env.local` 中显式设置的值优先。
-- WSL2 的 `0.0.0.0` 只暴露虚拟网卡；真机访问需要 Windows 端口转发/镜像网络，或设置手机可达的 `EXPO_PUBLIC_API_BASE_URL`。脚本只提示，不自动配置。
 
 开发数据全部落在仓库内，且已被 `.gitignore` 排除：
 
@@ -109,7 +81,7 @@ server/.data/
 
 浏览器自己的 IndexedDB 仍由浏览器管理，与 `server/.data` 是两套数据。
 
-启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo（Web 或 `--ios` 目标）。
+启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Expo Web。
 
 API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启。`npm run dev` 每次启动都会自动迁移；服务已在运行时单独执行 `npm run db:migrate` 即可升级同一个 `server/.data/dev.db`，不必重启开发会话。该命令固定使用开发数据库，不会读取 shell 或 `.env.local` 里的生产 `DATABASE_URL` / `DATA_DIR`。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
 
@@ -123,7 +95,7 @@ npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再
 
 `--reset-db` 只删除 `server/.data/dev.db*` 和 `server/.data/files/`，不会碰其他文件。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
 
-默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`；`DEV_API_HOST` 控制 API 绑定地址，`DEV_EXPO_HOST` 控制非 macOS 上 Expo 的局域网/tunnel/localhost 模式，`EXPO_PUBLIC_API_BASE_URL` 供 Expo Go 直连 API。端口被占用时失败退出，不自动切换。Web 目标下 Metro 先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置；iOS 目标不使用该代理。脚本不自动打开浏览器。
+默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`。端口被占用时失败退出，不自动切换。Metro 先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置。脚本不自动打开浏览器。
 
 命令持续挂起，前后端保存即热更新。Ctrl+C 清理本机进程树；任何常驻子进程退出也会结束整个开发会话。服务器和正式数据不受影响。
 
@@ -189,7 +161,7 @@ uv run --no-sync pytest
 - 已有测试覆盖相关行为时运行必要的测试；消息渲染相关修改运行 `npm run test:rendering`；测试覆盖格式解析、公式/货币与代码边界、安全 URL/HTML、高亮、折叠和原文复制，以及消息赞/踩切换和分支上下文隔离。文档迁移无需新增业务测试。
 - 不自动启动或控制浏览器、不生成浏览器截图、不访问运行中的 Web 端口；仅在用户明确要求 Web 浏览器验证时执行。未实测的平台行为说明限制。
 - TypeScript 保持 strict；不滥用 `any`、关闭 lint 或压制告警来绕过问题。
-- 引用与对话导航的回归在现有脚本中执行：`test:rendering` 覆盖选区边界、引用操作、会话草稿隔离、提问目录与跳转暂停跟随；`test:models` 覆盖三协议引用上下文、重新生成及 IndexedDB 恢复。原生选区、实际滚动几何与触屏行为仍需按需浏览器实测。
+- 引用与对话导航的回归在现有脚本中执行：`test:rendering` 覆盖选区边界、引用操作、会话草稿隔离、提问目录与跳转暂停跟随；`test:models` 覆盖三协议引用上下文、重新生成及 IndexedDB 恢复。选区、实际滚动几何与触屏行为仍需按需浏览器实测。
 - 复用已有组件和服务，避免无关重构；不提交真实用户数据、密钥和令牌。
 - 后续自动化测试应作为仓库资产提交，放在应用路由目录外。临时脚本、种子数据和测试产物应明确忽略，不能假设旧仓库的忽略规则已经迁移。
 
@@ -213,7 +185,7 @@ uv run --no-sync pytest
 - 点击侧栏切换样例，也可通过搜索标题或正文定位内容，支持置顶、重命名、删除与输入草稿；配置并选中模型后，发送会调用真实模型，沿用正式对话流程。
 - 示例模式不读取或写入浏览器真实工作区，变更仅保存在内存中。右下角提供重置和退出入口；刷新示例地址也会重置。
 - `src/app/mock/_layout.tsx` 通过 `__DEV__` 统一保护全部 mock 子路由；新增页面自动受保护。索引页、工具栏与示例数据仅在 `__DEV__` 分支动态加载，release 模式访问这些路径会跳回首页。
-- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。`npm run dev` 也使用开发 bundle；`npm run deploy` 构建生产 bundle，服务器上的 `/mock` 同时由 Caddy 拒绝。`__DEV__` 取决于 bundle 的开发/生产模式，与域名、登录状态或 EAS profile 名称无关。
+- `npm run web` 使用开发 bundle，可访问 Mock；`npx expo export --platform web` 默认生成生产 bundle，Mock 不可用。`npm run dev` 也使用开发 bundle；`npm run deploy` 构建生产 bundle，服务器上的 `/mock` 同时由 Caddy 拒绝。`__DEV__` 取决于 bundle 的开发/生产模式，与域名或登录状态无关。
 - 发布前检查导出的 JS/HTML 不包含 Mock 索引文案、工具栏或示例数据；路由名称和重定向页面仍可能存在于静态产物中，不代表 Mock 页面可用。
 - 用户与助手消息共用 Markdown/GFM 与 KaTeX 渲染，支持标题、列表、引用、表格、脚注、公式和按需代码高亮；代码块可复制与折叠。Mermaid 等未知代码语言作为原文展示，已接入三种协议的实时流式模型输出。
 
@@ -225,10 +197,10 @@ uv run --no-sync pytest
 ## 模型接入验证
 
 - `npm run test:models`：真实 pi 协议实现配合模拟服务商 SSE，验证三协议路径/鉴权、多轮上下文、分片 UTF-8、取消、超时、错误安全提示与会话密钥隔离，以及 IndexedDB v1→v2 原子迁移、增量正文写入、密钥独立记录和版本冲突。不会调用真实服务商，不需要 key。
-- 同一脚本也直接测试无 React/DOM 的 `createAgentRuntime`，覆盖输入快照、单请求限制、批量回复、取消时保留正文、模块加载期间停止、销毁和订阅清理；检查 `core/agent/` 不导入功能模块、React 或 Web 实现。原生传输和真机行为需单独验证。
+- 同一脚本也直接测试无 React/DOM 的 `createAgentRuntime`，覆盖输入快照、单请求限制、批量回复、取消时保留正文、模块加载期间停止、销毁和订阅清理；检查 `core/agent/` 不导入功能模块、React 或 Web 实现。真实浏览器中的流式传输与网络异常需单独验证。
 - 个性化回归包含默认值与字符上限、旧快照兼容、IndexedDB 保存/恢复、三协议系统提示注入，以及编辑偏好后重新生成采用最新指令。手动验证时从设置搜索“自定义指令”进入表单，编辑后返回对话、刷新或重新生成；Mock 执行相同流程但不写真实记录。记忆功能不在当前范围。
 - 测试脚本显式使用 `--test-isolation=none`，确保当前 Node 与 TypeScript loader 环境执行并报告每个测试用例。模型接入修改同时运行 `npm run test:rendering`、lint、typecheck 与 Web 生产导出。
-- 首次手动使用：设置 → 模型服务 → 添加服务商，填写名称、协议、基础地址和 key；保存后获取模型列表并添加模型，也可手动填写模型 ID。返回聊天选择模型并发送；生成中可停止，失败后可重新生成。模型请求与目录获取均经 `/api/model-proxy` 同源转发，本地/内网地址及原生端仍直连。`npm run web` 与 `npm run serve` 均已内置该中继；真实服务商兼容性仍需用自己的配置实测。
+- 首次手动使用：设置 → 模型服务 → 添加服务商，填写名称、协议、基础地址和 key；保存后获取模型列表并添加模型，也可手动填写模型 ID。返回聊天选择模型并发送；生成中可停止，失败后可重新生成。模型请求与目录获取均经 `/api/model-proxy` 同源转发，本地/内网地址仍直连。`npm run web` 与 `npm run serve` 均已内置该中继；真实服务商兼容性仍需用自己的配置实测。
 - 密钥与 Provider、模型元数据都保留在本机浏览器，删除服务商或清除站点数据才会移除密钥。无鉴权本地模型取消“接口需要 API key”。Chat Mock 支持相同真实调用，但会话和 Provider 配置只存在本次预览内存中。
 
 ## Linux 启动时 DevTools 缺少共享库

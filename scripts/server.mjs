@@ -101,6 +101,11 @@ const server = http.createServer((req, res) => {
   if (file.includes(`${sep}_expo${sep}static${sep}`)) {
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   }
+  // The service worker, manifest and SPA shell must be revalidated so a new
+  // build is picked up instead of being served from a stale cache.
+  if (pathname === '/sw.js' || pathname === '/manifest.json' || file === join(root, 'index.html')) {
+    res.setHeader('Cache-Control', 'no-cache');
+  }
   if (req.method === 'HEAD') {
     res.end();
     return;

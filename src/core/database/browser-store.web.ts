@@ -1,4 +1,4 @@
-import type { WorkspaceData } from '@/features/workspace/workspace-schema';
+import type { WorkspaceData } from '@/features/workspace/workspace-repository.web';
 import type { Message } from '@/features/chat/chat-state';
 
 const DATABASE_NAME = 'matrius';

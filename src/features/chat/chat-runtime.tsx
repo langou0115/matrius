@@ -9,9 +9,9 @@ import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
-import { protectBrowserRun } from '@/core/platform/run-protection';
-import { useAuth } from '@/features/auth/auth-state';
-import { useNetworkTools } from '@/features/auth/network-tools-state';
+import { protectBrowserRun } from '@/core/platform/run-protection.web';
+import { useAuth } from '@/features/auth/auth-state.web';
+import { useNetworkTools } from '@/features/auth/network-tools-state.web';
 import { deriveConversationTitle, useChat, type Conversation, type Message, type MessageImage } from './chat-state';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }

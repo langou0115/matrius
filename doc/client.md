@@ -1,4 +1,4 @@
-# React Native + Expo 客户端约定
+# Expo Web 客户端约定
 
 [文档索引](README.md) · [UI 风格规范](ui-style.md)
 
@@ -6,30 +6,29 @@
 
 ## 平台与路由
 
-- React Native + Expo + TypeScript 共用代码，当前先实现 Web 界面，移动端后续适配。Web 使用平台组件与 CSS，共享状态和业务契约不依赖 DOM。
-- 统一使用 Expo Router，`src/app/` 只放路由页面与 `_layout.tsx`；组件、hooks 和工具放在目录外。
+- Expo Web（React Native Web）+ TypeScript，只维护 Web 界面；移动 Web 响应式适配后续按单独要求进行。界面使用平台组件与 CSS，共享状态和业务契约不依赖 DOM。
+- 统一使用 Expo Router，`src/app/` 只放路由页面与 `_layout.web.tsx`；组件、hooks 和工具放在目录外。
 - Web 中 `Link asChild` 的锚点使用共享 `LinkAnchor`，保留 Router 注入的 `onClick`，过滤不能传入 DOM 的 `onPress`。
-- 平台差异集中在适配层，不在业务页面散落平台 API 调用。允许原生与 Web 使用不同的底层实现，但共用业务契约。
+- 浏览器差异集中在适配层，不在业务页面散落平台 API 调用。业务契约与 Web 实现分离，便于后续替换底层传输或存储。
 - Agent 业务集中在 `core/agent/`，共享消息类型、上下文、引用、系统提示、运行状态与取消；核心不依赖 React、DOM 或 `features/`。聊天 React 层负责状态与模型设置的适配，模型传输放在 `core/llm/`，凭据和持久化继续按平台接入。
-- 兼顾安全区、软键盘、系统返回、字体缩放与横竖屏；长会话避免一次挂载全部消息，流式更新避免重绘整个列表。
-- 实现 Expo、EAS 或 React Native API 前，先查 `package.json` 中 Expo 主版本，再读取对应版本文档；其他指南先从 [Expo 文档索引](https://docs.expo.dev/llms.txt) 定位。
+- 当前只保证桌面浏览器；移动 Web 的窄屏布局、软键盘、安全区与触屏交互在后续阶段单独适配。长会话避免一次挂载全部消息，流式更新避免重绘整个列表。
+- 实现 Expo 或 React Native Web API 前，先查 `package.json` 中 Expo 主版本，再读取对应版本文档；其他指南先从 [Expo 文档索引](https://docs.expo.dev/llms.txt) 定位。
 
 ## 主题
 
 - 保留 shadcn/ui 的语义变量命名：`background`、`primary`、`sidebar-*`、`ring` 等。通过统一的主题 hooks / Provider 向组件提供颜色，不硬编码业务颜色。
 - 支持浅色、深色、跟随系统，以及中文、英文界面。
 - 默认 Twitter 配色，目标迁移旧版 10 套配色；主题只改变颜色，布局、字体、间距和圆角统一管理。
-- tweakcn 预设的原始变量随代码保存，运行时不联网取主题。CSS 颜色需要在适配层转换为目标原生平台支持的颜色值，不直接假定所有 CSS 颜色语法均可使用。
+- tweakcn 预设的原始变量随代码保存，运行时不联网取主题。主题以 CSS 变量输出，业务代码不硬编码颜色。
 - 配色解析在主题切换时集中处理并复用结果，避免每条流式消息重复解析。Web 在 `resolve-theme.ts` 统一抬升暗色表面与文字的最低明度，保留预设色相和原始数据；设置中的主题缩略图跟随当前明暗模式使用相同解析结果。
 - 偏好统一接入本地仓储持久化，不先写只对 Web 生效的临时存储。
 
 ## 字体
 
-目标随包提供 Inter、Noto Sans SC 和 JetBrains Mono，避免运行时依赖在线字体。当前已迁移字体资源，Web 通过 expo-font 加载本地字体，原生字体接入待移动端阶段完成。
+目标随包提供 Inter、Noto Sans SC 和 JetBrains Mono，避免运行时依赖在线字体。当前已迁移字体资源，Web 通过 expo-font 加载本地字体。
 
-- 原生字体加载优先使用已安装的 Expo 字体能力，实施前查看匹配 SDK 文档。
 - 旧版中文字体采用 GB2312 两级字表子集，迁移时保留完整字表并检查缺字；字体子集不等于覆盖全部 Unicode 汉字。
-- 控制字体体积与字重数量；跨端字体回退由适配层处理，不假定原生与 CSS 的字体回退规则相同。
+- 控制字体体积与字重数量；字体回退由统一 CSS 字体栈处理。
 
 ## 消息、代码块与选区
 
@@ -41,14 +40,14 @@
 - `message-actions.web.tsx` 负责整条消息复制与赞/踩操作，评分通过 Chat State 更新对应助手消息的 `feedback` 并沿现有仓储保存。反馈在下一次模型请求时由共享 Agent 核心传给所选服务商，点击评分本身不触发请求；再次点击取消。分支动作创建独立会话和消息 ID，保留原文与反馈，原会话及草稿保留。
 - 语法颜色保持清晰可辨，不随主题主色旋转；复制使用原始消息或代码文本，不读取带工具栏的展示内容。
 - 行内代码保留在文本流中，复制内容不能丢失；代码标签、复制和折叠按钮不进入正文复制结果。
-- Web 目标是同一回答跨段落连续选中；原生端保留系统文本选择和整条消息复制。跨独立组件连续选区需要单独验证，不能直接套用旧版选区实现。
+- Web 目标是同一回答跨段落连续选中；跨独立组件连续选区需要单独验证，不能直接套用旧版选区实现。
 - 停止或出错时保留已生成文本与模型实际返回的推理/工具活动。供应商隐藏的思考内容不展示，也不重新注入上下文。
 
 ## 本地存储与安全存储
 
-- Web 已使用 IndexedDB 在浏览器中持久化会话与外观偏好；App 后续使用手机本地数据库。实现与边界见[存储与同步](data.md)，页面经数据层访问。
-- 移动端安全存储优先评估 Expo 对应模块，密钥不得进入普通业务存储、日志、崩溃上报或同步载荷。
-- 浏览器没有等价于 Keychain / Keystore 的安全存储；Web 的 `core/platform/model-credentials.ts` 只定义凭据接口与工作区独立的内存实现，正式工作区由 `features/models/model-credential-store.web.ts` 把密钥单独写入 IndexedDB 的 `model-credentials` 记录，刷新后仍可用；Mock 预览继续使用内存实现，不读写这份记录。
+- Web 使用 IndexedDB 在浏览器中持久化会话与外观偏好。实现与边界见[存储与同步](data.md)，页面经数据层访问。
+- 密钥不得进入普通业务存储、日志、崩溃上报或同步载荷。
+- 浏览器没有系统级安全存储；`core/platform/model-credentials.ts` 只定义凭据接口与工作区独立的内存实现，正式工作区由 `features/models/model-credential-store.web.ts` 把密钥单独写入 IndexedDB 的 `model-credentials` 记录，刷新后仍可用；Mock 预览继续使用内存实现，不读写这份记录。
 - 该记录**未加密**，同源脚本与能访问本机浏览器配置的人都能读取，界面上必须如实说明。密钥始终不进入 `model-preferences`、工作区记录、日志、崩溃上报或同步载荷；删除服务商会一并删除对应密钥，清除站点数据会删除全部密钥。
 - 云端模式不接收服务端模型 key，也不直连服务器上的 SQLite 数据库或文件目录，只通过 `/api/*` 访问。
 
@@ -65,19 +64,19 @@
   ↑
 SSE 分帧（字节流 → 事件）
   ↑
-平台传输适配（Android / iOS / Web）
+浏览器传输适配（fetch + ReadableStream）
 ```
 
 Runtime 消费工具调用事件，经云端工具 API 获取结果并回填上下文，然后发起下一次模型调用。未登录时不注册云端工具，不能执行这些工具。职责与运行状态见[Agent Runtime](agent.md)。
 
 - 解码器不得依赖网络库，只消费分帧结果。覆盖 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages，允许自定义 base URL。
 - 分帧处理多行 `data:`、`[DONE]`、CRLF、注释、跨块 UTF-8 字符和缺失尾换行。
-- 传输适配覆盖增量读取、取消、错误和结束，不能假定移动端与浏览器的流式接口行为完全相同。
-- Web 端模型请求统一经本站同源的 `/api/model-proxy` 转发，避免服务商 CORS 预检差异；原生端直接连接服务商。中继无状态，不保存密钥或对话。
+- 传输适配覆盖增量读取、取消、错误和结束。
+- Web 端模型请求统一经本站同源的 `/api/model-proxy` 转发，避免服务商 CORS 预检差异；中继无状态，不保存密钥或对话。
 
-## 依赖与原生配置
+## 依赖与构建
 
 - 保留 Expo Router，不引入第二套路由。优先复用现有依赖；新增第三方状态管理、网络或代码生成库前先与维护者确认。
 - 依赖通过 `npx expo install <package>` 安装；当前使用 npm，未来如切换 Bun 并存在 `bun.lock`，统一使用 `bunx`。
-- 当前没有 `ios/`、`android/`，使用 CNG，通过 `app.json` 和 config plugins 配置原生能力，不手写生成目录。
-- Expo Go 只包含其内置原生模块；新增未包含的原生能力后使用开发构建。
+- 项目只构建 Web（`app.json` 中 `platforms: ["web"]`），不包含 `ios/`、`android/` 工程或 EAS 配置。
+- 生产构建执行 `npm run export:web`：导出静态 SPA 后由 `scripts/inject-pwa.mjs` 注入 manifest 与触摸图标元数据；`public/sw.js` 提供应用外壳离线缓存。
