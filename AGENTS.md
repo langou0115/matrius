@@ -48,7 +48,7 @@ uv run --no-sync pytest
 
 - 路由只用 Expo Router，页面在 `src/app/`，组件和 hooks 放在路由目录外。
 - 只维护 Web 构建：不添加原生依赖、`ios/` / `android/` 工程或 EAS 配置。
-- 路由页面使用普通 `.tsx`；只有平台适配组件保留 `.web.tsx` 后缀。共享状态与业务契约不直接依赖 DOM。
+- Web 路由使用 `X.web.tsx`，并必须在同一目录保留 `X.tsx` fallback；缺少 fallback 时 Expo Router 会在开发模式报错。非路由的平台适配组件同样使用 `.web.tsx`。共享状态与业务契约不直接依赖 DOM。
 - 生产 Web 支持 PWA：`public/manifest.json`、`public/sw.js` 与导出后注入逻辑 `scripts/inject-pwa.mjs`。
 
 ## 架构与边界

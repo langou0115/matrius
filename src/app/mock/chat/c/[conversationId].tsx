@@ -1,1 +1,1 @@
-export { default } from '@/features/chat/chat-route.web';
+export { default } from '@/components/platform-unsupported';

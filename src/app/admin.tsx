@@ -1,1 +1,1 @@
-export { default } from '@/features/admin/admin-screen.web';
+export { default } from '@/components/platform-unsupported';

@@ -2,19 +2,30 @@
 
 [文档索引](README.md) · [UI 风格规范](ui-style.md) · [迁移记录](migration.md)
 
-当前只实现 Web 端，使用 Expo Router。路由页面使用普通 `.tsx`；只有平台适配实现保留 `.web.tsx` 后缀。共享状态与配色不依赖 DOM。
+当前只实现 Web 端，使用 Expo Router。路由页面使用 `X.web.tsx`，并保留同名的无后缀 `X.tsx` fallback；共享状态与配色不依赖 DOM。
+
+## 路由文件与 fallback
+
+- Web 页面统一命名为 `X.web.tsx`，同一目录必须存在 `X.tsx`。Expo Router 需要无后缀文件作为其它平台的 fallback；只有 `.web.tsx` 而没有 `.tsx` 时，开发模式会报 “does not have a fallback sibling file”。
+- 当前所有 `X.tsx` fallback 都是占位页，统一 `export { default } from '@/components/platform-unsupported'`；根布局 fallback 渲染 `<Slot />`。
+- 以后新增原生页面时，在对应 `X.tsx` 中实现平台界面，或新增 `X.native.tsx` / `X.ios.tsx` / `X.android.tsx`；无后缀文件继续作为兜底。
+- 新增路由必须同时创建 `.web.tsx` 与 `.tsx`，否则启动失败。
+- `src/app/mock/_layout.tsx` 是平台无关的开发守卫，不需要 `.web` 变体。
+- 非路由的平台适配组件（如 `message-content.web.tsx`）由 Metro 直接解析，不受此 fallback 规则约束。
 
 ## 当前结构
 
 ```text
 src/
 ├── app/
-│   ├── _layout.tsx                     Web Provider、应用框架与路由插槽
-│   ├── index.tsx                       聊天路由
-│   ├── c/[conversationId].tsx          已有对话的独立 URL
+│   ├── _layout.web.tsx                 Web Provider、应用框架与路由插槽
+│   ├── _layout.tsx                     非 Web 平台的根布局 fallback
+│   ├── index.web.tsx                   聊天路由
+│   ├── index.tsx                       未适配平台的占位 fallback
+│   ├── c/[conversationId].web.tsx      已有对话的独立 URL
 │   ├── mock/                          开发预览路由（索引页与各项测试）
-│   ├── settings.tsx                    设置路由
-│   └── admin.tsx                       管理员页面
+│   ├── settings.web.tsx                设置路由
+│   └── admin.web.tsx                   管理员页面
 ├── components/web/
 │   ├── link-anchor.tsx                 Expo Router 链接的 DOM 属性适配
 │   ├── app-frame.tsx                   配色变量、系统明暗模式

@@ -7,7 +7,8 @@
 ## 平台与路由
 
 - Expo Web（React Native Web）+ TypeScript，只维护 Web 界面；移动 Web 响应式适配后续按单独要求进行。界面使用平台组件与 CSS，共享状态和业务契约不依赖 DOM。
-- 统一使用 Expo Router，`src/app/` 只放路由页面与 `_layout.tsx`；组件、hooks 和工具放在目录外。因为只构建 Web，路由文件不使用平台后缀。
+- 统一使用 Expo Router，`src/app/` 只放路由页面与 `_layout.web.tsx`；组件、hooks 和工具放在目录外。
+- 路由必须成对存在：`X.web.tsx` 提供 Web 页面，`X.tsx` 作为无后缀 fallback。缺少 fallback 会触发 Expo Router 的 “does not have a fallback sibling file”。当前 fallback 统一指向 `@/components/platform-unsupported`，根布局 fallback 渲染 `<Slot />`；以后新增原生实现时替换 fallback 或添加 `X.native.tsx`。
 - Web 中 `Link asChild` 的锚点使用共享 `LinkAnchor`，保留 Router 注入的 `onClick`，过滤不能传入 DOM 的 `onPress`。
 - 浏览器差异集中在适配层，不在业务页面散落平台 API 调用。业务契约与 Web 实现分离，便于后续替换底层传输或存储。
 - Agent 业务集中在 `core/agent/`，共享消息类型、上下文、引用、系统提示、运行状态与取消；核心不依赖 React、DOM 或 `features/`。聊天 React 层负责状态与模型设置的适配，模型传输放在 `core/llm/`，凭据和持久化继续按平台接入。

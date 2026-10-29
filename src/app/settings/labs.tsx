@@ -1,1 +1,1 @@
-export { default } from '@/features/settings/labs-screen.web';
+export { default } from '@/components/platform-unsupported';

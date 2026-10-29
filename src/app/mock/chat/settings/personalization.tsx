@@ -1,1 +1,1 @@
-export { default } from '@/features/settings/personalization-screen.web';
+export { default } from '@/components/platform-unsupported';

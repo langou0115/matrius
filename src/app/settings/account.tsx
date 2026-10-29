@@ -1,1 +1,1 @@
-export { default } from '@/features/auth/account-screen.web';
+export { default } from '@/components/platform-unsupported';

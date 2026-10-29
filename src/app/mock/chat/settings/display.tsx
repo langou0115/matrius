@@ -1,1 +1,1 @@
-export { default } from '@/features/settings/appearance-redirect.web';
+export { default } from '@/components/platform-unsupported';

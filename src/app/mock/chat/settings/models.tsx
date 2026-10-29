@@ -1,1 +1,1 @@
-export { default } from '@/features/models/model-settings-screen.web';
+export { default } from '@/components/platform-unsupported';

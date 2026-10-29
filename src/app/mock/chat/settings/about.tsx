@@ -1,1 +1,1 @@
-export { AboutSettingsScreen as default } from '@/features/settings/settings-detail-screen.web';
+export { default } from '@/components/platform-unsupported';
