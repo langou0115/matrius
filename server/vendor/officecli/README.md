@@ -5,10 +5,10 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 版本 | `1.0.153`（见 `VERSION`） |
-| 来源 | `https://github.com/iOfficeAI/OfficeCLI/releases/tag/v1.0.153` |
-| Linux x64 | `linux-x64/officecli`，35,416,933 B |
-| Windows x64 | `win-x64/officecli.exe`，33,480,616 B |
+| 版本 | `1.0.159`（见 `VERSION`） |
+| 来源 | `https://github.com/iOfficeAI/OfficeCLI/releases/tag/v1.0.159` |
+| Linux x64 | `linux-x64/officecli`，35,502,949 B |
+| Windows x64 | `win-x64/officecli.exe`，33,533,864 B |
 | Node.js | 自包含发布产物，不需要额外安装 .NET/Node |
 
 ## 校验
