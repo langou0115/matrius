@@ -123,12 +123,18 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 /* The row action owns the right edge once the pointer or keyboard is on it. Keyboard focus is
    narrowed to :focus-visible so clicking a conversation does not leave the row action showing
    after the pointer has left. */
-.conversation-item:hover .conversation-status-indicator, .conversation-item:has(:focus-visible) .conversation-status-indicator, .conversation-item.menu-open .conversation-status-indicator, .conversation-item:hover .conversation-error-indicator, .conversation-item:has(:focus-visible) .conversation-error-indicator, .conversation-item.menu-open .conversation-error-indicator { opacity: 0; }
+.conversation-item:hover .conversation-status-indicator, .conversation-item:has(:focus-visible) .conversation-status-indicator, .conversation-item.menu-open .conversation-status-indicator, .conversation-item.is-active .conversation-status-indicator, .conversation-item:hover .conversation-error-indicator, .conversation-item:has(:focus-visible) .conversation-error-indicator, .conversation-item.menu-open .conversation-error-indicator, .conversation-item.is-active .conversation-error-indicator { opacity: 0; }
 @media (prefers-reduced-motion: reduce) { .conversation-spinner { animation: reasoning-breathe 2.2s ease-in-out infinite; } }
 .conversation-title[data-scrolling] .conversation-title-text { width: max-content; overflow: visible; text-overflow: clip; }
 .conversation-title[data-manual] { overflow-x: auto; }
 .conversation-more { position: absolute; right: 5px; opacity: 0; }
-.conversation-item:hover .conversation-more, .conversation-item:has(:focus-visible) .conversation-more, .conversation-item.menu-open .conversation-more { opacity: 1; }
+/* The selected row keeps its action visible: it is the one row the user is already engaged with. */
+.conversation-item:hover .conversation-more, .conversation-item:has(:focus-visible) .conversation-more, .conversation-item.menu-open .conversation-more, .conversation-item.is-active .conversation-more { opacity: 1; }
+/* A selected row is already painted with --sidebar-selected, so the neutral hover fill blends in.
+   Step the action's fill up instead, and keep the pressed/open state a shade stronger still. */
+.sidebar .icon-button.conversation-more:hover { background: color-mix(in srgb, var(--sidebar-foreground) 15%, var(--sidebar)); color: var(--sidebar-foreground); }
+.sidebar .icon-button.conversation-more:active,
+.sidebar .conversation-item.menu-open .icon-button.conversation-more { background: color-mix(in srgb, var(--sidebar-foreground) 21%, var(--sidebar)); color: var(--sidebar-foreground); }
 .user-entry { display: flex; align-items: center; gap: 10px; min-height: 58px; margin-top: 12px; padding: 10px 8px; border-radius: 10px; }
 .user-entry:hover { background: var(--sidebar-hover); }
 .user-avatar { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border: 1px solid color-mix(in srgb, var(--sidebar-foreground) 12%, var(--sidebar)); border-radius: 10px; background: var(--background); color: var(--sidebar-text-muted); }
@@ -394,8 +400,8 @@ input[type='password']::-ms-clear { display: none; }
 .login-spinner { animation: login-spin 800ms linear infinite; }
 @keyframes login-spin { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { .login-spinner { animation: reasoning-breathe 2.2s ease-in-out infinite; } }
-.conversation-menu { position: fixed; z-index: 30; width: 168px; padding: 5px; border: 1px solid var(--border); border-radius: 13px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 5px 22px #00000014; }
-.conversation-menu button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 9px; font-size: var(--text-small); text-align: left; }
+.conversation-menu { position: fixed; z-index: 30; width: 146px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 5px 22px #00000014; }
+.conversation-menu button { display: flex; width: 100%; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 8px; font-size: var(--text-small); text-align: left; }
 .conversation-menu button:hover, .conversation-menu button:focus-visible { background: color-mix(in srgb, var(--popover-foreground) 7%, var(--popover)); outline: none; }
 .danger-text { color: var(--destructive); }
 .model-empty { text-align: center; padding: 10px 16px; }
@@ -525,7 +531,10 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .account-row-copy { display: flex; flex: 1; min-width: 180px; flex-direction: column; gap: 2px; }
 .account-row-copy strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
 .account-row-description { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
-.account-toggle-row { cursor: pointer; }
+/* The visually hidden checkbox is absolutely positioned, so the row has to anchor it:
+   otherwise it contributes its static position to the document's scrollable overflow and
+   focusing the switch scrolls the whole app shell off-screen. */
+.account-toggle-row { position: relative; cursor: pointer; }
 .account-toggle-row:has(.model-checkbox-input:disabled) { cursor: default; }
 .account-row-spinner { flex: none; color: var(--muted-text); }
 .account-row-action { flex: none; min-height: 38px; }

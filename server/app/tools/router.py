@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthContext, read_rate_limit
+from app.auth.dependencies import AuthContext, ToolCaller, get_tool_caller, read_rate_limit
 from app.cache import concurrency_limit, enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
@@ -17,16 +17,25 @@ from app.tools.web_fetch import web_fetch
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 
 
+def _tool_budget(caller: ToolCaller) -> tuple[int, int]:
+    """Per-minute call budget and in-flight cap; anonymous IPs get a smaller allowance."""
+    settings = get_settings()
+    if caller.user is not None:
+        return 30, settings.tool_user_concurrency
+    return settings.anonymous_tool_calls_per_minute, settings.anonymous_tool_concurrency
+
+
 @router.post("/search")
 async def search_web(
     payload: SearchRequest,
-    ctx: AuthContext = Depends(read_rate_limit),
+    caller: ToolCaller = Depends(get_tool_caller),
 ) -> dict[str, Any]:
-    await enforce_rate_limit("tool_search", str(ctx.user.id), 30)
+    calls_per_minute, concurrency = _tool_budget(caller)
+    await enforce_rate_limit("tool_search", caller.identity, calls_per_minute)
     query = payload.query.strip()
     if not query:
         raise invalid("搜索关键词不能为空。")
-    async with concurrency_limit("tool_search", str(ctx.user.id), get_settings().tool_user_concurrency):
+    async with concurrency_limit("tool_search", caller.identity, concurrency):
         results = await web_search(query, payload.limit)
     return {"query": query, "results": results}
 
@@ -34,10 +43,11 @@ async def search_web(
 @router.post("/fetch")
 async def fetch_web(
     payload: FetchRequest,
-    ctx: AuthContext = Depends(read_rate_limit),
+    caller: ToolCaller = Depends(get_tool_caller),
 ) -> dict[str, Any]:
-    await enforce_rate_limit("tool_fetch", str(ctx.user.id), 30)
-    async with concurrency_limit("tool_fetch", str(ctx.user.id), get_settings().tool_user_concurrency):
+    calls_per_minute, concurrency = _tool_budget(caller)
+    await enforce_rate_limit("tool_fetch", caller.identity, calls_per_minute)
+    async with concurrency_limit("tool_fetch", caller.identity, concurrency):
         return await web_fetch(payload.url, payload.mode)
 
 

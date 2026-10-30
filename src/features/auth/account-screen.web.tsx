@@ -1,6 +1,6 @@
 import { Link, type Href } from 'expo-router';
 import {
-  AlertCircle, Check, ChevronRight, Cloud, Globe2, KeyRound,
+  AlertCircle, Check, ChevronRight, Cloud, KeyRound,
   LoaderCircle, LogIn, LogOut, ShieldCheck,
   UserRound, type LucideIcon,
 } from 'lucide-react';
@@ -11,36 +11,10 @@ import { SettingsPage } from '@/features/settings/settings-page.web';
 import { useAuth } from './auth-state.web';
 import { ChangePasswordDialog } from './change-password-dialog.web';
 import { LoginDialog } from './login-dialog.web';
-import { useNetworkTools } from './network-tools-state.web';
 /** The one benefit login currently promises. */
 const benefits: { icon: LucideIcon; title: string; description: string }[] = [
   { icon: Cloud, title: '云端对话', description: '登录后使用账号的云端对话与设置，本地记录独立保留；模型配置仍使用本机配置。' },
 ];
-
-function NetworkToolsSection() {
-  const { enabled, ready, saving, error, setEnabled } = useNetworkTools();
-  const busy = !ready || saving;
-  return <section className="settings-section" aria-labelledby="network-tools-heading">
-    <h2 id="network-tools-heading">网络工具</h2>
-    <div className="account-list">
-      <label className="account-row account-toggle-row">
-        <span className="account-row-icon"><Globe2 size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-        <span className="account-row-copy">
-          <strong>启用网络工具</strong>
-          <span className="account-row-description">允许助手搜索网页并读取正文，回答时附上来源。关闭后只使用模型已有知识。</span>
-        </span>
-        {busy && <LoaderCircle className="login-spinner account-row-spinner" size={16} strokeWidth={2} aria-hidden="true" />}
-        <input className="model-checkbox-input" type="checkbox" checked={enabled} disabled={busy}
-          onChange={(event) => void setEnabled(event.target.checked)} />
-        <span className="account-switch" aria-hidden="true" />
-      </label>
-    </div>
-    {error && <p className="account-message is-error" role="alert">
-      <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
-      <span>{error}</span>
-    </p>}
-  </section>;
-}
 
 export default function AccountScreen() {
   const auth = useAuth();
@@ -83,7 +57,6 @@ export default function AccountScreen() {
   const checking = auth.status === 'checking';
   const unavailable = auth.status === 'unavailable';
   const profileTitle = checking ? '正在验证账号…' : unavailable ? '账号状态未知' : user ? user.username : '未登录';
-  const syncReady = Boolean(user && !user.mustChangePassword);
 
   return <SettingsPage title="账号" description="登录账号、管理密码与查看账号状态。">
     <section className="settings-section" aria-labelledby="account-profile-heading">
@@ -130,8 +103,6 @@ export default function AccountScreen() {
         </div>)}
       </div>
     </section>}
-
-    {user && syncReady && <NetworkToolsSection />}
 
     {user?.isAdmin && <section className="settings-section" aria-labelledby="admin-entry-heading">
       <h2 id="admin-entry-heading">管理</h2>

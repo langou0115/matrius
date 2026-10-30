@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     fetch_cache_ttl_seconds: int = 600
     # Per-account in-flight cap for each web tool, on top of the global provider semaphore.
     tool_user_concurrency: int = 4
+    # Anonymous local mode is keyed by client IP. Keep its budget below a signed-in
+    # account's while still allowing a batched fetch (up to 4 pages) to run at once.
+    anonymous_tool_calls_per_minute: int = 20
+    anonymous_tool_concurrency: int = 4
 
     # Browser sessions stay signed in until logout/revocation. Browsers cap persistent
     # cookies (Chrome at 400 days), so refresh the cookie with this Max-Age on login.

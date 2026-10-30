@@ -25,6 +25,18 @@ class AuthContext:
     session: AuthSession
 
 
+@dataclass
+class ToolCaller:
+    """Identity for a public tool endpoint.
+
+    Web search/fetch work for anonymous local mode too, so these routes accept either a
+    signed-in account (quota keyed by user id) or an anonymous browser (keyed by IP).
+    """
+
+    identity: str
+    user: User | None
+
+
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
@@ -90,6 +102,35 @@ async def require_password_ready(ctx: AuthContext = Depends(get_current_user)) -
     if ctx.user.must_change_password:
         raise AppError(403, "password_change_required", "请先修改初始密码。")
     return ctx
+
+
+async def get_tool_caller(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> ToolCaller:
+    """Authenticate web-tool requests when possible, otherwise fall back to the client IP.
+
+    Anonymous local mode has no session at all. A stale cookie can also arrive after a
+    revoked/expired login: treat that the same as no session so tools keep working locally
+    instead of failing until the browser drops the cookie.
+    """
+    token = credentials.credentials if credentials is not None else request.cookies.get(
+        USER_SESSION_COOKIE
+    )
+    if not token:
+        await db.close()
+        return ToolCaller(identity=f"ip:{client_ip(request)}", user=None)
+    try:
+        ctx = await get_current_user(request, credentials, db)
+    except AppError as error:
+        if error.status_code != 401:
+            raise
+        await db.close()
+        return ToolCaller(identity=f"ip:{client_ip(request)}", user=None)
+    if ctx.user.must_change_password:
+        raise AppError(403, "password_change_required", "请先修改初始密码。")
+    return ToolCaller(identity=str(ctx.user.id), user=ctx.user)
 
 
 async def require_admin(ctx: AuthContext = Depends(require_password_ready)) -> AuthContext:

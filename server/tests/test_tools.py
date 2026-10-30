@@ -6,9 +6,12 @@ from types import SimpleNamespace
 import pytest
 from docx import Document
 
+from app.auth.cookies import USER_SESSION_COOKIE
+from app.config import get_settings
 from app.errors import AppError
 from app.files.parsing import extract_text
 from app.tools import files as tools_files
+from app.tools import router as tools_router_module
 from app.tools import web_fetch as web_fetch_module
 from app.tools.urls import canonical_result_key, normalize_search_url, validate_fetch_url
 
@@ -94,6 +97,63 @@ async def test_four_fetch_endpoints_download_pages_concurrently(client, create_u
     assert set(started) == set(urls)
     assert [response.status_code for response in responses] == [200] * 4
     assert [response.json()["url"] for response in responses] == urls
+
+
+async def test_web_tools_work_without_a_session(client, monkeypatch):
+    """Local mode has no account: web tools must still answer and key limits by IP."""
+    seen: list[tuple[str, str, int]] = []
+
+    async def fake_limit(name, identity, limit, *args, **kwargs):
+        seen.append((name, identity, limit))
+
+    async def fake_search(query, limit):
+        return [{"title": query, "url": "https://example.com", "snippet": "ok"}]
+
+    async def fake_fetch(url, _mode):
+        return {"url": url, "title": "Page", "text": "ok", "truncated": False, "chars": 2}
+
+    monkeypatch.setattr(tools_router_module, "enforce_rate_limit", fake_limit)
+    monkeypatch.setattr(tools_router_module, "web_search", fake_search)
+    monkeypatch.setattr(tools_router_module, "web_fetch", fake_fetch)
+
+    search = await client.post("/api/tools/search", json={"query": "matrius"})
+    fetch = await client.post("/api/tools/fetch", json={"url": "https://example.com"})
+
+    assert search.status_code == 200
+    assert search.json()["results"][0]["title"] == "matrius"
+    assert fetch.status_code == 200
+    assert fetch.json()["text"] == "ok"
+    anonymous_limit = get_settings().anonymous_tool_calls_per_minute
+    assert [(name, limit) for name, _, limit in seen] == [
+        ("tool_search", anonymous_limit),
+        ("tool_fetch", anonymous_limit),
+    ]
+    assert all(identity.startswith("ip:") for _, identity, _ in seen)
+
+
+async def test_stale_session_cookie_falls_back_to_anonymous_tools(client, monkeypatch):
+    """A revoked cookie left in the browser must not break local-mode tools."""
+    async def fake_fetch(url, _mode):
+        return {"url": url, "title": "Page", "text": "ok", "truncated": False, "chars": 2}
+
+    monkeypatch.setattr(tools_router_module, "web_fetch", fake_fetch)
+
+    response = await client.post(
+        "/api/tools/fetch",
+        json={"url": "https://example.com"},
+        cookies={USER_SESSION_COOKIE: "expired-or-revoked"},
+    )
+
+    assert response.status_code == 200
+
+
+async def test_password_change_gate_still_blocks_tools(client, create_user):
+    _, headers = await create_user(must_change_password=True)
+    response = await client.post(
+        "/api/tools/fetch", json={"url": "https://example.com"}, headers=headers
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "password_change_required"
 
 
 def test_normalize_search_url_strips_tracking():

@@ -1,7 +1,9 @@
+import { AlertCircle, Globe2, LoaderCircle } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { SelectField } from '@/components/web/select-field.web';
+import { useNetworkTools } from '@/features/auth/network-tools-state.web';
 import { ModelIcon } from '@/features/chat/components/model-icon.web';
 import { useModels } from '@/features/models/model-state';
 import { personalizationLimits } from './personalization';
@@ -32,6 +34,31 @@ function AutoSizeTextarea(props: ComponentProps<'textarea'>) {
   return <span className={`${props.className ?? ''} personalization-textarea-frame`}>
     <textarea {...props} className="personalization-textarea" ref={ref} />
   </span>;
+}
+
+function WebToolsSection() {
+  const { enabled, ready, saving, error, setEnabled } = useNetworkTools();
+  const busy = !ready || saving;
+  return <section className="settings-section" aria-labelledby="other-settings-heading">
+    <h2 id="other-settings-heading">其他设置</h2>
+    <div className="account-list">
+      <label className="account-row account-toggle-row">
+        <span className="account-row-icon"><Globe2 size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="account-row-copy">
+          <strong>网页搜索</strong>
+          <span className="account-row-description">允许助手搜索网页并读取正文，回答时附上来源。关闭后只使用模型已有知识。</span>
+        </span>
+        {busy && <LoaderCircle className="login-spinner account-row-spinner" size={16} strokeWidth={2} aria-hidden="true" />}
+        <input className="model-checkbox-input" type="checkbox" checked={enabled} disabled={busy}
+          onChange={(event) => void setEnabled(event.target.checked)} />
+        <span className="account-switch" aria-hidden="true" />
+      </label>
+    </div>
+    {error && <p className="account-message is-error" role="alert">
+      <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
+      <span>{error}</span>
+    </p>}
+  </section>;
 }
 
 export default function PersonalizationSettingsScreen() {
@@ -80,5 +107,6 @@ export default function PersonalizationSettingsScreen() {
         <label className="personalization-field" htmlFor="about-more"><span>更多关于你</span><AutoSizeTextarea id="about-more" className="text-field" rows={1} maxLength={personalizationLimits.aboutMore} value={preferences.aboutMore} placeholder="可填写你的兴趣、背景或需要模型考虑的其他信息。" onChange={(event) => update({ aboutMore: event.target.value })} /><small>{preferences.aboutMore.length.toLocaleString()} / {personalizationLimits.aboutMore.toLocaleString()}</small></label>
       </div>
     </section>
+    <WebToolsSection />
   </SettingsPage>;
 }

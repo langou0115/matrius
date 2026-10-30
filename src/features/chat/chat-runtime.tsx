@@ -133,10 +133,9 @@ function useRuntime() {
   const start = useCallback((conversationId: string, history: Message[], replyId: string, modelId?: string,
     contextSummary?: Conversation['contextSummary']) => {
     const config = pickModel(models, modelId);
-    // Cloud tools require a usable account. The server enforces the same rule; this keeps an
-    // anonymous or not-yet-ready session from advertising tools the model cannot call.
-    const useWebTools = Boolean(auth.user && !auth.user.mustChangePassword
-      && networkTools.ready && networkTools.enabled);
+    // Web tools work in both local and signed-in workspaces; the preference is only known
+    // after it loads, so the first reply waits for `ready` instead of guessing.
+    const useWebTools = networkTools.ready && networkTools.enabled;
     const useFileTools = hasFeature(auth.status === 'authenticated' ? auth.user : null, 'files');
     const tools: AgentTool[] = [];
     if (useWebTools) tools.push(...createWebTools(auth.request));

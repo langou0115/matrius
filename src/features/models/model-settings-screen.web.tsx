@@ -140,6 +140,7 @@ export default function ModelSettingsScreen() {
     : availableModels;
 
   return <SettingsPage title="模型服务" description="按服务商管理连接信息，再发现并添加要使用的模型。">
+    <p className="settings-footnote">服务商、模型与 API key 仅保存在此浏览器的本地存储中，本站不会保存；清除浏览器数据或更换设备后需要重新配置。</p>
     {models.error && <p className="model-form-error" role="alert">{models.error}</p>}
     {!models.ready && !models.error && <p role="status" className="settings-footnote">正在读取模型配置…</p>}
     {isAnyRunning && <p className="settings-footnote" role="status">正在生成回复，请先停止或等待完成后再修改配置。</p>}
