@@ -18,12 +18,14 @@ import { useModels } from '@/features/models/model-state';
 import { router } from 'expo-router';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from './conversation-href';
-import { ChatNotice } from './components/chat-notice.web';
+import { ChatNotice, type ChatNoticeItem } from './components/chat-notice.web';
 import { SelectionQuote } from './components/selection-quote.web';
 import { QuoteCard } from './components/quote-card.web';
 import { ConversationNavigator } from './components/conversation-navigator.web';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+
+const RUNTIME_NOTICE_ID = 'runtime-error';
 
 function UserMessage({ message, pending = false }: { message: Message; pending?: boolean }) {
   return <article className="user-message" data-user-message-id={pending ? undefined : message.id}
@@ -45,7 +47,7 @@ export default function ChatScreen() {
   const runtime = useChatRuntime();
   const models = useModels();
   const preview = useIsPreview();
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notices, setNotices] = useState<ChatNoticeItem[]>([]);
   const conversation = conversations.find((item) => item.id === activeId);
   // Each conversation remembers its model. Restoring it once per switch keeps the picker in
   // sync with what the next request will use, while a model change inside a conversation
@@ -87,7 +89,19 @@ export default function ChatScreen() {
   function bindModel(modelId: string) {
     if (activeId) dispatch({ type: 'bind-model', conversationId: activeId, modelId });
   }
-  function showNotice(message: string | null) { setNotice(message); runtime.clearError(); }
+  // Notices stack so separate failures stay readable instead of overwriting each other.
+  function showNotice(message: string | null) {
+    runtime.clearError();
+    if (!message) { setNotices([]); return; }
+    setNotices((current) => [...current, { id: createId(), message }]);
+  }
+  function dismissNotice(id: string) {
+    if (id === RUNTIME_NOTICE_ID) { runtime.clearError(); return; }
+    setNotices((current) => current.filter((item) => item.id !== id));
+  }
+  const noticeItems = runtime.error
+    ? [{ id: RUNTIME_NOTICE_ID, message: runtime.error }, ...notices]
+    : notices;
   // Settings and other full-page routes unmount this screen while a run may still be going;
   // completion must stay unread in that case even though activeId did not change.
   useEffect(() => {
@@ -101,7 +115,9 @@ export default function ChatScreen() {
     restoredFor.current = id;
     const bound = conversation?.modelId;
     if (!bound || bound === models.selectedId || !models.models.some((model) => model.id === bound)) return;
-    void models.select(bound).catch(() => setNotice('恢复该对话的模型失败，请重试。'));
+    void models.select(bound).catch(() => showNotice('恢复该对话的模型失败，请重试。'));
+    // showNotice only sets state; depending on it would re-run this once-per-switch restore.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation, models]);
   function send(images: MessageImage[], files: MessageFile[] = []) {
     const content = draft.trim();
@@ -114,7 +130,7 @@ export default function ChatScreen() {
     if (sent) {
       setDraft(draftKey, '');
       setQuote(draftKey, '');
-      if (outcome === 'deferred') setNotice('回复已开始，这条消息将在本轮结束后发送。');
+      if (outcome === 'deferred') showNotice('回复已开始，这条消息将在本轮结束后发送。');
       // Sending is an explicit request to see the conversation continue, so bring
       // the reader back even when they had scrolled up to read older messages.
       followLatest();
@@ -178,7 +194,7 @@ export default function ChatScreen() {
       <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
     </div></div>}
   </main>
-    <ChatNotice message={runtime.error ?? notice} onClose={() => showNotice(null)} />
+    <ChatNotice items={noticeItems} onClose={dismissNotice} />
     {hasMessages && <SelectionQuote key={`selection-${draftKey}`} containerRef={messageScroller} onQuote={(content) => {
       setQuote(draftKey, content);
       scrollToBottom();

@@ -220,7 +220,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   function startUpload(attachment: StagedAttachment) {
     const controller = new AbortController();
     setAttachments((current) => current.map((item) => item.id === attachment.id
-      ? { ...item, status: 'uploading', controller, error: undefined } : item));
+      ? { ...item, status: 'uploading', controller } : item));
     void uploadFile(requestRef.current, attachment.file, {
       clientId: attachment.id,
       ...(activeId ? { conversationId: activeId } : {}),
@@ -233,7 +233,8 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       if (!mounted.current || controller.signal.aborted) return;
       const message = reason instanceof Error ? reason.message.trim() : '';
       setAttachments((current) => current.map((item) => item.id === attachment.id
-        ? { ...item, status: 'error', error: message || '上传失败', controller: undefined } : item));
+        ? { ...item, status: 'error', controller: undefined } : item));
+      onNotice(`附件「${attachment.file.name}」上传失败${message ? `：${message}` : ''}，请重试或移除。`);
     });
   }
 

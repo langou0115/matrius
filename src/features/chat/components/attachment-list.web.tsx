@@ -13,7 +13,6 @@ export type StagedAttachment = {
   status?: 'uploading' | 'ready' | 'error';
   fileId?: string;
   serverFile?: LibraryFile;
-  error?: string;
   controller?: AbortController;
   /** Set once the attachment has been handed to an outgoing message; cleanup must keep it. */
   consumed?: boolean;
@@ -46,16 +45,14 @@ export function AttachmentList({ attachments, removingDisabled, onRemove, onRetr
     <div className="composer-attachments" aria-label="待发送的附件" role="list">
       {attachments.map((attachment) => {
         const { size } = fileDetails(attachment.file);
-        const meta = attachment.status === 'uploading' ? '上传中…'
-          : attachment.status === 'error' ? attachment.error ?? '上传失败'
-            : size;
+        const meta = attachment.status === 'uploading' ? '上传中…' : size;
         return <div className={`composer-attachment${attachment.status === 'error' ? ' has-error' : ''}`}
           key={attachment.id} title={attachment.file.name} role="listitem">
           <div className={`attachment-artwork${attachment.preview ? ' is-image' : ''}`}>
             {attachment.preview ? <button className="attachment-preview-trigger" type="button" aria-label={`预览图片 ${attachment.file.name}`} onClick={() => setPreviewId(attachment.id)}><img src={attachment.preview} alt="" /></button>
               : <FileTypeIcon file={attachment.file} />}
           </div>
-          <span className="attachment-copy"><span className="attachment-name" title={attachment.file.name}>{attachment.file.name}</span><span className="attachment-meta" title={attachment.status === 'error' ? meta : undefined}>{meta}</span></span>
+          <span className="attachment-copy"><span className="attachment-name" title={attachment.file.name}>{attachment.file.name}</span><span className="attachment-meta">{meta}</span></span>
           {attachment.status === 'error' && onRetry
             ? <button type="button" className="composer-attachment-retry" disabled={removingDisabled} onClick={() => onRetry(attachment)}>重试</button>
             : null}
