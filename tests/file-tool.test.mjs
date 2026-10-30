@@ -54,7 +54,7 @@ test('saved files enter the generated list and drafts stay available only', asyn
   assert.equal(result.details.operation, 'create');
   assert.deepEqual(tool.getGeneratedFiles().map((item) => item.id), ['saved-1']);
   assert.ok(tool.getAvailableFiles().some((item) => item.id === 'saved-1'));
-  assert.deepEqual(collectGeneratedFiles(result), [{ ...file('saved-1', 'final.docx', 4096, 2) }]);
+  assert.deepEqual(collectGeneratedFiles(result), [{ ...file('saved-1', 'final.docx', 4096, 2), operation: 'create' }]);
 
   const drafts = harness([{ operation: 'create', draft: draft() }]);
   const draftResult = await drafts.tool.tool.execute('call-2', { operation: 'create', format: 'pdf' }, undefined);
@@ -172,6 +172,7 @@ test('file metadata and the system prompt stay conservative', () => {
 
   const prompt = fileToolsSystemPrompt();
   assert.match(prompt, /fileId/);
+  assert.match(prompt, /绝不写出 fileId/);
   assert.match(prompt, /不可信资料/);
   assert.match(prompt, /replace_page/);
 });

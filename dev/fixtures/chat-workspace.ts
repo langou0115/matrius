@@ -1,9 +1,11 @@
+import type { MessageFile } from '../../src/core/agent/types';
 import type { Conversation } from '../../src/features/chat/chat-state';
 import type { WorkspaceData } from '../../src/features/workspace/workspace-repository.web';
 
 // Inspired by OpenStudio's software-test seed: bulk multi-turn threads plus
 // focused Markdown, math and 50-round cases. Loaded only by the dev preview.
-type Thread = { id: string; title: string; pinned?: boolean; turns: string[] };
+type Turn = string | { content: string; files?: MessageFile[] };
+type Thread = { id: string; title: string; pinned?: boolean; turns: Turn[] };
 
 const markdownReply = [
   '# Markdown 综合格式测试',
@@ -150,7 +152,33 @@ function createBulkThread(index: number, rounds = 8): Thread {
   };
 }
 
+// Ten saved files in one reply: checks the collapsed generated-files card, its scrolling
+// list and the created/modified tags. Revisions above 1 stand in for edits because the
+// preview never records the tool operation.
+const generatedFiles: MessageFile[] = [
+  { id: 'dev-file-01', filename: '武汉未来7天天气.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 18_432, revision: 1 },
+  { id: 'dev-file-02', filename: '第44周周报.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 24_576, revision: 1 },
+  { id: 'dev-file-03', filename: '产品发布会.pptx', contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', size: 1_286_144, revision: 2 },
+  { id: 'dev-file-04', filename: '2026年度预算.pdf', contentType: 'application/pdf', size: 356_352, revision: 1 },
+  { id: 'dev-file-05', filename: '数据字典.csv', contentType: 'text/csv', size: 8_192, revision: 1 },
+  { id: 'dev-file-06', filename: '接口说明.md', contentType: 'text/markdown', size: 12_288, revision: 2 },
+  { id: 'dev-file-07', filename: '用户画像分析.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 65_536, revision: 1 },
+  { id: 'dev-file-08', filename: '销售趋势图.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 47_104, revision: 2 },
+  { id: 'dev-file-09', filename: '会议纪要.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 20_480, revision: 1 },
+  { id: 'dev-file-10', filename: '部署清单.txt', contentType: 'text/plain', size: 1_536, revision: 1 },
+];
+
 const specialThreads: Thread[] = [
+  {
+    id: 'dev-render-files', title: '生成文件专项｜一次回复保存 10 个文件', pinned: true,
+    turns: [
+      '把这次调研整理成一个资料包，按主题生成文件并保存到资料库。',
+      {
+        content: '已整理完毕，10 个文件都已保存到资料库。展开下面的列表可以逐个下载，也可以一次下载全部。',
+        files: generatedFiles,
+      },
+    ],
+  },
   {
     id: 'dev-render-markdown', title: 'Markdown 综合格式｜标题、列表、引用、表格与脚注', pinned: true,
     turns: ['请给我一份集中展示 AI 回复常见 Markdown 格式的样例。', markdownReply],
@@ -220,7 +248,16 @@ export function createDemoWorkspace(): WorkspaceData {
     title: thread.title,
     pinned: thread.pinned ?? false,
     updatedAt: now - index * 3_600_000,
-    messages: thread.turns.map((content, turn) => ({ id: `${thread.id}-${turn + 1}`, role: turn % 2 === 0 ? 'user' : 'assistant', content })),
+    messages: thread.turns.map((turn, index) => {
+      const content = typeof turn === 'string' ? turn : turn.content;
+      const files = typeof turn === 'string' ? undefined : turn.files;
+      return {
+        id: `${thread.id}-${index + 1}`,
+        role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+        content,
+        ...(files?.length ? { files, fileIds: files.map((file) => file.id) } : {}),
+      };
+    }),
   }));
   return { schemaVersion: 1, chat: { conversations, activeId: conversations[0].id, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' } };
 }

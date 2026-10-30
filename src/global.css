@@ -1211,9 +1211,30 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .message-attachment.is-document { cursor: default; }
 .message-attachment.is-document:hover { background: color-mix(in srgb, var(--foreground) 5%, var(--background)); }
 .message-attachment.is-missing { opacity: .7; }
-.message-attachments.is-generated { align-items: flex-start; margin-top: 14px; margin-bottom: 0; }
-.message-attachments.is-generated .message-attachment-grid { justify-content: flex-start; }
-.message-attachments.is-generated .message-attachments-header { justify-content: flex-start; }
+/* Files saved during a reply: one bordered card below the finished answer, following the
+   reference file-results block: toggleable header, download-all action, scrollable rows. */
+.generated-files { display: flex; flex-direction: column; gap: 8px; width: 100%; margin: 12px 0 8px; padding: 12px; border: 1px solid color-mix(in srgb, var(--foreground) 10%, var(--background)); border-radius: 12px; background: color-mix(in srgb, var(--foreground) 2%, var(--background)); }
+.generated-files-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.generated-files-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; padding: 0; color: var(--foreground); text-align: left; }
+.generated-files-title { font-family: var(--font-medium); font-size: var(--text-caption); }
+.generated-files-count { color: var(--muted-text); font-size: var(--text-caption); }
+.generated-files-toggle > svg { flex: none; color: var(--muted-text); }
+.generated-files-toggle:hover > svg { color: var(--foreground); }
+.generated-files-download { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 7px; color: var(--muted-text); }
+.generated-files-download:hover { background: color-mix(in srgb, var(--foreground) 8%, var(--background)); color: var(--foreground); }
+.generated-files-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; margin: 0; padding: 0; overflow-y: auto; overscroll-behavior-y: contain; list-style: none; scrollbar-width: thin; }
+.generated-files-list > li { display: flex; min-width: 0; }
+.generated-file { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 6px; border-radius: 9px; text-align: left; }
+/* The 3% `--soft` wash disappears on tinted themes; a plain 8% fill stays visible. */
+.generated-file:hover { background: color-mix(in srgb, var(--foreground) 8%, var(--background)); }
+.generated-file:active { background: color-mix(in srgb, var(--foreground) 12%, var(--background)); }
+.generated-file-icon { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 8px; background: color-mix(in srgb, var(--primary) 8%, var(--background)); }
+.generated-file-icon .file-type-icon { width: 22px; height: 22px; }
+.generated-file-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.generated-file-name { display: block; max-width: 100%; overflow: hidden; color: var(--foreground); font-size: var(--text-small); text-overflow: ellipsis; white-space: nowrap; }
+.generated-file-meta { display: flex; align-items: center; gap: 8px; color: var(--muted-text); font-size: var(--text-caption); }
+.generated-file-action { padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; line-height: 18px; }
+@media (pointer: coarse) { .generated-files-download { width: 40px; height: 40px; } .generated-file { min-height: 48px; } }
 
 /* File tool rows reuse the web activity row; only the name and error state differ. */
 .file-activity-name { min-width: 0; max-width: min(100%, 420px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

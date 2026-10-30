@@ -23,7 +23,7 @@ export const mockItems: readonly MockItem[] = [
   {
     href: '/mock/chat',
     title: '聊天渲染测试',
-    description: '109 个会话、1730 条消息，覆盖 Markdown、公式、代码高亮与长对话渲染。',
+    description: '112 个会话、1735 条消息，覆盖 Markdown、公式、代码高亮、生成文件列表与长对话渲染。',
     icon: 'chat',
   },
   {

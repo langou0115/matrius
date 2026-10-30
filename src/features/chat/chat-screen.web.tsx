@@ -9,6 +9,7 @@ import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-
 import { useDrafts } from './draft-state';
 import { MessageContent } from './components/message-content.web';
 import { MessageAttachments } from './components/message-attachments.web';
+import { GeneratedFiles } from './components/generated-files.web';
 import { CollapsibleMessageContent } from './components/collapsible-message-content.web';
 import { MessageActions } from './components/message-actions.web';
 import { ReasoningBlock, getReasoningState } from './components/reasoning-block.web';
@@ -165,7 +166,8 @@ export default function ChatScreen() {
               <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
               <ReplyStatus message={message} onRetry={message.status === 'error' && message.id === lastMessage?.id && !generating
                 ? () => runtime.retry(conversation.id) : undefined} />
-              {!!message.files?.length && <MessageAttachments files={message.files} generated />}
+              {/* Saved files wait for the reply to finish, so the answer is not pushed down mid-stream. */}
+              {message.status !== 'streaming' && !!message.files?.length && <GeneratedFiles files={message.files} />}
               {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message}
                 onFeedback={(feedback) => dispatch({ type: 'feedback', conversationId: conversation.id, messageId: message.id, feedback })} onFork={() => {
                 const forkId = createId();

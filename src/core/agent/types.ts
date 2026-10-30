@@ -17,6 +17,8 @@ export type MessageFile = {
   contentType: string;
   size: number;
   revision?: number;
+  /** The file tool operation that produced this file; absent on files loaded from history. */
+  operation?: string;
 };
 
 /** One normalized search hit, as returned by the server's tool API. */
