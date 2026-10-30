@@ -27,7 +27,7 @@ export function deriveConversationTitle(message: Pick<Message, 'content' | 'imag
     || (message.images?.length ? '图片对话' : message.files?.length || message.fileIds?.length ? '文件对话' : '新对话');
 }
 export type ChatState = { conversations: Conversation[]; deletedConversationIds?: string[]; activeId: string | null; sidebarOpen: boolean; chatVisible: boolean };
-/** Visibility is a per-tab concern, so it is kept out of the persisted workspace. */
+/** Visibility and boot restoration are per-page concerns, so they stay out of the persisted workspace. */
 export type PersistedChatState = Omit<ChatState, 'chatVisible'>;
 type Action =
   | { type: 'select'; id: string | null }

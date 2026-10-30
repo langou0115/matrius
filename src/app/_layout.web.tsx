@@ -22,9 +22,23 @@ export default function WebLayout() {
   const fullPage = pathname === '/admin' || pathname === '/settings' || pathname.startsWith('/settings/') || pathname === '/mock'
     || pathname === '/mock/chat/settings' || pathname.startsWith('/mock/chat/settings/');
   useEffect(() => {
+    // A worker registered while a production build was served on this same localhost port
+    // would keep answering Metro requests from its cache, hiding every code change.
+    // Development never needs one, so drop it (and its caches) before doing anything else.
+    if (__DEV__) {
+      if ('serviceWorker' in navigator) {
+        void navigator.serviceWorker.getRegistrations()
+          .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+          .catch(() => undefined);
+      }
+      if (globalThis.caches) {
+        void caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))).catch(() => undefined);
+      }
+      return;
+    }
     // The dev server has no built service worker; registering there would cache
     // Metro output and break hot updates.
-    if (__DEV__ || !('serviceWorker' in navigator)) return;
+    if (!('serviceWorker' in navigator)) return;
     const register = () => { void navigator.serviceWorker.register('/sw.js').catch(() => undefined); };
     if (document.readyState === 'complete') register();
     else window.addEventListener('load', register, { once: true });

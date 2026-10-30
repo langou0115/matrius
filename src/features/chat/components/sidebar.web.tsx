@@ -12,6 +12,7 @@ import { ConversationSelect } from './conversation-select.web';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChatRuntime } from '../chat-runtime';
 import { conversationHref } from '../conversation-href';
+import { writeLastRoute } from '../last-conversation.web';
 import { forgetScrollPosition } from '../scroll-position.web';
 
 type Props = { onSearch: () => void; collapsed: boolean };
@@ -38,13 +39,16 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
     { name: '最近', items: sorted.filter((item) => !item.pinned) },
   ];
   function select(id: string | null) {
+    // Record the choice before navigating; the workspace save is asynchronous and a quick
+    // tab switch can happen before it lands.
+    if (!preview) writeLastRoute(id);
     router.push(conversationHref(id, preview));
   }
 
   return (
     <aside className="sidebar" aria-label="对话导航" inert={sidebarCollapsed || undefined}>
       <div className="sidebar-header">
-        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => dispatch({ type: 'select', id: null })}>Matrius</LinkAnchor></Link>
+        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => { dispatch({ type: 'select', id: null }); if (!preview) writeLastRoute(null); }}>Matrius</LinkAnchor></Link>
         <div className="sidebar-header-actions">
           <button className="icon-button" onClick={onSearch} aria-label="搜索对话"><Icon name="search" size={19} /></button>
           <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>
@@ -110,7 +114,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
       {editing && <Dialog title={confirmDelete ? '删除这段对话？' : '重命名对话'} onClose={() => setEditing(null)} className="compact-dialog">
         {confirmDelete ? <>
           <p className="dialog-description">“{editing.title}”及其消息将被删除，此操作无法撤销。</p>
-          <div className="dialog-footer"><button className="secondary-button" onClick={() => setEditing(null)}>取消</button><button className="danger-button" onClick={() => { dispatch({ type: 'delete', id: editing.id }); forgetScrollPosition(editing.id); if (activeId === editing.id) router.replace(conversationHref(null, preview)); setEditing(null); }}>删除对话</button></div>
+          <div className="dialog-footer"><button className="secondary-button" onClick={() => setEditing(null)}>取消</button><button className="danger-button" onClick={() => { dispatch({ type: 'delete', id: editing.id }); forgetScrollPosition(editing.id); if (activeId === editing.id) { if (!preview) writeLastRoute(null); router.replace(conversationHref(null, preview)); } setEditing(null); }}>删除对话</button></div>
         </> : <>
           <form onSubmit={(event) => { event.preventDefault(); if (title.trim()) { dispatch({ type: 'rename', id: editing.id, title }); setEditing(null); } }}>
             <label className="field-label" htmlFor="conversation-title">对话标题</label>

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
+import { router, type Href } from 'expo-router';
 
 import { LocalDataConflict, writeWorkspace } from '@/core/database/browser-store.web';
 import { ChatProvider, useChat } from '@/features/chat/chat-state';
 import { DraftProvider } from '@/features/chat/draft-state';
+import { resumeHref } from '@/features/chat/conversation-route-state';
 import { loadWorkspace, stripMessageImages, type LoadedWorkspace, type WorkspaceData } from '@/features/workspace/workspace-repository.web';
 import { AppearanceProvider, useAppearance } from '@/theme/appearance';
 import { PreviewContext } from '@/features/workspace/preview-context';
@@ -13,6 +15,7 @@ import { useAuth } from '@/features/auth/auth-state.web';
 import { createCloudWorkspaceRepository } from '@/features/workspace/cloud-workspace-repository';
 import { workspaceScope } from '@/features/workspace/workspace-mode';
 import { NetworkToolsProvider } from '@/features/auth/network-tools-state.web';
+import { readLastConversation, readLastRouteId, writeLastConversation } from '@/features/chat/last-conversation.web';
 
 function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean; cloud?: ReturnType<typeof createCloudWorkspaceRepository> }>) {
   const { conversations, deletedConversationIds, activeId, sidebarOpen } = useChat();
@@ -69,11 +72,35 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
   </>;
 }
 
+/** The cloud workspace keeps conversations on the server but carries no activeId, so remember
+    the conversation this device had open and let the next launch reopen it in place. */
+function RememberLastConversation({ scope }: { scope: string }) {
+  const { activeId } = useChat();
+  useEffect(() => { writeLastConversation(scope, activeId); }, [scope, activeId]);
+  return null;
+}
+
 export function LocalWorkspace({ children, preview }: PropsWithChildren<{ preview: boolean }>) {
   const auth = useAuth();
-  const scope = workspaceScope(auth, preview);
+  const resolved = workspaceScope(auth, preview);
+  // Coming back to the tab re-checks the session. An anonymous workspace used to turn into
+  // `pending` for that moment, which unmounted the whole app: the URL was reset to `/`, the
+  // selected conversation was cleared and local mode landed on the new-conversation screen.
+  // Keep the last resolved workspace mounted while the check runs; a real sign-in/out still
+  // switches scope as soon as the new state resolves.
+  const lastResolved = useRef<string | null>(null);
+  if (resolved !== 'pending') lastResolved.current = resolved;
+  const scope = resolved === 'pending' && lastResolved.current ? lastResolved.current : resolved;
   // Models and credentials belong to this browser, independent of the workspace/account.
   return <ModelProvider preview={preview}><ScopedWorkspace key={scope} scope={scope} preview={preview}>{children}</ScopedWorkspace></ModelProvider>;
+}
+
+/** The router updates the address bar asynchronously; keep the loading screen up until the
+    conversation URL is in place so the chat screen never mounts on `/` first. */
+async function waitForPath(path: string) {
+  for (let attempt = 0; attempt < 60 && globalThis.location?.pathname !== path; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 16));
+  }
 }
 
 function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ preview: boolean; scope: string }>) {
@@ -99,7 +126,26 @@ function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ previ
         const { createDemoWorkspace } = await import('../../../dev/fixtures/chat-workspace');
         return { data: createDemoWorkspace(), revision: 0, preview: true };
       }
-      return { ...await (cloud ? cloud.load() : loadWorkspace()), preview: false };
+      const workspace = { ...await (cloud ? cloud.load() : loadWorkspace()), preview: false };
+      // The cloud workspace has no activeId of its own; restore the one this device left off in.
+      const last = cloud ? readLastConversation(scope) : null;
+      if (last && workspace.data.chat.conversations.some((conversation) => conversation.id === last)) {
+        workspace.data = { ...workspace.data, chat: { ...workspace.data.chat, activeId: last } };
+      }
+      // The page mirror is written synchronously before navigation, so it survives a quick tab
+      // switch and IndexedDB revision conflicts between tabs. Prefer it over the saved activeId.
+      const conversations = workspace.data.chat.conversations;
+      const remembered = [last, readLastRouteId(), workspace.data.chat.activeId]
+        .find((candidate) => candidate && conversations.some((conversation) => conversation.id === candidate)) ?? null;
+      // A PWA relaunch, a bookmark or a reload of `/` should open the conversation the workspace
+      // left off in at its own URL. Navigating before the workspace renders keeps the first paint
+      // on `/c/<id>`; rendering it on `/` and redirecting afterwards visibly flickers.
+      const href = preview ? null : resumeHref(globalThis.location?.pathname ?? '', remembered, conversations);
+      if (href) {
+        router.replace(href as Href);
+        await waitForPath(href);
+      }
+      return workspace;
     }
     load().then((value) => { if (active) { setLoaded(value); setFailed(false); } }).catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
@@ -117,6 +163,7 @@ function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ previ
 
   return <AppearanceProvider initialPreferences={loaded.data.appearance}>
     <PersonalizationProvider initialPreferences={loaded.data.personalization}><ChatProvider initialState={loaded.data.chat}><DraftProvider>
+      {cloud && <RememberLastConversation scope={scope} />}
       <PreviewContext value={loaded.preview}><NetworkToolsProvider><ChatRuntimeProvider><WorkspacePersistence initial={loaded} preview={loaded.preview} cloud={cloud}>{children}</WorkspacePersistence></ChatRuntimeProvider></NetworkToolsProvider></PreviewContext>
     </DraftProvider></ChatProvider></PersonalizationProvider>
   </AppearanceProvider>;

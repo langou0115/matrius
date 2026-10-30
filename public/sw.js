@@ -1,6 +1,6 @@
 /* Matrius PWA service worker: precache the app shell, then serve it offline.
    Bump CACHE_NAME whenever the shell or the caching strategy changes. */
-const CACHE_NAME = 'matrius-v1';
+const CACHE_NAME = 'matrius-v2';
 const APP_SHELL = [
   '/',
   '/manifest.json',
@@ -33,6 +33,11 @@ function isCacheable(request) {
   // API traffic is account data and streaming responses; never cache it.
   if (url.pathname.startsWith('/api/')) return false;
   if (url.pathname === '/sw.js') return false;
+  // Metro bundles and hot-update files only exist on the dev server. The dev and production
+  // servers share port 8081, so a worker left over from `npm run serve` would otherwise serve
+  // an old development bundle after the code changed.
+  if (url.searchParams.has('dev') || url.pathname.endsWith('.bundle') || url.pathname.startsWith('/node_modules/')
+    || url.pathname.startsWith('/@') || url.pathname.startsWith('/__expo')) return false;
   return true;
 }
 
