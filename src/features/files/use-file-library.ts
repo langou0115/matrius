@@ -8,6 +8,14 @@ type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
+const EMPTY_FILES: ReadonlyMap<string, LibraryFile> = new Map<string, LibraryFile>();
+
+/** Selected ids plus their metadata, because "select all" reaches rows that were never loaded. */
+type SelectionState = {
+  key: string;
+  ids: ReadonlySet<string>;
+  files: ReadonlyMap<string, LibraryFile>;
+};
 
 function readError(reason: unknown): string {
   if (reason instanceof Error && reason.message.trim()) return reason.message;
@@ -38,7 +46,8 @@ export function useFileLibrary({ request, enabled, initialKind = 'all' }: {
     { key: '', items: [], nextCursor: null, error: null },
   );
   const [more, setMore] = useState<{ key: string; loading: boolean } | null>(null);
-  const [selection, setSelection] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: '', ids: EMPTY_SELECTION });
+  const [selection, setSelection] = useState<SelectionState>({ key: '', ids: EMPTY_SELECTION, files: EMPTY_FILES });
+  const [selectingAll, setSelectingAll] = useState(false);
   const generation = useRef(0);
 
   const filterKey = JSON.stringify([enabled, debouncedQuery, kind, sort, order, reloadKey]);
@@ -52,6 +61,7 @@ export function useFileLibrary({ request, enabled, initialKind = 'all' }: {
   const loading = enabled && !current;
   const loadingMore = more !== null && more.key === filterKey && more.loading;
   const selected = selection.key === filterKey ? selection.ids : EMPTY_SELECTION;
+  const selectedFiles = selection.key === filterKey ? [...selection.files.values()] : [];
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), SEARCH_DEBOUNCE_MS);
@@ -117,23 +127,51 @@ export function useFileLibrary({ request, enabled, initialKind = 'all' }: {
     setList((previous) => ({ ...previous, items: previous.items.filter((item) => !target.has(item.id)) }));
     setSelection((previous) => {
       const next = new Set(previous.ids);
-      for (const id of ids) next.delete(id);
-      return { key: previous.key, ids: next };
+      const files = new Map(previous.files);
+      for (const id of ids) { next.delete(id); files.delete(id); }
+      return { key: previous.key, ids: next, files };
     });
     return result.deleted;
   }, [request]);
 
-  const toggleSelected = useCallback((id: string) => {
+  const toggleSelected = useCallback((file: LibraryFile) => {
     setSelection((previous) => {
-      const ids = new Set(previous.key === filterKey ? previous.ids : EMPTY_SELECTION);
-      if (ids.has(id)) ids.delete(id);
-      else ids.add(id);
-      return { key: filterKey, ids };
+      const sameKey = previous.key === filterKey;
+      const ids = new Set(sameKey ? previous.ids : EMPTY_SELECTION);
+      const files = new Map(sameKey ? previous.files : EMPTY_FILES);
+      if (ids.has(file.id)) { ids.delete(file.id); files.delete(file.id); }
+      else { ids.add(file.id); files.set(file.id, file); }
+      return { key: filterKey, ids, files };
     });
   }, [filterKey]);
 
-  const selectMany = useCallback((ids: string[]) => setSelection({ key: filterKey, ids: new Set(ids) }), [filterKey]);
-  const clearSelection = useCallback(() => setSelection({ key: filterKey, ids: EMPTY_SELECTION }), [filterKey]);
+  // "Select all" has to cover rows the lazy list never fetched; walking the cursor pages
+  // once keeps delete/download honest about the full filtered result.
+  const selectAll = useCallback(async () => {
+    if (selectingAll) return;
+    const key = filterKey;
+    const requestGeneration = generation.current;
+    setSelectingAll(true);
+    try {
+      const files = new Map<string, LibraryFile>();
+      let cursor: string | null = null;
+      do {
+        const page = await listFiles(request, {
+          query: debouncedQuery, kind, sort, order, ...(cursor ? { cursor } : {}), limit: PAGE_SIZE,
+        });
+        if (requestGeneration !== generation.current) return;
+        for (const file of page.items) files.set(file.id, file);
+        cursor = page.nextCursor;
+      } while (cursor);
+      setSelection({ key, ids: new Set(files.keys()), files });
+    } catch {
+      // Keep the previous selection; the list error state already surfaces the failure.
+    } finally {
+      if (requestGeneration === generation.current) setSelectingAll(false);
+    }
+  }, [selectingAll, filterKey, debouncedQuery, kind, sort, order, request]);
+
+  const clearSelection = useCallback(() => setSelection({ key: filterKey, ids: EMPTY_SELECTION, files: EMPTY_FILES }), [filterKey]);
   const toggleOrder = useCallback(() => setOrder((value) => value === 'desc' ? 'asc' : 'desc'), []);
 
   return {
@@ -142,7 +180,7 @@ export function useFileLibrary({ request, enabled, initialKind = 'all' }: {
     sort, setSort,
     order, setOrder, toggleOrder,
     items, nextCursor, loading, loadingMore, refreshing, error,
-    selected, toggleSelected, selectMany, clearSelection,
+    selected, selectedFiles, toggleSelected, selectAll, selectingAll, clearSelection,
     loadMore, refresh, rename, remove,
   };
 }

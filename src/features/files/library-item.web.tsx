@@ -1,4 +1,5 @@
-import { Check, Download, Pencil, Trash2 } from 'lucide-react';
+import { Check, Download, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { FileTypeIcon } from '@/features/chat/components/file-type-icon.web';
 import { fileContentUrl, type LibraryFile } from './files-api.web';
@@ -11,9 +12,29 @@ export function LibraryItem({ file, selected, onToggle, onRename, onDelete }: {
   onRename: () => void;
   onDelete: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const actions = useRef<HTMLDivElement>(null);
   const created = formatDate(file.createdAt);
   const contentUrl = file.previewUrl ?? fileContentUrl(file.id);
-  return <div className={`library-item${selected ? ' is-selected' : ''}`} role="listitem">
+
+  // One settings menu replaces the per-row buttons; outside clicks and Escape dismiss it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function dismissOnPointerDown(event: PointerEvent) {
+      if (!actions.current?.contains(event.target as Node)) setMenuOpen(false);
+    }
+    function dismissOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('pointerdown', dismissOnPointerDown);
+    document.addEventListener('keydown', dismissOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismissOnPointerDown);
+      document.removeEventListener('keydown', dismissOnEscape);
+    };
+  }, [menuOpen]);
+
+  return <div className={`library-item${selected ? ' is-selected' : ''}${menuOpen ? ' is-menu-open' : ''}`} role="listitem">
     <button type="button" className="library-item-main" aria-pressed={selected}
       aria-label={`${selected ? '取消选择' : '选择'} ${file.filename}`} onClick={onToggle}>
       <span className={`library-item-check${selected ? ' is-checked' : ''}`} aria-hidden="true">
@@ -29,19 +50,23 @@ export function LibraryItem({ file, selected, onToggle, onRename, onDelete }: {
         <span className="library-item-meta">{formatBytes(file.size)}{created ? ` · ${created}` : ''}</span>
       </span>
     </button>
-    <div className="library-item-actions">
-      <a className="icon-button" href={contentUrl} download={file.filename}
-        aria-label={`下载 ${file.filename}`} title="下载">
-        <Download size={17} strokeWidth={1.75} aria-hidden="true" />
-      </a>
-      <button className="icon-button" type="button" aria-label={`重命名 ${file.filename}`}
-        title="重命名" onClick={onRename}>
-        <Pencil size={16} strokeWidth={1.75} aria-hidden="true" />
+    <div className="library-item-actions" ref={actions}>
+      <button type="button" className="icon-button" aria-label={`更多操作 ${file.filename}`}
+        aria-haspopup="menu" aria-expanded={menuOpen} title="更多操作"
+        onClick={() => setMenuOpen((open) => !open)}>
+        <MoreHorizontal size={18} strokeWidth={1.75} aria-hidden="true" />
       </button>
-      <button className="icon-button danger-icon" type="button" aria-label={`删除 ${file.filename}`}
-        title="删除" onClick={onDelete}>
-        <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />
-      </button>
+      {menuOpen && <div className="library-item-menu" role="menu" aria-label={`${file.filename} 的操作`}>
+        <a role="menuitem" href={contentUrl} download={file.filename} onClick={() => setMenuOpen(false)}>
+          <Download size={16} strokeWidth={1.75} aria-hidden="true" />下载
+        </a>
+        <button role="menuitem" type="button" onClick={() => { setMenuOpen(false); onRename(); }}>
+          <Pencil size={16} strokeWidth={1.75} aria-hidden="true" />重命名
+        </button>
+        <button role="menuitem" type="button" className="is-danger" onClick={() => { setMenuOpen(false); onDelete(); }}>
+          <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />删除
+        </button>
+      </div>}
     </div>
   </div>;
 }

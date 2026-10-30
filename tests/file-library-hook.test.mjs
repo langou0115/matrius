@@ -139,7 +139,7 @@ test('rename updates the row and delete removes it from the list and selection',
   const { Probe, get } = harness(request);
   try {
     await render(root, Probe);
-    await act(async () => { get().toggleSelected('a'); });
+    await act(async () => { get().toggleSelected(get().items[0]); });
     assert.deepEqual([...get().selected], ['a']);
 
     await act(async () => { await get().rename('a', 'renamed.pdf'); });
@@ -189,14 +189,33 @@ test('selection does not leak across filters', async () => {
   const { Probe, get } = harness(request);
   try {
     await render(root, Probe);
-    await act(async () => { get().toggleSelected('a'); });
+    await act(async () => { get().toggleSelected(get().items[0]); });
     assert.equal(get().selected.size, 1);
     await act(async () => { get().setKind('document'); });
     assert.equal(get().selected.size, 0);
-    await act(async () => { get().selectMany(['x', 'y']); });
-    assert.deepEqual([...get().selected].sort(), ['x', 'y']);
+    await act(async () => { await get().selectAll(); });
+    assert.deepEqual([...get().selected].sort(), ['a']);
     await act(async () => { get().clearSelection(); });
     assert.equal(get().selected.size, 0);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('select all reaches pages that were never loaded', async () => {
+  const { root, cleanup } = setup();
+  const request = async (path) => {
+    if (path.includes('cursor=page-2')) return { items: [file('c'), file('d')], nextCursor: null };
+    return { items: [file('a'), file('b')], nextCursor: 'page-2' };
+  };
+  const { Probe, get } = harness(request);
+  try {
+    await render(root, Probe);
+    assert.deepEqual(get().items.map((item) => item.id), ['a', 'b']);
+    await act(async () => { await get().selectAll(); });
+    assert.deepEqual([...get().selected].sort(), ['a', 'b', 'c', 'd']);
+    assert.deepEqual(get().selectedFiles.map((item) => item.id).sort(), ['a', 'b', 'c', 'd']);
+    assert.equal(get().selectingAll, false);
   } finally {
     await cleanup();
   }

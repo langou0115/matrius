@@ -9,7 +9,7 @@ import { useAuth } from '@/features/auth/auth-state.web';
 import { useChat } from '@/features/chat/chat-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { hasFeature } from '@/core/features/capabilities';
-import { fileExtension, type LibraryFile } from './files-api.web';
+import { fileContentUrl, fileExtension, type LibraryFile } from './files-api.web';
 import { LibraryItem } from './library-item.web';
 import { LibraryToolbar } from './library-toolbar.web';
 import { previewFileRequest } from './mock-library';
@@ -158,8 +158,27 @@ export default function LibraryScreen() {
     </main>;
   }
 
-  const selectedFiles = library.items.filter((file) => library.selected.has(file.id));
-  const allSelected = library.items.length > 0 && library.items.every((file) => library.selected.has(file.id));
+  const selectedFiles = library.selectedFiles;
+  // Selecting all walks the remaining pages, so rows that were never scrolled into view
+  // are included in batch download and delete too. Once anything is selected, the header
+  // box clears the selection instead of adding the rest.
+  function toggleSelectAll() {
+    if (library.selected.size > 0) library.clearSelection();
+    else void library.selectAll();
+  }
+  // Browsers allow a burst of same-origin downloads; each file goes through the same URL
+  // the per-row download link uses.
+  function downloadSelected() {
+    for (const file of selectedFiles) {
+      const anchor = document.createElement('a');
+      anchor.href = file.previewUrl ?? fileContentUrl(file.id);
+      anchor.download = file.filename;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
+  }
 
   return <main className="library-main" id="main-content" tabIndex={-1}>
     {topbar}
@@ -171,16 +190,13 @@ export default function LibraryScreen() {
           kind={library.kind} onKindChange={library.setKind}
           sort={library.sort} onSortChange={library.setSort}
           order={library.order} onToggleOrder={library.toggleOrder}
+          total={library.items.length}
+          selectedCount={library.selected.size}
+          selectingAll={library.selectingAll}
+          onToggleSelectAll={toggleSelectAll}
+          onDownloadSelected={downloadSelected}
+          onDeleteSelected={() => openDelete(selectedFiles)}
         />
-
-        {library.selected.size > 0 && <div className="library-selection" role="status">
-          <span>已选择 {library.selected.size} 项</span>
-          <button type="button" className="secondary-button" onClick={() => library.selectMany(library.items.map((file) => file.id))}
-            disabled={allSelected}>全选本页</button>
-          <button type="button" className="secondary-button" onClick={library.clearSelection}>取消选择</button>
-          <button type="button" className="danger-button" onClick={() => openDelete(selectedFiles)}
-            disabled={!selectedFiles.length}>删除所选</button>
-        </div>}
 
         {library.error && <p className="account-message is-error" role="alert">{library.error}</p>}
 
@@ -200,7 +216,7 @@ export default function LibraryScreen() {
           role="list" aria-label="资料库文件" aria-busy={library.refreshing || undefined}>
           {library.items.map((file) => <LibraryItem key={file.id} file={file}
             selected={library.selected.has(file.id)}
-            onToggle={() => library.toggleSelected(file.id)}
+            onToggle={() => library.toggleSelected(file)}
             onRename={() => openRename(file)}
             onDelete={() => openDelete([file])}
           />)}
@@ -208,9 +224,6 @@ export default function LibraryScreen() {
 
         <div ref={sentinel} className="library-sentinel" aria-hidden="true" />
         {library.loadingMore && <p className="library-loading-more" role="status">正在加载更多…</p>}
-        {!library.loadingMore && !library.refreshing && !library.nextCursor && library.items.length > 0
-          ? <p className="library-end" role="status">已显示全部文件</p>
-          : null}
       </div>
     </div>
 

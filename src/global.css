@@ -147,7 +147,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .chat-main, .settings-main, .mock-main { display: flex; flex-direction: column; height: 100%; min-height: 0; outline: none; }
 .chat-main { background: transparent; }
 .chat-screen { position: relative; height: 100%; min-height: 0; }
-.chat-notice-anchor { position: absolute; top: calc(var(--header-height) + 8px); left: 50%; transform: translateX(-50%); z-index: 10; width: calc(100% - 48px); max-width: 712px; pointer-events: none; }
+.chat-notice-anchor { position: absolute; top: calc(var(--header-height) + 8px); left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; gap: 6px; width: calc(100% - 48px); max-width: 712px; pointer-events: none; }
 .chat-notice { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 10px 8px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 9%, transparent); pointer-events: auto; }
 .chat-notice > svg { flex-shrink: 0; color: var(--muted-text); }
 .chat-notice > p { flex: 1; min-width: 0; font-size: var(--text-small); line-height: 1.6; overflow-wrap: anywhere; }
@@ -1229,9 +1229,23 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .library-heading h1 { font-size: 26px; letter-spacing: -.8px; font-family: var(--font-semibold); font-weight: 400; }
 .library-heading p { margin-top: 7px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.7; }
 .library-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
-.library-content { width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 40px 80px; }
+.library-content { --library-gutter: 30px; width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 40px 80px; }
 .library-toolbar { position: sticky; top: 0; z-index: 2; padding: 6px 0 14px; background: linear-gradient(to bottom, var(--background) 76%, transparent); }
 .library-toolbar-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.library-toolbar-row + .library-toolbar-row { margin-top: 10px; }
+/* The filter row and every file row reach 30px into the content gutter so their hover
+   target covers the checkbox column, while their visible background starts at the search
+   box's left edge. The check sits in that gutter, outside the outlined row. */
+.library-filter-row { position: relative; margin-left: calc(-1 * var(--library-gutter)); padding-left: var(--library-gutter); }
+.library-select-all { position: absolute; left: 0; top: 50%; display: inline-flex; flex: none; align-items: center; transform: translateY(-50%); cursor: pointer; }
+.library-select-all-input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.library-select-all-input:focus-visible + .library-item-check { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* The header box follows the row boxes: hidden until the filter row is hovered or has
+   focus, but always visible once a selection exists so its state can be read. */
+.library-select-all .library-item-check { opacity: 0; }
+.library-filter-row:hover .library-select-all .library-item-check, .library-select-all-input:focus-visible + .library-item-check, .library-select-all .library-item-check.is-checked { opacity: 1; }
+.library-select-all-input:disabled + .library-item-check { opacity: .5; }
+.library-download-selected, .library-delete-selected { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; }
 .library-search { display: flex; flex: 1 1 220px; align-items: center; gap: 8px; min-width: 160px; max-width: 340px; min-height: 38px; padding: 0 6px 0 11px; border: 1px solid var(--border); border-radius: 12px; background: var(--background); color: var(--muted-text); transition: border-color 140ms, color 140ms; }
 .library-search:focus-within { border-color: var(--primary); color: var(--foreground); }
 .library-search input { flex: 1; min-width: 0; height: 36px; padding: 0; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: var(--text-small); }
@@ -1264,30 +1278,43 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .storage-category-copy strong { font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
 .storage-category-copy > span { color: var(--muted-text); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .storage-login-action { display: inline-flex; align-items: center; gap: 7px; margin-top: 18px; }
-.library-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--primary) 5%, var(--background)); font-size: var(--text-small); }
-.library-selection > span { margin-right: auto; font-family: var(--font-medium); }
-.library-selection .secondary-button, .library-selection .danger-button { padding: 6px 12px; }
 .library-list { display: flex; flex-direction: column; gap: 2px; transition: opacity 120ms ease; }
 /* The previous page stays visible while the next filter loads; dimming marks it stale
    without the skeleton flash a full list swap produces. */
 .library-list.is-refreshing { opacity: .45; pointer-events: none; }
-.library-item { display: flex; align-items: center; gap: 6px; min-height: 56px; padding: 4px 6px 4px 2px; border: 1px solid transparent; border-radius: 12px; transition: background 140ms, border-color 140ms; }
-.library-item:hover { background: var(--soft); }
-.library-item.is-selected { border-color: color-mix(in srgb, var(--primary) 32%, var(--border)); background: color-mix(in srgb, var(--primary) 6%, var(--background)); }
-.library-item-main { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 6px 8px; border-radius: 9px; text-align: left; }
+.library-item { position: relative; isolation: isolate; display: flex; align-items: center; gap: 6px; min-height: 56px; margin-left: calc(-1 * var(--library-gutter)); padding: 4px 6px 4px calc(var(--library-gutter) + 2px); border-radius: 12px; }
+/* The outline is drawn from the content edge so the checkbox stays outside it. */
+.library-item::before { content: ''; position: absolute; inset: 0 0 0 var(--library-gutter); z-index: -1; border: 1px solid transparent; border-radius: 12px; transition: background 140ms, border-color 140ms; pointer-events: none; }
+.library-item:hover::before { background: var(--soft); }
+.library-item.is-selected::before { border-color: color-mix(in srgb, var(--primary) 32%, var(--border)); background: color-mix(in srgb, var(--primary) 6%, var(--background)); }
+.library-item-main { position: relative; display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 6px 8px; border-radius: 9px; text-align: left; }
+.library-item-main .library-item-check { position: absolute; left: calc(-1 * var(--library-gutter) - 2px); top: 50%; transform: translateY(-50%); }
 .library-item-main:focus-visible { outline-offset: 0; }
-.library-item-check { display: grid; flex: none; place-items: center; width: 18px; height: 18px; border: 1.5px solid var(--border); border-radius: 5px; background: var(--background); color: var(--primary-foreground); }
+.library-item-check { display: grid; flex: none; place-items: center; width: 18px; height: 18px; border: 1.5px solid color-mix(in srgb, var(--foreground) 26%, var(--background)); border-radius: 5px; background: var(--background); color: var(--primary-foreground); transition: border-color 140ms, background 140ms, opacity 140ms; }
+/* Row checks stay out of the way until the row is hovered or selected, like the menu button. */
+.library-item .library-item-check { opacity: 0; }
+.library-item:hover .library-item-check, .library-item:has(:focus-visible) .library-item-check, .library-item.is-selected .library-item-check { opacity: 1; }
+.library-item:hover .library-item-check:not(.is-checked) { border-color: color-mix(in srgb, var(--foreground) 46%, var(--background)); }
 .library-item-check.is-checked { border-color: var(--primary); background: var(--primary); }
+.library-item-check.is-indeterminate::before { content: ''; width: 9px; height: 1.5px; border-radius: 1px; background: var(--primary-foreground); }
 .library-item-artwork { display: grid; flex: none; place-items: center; width: 38px; height: 38px; overflow: hidden; border-radius: 9px; background: color-mix(in srgb, var(--primary) 8%, var(--background)); color: var(--primary); }
 .library-item-artwork img { width: 100%; height: 100%; object-fit: cover; }
 .library-item-artwork .file-type-icon { width: 28px; height: 28px; object-fit: contain; border-radius: 0; }
 .library-item-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .library-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-ui); }
 .library-item-meta { color: var(--muted-text); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
-.library-item-actions { display: flex; flex: none; align-items: center; gap: 2px; opacity: 0; transition: opacity 140ms; }
-.library-item:hover .library-item-actions, .library-item:has(:focus-visible) .library-item-actions, .library-item.is-selected .library-item-actions { opacity: 1; }
-@media (pointer: coarse) { .library-item-actions { opacity: 1; } .library-item-actions .icon-button { width: 44px; height: 44px; } }
-.library-item.is-skeleton { gap: 12px; padding: 10px; pointer-events: none; }
+.library-item-actions { position: relative; display: flex; flex: none; align-items: center; opacity: 0; transition: opacity 140ms; }
+.library-item:hover .library-item-actions, .library-item:has(:focus-visible) .library-item-actions, .library-item.is-selected .library-item-actions, .library-item.is-menu-open .library-item-actions { opacity: 1; }
+/* Per-row settings menu: download, rename and delete live behind one button. */
+.library-item-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 6; display: flex; flex-direction: column; min-width: 148px; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--popover); box-shadow: 0 8px 24px color-mix(in srgb, var(--foreground) 12%, transparent); }
+.library-item-menu > a, .library-item-menu > button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border-radius: 7px; color: var(--foreground); font-size: var(--text-small); text-align: left; }
+.library-item-menu > a:hover, .library-item-menu > button:hover { background: var(--soft); }
+.library-item-menu svg { flex: none; color: var(--muted-text); }
+.library-item-menu > .is-danger { color: var(--destructive); }
+.library-item-menu > .is-danger svg { color: inherit; }
+.library-item-menu > .is-danger:hover { background: color-mix(in srgb, var(--destructive) 8%, var(--background)); }
+@media (pointer: coarse) { .library-item-actions, .library-item .library-item-check, .library-select-all .library-item-check { opacity: 1; } .library-item-actions .icon-button { width: 44px; height: 44px; } }
+.library-item.is-skeleton { gap: 12px; margin-left: calc(-1 * var(--library-gutter)); padding: 10px; pointer-events: none; }
 .library-skeleton-check, .library-skeleton-artwork, .library-skeleton-copy > span { display: block; background: color-mix(in srgb, var(--foreground) 8%, var(--background)); animation: library-pulse 1.4s ease-in-out infinite; }
 .library-skeleton-check { flex: none; width: 18px; height: 18px; border-radius: 5px; }
 .library-skeleton-artwork { flex: none; width: 38px; height: 38px; border-radius: 9px; }
@@ -1302,10 +1329,10 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .library-placeholder p { max-width: 380px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.8; }
 .library-placeholder-action { display: inline-flex; align-items: center; gap: 7px; margin-top: 10px; }
 .library-sentinel { height: 1px; }
-.library-loading-more, .library-end { padding: 18px 0 4px; color: var(--muted-text); font-size: var(--text-caption); text-align: center; }
+.library-loading-more { padding: 18px 0 4px; color: var(--muted-text); font-size: var(--text-caption); text-align: center; }
 @media (max-width: 760px) {
   .library-heading { padding: 6px 20px 14px; }
-  .library-content { padding: 0 20px 56px; }
+  .library-content { --library-gutter: 20px; padding: 0 20px 56px; }
   .library-sort { margin-left: 0; }
   .library-search { max-width: none; }
 }
