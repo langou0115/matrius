@@ -60,7 +60,7 @@ def _conversation_conditions(value: str):
     return conditions
 
 
-async def _resolve_conversation_id(
+async def resolve_conversation_id(
     db: AsyncSession, user_id: uuid.UUID, value: str | None,
 ) -> uuid.UUID | None:
     if value is None:
@@ -143,7 +143,7 @@ async def upload_file(
     if suffix not in ALLOWED_EXTENSIONS:
         raise AppError(415, "unsupported_file_type", "不支持的文件类型。")
 
-    resolved_conversation_id = await _resolve_conversation_id(db, ctx.user.id, conversationId)
+    resolved_conversation_id = await resolve_conversation_id(db, ctx.user.id, conversationId)
     if conversationId is not None and resolved_conversation_id is None:
         raise not_found("对话不存在。")
 
@@ -274,7 +274,7 @@ async def list_files(
 
     stmt = select(StoredFile).where(StoredFile.user_id == ctx.user.id)
     if conversationId is not None:
-        scoped_id = await _resolve_conversation_id(db, ctx.user.id, conversationId)
+        scoped_id = await resolve_conversation_id(db, ctx.user.id, conversationId)
         # An unknown conversation has no files; keeping the filter empty avoids leaking
         # whether the id exists for another account.
         if scoped_id is None:

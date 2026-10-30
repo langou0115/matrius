@@ -24,7 +24,13 @@ from app.documents.officecli import office_create, office_edit, office_help, off
 from app.documents.pdf import apply_pdf_changes, inspect_pdf
 from app.documents.schemas import FileToolRequest
 from app.errors import AppError, conflict, invalid
-from app.files.router import file_out, get_owned_file, load_file_bytes, safe_filename
+from app.files.router import (
+    file_out,
+    get_owned_file,
+    load_file_bytes,
+    resolve_conversation_id,
+    safe_filename,
+)
 from app.files.service import ensure_quota
 from app.models import StoredFile
 from app.storage import delete_object, put_object
@@ -160,9 +166,17 @@ async def run(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) ->
 
 
 async def _list(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
-    stmt = select(StoredFile).where(StoredFile.user_id == user_id)
+    # The chat client only knows its own conversation id; store the server id everywhere.
+    conversation_id = None
     if payload.conversationId is not None:
-        stmt = stmt.where(StoredFile.conversation_id == payload.conversationId)
+        conversation_id = await resolve_conversation_id(db, user_id, str(payload.conversationId))
+        if conversation_id is None:
+            # An unknown scope must not fall back to account-wide files.
+            return {"operation": "list", "files": []}
+
+    stmt = select(StoredFile).where(StoredFile.user_id == user_id)
+    if conversation_id is not None:
+        stmt = stmt.where(StoredFile.conversation_id == conversation_id)
     stmt = stmt.order_by(StoredFile.created_at.desc()).limit(100)
     files = list((await db.execute(stmt)).scalars().all())
     items = [
@@ -176,7 +190,7 @@ async def _list(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) 
         }
         for item in files
     ]
-    stored_drafts = await draft_store.drafts.list_for_user(user_id, payload.conversationId)
+    stored_drafts = await draft_store.drafts.list_for_user(user_id, conversation_id)
     items.extend(
         {
             "id": item.id,
@@ -263,9 +277,14 @@ async def _create(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest
         fmt = LEGACY_FORMATS[fmt]
     filename = _filename_for(fmt, payload.filename)
     data = await _apply(fmt, None, payload)
+    conversation_id = (
+        await resolve_conversation_id(db, user_id, str(payload.conversationId))
+        if payload.conversationId is not None
+        else None
+    )
     draft = await draft_store.drafts.put(
         user_id=user_id,
-        conversation_id=payload.conversationId,
+        conversation_id=conversation_id,
         filename=filename,
         content_type=CONTENT_TYPES[fmt],
         data=data,
@@ -281,7 +300,13 @@ async def _edit(
     data = await _apply(fmt, data, payload)
     base_file_id = None if converted or resolved.stored is None else resolved.stored.id
     base_revision = None if converted or resolved.stored is None else resolved.stored.revision
-    conversation_id = payload.conversationId or resolved.conversation_id
+    # The chat client sends its own conversation id; the file table only accepts server ids.
+    scoped_id = (
+        await resolve_conversation_id(db, user_id, str(payload.conversationId))
+        if payload.conversationId is not None
+        else None
+    )
+    conversation_id = scoped_id or resolved.conversation_id
     draft = await draft_store.drafts.put(
         user_id=user_id,
         conversation_id=conversation_id,

@@ -207,6 +207,43 @@ async def test_list_returns_uploads_and_drafts_then_filters_conversations(client
     assert empty["files"] == []
 
 
+async def test_client_conversation_id_is_resolved_before_saving(client, create_user):
+    import uuid
+
+    _, headers = await create_user("regular")
+    conversation = (
+        await client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"clientId": str(uuid.uuid4()), "title": "Docs"},
+        )
+    ).json()
+
+    # The chat client only knows its own conversation id; the draft and the saved file
+    # must both carry the server id, or the foreign key rejects the save.
+    created = await _call(
+        client,
+        headers,
+        operation="create",
+        format="pdf",
+        filename="client.pdf",
+        conversationId=conversation["clientId"],
+    )
+    assert created.status_code == 200, created.text
+    draft = created.json()["draft"]
+    assert draft["conversationId"] == conversation["id"]
+
+    saved = await _call(client, headers, operation="save", fileId=draft["id"])
+    assert saved.status_code == 200, saved.text
+    file = saved.json()["file"]
+    assert file["conversationId"] == conversation["id"]
+
+    listing = (
+        await _call(client, headers, operation="list", conversationId=conversation["clientId"])
+    ).json()
+    assert [item["id"] for item in listing["files"]] == [file["id"]]
+
+
 async def test_saved_generated_file_can_be_edited_in_place(client, create_user):
     _, headers = await create_user("regular")
     created = await _call(

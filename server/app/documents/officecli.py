@@ -13,6 +13,11 @@ from app.errors import AppError
 
 MAX_TEXT_CHARS = 30_000
 
+# Every call works on a throwaway temp file, so the resident cache buys nothing.
+# Worse, under uvloop the resident inherits the child's stdout/stderr pipes and keeps
+# them open after `create` exits, so run_process never sees EOF and hits its timeout.
+_ENGINE_ENV = {"OFFICECLI_NO_AUTO_RESIDENT": "1"}
+
 
 def _decode(result: ProcessResult) -> str:
     return result.stdout.decode("utf-8", errors="replace").strip()
@@ -52,6 +57,7 @@ async def _run(argv: list[str], *, stdin: bytes | None = None, cwd: Path | None 
             timeout_seconds=settings.officecli_timeout_seconds,
             max_output_bytes=settings.officecli_max_output_bytes,
             cwd=cwd,
+            env=_ENGINE_ENV,
         )
 
 
@@ -155,8 +161,8 @@ async def _read_verified(fmt: str, target: Path, directory: str) -> bytes:
         cwd=Path(directory),
     )
     _check(verify, "校验文档")
-    # create/edit may keep the file open in a resident process; the on-disk copy is
-    # only current after close. This also releases the handle before TemporaryDirectory
-    # cleanup (which fails on Windows otherwise).
+    # Auto-resident is disabled, so this is normally a no-op. Keep it as a backstop:
+    # if an engine build ignores the switch, `close` flushes and releases the handle
+    # before TemporaryDirectory cleanup (which fails on Windows otherwise).
     await _run([str(resolve_officecli()), "close", str(target), "--json"], cwd=Path(directory))
     return await asyncio.to_thread(_read_bytes, target)
