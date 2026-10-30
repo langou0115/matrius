@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 import { router, type Href } from 'expo-router';
 
+import { ApiError } from '@/core/api/auth-session';
 import { LocalDataConflict, writeWorkspace } from '@/core/database/browser-store.web';
+import { StorageErrorToast } from '@/components/web/storage-error-toast.web';
 import { ChatProvider, useChat } from '@/features/chat/chat-state';
 import { DraftProvider } from '@/features/chat/draft-state';
 import { resumeHref } from '@/features/chat/conversation-route-state';
@@ -17,6 +19,50 @@ import { workspaceScope } from '@/features/workspace/workspace-mode';
 import { NetworkToolsProvider } from '@/features/auth/network-tools-state.web';
 import { readLastConversation, readLastRouteId, writeLastConversation } from '@/features/chat/last-conversation.web';
 
+const ERROR_MIN_VISIBLE_MS = 6000;
+type ErrorTimers = { shownAt: number; timer: ReturnType<typeof setTimeout> | undefined };
+
+/* A transient failure used to be cleared by the next successful save 1.5s later, before its text
+   could be selected. Keep the toast up long enough to read and copy it. */
+function showSaveError(timers: ErrorTimers, setError: (message: string) => void, message: string) {
+  if (timers.timer) clearTimeout(timers.timer);
+  timers.timer = undefined;
+  timers.shownAt = Date.now();
+  setError(message);
+}
+function clearSaveErrorSoon(timers: ErrorTimers, setError: (message: string | null) => void) {
+  if (timers.timer) clearTimeout(timers.timer);
+  if (!timers.shownAt) return;
+  const wait = Math.max(0, ERROR_MIN_VISIBLE_MS - (Date.now() - timers.shownAt));
+  const finish = () => {
+    // Never pull the text out from under an active selection inside the toast.
+    const node = document.querySelector('.storage-error');
+    const selection = globalThis.getSelection?.();
+    if (node && selection && !selection.isCollapsed && selection.anchorNode && node.contains(selection.anchorNode)) {
+      timers.timer = setTimeout(finish, 2000);
+      return;
+    }
+    timers.timer = undefined;
+    timers.shownAt = 0;
+    setError(null);
+  };
+  timers.timer = setTimeout(finish, wait);
+}
+
+/** Name the cause: "sometimes while a reply runs" is not actionable, but 429 / 5xx / network is. */
+function saveErrorMessage(reason: unknown, cloud: unknown): string {
+  if (reason instanceof LocalDataConflict) return '其他页面已更新本地数据。请先保留当前未保存的内容，再刷新页面。';
+  if (!cloud) return '最新修改未能保存到浏览器，关闭页面可能丢失这些修改。';
+  if (reason instanceof ApiError) {
+    if (reason.status === 0) return '最新修改未能保存到云端：暂时无法连接服务器。请检查网络后重试。';
+    if (reason.status === 401) return '最新修改未能保存到云端：登录已失效，请重新登录后重试。';
+    if (reason.status === 429) return '最新修改未能保存到云端：写入过于频繁（429），请稍等片刻再点“重试保存”。';
+    return `最新修改未能保存到云端：${reason.message}（${reason.status}${reason.code ? ` ${reason.code}` : ''}）。内容已保留，可重试保存。`;
+  }
+  const detail = reason instanceof Error && reason.message ? `（${reason.message}）` : '';
+  return `最新修改未能保存到云端。请检查网络后重试；若其他设备已修改，请保留内容后刷新。${detail}`;
+}
+
 function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithChildren<{ initial: LoadedWorkspace; preview: boolean; cloud?: ReturnType<typeof createCloudWorkspaceRepository> }>) {
   const { conversations, deletedConversationIds, activeId, sidebarOpen } = useChat();
   const { themeId, mode } = useAppearance();
@@ -29,6 +75,7 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
   const [retry, setRetry] = useState(0);
   const pending = useRef<WorkspaceData | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const errorTimers = useRef<ErrorTimers>({ shownAt: 0, timer: undefined });
   const streaming = conversations.some((conversation) => conversation.messages.some((message) => message.status === 'streaming'));
 
   useEffect(() => {
@@ -38,26 +85,26 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
     if (saveTimer.current) return;
     saveTimer.current = setTimeout(() => {
       saveTimer.current = undefined;
-      const snapshot = pending.current;
-      if (!snapshot) return;
-      const serialized = JSON.stringify(snapshot);
-      // Queue snapshots so that slower writes cannot overwrite a newer action.
+      // Queue writes so that slower ones cannot overwrite a newer action. Read the latest
+      // snapshot when the write runs: a slow server used to leave a queue of stale snapshots,
+      // each re-sending content the next one was about to replace.
       queue.current = queue.current.then(async () => {
+        const snapshot = pending.current;
+        if (!snapshot) return;
+        const serialized = JSON.stringify(snapshot);
         if (saved.current === serialized) return;
         if (cloud) await cloud.save(snapshot);
         else revision.current = await writeWorkspace(snapshot, revision.current);
         saved.current = serialized;
-        setError(null);
+        clearSaveErrorSoon(errorTimers.current, setError);
       }).catch((reason: unknown) => {
-        setError(reason instanceof LocalDataConflict
-          ? '其他页面已更新本地数据。请先保留当前未保存的内容，再刷新页面。'
-          : cloud ? '最新修改未能保存到云端。请检查网络后重试；若其他设备已修改，请保留内容后刷新。'
-          : '最新修改未能保存到浏览器，关闭页面可能丢失这些修改。');
+        showSaveError(errorTimers.current, setError, saveErrorMessage(reason, cloud));
       });
     }, streaming ? (cloud ? 1500 : 300) : 0);
   }, [data, retry, preview, streaming, cloud]);
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (errorTimers.current.timer) clearTimeout(errorTimers.current.timer);
     const snapshot = pending.current;
     if (!preview && snapshot) queue.current = queue.current.then(async () => {
       if (saved.current === JSON.stringify(snapshot)) return;
@@ -67,7 +114,7 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
   }, [cloud, preview]);
 
   return <>
-    {error && <div className="storage-error" role="alert"><span>{error}</span><button onClick={() => setRetry((current) => current + 1)}>重试保存</button></div>}
+    {error && <StorageErrorToast message={error} onRetry={() => setRetry((current) => current + 1)} />}
     <div className="persisted-workspace">{children}</div>
   </>;
 }

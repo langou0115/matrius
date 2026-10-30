@@ -1,5 +1,6 @@
 import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
+import { ApiError } from '@/core/api/auth-session';
 import type { ApiRequest } from '@/features/auth/account-sync.web';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
@@ -32,6 +33,26 @@ const messageBody = (value: Message) => ({
   // Image attachments contribute their cloud ids while only documents have metadata here.
   fileIds: value.fileIds ?? value.files?.map((file) => file.id) ?? [],
 });
+
+/** The server puts the conflicting record in the error body so the caller can resync. */
+function conflictRevision(error: unknown): number | undefined {
+  if (!(error instanceof ApiError) || error.status !== 409) return undefined;
+  const current = (error.payload as { error?: { current?: { revision?: unknown } } } | undefined)?.error?.current;
+  return typeof current?.revision === 'number' ? current.revision : undefined;
+}
+
+/** A stale in-memory revision used to wedge every later save: one interrupted response left the
+ * baseline behind, so every retry conflicted again until reload. Adopt the server's revision and
+ * retry once; the local streaming content is still the newer copy for the record being written. */
+async function withRevisionRecovery<T>(baseRevision: number, run: (baseRevision: number) => Promise<T>): Promise<T> {
+  try {
+    return await run(baseRevision);
+  } catch (error) {
+    const current = conflictRevision(error);
+    if (current === undefined || current === baseRevision) throw error;
+    return run(current);
+  }
+}
 
 /** An account-scoped, memory-only REST repository. It never reads or writes IndexedDB.
  * Successful operations advance their own baseline so retrying a partial save is safe. */
@@ -100,7 +121,8 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
     const ids = new Set(data.chat.conversations.map((item) => item.id));
     for (const [id, previous] of conversations) {
       if (ids.has(id)) continue;
-      await request(`/api/conversations/${encodeURIComponent(previous.remote.id)}?baseRevision=${previous.remote.revision}`, { method: 'DELETE' });
+      await withRevisionRecovery(previous.remote.revision, (baseRevision) => request(
+        `/api/conversations/${encodeURIComponent(previous.remote.id)}?baseRevision=${baseRevision}`, { method: 'DELETE' }));
       conversations.delete(id);
       for (const key of messages.keys()) if (JSON.parse(key)[0] === id) messages.delete(key);
     }
@@ -116,7 +138,8 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
       const messageIds = new Set(value.messages.map((item) => item.id));
       for (const [key, old] of messages) {
         if (JSON.parse(key)[0] !== value.id || messageIds.has(old.value.id)) continue;
-        await request(`/api/messages/${encodeURIComponent(old.remote.id)}?baseRevision=${old.remote.revision}`, { method: 'DELETE' });
+        await withRevisionRecovery(old.remote.revision, (baseRevision) => request(
+          `/api/messages/${encodeURIComponent(old.remote.id)}?baseRevision=${baseRevision}`, { method: 'DELETE' }));
         messages.delete(key);
       }
       for (const message of value.messages) {
@@ -124,20 +147,23 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
         const old = messages.get(key);
         const body = messageBody(message);
         if (old && same(messageBody(old.value), body)) continue;
-        const remote = await request<RecordVersion>(old ? `/api/messages/${encodeURIComponent(old.remote.id)}`
-          : `/api/conversations/${encodeURIComponent(previous.remote.id)}/messages`, {
-          method: old ? 'PATCH' : 'POST',
-          body: JSON.stringify({ ...body, ...(old ? { baseRevision: old.remote.revision } : { clientId: message.id }) }),
-        });
+        const remote = old
+          ? await withRevisionRecovery(old.remote.revision, (baseRevision) => request<RecordVersion>(
+            `/api/messages/${encodeURIComponent(old.remote.id)}`,
+            { method: 'PATCH', body: JSON.stringify({ ...body, baseRevision }) }))
+          : await request<RecordVersion>(`/api/conversations/${encodeURIComponent(previous.remote.id)}/messages`, {
+            method: 'POST', body: JSON.stringify({ ...body, clientId: message.id }),
+          });
         messages.set(key, { remote, value: structuredClone(message) });
       }
-      // Message appends set read markers on the server, so always restore the UI's markers
-      // after a changed message list (including when the user is watching the conversation).
-      if (!same(metadata(previous.value), metadata(value)) || !same(previous.value.messages.map(messageBody), value.messages.map(messageBody))) {
-        const remote = await request<RecordVersion>(`/api/conversations/${encodeURIComponent(previous.remote.id)}`, {
-          method: 'PATCH', body: JSON.stringify({ ...metadata(value), baseRevision: previous.remote.revision }),
-        });
-        previous.remote = remote;
+      // Message appends set read markers on the server, so restore the UI's markers whenever the
+      // message list changes. Streaming only rewrites message bodies, so comparing ids keeps the
+      // 1.5s save from also PATCHing the conversation and doubling both writes and revisions.
+      if (!same(metadata(previous.value), metadata(value))
+        || !same(previous.value.messages.map((item) => item.id), value.messages.map((item) => item.id))) {
+        previous.remote = await withRevisionRecovery(previous.remote.revision, (baseRevision) => request<RecordVersion>(
+          `/api/conversations/${encodeURIComponent(previous.remote.id)}`,
+          { method: 'PATCH', body: JSON.stringify({ ...metadata(value), baseRevision }) }));
       }
       previous.value = structuredClone(value);
     }

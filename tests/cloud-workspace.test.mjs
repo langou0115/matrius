@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAuthSession } from '../src/core/api/auth-session.ts';
+import { ApiError, createAuthSession } from '../src/core/api/auth-session.ts';
 import { createCloudWorkspaceRepository } from '../src/features/workspace/cloud-workspace-repository.ts';
 import { workspaceScope } from '../src/features/workspace/workspace-mode.ts';
 
@@ -128,6 +128,38 @@ test('cloud conflicts surface without switching to a local write or incrementing
   await repo.save(data);
   const patches = calls.filter((call) => call.path === '/api/messages/server-m');
   assert.deepEqual(patches.map((call) => call.body.baseRevision), [4, 4]);
+});
+
+test('streaming body updates patch only the message, not the conversation', async () => {
+  const { repo, calls } = fixture();
+  const { data } = await repo.load();
+  calls.length = 0;
+  data.chat.conversations[0].messages[0].content = 'a longer partial reply';
+  await repo.save(data);
+  assert.deepEqual(calls.map((call) => [call.method, call.path]),
+    [['PATCH', '/api/messages/server-m']], 'the 1.5s streaming save must not double its writes');
+});
+
+test('a stale revision adopts the server revision and retries once', async () => {
+  let conflicted = false;
+  const { repo, calls } = fixture({ fail: (path, init) => {
+    if (!conflicted && init.method === 'PATCH' && path === '/api/messages/server-m') {
+      conflicted = true;
+      throw new ApiError(409, 'conflict', '消息已在其他设备更新，请刷新后重试。', undefined,
+        { error: { code: 'conflict', message: '冲突', current: { revision: 9 } } });
+    }
+  } });
+  const { data } = await repo.load();
+  const message = data.chat.conversations[0].messages[0];
+  message.content = 'edit';
+  await repo.save(data);
+  const patches = calls.filter((call) => call.path === '/api/messages/server-m');
+  assert.deepEqual(patches.map((call) => call.body.baseRevision), [4, 9], 'the retry uses the server revision');
+  calls.length = 0;
+  message.content = 'edit again';
+  await repo.save(data);
+  assert.equal(calls.find((call) => call.path === '/api/messages/server-m').body.baseRevision, 10,
+    'the recovered revision becomes the new baseline instead of wedging later saves');
 });
 
 test('cloud new conversations and messages use idempotent client ids and do not include local workspaces', async () => {

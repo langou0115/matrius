@@ -27,6 +27,12 @@ export const mockItems: readonly MockItem[] = [
     icon: 'chat',
   },
   {
+    href: '/mock/storage',
+    title: '保存失败提示',
+    description: '切换网络中断、冲突、限流与浏览器存储失败的提示文案，检查顶部提示的样式和文字复制。',
+    icon: 'alert',
+  },
+  {
     href: '/mock/library',
     title: '资料库渲染测试',
     description: '500 个生成文件，覆盖搜索、图片/文件筛选、排序、分页、重命名与批量删除。',

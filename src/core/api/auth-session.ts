@@ -12,7 +12,8 @@ export type AuthState = {
 };
 export type SessionStore = { read(): string | null; write(token: string | null): void };
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string, public retryAfterMs?: number) { super(message); }
+  /** `payload` is the parsed error body; conflicts carry the record that caused them. */
+  constructor(public status: number, public code: string, message: string, public retryAfterMs?: number, public payload?: unknown) { super(message); }
 }
 
 function parseAccount(value: unknown): Account {
@@ -95,7 +96,7 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
         : retryAfter ? Math.max(0, Date.parse(retryAfter) - Date.now()) : undefined;
       throw new ApiError(response.status, error?.code ?? 'request_failed',
         typeof error?.message === 'string' ? error.message : '请求未能完成，请重试。',
-        retryAfterMs !== undefined && Number.isFinite(retryAfterMs) ? retryAfterMs : undefined);
+        retryAfterMs !== undefined && Number.isFinite(retryAfterMs) ? retryAfterMs : undefined, data);
     }
     return data as T;
   }
