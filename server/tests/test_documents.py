@@ -35,7 +35,7 @@ async def test_run_process_caps_output():
     assert len(result.stdout) == 100
 
 
-async def test_officecli_disables_the_auto_resident(monkeypatch):
+async def test_officecli_disables_background_resident_update_and_install(monkeypatch):
     from app.documents import officecli
     from app.documents.process import ProcessResult
 
@@ -48,7 +48,11 @@ async def test_officecli_disables_the_auto_resident(monkeypatch):
     monkeypatch.setattr(officecli, "resolve_officecli", lambda: "officecli")
     monkeypatch.setattr(officecli, "run_process", fake_run)
     await officecli.office_help("xlsx")
-    assert captured["env"] == {"OFFICECLI_NO_AUTO_RESIDENT": "1"}
+    assert captured["env"] == {
+        "OFFICECLI_NO_AUTO_RESIDENT": "1",
+        "OFFICECLI_SKIP_UPDATE": "1",
+        "OFFICECLI_NO_AUTO_INSTALL": "1",
+    }
 
 
 def test_child_env_only_forwards_the_whitelist(monkeypatch):

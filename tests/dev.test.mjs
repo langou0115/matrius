@@ -82,7 +82,7 @@ test('db:migrate targets the development database even when production paths are
   assert.equal(environment.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/dev.db');
   assert.equal(environment.DATA_DIR, dataDir);
   assert.equal(environment.APP_URL, 'http://localhost:8082');
-  assert.equal(environment.MATRIUS_DEV_ENV_FILE, '/repo/.env.local');
+  assert.equal(environment.MATRIUS_DEV_ENV_FILE, resolve('/repo', '.env.local'));
 });
 
 test('development API watches application code and isolates Windows console signals', () => {
@@ -161,14 +161,26 @@ test('supervisor reports missing executables and cleans up surviving children', 
   } finally { await runner.stop(); }
 });
 
-test('Windows backend survives repeated Uvicorn reloads and its entire tree stops', {
-  skip: process.platform !== 'win32', timeout: 20000,
+test('Windows backend creates Office documents across repeated reloads and its entire tree stops', {
+  skip: process.platform !== 'win32', timeout: 40000,
 }, async (t) => {
   const python = resolve('server/.venv/Scripts/python.exe');
   try { await stat(python); } catch { t.skip('Install backend development dependencies first.'); return; }
   const directory = await mkdtemp(join(tmpdir(), 'matrius-reload-'));
   const fixture = join(directory, 'fixture_api.py');
-  const source = 'from fastapi import FastAPI\napp = FastAPI()\n';
+  const source = [
+    'import asyncio',
+    'import sys',
+    `sys.path.insert(0, ${JSON.stringify(resolve('server').replaceAll('\\', '/'))})`,
+    'from fastapi import FastAPI',
+    'from app.documents.officecli import office_create',
+    'app = FastAPI()',
+    '@app.get("/document")',
+    'async def document(fmt: str = "docx"):',
+    '    data = await office_create(fmt)',
+    '    return {"loop": type(asyncio.get_running_loop()).__name__, "zip": data[:2] == b"PK", "size": len(data)}',
+    '',
+  ].join('\n');
   await writeFile(fixture, source);
   const port = await availablePort();
   const runner = supervise();
@@ -189,14 +201,34 @@ test('Windows backend survives repeated Uvicorn reloads and its entire tree stop
       }
     };
     await waitForStart(1);
+    const createDocument = async (fmt) => {
+      // The lifespan logs startup before Proactor has finished binding the socket.
+      const deadline = Date.now() + 5000;
+      while (true) {
+        try {
+          await fetch(`http://127.0.0.1:${port}/openapi.json`, { signal: AbortSignal.timeout(1000) });
+          break;
+        } catch (error) {
+          if (Date.now() >= deadline) throw error;
+          await new Promise((accept) => setTimeout(accept, 50));
+        }
+      }
+      const result = await fetch(`http://127.0.0.1:${port}/document?fmt=${fmt}`, { signal: AbortSignal.timeout(10000) });
+      assert.equal(result.status, 200, `${await result.clone().text()}\n${output}`);
+      const document = await result.json();
+      assert.equal(document.loop, 'ProactorEventLoop');
+      assert.equal(document.zip, true, `${fmt} must be an Office ZIP archive`);
+      assert.ok(document.size > 0);
+    };
+    await createDocument('docx');
     for (let count = 2; count <= 3; count++) {
       await writeFile(fixture, `${source}# reload ${count}\n`);
       await waitForStart(count);
+      await createDocument(count === 2 ? 'xlsx' : 'pptx');
     }
     assert.equal(child.exitCode, null, 'reloading must not terminate the launcher');
   } catch (error) {
-    error.message += `\nBackend output:\n${output}`;
-    throw error;
+    throw new Error(`${error.message}\nBackend output:\n${output}`, { cause: error });
   } finally {
     await runner.stop();
     await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });

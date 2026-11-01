@@ -133,9 +133,11 @@ async def change_password(
     user = await db.get(User, ctx.user.id)
     if user is None:
         raise unauthorized("登录已失效，请重新登录。")
-    if not verify_password(user.password_hash, payload.currentPassword):
+    if not user.must_change_password and (
+        payload.currentPassword is None or not verify_password(user.password_hash, payload.currentPassword)
+    ):
         raise unauthorized("当前密码不正确。")
-    if payload.currentPassword == payload.newPassword:
+    if verify_password(user.password_hash, payload.newPassword):
         raise AppError(422, "invalid", "新密码不能与当前密码相同。")
     user.password_hash = hash_password(payload.newPassword)
     user.must_change_password = False

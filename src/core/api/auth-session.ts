@@ -161,7 +161,7 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
     getSnapshot: () => state,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     refresh, login, logout, request,
-    async changePassword(currentPassword: string, newPassword: string) {
+    async changePassword(currentPassword: string | undefined, newPassword: string) {
       const version = generation;
       await request('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
       if (version === generation) await refresh();

@@ -15,6 +15,8 @@
 
 > 未登录读写本机 IndexedDB，登录后读写账号云端数据，二者独立、不自动导入或合并。模型配置与 API key 始终保存在本机，登录前后共用。
 
+模型回复失败时，可在浏览器 Console 查看 `[Matrius Agent]`，或执行 `copy(matriusDiagnostics.export())` 导出当前页面的诊断摘要（不含密钥和正文）；字段说明见[模型回复诊断](doc/development.md#模型回复诊断)。
+
 ## 技术栈
 
 | 部分 | 选型 |

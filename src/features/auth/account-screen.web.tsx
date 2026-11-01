@@ -142,7 +142,7 @@ export default function AccountScreen() {
     </section>}
 
     {loginOpen && <LoginDialog onClose={() => setLoginOpen(false)} />}
-    {passwordDialogOpen && user && <ChangePasswordDialog
+    {!loginOpen && passwordDialogOpen && user && <ChangePasswordDialog
       onClose={closePasswordDialog}
       onSuccess={() => { setError(null); setNotice('密码已更新。'); }} />}
     {logoutOpen && <Dialog title="退出登录？" className="compact-dialog" onClose={() => { if (!busy) setLogoutOpen(false); }}>

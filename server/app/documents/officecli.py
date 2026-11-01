@@ -16,7 +16,13 @@ MAX_TEXT_CHARS = 30_000
 # Every call works on a throwaway temp file, so the resident cache buys nothing.
 # Worse, under uvloop the resident inherits the child's stdout/stderr pipes and keeps
 # them open after `create` exits, so run_process never sees EOF and hits its timeout.
-_ENGINE_ENV = {"OFFICECLI_NO_AUTO_RESIDENT": "1"}
+# The vendored engine is version-pinned and hash-verified. Never let its
+# background updater replace the binary between document operations.
+_ENGINE_ENV = {
+    "OFFICECLI_NO_AUTO_RESIDENT": "1",
+    "OFFICECLI_SKIP_UPDATE": "1",
+    "OFFICECLI_NO_AUTO_INSTALL": "1",
+}
 
 
 def _decode(result: ProcessResult) -> str:

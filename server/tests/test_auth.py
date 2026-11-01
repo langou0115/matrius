@@ -93,7 +93,7 @@ async def test_must_change_password_accepts_short_password_and_unblocks_data(cli
     changed = await client.post(
         "/api/auth/change-password",
         headers=headers,
-        json={"currentPassword": "password123", "newPassword": "x"},
+        json={"newPassword": "x"},
     )
     assert changed.status_code == 200
     assert (await client.get("/api/conversations", headers=headers)).status_code == 200
@@ -114,6 +114,32 @@ async def test_password_change_rejects_empty_and_unchanged_passwords(client, cre
     assert (
         await client.post("/api/auth/login", json={"username": "alice", "password": "x"})
     ).status_code == 200
+
+
+async def test_initial_password_cannot_be_reused_without_current_password(client, create_user):
+    _, headers = await create_user(must_change_password=True)
+    response = await client.post(
+        "/api/auth/change-password", headers=headers, json={"newPassword": "password123"}
+    )
+    assert response.status_code == 422
+    assert (await client.get("/api/auth/me", headers=headers)).json()["mustChangePassword"] is True
+
+
+async def test_normal_password_change_requires_current_password(client, create_user):
+    _, headers = await create_user()
+    for payload in ({"newPassword": "replacement"}, {"currentPassword": "wrong", "newPassword": "replacement"}):
+        response = await client.post("/api/auth/change-password", headers=headers, json=payload)
+        assert response.status_code == 401
+    response = await client.post(
+        "/api/auth/change-password", headers=headers,
+        json={"currentPassword": "password123", "newPassword": "replacement"},
+    )
+    assert response.status_code == 200
+
+
+async def test_initial_password_change_requires_a_session(client):
+    response = await client.post("/api/auth/change-password", json={"newPassword": "replacement"})
+    assert response.status_code == 401
 
 
 async def test_admin_can_create_and_disable_user(client, create_user):

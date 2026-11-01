@@ -78,10 +78,7 @@ export default function StorageScreen() {
         <p className="storage-summary">已使用 <strong>{formatBytes(usage.used)}</strong>，共 {formatBytes(usage.quota)}</p>
         <div className="storage-meter-track" role="progressbar" aria-label="存储空间"
           aria-valuemin={0} aria-valuemax={usage.quota} aria-valuenow={usage.used}>
-          {hasFiles && <>
-            <span className="storage-meter-fill" style={{ width: `${ratio * 100}%` }} />
-            <span className="storage-meter-thumb" style={{ left: `calc(9px + (100% - 18px) * ${ratio})` }} />
-          </>}
+          {hasFiles && <span className="storage-meter-fill" style={{ width: `${ratio * 100}%` }} />}
         </div>
       </> : failed ? <div className="storage-retry" role="alert">
         <span>暂时无法获取存储空间。</span>

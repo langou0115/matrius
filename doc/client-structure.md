@@ -160,6 +160,7 @@ src/
 ## 账号与功能开关
 
 - `core/api/auth-session.ts`：无 DOM / React 的会话状态、同源 API 请求与过期处理；拒绝迟到请求覆盖新账号。
+- `core/agent/diagnostics.ts`：模型回复诊断摘要，记录每次调用的输出上限、HTTP 元数据、结束原因与用量；通过 `matriusDiagnostics.export()` 导出有界内存记录，不保存正文、工具参数或凭据。
 - `core/platform/auth-session.web.ts`：浏览器 Cookie 会话模式下的空 token 适配；账号权限不落本地。
 - `core/features/capabilities.ts`：统一判断服务端授予的功能。
 - `features/auth/auth-state.web.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。

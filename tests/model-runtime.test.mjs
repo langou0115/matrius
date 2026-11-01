@@ -1212,7 +1212,7 @@ test('a reasoning-only final response keeps its transcript but does not claim a 
   try {
     const result = await createReplyRun({ config, apiKey: 'test', messages: history, onUpdate: (update) => updates.push(update) }).start();
     assert.equal(result.status, 'error');
-    assert.match(result.error, /未返回回答正文/);
+    assert.match(result.error, /仅返回了思考内容/);
     assert.equal(updates.at(-1).process[0].content, 'Only thinking');
   } finally { globalThis.fetch = original; }
 });

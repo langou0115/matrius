@@ -3,12 +3,9 @@ import { useState, type FormEvent } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
 import { PasswordInput } from '@/components/web/password-input';
-import type { Account } from '@/core/api/auth-session';
 import { useAuth } from './auth-state.web';
 
 type Props = { onClose: () => void };
-
-type PendingLogin = { username: string; password: string; user: Account };
 
 /**
  * Login lives in a dialog so the sidebar can offer it without leaving the conversation.
@@ -19,7 +16,6 @@ type PendingLogin = { username: string; password: string; user: Account };
 export function LoginDialog({ onClose }: Props) {
   const auth = useAuth();
   const [step, setStep] = useState<'login' | 'change'>('login');
-  const [pending, setPending] = useState<PendingLogin | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -36,7 +32,7 @@ export function LoginDialog({ onClose }: Props) {
       // A newer login superseded this one; it owns the session now.
       if (!user) return;
       if (user.mustChangePassword) {
-        setPending({ username: username.trim(), password, user });
+        setPassword('');
         setStep('change');
         return;
       }
@@ -50,7 +46,6 @@ export function LoginDialog({ onClose }: Props) {
 
   async function changePassword(event: FormEvent) {
     event.preventDefault();
-    if (!pending) return;
     if (newPassword !== confirmPassword) {
       setError('两次输入的新密码不一致。');
       return;
@@ -58,7 +53,7 @@ export function LoginDialog({ onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await auth.changePassword(pending.password, newPassword);
+      await auth.changePassword(undefined, newPassword);
       onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '密码修改失败，请重试。');

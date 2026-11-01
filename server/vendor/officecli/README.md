@@ -14,6 +14,7 @@
 ## 校验
 
 `SHA256SUMS` 记录相对本目录的路径，服务端 `app/documents/binaries.py` 在启动后首次调用时校验。
+服务端调用时固定传入 `OFFICECLI_SKIP_UPDATE=1`、`OFFICECLI_NO_AUTO_INSTALL=1` 与 `OFFICECLI_NO_AUTO_RESIDENT=1`，禁止自动替换内置引擎、自行安装及启动常驻进程；升级必须按下方流程同步版本与校验值。
 手工校验：
 
 ```bash

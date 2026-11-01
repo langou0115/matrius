@@ -181,12 +181,15 @@ test('changing the initial password refreshes capabilities without storing crede
       ...account('alice'), mustChangePassword: true,
     } });
     assert.equal(init.headers.get('Authorization'), 'Bearer session-only');
-    if (url.endsWith('/change-password')) return response({ ok: true });
+    if (url.endsWith('/change-password')) {
+      assert.deepEqual(JSON.parse(init.body), { newPassword: 'replacement-password' });
+      return response({ ok: true });
+    }
     return response(account('alice', ['files']));
   });
   await auth.login('alice', 'initial-password');
   assert.equal(hasFeature(auth.getSnapshot().user, 'files'), false);
-  await auth.changePassword('initial-password', 'replacement-password');
+  await auth.changePassword(undefined, 'replacement-password');
   assert.equal(hasFeature(auth.getSnapshot().user, 'files'), true);
   assert.deepEqual(calls, ['/api/auth/login', '/api/auth/change-password', '/api/auth/me']);
   assert.equal(store.read(), 'session-only');

@@ -9,6 +9,7 @@ import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import { buildContext, buildSteeringMessage } from './context';
 import { collectGeneratedFiles, getFileActivityEnd, getFileActivityStart } from './file-tools';
 import { getWebActivityEnd, getWebActivityStart } from './web-tools';
+import { createReplyDiagnostics } from './diagnostics';
 
 function getErrorSignal(value: unknown, seen = new Set<object>(), depth = 0): string {
   if (depth > 3 || value == null) return '';
@@ -71,10 +72,11 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   maxDurationMs?: number;
 }) {
   const model = createAgentModel(config);
+  const diagnostics = createReplyDiagnostics(config, thinkingEffort);
   if (thinkingEffort !== 'default') model.reasoning = true;
   const agent = new Agent({
     initialState: { model, messages: buildContext(messages, config), systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
-    getApiKey: () => apiKey || 'no-key', streamFn,
+    getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream(streamFn),
     transport: 'sse', maxRetryDelayMs: 5000,
     // Match OpenStudio: serialize model tool calls, while each fetch batches four pages.
     // Parallel four-page calls otherwise overflow the account's four-request cap.
@@ -136,6 +138,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   }
 
   function endTool(event: { toolCallId: string; toolName: string; result: unknown; isError: boolean }) {
+    diagnostics.toolEnd(event.isError);
     const previous = activities.find((activity) => activity.id === event.toolCallId);
     const ended = getWebActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous)
       ?? getFileActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous);
@@ -211,6 +214,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       emit();
       if (event.type === 'message_end') {
         finalMessage = message;
+        diagnostics.messageEnd(message);
         // With tools registered, tool calls are the expected loop. Without them, the local
         // mode cannot execute anything, so surface the request as an error instead of hanging.
         if (!tools.length && message.content.some((block) => block.type === 'toolCall')) { unsupportedTool = true; agent.abort(); }
@@ -231,7 +235,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       return 'steered';
     },
     async start(): Promise<ReplyResult> {
-      if (stopped) { unsubscribe(); return { status: 'stopped' }; }
+      if (stopped) { unsubscribe(); return diagnostics.finish({ status: 'stopped' }, 'cancelled_before_start'); }
       resetIdleTimer();
       const deadline = setTimeout(() => { timedOut = true; durationExceeded = true; agent.abort(); }, maxDurationMs);
       try {
@@ -243,16 +247,22 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
           && agent.hasQueuedMessages()) {
           await agent.continue();
         }
-        if (timedOut) return { status: 'error', error: timeoutError() };
-        if (unsupportedTool) return { status: 'error', error: '当前本地模式仅支持文本对话，模型请求了不可用的工具。' };
-        if (stopped || finalMessage?.stopReason === 'aborted') return { status: 'stopped' };
-        if (finalMessage?.stopReason === 'error') return { status: 'error', error: describeModelError(finalMessage.errorMessage) };
-        if (!finalMessage) return { status: 'error', error: agent.state.errorMessage ? describeModelError(agent.state.errorMessage) : '服务商未返回有效回复，请检查模型配置。' };
-        if (!finalMessage.content.some((block) => block.type === 'text' && block.text.trim())) return { status: 'error', error: '服务商未返回回答正文，已保留思考和工具记录。' };
-        if (finalMessage.stopReason === 'length') return { status: 'complete', error: '已达到最大输出长度，可继续追问。' };
-        return { status: 'complete' };
+        if (timedOut) return diagnostics.finish({ status: 'error', error: timeoutError() }, durationExceeded ? 'duration_timeout' : 'idle_timeout');
+        if (unsupportedTool) return diagnostics.finish({ status: 'error', error: '当前本地模式仅支持文本对话，模型请求了不可用的工具。' }, 'unsupported_tool');
+        if (stopped || finalMessage?.stopReason === 'aborted') return diagnostics.finish({ status: 'stopped' }, 'aborted');
+        if (finalMessage?.stopReason === 'error') return diagnostics.finish({ status: 'error', error: describeModelError(finalMessage.errorMessage) }, 'provider_error');
+        if (!finalMessage) return diagnostics.finish({ status: 'error', error: agent.state.errorMessage ? describeModelError(agent.state.errorMessage) : '服务商未返回有效回复，请检查模型配置。' }, 'missing_message');
+        const hasText = finalMessage.content.some((block) => block.type === 'text' && block.text.trim());
+        if (finalMessage.stopReason === 'length') return diagnostics.finish(hasText
+          ? { status: 'complete', error: '已达到最大输出长度，可继续追问。' }
+          : { status: 'error', error: '已达到最大输出长度，但尚未生成回答正文。请调大模型的最大输出或降低思考深度后重试。' }, 'output_limit');
+        if (!hasText) return diagnostics.finish({ status: 'error', error: finalMessage.content.some((block) => block.type === 'thinking')
+          ? '模型仅返回了思考内容，没有回答正文。已保留思考和工具记录。'
+          : '模型本次回复没有回答正文。已保留之前收到的内容和工具记录。' }, 'no_final_text');
+        return diagnostics.finish({ status: 'complete' }, 'complete');
       } catch (reason) {
-        return stopped ? { status: 'stopped' } : { status: 'error', error: timedOut ? timeoutError() : describeModelError(reason) };
+        return diagnostics.finish(stopped ? { status: 'stopped' } : { status: 'error', error: timedOut ? timeoutError() : describeModelError(reason) },
+          stopped ? 'aborted' : timedOut ? 'timeout' : 'exception');
       } finally { clearTimeout(idleTimer); clearTimeout(deadline); unsubscribe(); }
     },
   };

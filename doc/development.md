@@ -85,6 +85,8 @@ server/.data/
 
 API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启。`npm run dev` 每次启动都会自动迁移；服务已在运行时单独执行 `npm run db:migrate` 即可升级同一个 `server/.data/dev.db`，不必重启开发会话。该命令固定使用开发数据库，不会读取 shell 或 `.env.local` 里的生产 `DATABASE_URL` / `DATA_DIR`。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Expo。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test:dev`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
 
+Windows 开发工作进程显式使用 `ProactorEventLoop`，以支持 OfficeCLI / LibreOffice 的异步子进程。每次重载由新工作进程自行绑定端口，不复用父进程的监听 socket，避免 IOCP 关联失效导致 `WinError 87`。`npm run test:dev` 在 Windows 上会真实创建 DOCX、连续两次重载后分别创建 XLSX / PPTX，并验证进程树清理。修改 `server/scripts/dev-api.py` 后须完整重启 `npm run dev`，仅应用代码热重载不会替换启动器。
+
 开发管理员和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
 
 开发环境下，如果库中已有同名管理员但密码与当前配置不一致，启动时会将其密码同步为配置值；正式环境不会修改已有管理员密码。
@@ -193,6 +195,22 @@ uv run --no-sync pytest
 
 - 设置首页搜索名称、说明与关键词（如“暗色”“跟随系统”“Twitter”“版本”），点击结果进入对应详情；无匹配时可清空搜索。
 - 检查显示模式和配色修改后返回首页显示当前值，再返回聊天保持会话和草稿。Chat Mock 执行相同流程，导航保持 `/mock/chat/settings` 前缀，刷新后恢复样例且不写真实数据。
+
+## 模型回复诊断
+
+模型请求和 Agent 循环运行在浏览器中，因此空回复、输出截断等问题需要查看浏览器诊断，FastAPI 日志只能反映代理与工具请求。
+
+打开浏览器开发者工具（F12）的 Console，复现问题后搜索 `[Matrius Agent]`，每轮回复结束会打印一条结构化摘要。也可以在 Console 执行 `copy(matriusDiagnostics.export())` 复制最近 20 轮诊断；每轮最多保存最近 100 个事件。`matriusDiagnostics.clear()` 清空记录。记录仅保存在当前页面内存中，刷新即清空，不写入 IndexedDB、云端会话或服务器。只有加载并发起过模型回复的页面才有这个诊断入口，历史失败不能补录。
+
+诊断只包含模型 ID、协议、思考深度、配置的最大输出、实际请求上限、HTTP 状态与允许的 request ID、每次模型回复的结束原因、内容块类型、正文/思考字符数、token 用量和工具执行成功/失败。不会记录密钥、完整 URL、其他请求/响应头、原始请求体、对话正文、思考正文、工具参数或工具结果。
+
+- `payload_limits` 是 SDK 最终发送前的输出/思考上限，可能不同于 `configuredMaxOutput`，按实际字段 `maxTokens` / `maxCompletionTokens` / `maxOutputTokens` 排查。
+- `message_end.stopReason = length` 且 `textChars = 0`：服务商报告达到输出上限但未生成正文；可检查最大输出和思考深度。界面会明确提示，不再报笼统的空正文。
+- `stopReason = stop` 且正文为空：模型正常结束但 SDK 没有解析出正文；若 `thinkingChars > 0`，只收到思考。仅凭这个结果不能断定服务商或解析器出错，需结合 Network 中本次响应的结束事件检查。
+- `response.status`、`requestId` 用于定位对应的服务商请求；跨域未暴露这些头时可能没有 request ID。SDK 在非 2xx 响应时可能不触发响应回调，此时 `message_end.httpErrorStatus` 尝试提取错误信息开头的 HTTP 状态码，不保留错误正文。`providerDiagnosticCount` 表示 SDK 附带的诊断数量，诊断原文可能含响应内容，因此不导出。
+- `finish.outcome` 区分 `output_limit`、`no_final_text`、`provider_error`、空闲/总时长超时、取消和本地异常；`round` 可关联一次工具循环中的请求与结果。
+
+`npm run test:models` 包含诊断回归：验证三种真实协议适配器的模拟 SSE、工具调用后只思考便截断、日志脱敏和有界历史；不调用真实模型服务。
 
 ## 模型接入验证
 
