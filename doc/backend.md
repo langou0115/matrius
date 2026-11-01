@@ -282,6 +282,7 @@ POST /api/tools/file
 - Office 属性白名单、文档路径（必须以 `/` 开头，禁止 `..`/NUL/CRLF，≤500 字符）、命令与 PDF 变更均限最多 100 条；不接收 raw XML、任意 CLI 参数、图片导入或外部资源。
 - Office 操作经 vendored OfficeCLI 子进程执行，不使用 shell，环境变量白名单，超时杀进程组，stdout/stderr 累计超限即终止。PDF 使用 pypdf + reportlab，在 `asyncio.to_thread` 中运行。
 - 单次结果约 30,000 字符并标记 `truncated`；文档内容按不可信资料返回。
+- Office 批量命令失败返回命令序号、引擎错误码及修复建议，不回显命令正文；例如新建 Excel 已有 `Sheet1`，再次添加同名表会提示先检查已有表。文件工具参数校验失败把字段位置和校验原因返回给客户端 Agent，以便修正下一次调用。
 - 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{userId}/{draftId}/`；TTL 默认 30 分钟，每用户最多 10 个、总计 60 MiB，跨用户 404。保存成功后删除草稿。
 - 保存编辑结果时检查 `StoredFile.revision == base_revision`，不一致返回 409；先写新对象再更新行，提交后 best-effort 删除旧对象。旧版 Office 编辑后的保存会新建文件，不改原件。
 - 兼容保留 `POST /api/tools/files/read|grep`：按行读取（单次最多 50,000 字符）与正则匹配（最多 200 条）。

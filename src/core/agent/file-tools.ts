@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import { Type } from 'typebox';
+import { ApiError } from '@/core/api/auth-session';
 
 import type { MessageFile, WebActivity } from './types';
 
@@ -11,6 +12,7 @@ export function fileToolsSystemPrompt(): string {
     '你可以使用单一的 `file` 工具处理附件，并在资料库中创建或编辑文档。',
     '只能通过 fileId 访问文件，绝不要编造文件系统路径；附件清单里的 fileId 就是唯一入口。',
     '读取时先用 list 发现文件，再用 read/grep 取文本；用 help/inspect 了解文档结构后再提交 create/edit 的结构化命令。',
+    '新建 xlsx 已有 Sheet1，不要重复添加同名工作表；复杂文档先创建草稿，再 inspect 确认路径，分批 edit，最后 save。每次最多 100 条命令。',
     'create/edit 默认生成临时草稿，用户需要留存时才设置 save=true（或对草稿调用 save）；草稿会过期。',
     '编辑已有文件是原地更新；旧版 .doc/.xls/.ppt 会转换为现代格式并另存为新文件，原件保持不变。',
     'fileId 和草稿句柄只是内部标识：回复用户时绝不写出 fileId、draft: 前缀或任何内部 id，只提文件名和结果。',
@@ -36,7 +38,9 @@ const officePath = Type.String({
 });
 
 const officeProps = Type.Record(
-  Type.String({ maxLength: 100 }),
+  Type.String({ maxLength: 100, description:
+    'Allowed property names only (engine help may document additional unsupported properties): text value formula name title background color fill font size fontsize bold italic underline strike highlight align alignment valign style styleid liststyle numlevel spacebefore spaceafter linespacing linerule indent firstline width height left top x y rotation opacity border bordercolor borderwidth cols rows numberformat format wraptext merge hidden layout notes margin padding halign wrap alignment.horizontal alignment.vertical alignment.wraptext alignment.indent alignment.shrinktofit alignment.textrotation alignment.readingorder font.name font.size font.color font.bold font.italic autofit shape geometry strokecolor strokewidth stroke.',
+  }),
   Type.Union([Type.String({ maxLength: 50_000 }), Type.Number(), Type.Boolean()]),
 );
 
@@ -191,6 +195,13 @@ export function normalizeFile(value: unknown): MessageFile | null {
 }
 
 function describeToolError(reason: unknown): Error {
+  if (reason instanceof ApiError && reason.code === 'validation_error') {
+    const payload = reason.payload as { error?: { details?: { loc?: unknown[]; type?: string; msg?: string }[] } } | undefined;
+    // Field paths and validator messages help the model repair the next call. Never echo input.
+    const details = payload?.error?.details?.slice(0, 3).map((item) =>
+      `${item.loc?.join('.') ?? 'request'}: ${item.msg ?? item.type ?? 'invalid'}`).join('; ');
+    return new Error(truncate(`文件工具参数不合法。${details ? ` ${details}` : ''} 请按工具 schema 修正参数后重试；Office 属性和元素以本工具允许的范围为准。`, 800));
+  }
   if (reason instanceof Error) {
     if (reason.name === 'AbortError') return new Error('请求已取消。');
     const message = reason.message.replace(/\s+/g, ' ').trim().slice(0, 500);

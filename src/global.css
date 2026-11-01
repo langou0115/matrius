@@ -777,7 +777,8 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .storage-screen p { max-width: 440px; font-size: var(--text-small); line-height: 1.8; }
 .storage-screen button { border: 1px solid currentColor; border-radius: 12px; padding: 8px 16px; font-size: var(--text-small); }
 .storage-error { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 10px 16px; border: 1px solid #d08b36; border-radius: 12px; color: #704509; background: #fff4de; font-family: var(--font-display); font-size: var(--text-caption); box-shadow: 0 4px 20px #0002; -webkit-user-select: text; user-select: text; }
-.storage-error span { min-width: 0; overflow-wrap: anywhere; cursor: text; }
+.storage-error span { min-width: 0; overflow-wrap: anywhere; cursor: text; -webkit-user-select: text; user-select: text; }
+.storage-error span::selection { color: #402500; background: #ffd391; }
 .storage-error button { flex-shrink: 0; white-space: nowrap; text-decoration: underline; }
 @media (prefers-color-scheme: dark) { .storage-screen { background: #212121; color: #b4b4b4; } .storage-screen strong { color: #ececec; } }
 

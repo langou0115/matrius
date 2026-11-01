@@ -86,3 +86,17 @@ test('file tool activities keep their operation and saved links across a reload'
   const restored = readActivities(compacted);
   assert.deepEqual(restored, activities);
 });
+
+test('long tool failures cannot exceed the server activity limits and wedge conversation saving', () => {
+  const [activity] = compactActivities([{
+    id: 'bad-call', kind: 'file', operation: 'create', status: 'error',
+    error: 'Schema validation failed: '.repeat(500), warning: 'w'.repeat(1500),
+    title: 't'.repeat(400), filename: 'f'.repeat(400),
+  }]);
+  assert.equal(activity.error.length, 1000);
+  assert.equal(activity.warning.length, 1000);
+  assert.equal(activity.filename.length, 300);
+  assert.equal(activity.title.length, 300);
+  assert.equal(activity.id, 'bad-call');
+  assert.equal(activity.status, 'error');
+});

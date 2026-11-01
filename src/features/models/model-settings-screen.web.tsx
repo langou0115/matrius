@@ -10,7 +10,6 @@ import { useChatRuntime } from '@/features/chat/chat-runtime';
 import { useModels } from './model-state';
 
 type ProviderForm = Omit<ProviderConfig, 'models'>;
-type ConfirmTarget = { name: string; id: string };
 
 function createId(prefix: string) {
   return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -41,7 +40,6 @@ export default function ModelSettingsScreen() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -109,12 +107,9 @@ export default function ModelSettingsScreen() {
     }
   }
 
-  function confirmRemoval() {
-    const target = confirmTarget;
-    if (!target) return;
-    setConfirmTarget(null);
-    if (catalogProviderId === target.id) closeCatalog();
-    void perform(() => models.removeProvider(target.id), '已删除服务商及其模型配置。');
+  function removeProvider(id: string) {
+    if (catalogProviderId === id) closeCatalog();
+    void perform(() => models.removeProvider(id), '已删除服务商及其模型配置。');
   }
 
   // Errors go into the dialog: the modal covers anything the page would show behind it.
@@ -174,7 +169,7 @@ export default function ModelSettingsScreen() {
               <button className="secondary-button" disabled={disabled} onClick={() => void discover(provider)}>获取模型列表</button>
               <button className="secondary-button" disabled={disabled} onClick={() => editModel(provider, null)}><Plus size={15} strokeWidth={1.75} aria-hidden="true" />手动添加</button>
               <button className="icon-button" aria-label={`编辑服务商：${provider.name}`} disabled={disabled} onClick={() => editProvider(provider)}><Pencil size={17} strokeWidth={1.75} aria-hidden="true" /></button>
-              <button className="icon-button danger-icon" aria-label={`删除服务商：${provider.name}`} disabled={disabled} onClick={() => setConfirmTarget({ id: provider.id, name: provider.name })}><Trash2 size={17} strokeWidth={1.75} aria-hidden="true" /></button>
+              <button className="icon-button danger-icon" aria-label={`删除服务商：${provider.name}`} disabled={disabled} onClick={() => removeProvider(provider.id)}><Trash2 size={17} strokeWidth={1.75} aria-hidden="true" /></button>
             </div>
             <ChevronDown size={18} strokeWidth={1.75} className="provider-toggle-chevron" aria-hidden="true" />
             {/* Its own line across the full row: sharing a line with four buttons left it a
@@ -275,14 +270,5 @@ export default function ModelSettingsScreen() {
       </div>
     </Dialog>}
 
-    {confirmTarget && <Dialog title="删除服务商？" onClose={() => setConfirmTarget(null)} className="compact-dialog">
-      <p className="dialog-description">
-        “{confirmTarget.name}”及其模型配置将被删除，已有对话会保留。
-      </p>
-      <div className="dialog-footer">
-        <button className="secondary-button" onClick={() => setConfirmTarget(null)}>取消</button>
-        <button className="danger-button" disabled={disabled} onClick={confirmRemoval}>删除服务商</button>
-      </div>
-    </Dialog>}
   </SettingsPage>;
 }

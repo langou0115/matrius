@@ -29,24 +29,51 @@ def _decode(result: ProcessResult) -> str:
     return result.stdout.decode("utf-8", errors="replace").strip()
 
 
+def _failure(action: str, envelope: object) -> AppError:
+    # Return bounded engine diagnostics, never the echoed command/item or document payload.
+    details = []
+    if isinstance(envelope, dict):
+        data = envelope.get("data")
+        results = data.get("results", []) if isinstance(data, dict) else []
+        for item in results:
+            if not isinstance(item, dict) or item.get("success") is not False:
+                continue
+            index = item.get("index")
+            code = item.get("code")
+            if not isinstance(code, str):
+                code = ""
+            label = f"第 {index + 1} 条命令" if isinstance(index, int) else "命令"
+            if code.replace("_", "").isalnum():
+                label += f"（{code[:80]}）"
+            # These hints contain no document contents or server filesystem paths.
+            hint = {
+                "duplicate_name": "名称已存在；新建 Excel 已有 Sheet1，请 inspect 后修改已有表或使用其他名称。",
+                "not_found": "目标不存在，请先 inspect 确认路径。",
+                "invalid_path": "文档路径不合法，请先 inspect 确认路径。",
+            }.get(code, "请用 help/inspect 核对本工具支持的元素、属性和目标路径，缩小命令批次后重试。")
+            details.append(f"{label}：{hint}")
+            if len(details) == 3:
+                break
+    message = " ".join(details) or "请用 help/inspect 核对元素、属性和路径后重试。"
+    return AppError(422, "invalid_document_operation", f"{action}失败。{message}")
+
+
 def _check(result: ProcessResult, action: str) -> str:
     if result.returncode == -1 and not result.stdout and not result.stderr:
         raise AppError(504, "officecli_timeout", "文档处理超时，请重试。")
     if result.truncated:
         raise AppError(422, "document_too_large", "文档输出过大，请缩小操作范围。")
+    text = _decode(result)
+    try:
+        envelope = json.loads(text)
+    except ValueError:
+        envelope = None
     if result.returncode != 0:
-        raise AppError(422, "invalid_document_operation", f"{action}失败，请检查文档操作后重试。")
+        raise _failure(action, envelope)
     if not result.stdout:
         raise AppError(502, "document_engine_error", "文档引擎未返回结果。")
-    text = _decode(result)
-    if text.startswith("{"):
-        try:
-            envelope = json.loads(text)
-        except ValueError:
-            envelope = None
-        # Exit code 2 means "ran with caveats"; `success: false` still signals a failure.
-        if isinstance(envelope, dict) and envelope.get("success") is False:
-            raise AppError(422, "invalid_document_operation", f"{action}失败，请检查文档操作后重试。")
+    if isinstance(envelope, dict) and envelope.get("success") is False:
+        raise _failure(action, envelope)
     return text
 
 

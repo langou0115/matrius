@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ApiError } from '../src/core/api/auth-session.ts';
 
 import {
   collectGeneratedFiles,
@@ -15,6 +16,18 @@ const file = (id, filename = `${id}.pdf`, size = 1024, revision = 1) => ({
 });
 const draft = (id = 'draft:1', filename = 'draft.pdf') => ({
   id, filename, contentType: 'application/pdf', size: 512,
+});
+
+test('document validation failures tell the model which field to repair without echoing inputs', async () => {
+  const { tool } = harness([new ApiError(422, 'validation_error', '请求参数不合法。', undefined, {
+    error: { details: [{ loc: ['body', 'commands', 0, 'add'], msg: '不支持的文档属性：invalid', input: 'private content' }] },
+  })]);
+  await assert.rejects(tool.tool.execute('call', { operation: 'create', format: 'pptx' }), (error) => {
+    assert.match(error.message, /body.commands.0.add/);
+    assert.match(error.message, /不支持的文档属性/);
+    assert.ok(!error.message.includes('private content'));
+    return true;
+  });
 });
 
 function harness(results, options = {}) {

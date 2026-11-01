@@ -8,6 +8,24 @@ from app.documents.process import child_env, run_process
 from app.errors import AppError
 
 
+def test_officecli_batch_errors_explain_repair_without_echoing_document_content():
+    import json
+
+    from app.documents.officecli import _check
+    from app.documents.process import ProcessResult
+
+    result = ProcessResult(1, json.dumps({"success": False, "data": {"results": [{
+        "index": 2, "success": False, "code": "duplicate_name",
+        "error": "private document content", "item": {"props": {"text": "private"}},
+    }]}}).encode(), b"private stderr")
+    with pytest.raises(AppError) as caught:
+        _check(result, "编辑文档")
+    assert caught.value.code == "invalid_document_operation"
+    assert "第 3 条命令" in caught.value.message
+    assert "Sheet1" in caught.value.message
+    assert "private" not in caught.value.message
+
+
 async def test_run_process_feeds_stdin_and_filters_environment(monkeypatch):
     monkeypatch.setenv("MATRIUS_TEST_SECRET", "leaked")
     code = (

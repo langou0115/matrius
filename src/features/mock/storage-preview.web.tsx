@@ -32,7 +32,7 @@ export default function StoragePreview() {
           {visible ? '隐藏提示' : '显示提示'}
         </button>
       </div>
-      <p className="process-preview-intro">提示固定在页面顶部。用鼠标在文字上拖动即可选中，Ctrl+C（macOS 为 ⌘C）复制；点击「重试保存」会记录次数。</p>
+      <p className="process-preview-intro">提示在页面顶部显示 5 秒后自动关闭。可拖动选择文字后按 Ctrl+C（macOS 为 ⌘C）复制；点击「重试保存」会记录次数。</p>
       <p className="process-preview-intro" role="status">已点击重试 {retries} 次（mock 不会真的保存）。</p>
     </div></div>
     {visible && <StorageErrorToast message={message} onRetry={() => setRetries((current) => current + 1)} />}

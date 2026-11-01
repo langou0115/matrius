@@ -19,7 +19,7 @@ import { workspaceScope } from '@/features/workspace/workspace-mode';
 import { NetworkToolsProvider } from '@/features/auth/network-tools-state.web';
 import { readLastConversation, readLastRouteId, writeLastConversation } from '@/features/chat/last-conversation.web';
 
-const ERROR_MIN_VISIBLE_MS = 6000;
+const ERROR_MIN_VISIBLE_MS = 5000;
 type ErrorTimers = { shownAt: number; timer: ReturnType<typeof setTimeout> | undefined };
 
 /* A transient failure used to be cleared by the next successful save 1.5s later, before its text
@@ -35,13 +35,6 @@ function clearSaveErrorSoon(timers: ErrorTimers, setError: (message: string | nu
   if (!timers.shownAt) return;
   const wait = Math.max(0, ERROR_MIN_VISIBLE_MS - (Date.now() - timers.shownAt));
   const finish = () => {
-    // Never pull the text out from under an active selection inside the toast.
-    const node = document.querySelector('.storage-error');
-    const selection = globalThis.getSelection?.();
-    if (node && selection && !selection.isCollapsed && selection.anchorNode && node.contains(selection.anchorNode)) {
-      timers.timer = setTimeout(finish, 2000);
-      return;
-    }
     timers.timer = undefined;
     timers.shownAt = 0;
     setError(null);
