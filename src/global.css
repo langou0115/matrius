@@ -316,7 +316,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .messages-scroll { flex: 1 0 auto; min-height: 0; background: transparent; }
 /* The 24px side padding keeps text off the edge on narrow screens; the content itself
    shares the composer's --chat-column width. */
-.messages-content { max-width: calc(var(--chat-column) + 48px); margin: 0 auto; padding: 34px 24px 16px; background: transparent; }
+.messages-content { max-width: calc(var(--chat-column) + 48px); margin: 0 auto; padding: 20px 24px 16px; background: transparent; }
 /* The transcript ends at its last reply, so that reply's inter-message margin would stack on the
    list padding and read as a hole above the composer. The last actions row stops one gap short of
    the input instead. */
