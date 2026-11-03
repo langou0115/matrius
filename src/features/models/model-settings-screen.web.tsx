@@ -66,9 +66,9 @@ export default function ModelSettingsScreen() {
   function closeProviderForm() { setProviderForm(null); setApiKey(''); }
   function closeModelForm() { setModelForm(null); setModelProviderId(null); }
 
-  async function perform(action: () => Promise<void>, message: string) {
+  async function perform(action: () => Promise<void>, message?: string) {
     setSaving(true); setFailure(null); setFeedback(null);
-    try { await action(); setFeedback(message); }
+    try { await action(); if (message) setFeedback(message); }
     catch (reason) { setFailure(errorMessage(reason)); }
     finally { setSaving(false); }
   }
@@ -109,7 +109,8 @@ export default function ModelSettingsScreen() {
 
   function removeProvider(id: string) {
     if (catalogProviderId === id) closeCatalog();
-    void perform(() => models.removeProvider(id), '已删除服务商及其模型配置。');
+    // The card disappearing is the result; no success line is needed for a deletion.
+    void perform(() => models.removeProvider(id));
   }
 
   // Errors go into the dialog: the modal covers anything the page would show behind it.

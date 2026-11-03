@@ -214,7 +214,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     const element = input.current;
     if (!element) return;
     element.style.height = 'auto';
-    element.style.height = `${Math.min(192, Math.max(58, element.scrollHeight))}px`;
+    element.style.height = `${Math.min(192, Math.max(54, element.scrollHeight))}px`;
   }, [value]);
 
   function startUpload(attachment: StagedAttachment) {

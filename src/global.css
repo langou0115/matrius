@@ -17,6 +17,7 @@ h1, h2, h3, p { margin: 0; }
 
 .matrius-app {
   --header-height: 52px;
+  --chat-column: 780px;
   --text-body: 15px;
   --text-ui: 14px;
   --text-small: 13px;
@@ -79,7 +80,9 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
    mid-animation. The workspace column widens in step because the negative margin takes
    the rail out of the layout. */
 .sidebar-collapsed .sidebar { margin-left: -260px; }
-.sidebar-header { display: flex; align-items: center; justify-content: space-between; height: var(--header-height); flex-shrink: 0; padding: 0 6px 0 8px; margin-bottom: 16px; }
+/* The brand row keeps the topbar's 52px alignment; a 4px gap is all the separation the
+   primary nav needs after it, so Matrius and 新对话 read as one cluster. */
+.sidebar-header { display: flex; align-items: center; justify-content: space-between; height: var(--header-height); flex-shrink: 0; padding: 0 6px 0 8px; margin-bottom: 4px; }
 .brand { display: inline-flex; align-items: center; font-size: 17px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.5px; line-height: 1; }
 .sidebar-header-actions { display: flex; align-items: center; gap: 4px; }
 .sidebar .icon-button { color: var(--sidebar-text-muted); }
@@ -151,7 +154,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .chat-main, .settings-main, .mock-main { display: flex; flex-direction: column; height: 100%; min-height: 0; outline: none; }
 .chat-main { background: transparent; }
 .chat-screen { position: relative; height: 100%; min-height: 0; }
-.chat-notice-anchor { position: absolute; top: calc(var(--header-height) + 8px); left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; gap: 6px; width: calc(100% - 48px); max-width: 712px; pointer-events: none; }
+.chat-notice-anchor { position: absolute; top: calc(var(--header-height) + 8px); left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; gap: 6px; width: calc(100% - 48px); max-width: var(--chat-column); pointer-events: none; }
 .chat-notice { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 10px 8px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 9%, transparent); pointer-events: auto; }
 .chat-notice > svg { flex-shrink: 0; color: var(--muted-text); }
 .chat-notice > p { flex: 1; min-width: 0; font-size: var(--text-small); line-height: 1.6; overflow-wrap: anywhere; }
@@ -222,12 +225,12 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .chat-topbar .conversation-title-measure { display: block; max-width: min(360px, 100%); padding: 5px 14px; border: 1px solid transparent; overflow: hidden; font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; white-space: pre; visibility: hidden; }
 .chat-topbar .conversation-title-input { position: absolute; inset: 0; width: 100%; padding: 5px 14px; font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; color: var(--foreground); background: none; border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: 999px; outline: none; caret-color: var(--primary); }
 .welcome-scroll { overflow-y: auto; flex: 1; display: flex; flex-direction: column; padding: 24px 40px 100px; }
-.welcome-content { width: 100%; max-width: 712px; margin: auto; padding-bottom: 5vh; }
+.welcome-content { width: 100%; max-width: var(--chat-column); margin: auto; padding-bottom: 5vh; }
 .welcome-heading { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 34px; }
 .welcome-heading h1 { font-size: 30px; font-family: var(--font-medium); font-weight: 400; letter-spacing: -.8px; line-height: 1.5; }
-.composer { border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: var(--radius-xl); padding: 17px 16px 12px; background: var(--soft); transition: border-color 160ms; }
+.composer { border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: var(--radius-xl); padding: 14px 16px 11px; background: var(--soft); transition: border-color 160ms; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--foreground) 26%, var(--background)); }
-.composer textarea { width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: var(--text-body); min-height: 58px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
+.composer textarea { width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: var(--text-body); min-height: 54px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
 .composer textarea::placeholder { color: var(--muted-text); opacity: .8; }
 .composer-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 7px; }
 /* A clear, borderless entry point; the surface appears only during interaction. */
@@ -309,7 +312,9 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .send-button:disabled { background: color-mix(in srgb, var(--foreground) 9%, var(--background)); color: color-mix(in srgb, var(--foreground) 45%, var(--background)); opacity: 1; }
 .send-button:not(:disabled):hover { filter: brightness(.94); }
 .messages-scroll { flex: 1 0 auto; min-height: 0; background: transparent; }
-.messages-content { max-width: 760px; margin: 0 auto; padding: 34px 24px 28px; background: transparent; }
+/* The 24px side padding keeps text off the edge on narrow screens; the content itself
+   shares the composer's --chat-column width. */
+.messages-content { max-width: calc(var(--chat-column) + 48px); margin: 0 auto; padding: 34px 24px 28px; background: transparent; }
 .user-message { display: flex; flex-direction: column; align-items: flex-end; margin: 0 0 28px; }
 /* A supplement waiting for the streaming reply to end. It is not saved yet, so it has no
    message actions and sits back visually until it moves below the finished reply. */
@@ -345,7 +350,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .connection-notice strong { font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
 .connection-notice p { margin-top: 4px; line-height: 1.8; }
 .bottom-composer { position: sticky; bottom: 0; z-index: 2; width: 100%; padding: 12px 24px 24px; flex-shrink: 0; background: linear-gradient(to bottom, transparent calc(100% - 24px - var(--radius-xl)), var(--background) calc(100% - 24px - var(--radius-xl))); }
-.bottom-composer > .composer { width: 100%; max-width: 712px; margin: 0 auto; }
+.bottom-composer > .composer { width: 100%; max-width: var(--chat-column); margin: 0 auto; }
 .scroll-to-bottom-anchor { position: absolute; right: 0; bottom: calc(100% + 10px); left: 0; display: flex; justify-content: center; pointer-events: none; }
 /* A light surface taken from the active theme. `--popover` is plain white in almost every preset,
    so it read as fixed rather than themed; `--muted` is the theme's own softly tinted surface (warm
