@@ -116,12 +116,107 @@ test('thinking disclosure keeps its open state and content across tool, answer a
       await render({ state, reasoning: '已收到的思考', activities: [{ id: 'search', kind: 'search', query: '资料', status: state === 'running' ? 'running' : 'complete', results: [] }] });
       assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
       assert.equal(document.querySelector('.reasoning-label').textContent, '思考过程');
-      assert.ok(document.querySelector('.reasoning-text').textContent.includes('已收到的思考'));
-      assert.equal(document.querySelector('.reasoning-body').hidden, false);
+      // Once a tool step follows it, the thought is a folded row; its text is one click away.
+      assert.equal(document.querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
+      assert.equal(document.querySelector('.thinking-body').hidden, true);
+      await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      assert.ok(document.querySelector('.thinking-body').textContent.includes('已收到的思考'));
+      assert.equal(document.querySelector('.thinking-body').hidden, false);
+      await act(async () => { document.querySelector('.thinking-toggle').click(); });
       assert.equal(document.querySelector('.response-sources'), null);
     }
     await act(async () => { document.querySelector('.reasoning-toggle').click(); });
-    assert.equal(document.querySelector('.reasoning-text'), null, 'collapsed text unmounts to avoid streaming Markdown work');
+    assert.equal(document.querySelector('.thinking-body'), null, 'collapsed text unmounts to avoid streaming Markdown work');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('only the thought being written stays open and it folds as soon as it stops streaming', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const thought = (status, extra = {}) => ({ id: 't1', kind: 'thinking', content: '先想一下', status, ...extra });
+  const search = { id: 's1', kind: 'search', status: 'complete', query: '资料', results: [] };
+  const render = (process) => act(async () => { root.render(createElement(ReasoningBlock, { open: true, state: 'running', process })); });
+  const rows = () => [...document.querySelectorAll('.thinking-toggle')];
+  try {
+    // The newest step is the one being produced, so it reads inline while it streams.
+    await render([thought('running')]);
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'true');
+    assert.equal(document.querySelector('.thinking-body').hidden, false);
+    assert.equal(rows()[0].textContent, '思考', 'an open thought repeats nothing above its own text');
+
+    // It stops streaming, so it folds on its own: only a thought that is still being written
+    // stays open by default. The opened text is one click away again.
+    await render([thought('complete')]);
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
+    assert.equal(document.querySelector('.thinking-body').hidden, true);
+    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
+
+    // A following step does not reopen it: the finished thought stays a row with icon, 思考, and
+    // the opening of that thought. No state or timing column.
+    await render([thought('complete'), { ...search, status: 'running', results: [] }]);
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
+    assert.equal(document.querySelector('.thinking-body').hidden, true);
+    assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'true');
+    assert.equal(rows()[0].querySelector('.thinking-label').textContent, '思考');
+    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
+    assert.equal(document.querySelector('.thinking-state, .thinking-time'), null);
+
+    // A thought the reader opens again is not folded a second time by later steps.
+    await act(async () => { rows()[0].click(); });
+    assert.equal(document.querySelector('.thinking-preview'), null, 'an open row drops the preview');
+    await render([thought('complete'), search, thought('running', { id: 't2', content: '再想一下' })]);
+    assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['true', 'true']);
+
+    // The snippet is one line of prose: fences, links and markdown markers do not reach the row.
+    await render([thought('complete', { content: '**结论**：先看 [官方文档](https://example.com/a)\n\n```ts\nconst x = 1;\n```\n后面还有内容' }), search]);
+    await act(async () => { rows()[0].click(); });
+    assert.match(rows()[0].querySelector('.thinking-preview').textContent, /^结论：先看 官方文档/);
+    assert.ok(!rows()[0].querySelector('.thinking-preview').textContent.includes('```'));
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('a long transcript closes from its own end instead of the header far above', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const render = (props) => act(async () => { root.render(createElement(ReasoningBlock, props)); });
+  try {
+    await render({ state: 'complete', reasoning: '很长的思考' });
+    assert.equal(document.querySelector('.reasoning-collapse'), null, 'a closed block has nothing to close');
+
+    await act(async () => { document.querySelector('.reasoning-toggle').click(); });
+    const collapse = document.querySelector('.reasoning-collapse');
+    assert.equal(collapse.parentElement.className, 'reasoning-body');
+    assert.equal(collapse.parentElement.lastElementChild, collapse, 'the control follows the transcript');
+    assert.equal(collapse.textContent, '收起思考过程');
+
+    // The footer control must work while the reader is deep in the transcript, i.e. without
+    // touching the header, and it must not leave focus on the page body afterwards. linkedom has
+    // no activeElement, so the header's focus call is observed instead.
+    let focused = null;
+    document.querySelector('.reasoning-toggle').focus = (options) => { focused = options; };
+    await act(async () => { collapse.click(); });
+    assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'false');
+    assert.equal(document.querySelector('.reasoning-body').hidden, true);
+    assert.equal(document.querySelector('.reasoning-collapse'), null);
+    assert.deepEqual(focused, { preventScroll: true }, 'focus returns to the header that stays on screen');
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.window = previous.window;
@@ -171,10 +266,14 @@ test('the process renders separate thinking segments around search and fetch in 
   })));
   const steps = [...document.querySelector('.reasoning-steps').children];
   assert.equal(steps.length, 4);
-  assert.equal(steps[0].textContent, '先搜索');
+  // The finished thought folded itself away; the one still being written is inline.
+  assert.equal(steps[0].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
+  assert.equal(steps[0].querySelector('.thinking-preview').textContent, '先搜索');
+  assert.equal(steps[0].querySelector('.thinking-body').hidden, true);
   assert.ok(steps[1].querySelector('.web-activity'));
   assert.ok(steps[2].querySelector('.web-activity'));
-  assert.equal(steps[3].textContent, '再分析');
+  assert.equal(steps[3].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
+  assert.ok(steps[3].querySelector('.thinking-body').textContent.includes('再分析'));
   assert.ok(!document.body.textContent.includes('legacy merged transcript'));
 });
 

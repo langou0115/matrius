@@ -249,7 +249,7 @@ type ScrollToBottomButtonProps = {
 
 export function ScrollToBottomButton({ generating, onScrollToBottom, visible }: ScrollToBottomButtonProps) {
   if (!visible) return null;
-  return <div className="scroll-to-bottom-anchor">
+  return <div className="scroll-to-bottom-slot">
     <button
       type="button"
       className="scroll-to-bottom-button"

@@ -87,7 +87,9 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .sidebar-header-actions { display: flex; align-items: center; gap: 4px; }
 .sidebar .icon-button { color: var(--sidebar-text-muted); }
 .sidebar .icon-button:hover { background: var(--sidebar-selected); color: var(--sidebar-foreground); }
-.sidebar-primary { display: flex; flex-direction: column; gap: 3px; flex: none; padding-bottom: 24px; }
+/* 8px separates the fixed primary nav from the scrolling history; the group header's own
+   7px inner padding already adds air below it, so a larger gap read as a hole. */
+.sidebar-primary { display: flex; flex-direction: column; gap: 3px; flex: none; padding-bottom: 8px; }
 .new-conversation { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; padding: 10px 12px; border-radius: 9px; font-size: var(--text-ui); line-height: 22px; text-align: left; transition: background 140ms, color 140ms; }
 .new-conversation { color: var(--sidebar-foreground); font-family: var(--font-medium); }
 .new-conversation:hover { color: var(--sidebar-foreground); background: var(--sidebar-hover); }
@@ -314,7 +316,11 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .messages-scroll { flex: 1 0 auto; min-height: 0; background: transparent; }
 /* The 24px side padding keeps text off the edge on narrow screens; the content itself
    shares the composer's --chat-column width. */
-.messages-content { max-width: calc(var(--chat-column) + 48px); margin: 0 auto; padding: 34px 24px 28px; background: transparent; }
+.messages-content { max-width: calc(var(--chat-column) + 48px); margin: 0 auto; padding: 34px 24px 16px; background: transparent; }
+/* The transcript ends at its last reply, so that reply's inter-message margin would stack on the
+   list padding and read as a hole above the composer. The last actions row stops one gap short of
+   the input instead. */
+.messages-content > :is(.assistant-message, .user-message, .reasoning):last-child { margin-bottom: 0; }
 .user-message { display: flex; flex-direction: column; align-items: flex-end; margin: 0 0 28px; }
 /* A supplement waiting for the streaming reply to end. It is not saved yet, so it has no
    message actions and sits back visually until it moves below the finished reply. */
@@ -350,8 +356,13 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .connection-notice strong { font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
 .connection-notice p { margin-top: 4px; line-height: 1.8; }
 .bottom-composer { position: sticky; bottom: 0; z-index: 2; width: 100%; padding: 12px 24px 24px; flex-shrink: 0; background: linear-gradient(to bottom, transparent calc(100% - 24px - var(--radius-xl)), var(--background) calc(100% - 24px - var(--radius-xl))); }
-.bottom-composer > .composer { width: 100%; max-width: var(--chat-column); margin: 0 auto; }
-.scroll-to-bottom-anchor { position: absolute; right: 0; bottom: calc(100% + 10px); left: 0; display: flex; justify-content: center; pointer-events: none; }
+/* The wrapper is the composer's own box, so the jump button can sit on its top-right corner
+   without depending on the page padding or on how wide the chat column has become. */
+.bottom-composer-body { position: relative; width: 100%; max-width: var(--chat-column); margin: 0 auto; }
+/* Above the input, on its right but not on the edge: the button lines up with the send button,
+   16px in from the field's edge (the composer's own right padding), 8px off its top edge. Absolute
+   positioning keeps the composer itself from ever moving. */
+.scroll-to-bottom-slot { position: absolute; right: 16px; bottom: calc(100% + 8px); pointer-events: none; }
 /* A light surface taken from the active theme. `--popover` is plain white in almost every preset,
    so it read as fixed rather than themed; `--muted` is the theme's own softly tinted surface (warm
    cream for Claude, pink for T3, lavender for Catppuccin) and still darkens with dark mode. It must
@@ -1116,16 +1127,39 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 @keyframes reasoning-light { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .reasoning-meta { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--muted-text); }
 .reasoning-time { flex: none; font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
-.reasoning-chevron, .web-activity-chevron { flex: none; transition: opacity 140ms ease, transform 180ms ease; }
-.reasoning-toggle[aria-expanded='true'] .reasoning-chevron, .web-activity-toggle[aria-expanded='true'] .web-activity-chevron { transform: rotate(90deg); }
+.reasoning-chevron, .web-activity-chevron, .thinking-chevron { flex: none; transition: opacity 140ms ease, transform 180ms ease; }
+.reasoning-toggle[aria-expanded='true'] .reasoning-chevron, .web-activity-toggle[aria-expanded='true'] .web-activity-chevron, .thinking-toggle[aria-expanded='true'] .thinking-chevron { transform: rotate(90deg); }
 .reasoning-body { min-width: 0; padding: 8px 0 2px; }
 .reasoning-body[hidden] { display: none; }
 .reasoning-steps { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+/* A transcript that runs past a screen puts its header out of reach, so the body ends with the
+   same toggle, flush with the step rows instead of indented into the timeline gutter, where the
+   reader already is when they are done. */
+.reasoning-collapse { display: inline-flex; align-items: center; gap: 4px; margin: 14px 0 2px; padding: 2px 0; color: var(--muted-text); font-size: var(--text-small); line-height: 18px; text-align: left; transition: color 140ms; }
+.reasoning-collapse > svg { flex: none; pointer-events: none; }
+.reasoning-collapse:hover { color: var(--foreground); }
+.reasoning-collapse:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .reasoning-collapse { transition: none; } }
 .reasoning-process-step { position: relative; min-width: 0; }
 .reasoning-process-step:not(:last-child)::after { content: ''; position: absolute; left: 7px; top: calc(100% + 2px); bottom: -10px; border-left: 1px solid var(--border); pointer-events: none; }
-.reasoning-process-step.reasoning-text:not(:last-child)::after { top: 24px; bottom: -6px; }
-.reasoning-text { position: relative; min-width: 0; padding-left: 25px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
-.reasoning-text::before { content: ''; position: absolute; left: 4px; top: calc(.75em - 3px); width: 6px; height: 6px; border-radius: 50%; background: var(--muted-text); }
+/* A thinking segment anchors the timeline on its icon row, so the connector starts below the icon
+   and keeps running beside the transcript while the segment is open. */
+.reasoning-process-step.thinking-step:not(:last-child)::after { top: 20px; }
+/* Thinking segments fold like the tool rows around them: only the one being written stays open,
+   and it closes as soon as the model stops writing it. A folded segment is always one row, so the
+   row never wraps: the preview gives way instead. */
+.thinking-toggle { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; width: 100%; min-width: 0; min-height: 18px; padding: 0; line-height: 18px; text-align: left; color: var(--muted-text); }
+.thinking-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.thinking-icon { flex: none; color: var(--muted-text); pointer-events: none; }
+.thinking-step.is-error .thinking-icon { color: var(--destructive); }
+.thinking-label { flex: none; color: var(--foreground); font-family: var(--font-medium); font-size: 13px; white-space: nowrap; }
+/* The folded row carries the opening of that thought, one line, so the list still says what each
+   segment was about without being opened. */
+.thinking-preview { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--muted-text); font-size: var(--text-caption); white-space: nowrap; text-overflow: ellipsis; }
+.thinking-chevron { flex: none; transition: opacity 140ms ease, transform 180ms ease; }
+.thinking-toggle[aria-expanded='true'] .thinking-chevron { transform: rotate(90deg); }
+/* The transcript keeps the timeline's gutter so a folded segment stays on the same axis. */
+.thinking-body { min-width: 0; margin-top: 4px; padding-left: 25px; overflow-wrap: anywhere; }
 
 /* Tool calls use plain activity rows; source lists expand independently of the reasoning. */
 .web-activities { display: flex; flex-direction: column; gap: 12px; margin-bottom: 0; }
@@ -1174,14 +1208,15 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 @keyframes reasoning-breathe { 50% { opacity: 0.45; } }
 /* The toggle stays quiet until it is wanted; touch and reduced-motion users always see it. */
 @media (hover: hover) {
-  .reasoning-chevron, .web-activity-chevron { opacity: 0; }
+  .reasoning-chevron, .web-activity-chevron, .thinking-chevron { opacity: 0; }
   .reasoning-toggle:hover .reasoning-chevron, .reasoning-toggle:focus-visible .reasoning-chevron,
-  .web-activity-toggle:hover .web-activity-chevron, .web-activity-toggle:focus-visible .web-activity-chevron { opacity: 1; }
+  .web-activity-toggle:hover .web-activity-chevron, .web-activity-toggle:focus-visible .web-activity-chevron,
+  .thinking-toggle:hover .thinking-chevron, .thinking-toggle:focus-visible .thinking-chevron { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .reasoning-label.is-running { animation: none; background: none; -webkit-text-fill-color: currentColor; }
   .reasoning-icon.is-running { animation: none; }
-  .reasoning-chevron, .web-activity-chevron, .web-activity-result { transition: none; }
+  .reasoning-chevron, .web-activity-chevron, .thinking-chevron, .web-activity-result { transition: none; }
   .model-checkbox, .model-checkbox::before, .account-switch, .account-switch::before { transition: none; }
 }
 @media (max-width: 600px) {
@@ -1197,9 +1232,9 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (pointer: coarse) {
-  .web-activity-toggle { min-height: 44px; }
+  .web-activity-toggle, .thinking-toggle { min-height: 44px; }
   .settings-back, .settings-nav-item { min-height: 44px; }
-  .model-picker, .sidebar-section-label button, .new-conversation, .conversation-select, .reasoning-toggle, .provider-heading-actions .icon-button, .model-config-actions .icon-button { min-height: 44px; }
+  .model-picker, .sidebar-section-label button, .new-conversation, .conversation-select, .reasoning-toggle, .reasoning-collapse, .provider-heading-actions .icon-button, .model-config-actions .icon-button { min-height: 44px; }
   /* The card action buttons are square; the coarse-pointer minimum has to grow the pair together. */
   .provider-heading-actions .icon-button, .model-config-actions .icon-button { width: 44px; }
 }

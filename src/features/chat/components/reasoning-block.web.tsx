@@ -1,7 +1,7 @@
-import { Check, ChevronRight, CircleAlert, FilePenLine, FilePlus2, FileText, Globe2, Save, Search, Sparkles, Square } from 'lucide-react';
-import { useEffect, useId, useState } from 'react';
+import { Check, ChevronRight, ChevronUp, CircleAlert, FilePenLine, FilePlus2, FileText, Globe2, Save, Search, Sparkles, Square } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 
-import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
+import type { ProcessActivity, ThinkingActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
 import { fileContentUrl } from '@/features/files/files-api.web';
 import type { Message } from '../chat-state';
 import { formatFileSize } from './attachment-list.web';
@@ -178,6 +178,46 @@ function WebActivityRow({ activity }: { activity: WebActivity }) {
   </div>;
 }
 
+/** A snippet for the folded row: markdown syntax and newlines read as noise on one line. Bounded
+    before cleaning, so re-rendering a folded transcript mid-stream stays cheap. */
+function thinkingPreview(content: string): string {
+  return content.slice(0, 240)
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`#>~]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * One reasoning segment. It reads as a row like the tool calls around it: open only while it is
+ * being written, folded as soon as the model stops writing it, so a long process stays a list
+ * instead of a wall of text. `expanded` is that live default; the reader's own choice outranks it
+ * until the segment starts or finishes streaming.
+ */
+function ThinkingRow({ activity, streaming, expanded }: { activity: ThinkingActivity; streaming: boolean; expanded: boolean }) {
+  const failed = activity.status === 'error';
+  const [expansion, setExpansion] = useState<{ key: string; open: boolean } | null>(null);
+  const key = `${activity.status}:${expanded}`;
+  const open = expansion?.key === key ? expansion.open : expanded;
+  const bodyId = useId();
+  // The folded row says what that thought was about; open, the text below already says it.
+  const preview = open ? '' : thinkingPreview(activity.content);
+  const Glyph = failed ? CircleAlert : Sparkles;
+  return <div className={`thinking-step is-${activity.status}`}>
+    <button type="button" className="thinking-toggle" aria-expanded={open} aria-controls={bodyId}
+      onClick={() => setExpansion({ key, open: !open })}>
+      <Glyph size={15} strokeWidth={1.75} className="thinking-icon" aria-hidden="true" />
+      <span className="thinking-label">思考</span>
+      {preview ? <span className="thinking-preview">{preview}</span> : null}
+      <ChevronRight size={14} className="thinking-chevron" aria-hidden="true" />
+    </button>
+    <div className="thinking-body" id={bodyId} hidden={!open}>
+      {open && <MessageContent content={activity.content} streaming={streaming} />}
+    </div>
+  </div>;
+}
+
 function useElapsed(startedAt: number | null) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -213,6 +253,7 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const bodyId = useId();
+  const header = useRef<HTMLButtonElement>(null);
   const running = state === 'running';
   const text = reasoning.trim();
   // Legacy replies have no event ordering; new replies render the ordered runtime segments.
@@ -231,6 +272,12 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     if (controlledOpen === undefined) setUncontrolledOpen(next);
     onOpenChange?.(next);
   }
+  // A long transcript leaves the header far above, so the footer control closes the block from
+  // its end and returns focus to the header instead of dropping it on the page body.
+  function collapse() {
+    toggle();
+    header.current?.focus({ preventScroll: true });
+  }
   const label = '思考过程';
   const StatusIcon = state === 'stopped' ? Square : state === 'error' ? CircleAlert : running ? Sparkles : Check;
   const line = <>
@@ -245,12 +292,21 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
   </>;
   return <div className={`reasoning${open ? ' is-open' : ''}`}>
     <span className="sr-only" role="status">{label}</span>
-    <button type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>{line}</button>
+    <button ref={header} type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>{line}</button>
     <div className="reasoning-body" id={bodyId} hidden={!open}>
-      {open && visibleSteps.length ? <div className="reasoning-steps">{visibleSteps.map((step) => step.kind === 'thinking'
-        ? <div className="reasoning-text reasoning-process-step" key={step.id}><MessageContent content={step.content} streaming={running && step.status === 'running'} /></div>
-        : <div className="reasoning-process-step" key={step.id}>{step.kind === 'file'
-          ? <FileActivityRow activity={step} /> : <WebActivityRow activity={step} />}</div>)}</div> : null}
+      {open && visibleSteps.length ? <>
+        <div className="reasoning-steps">{visibleSteps.map((step) => <div key={step.id}
+          className={`reasoning-process-step${step.kind === 'thinking' ? ' thinking-step' : ''}`}>
+          {step.kind === 'thinking'
+            ? <ThinkingRow activity={step} streaming={running && step.status === 'running'}
+              expanded={step.status === 'running'} />
+            : step.kind === 'file' ? <FileActivityRow activity={step} /> : <WebActivityRow activity={step} />}
+        </div>)}</div>
+        <button type="button" className="reasoning-collapse" onClick={collapse}>
+          <ChevronUp size={14} strokeWidth={1.75} aria-hidden="true" />
+          <span>收起思考过程</span>
+        </button>
+      </> : null}
     </div>
   </div>;
 }
