@@ -111,7 +111,7 @@ export function LoginDialog({ onClose }: Props) {
         <PasswordInput label="密码" required maxLength={256}
           autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
       </label>
-      {(error || auth.error) && <p className="login-error" role="alert"><AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />{error ?? auth.error}</p>}
+      {error && <p className="login-error" role="alert"><AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />{error}</p>}
       <button className="primary-button login-submit" type="submit" disabled={busy || !username.trim() || !password}>
         {busy && <LoaderCircle className="login-spinner" size={17} strokeWidth={2} aria-hidden="true" />}
         {busy ? '正在登录…' : '登录'}

@@ -71,8 +71,6 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
   .matrius-app ::-webkit-scrollbar-button:vertical:increment:end { display: block; width: 14px; height: 18px; background-repeat: no-repeat; background-size: 4px 4px; background-position: 3px 7px, 7px 7px; }
   .matrius-app ::-webkit-scrollbar-button:vertical:decrement:start { background-image: linear-gradient(135deg, transparent 50%, var(--muted-text) 50%), linear-gradient(225deg, transparent 50%, var(--muted-text) 50%); }
   .matrius-app ::-webkit-scrollbar-button:vertical:increment:end { background-image: linear-gradient(45deg, transparent 50%, var(--muted-text) 50%), linear-gradient(315deg, transparent 50%, var(--muted-text) 50%); }
-  .matrius-app ::-webkit-scrollbar-button:vertical:decrement:start:hover,
-  .matrius-app ::-webkit-scrollbar-button:vertical:increment:end:hover { background-color: var(--soft); }
 }
 
 /* Sidebar: flat navigation, quiet groups and one consistent content gutter. */
@@ -92,12 +90,18 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .new-conversation:hover { color: var(--sidebar-foreground); background: var(--sidebar-hover); }
 .new-conversation.is-active { background: var(--sidebar-selected); }
 .new-conversation > svg { flex: none; }
-.conversation-list { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; padding-right: 4px; overscroll-behavior-y: contain; scrollbar-width: thin; }
+.conversation-list { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; margin-right: -8px; padding-right: 6px; overscroll-behavior-y: contain; }
+/* The sidebar is narrow: keep the arrows on a 12px track, tucked against the sidebar
+   edge, and leave a small gap before the conversation rows. */
 @supports selector(::-webkit-scrollbar) {
-  .matrius-app .conversation-list { scrollbar-width: auto; }
-  .matrius-app .conversation-list::-webkit-scrollbar { width: 6px; }
-  .matrius-app .conversation-list::-webkit-scrollbar-thumb { border-width: 1px; }
-  .matrius-app .conversation-list::-webkit-scrollbar-button { display: none !important; }
+  .matrius-app .conversation-list::-webkit-scrollbar { width: 12px; }
+  .matrius-app .conversation-list::-webkit-scrollbar-button:vertical:decrement:start,
+  .matrius-app .conversation-list::-webkit-scrollbar-button:vertical:increment:end {
+    width: 12px;
+    height: 18px;
+    background-size: 4px 4px;
+    background-position: 2px 7px, 6px 7px;
+  }
 }
 .sidebar-section-label { margin: 0 0 3px; color: var(--sidebar-text-muted); font-size: var(--text-ui); font-family: var(--font-semibold); font-weight: 400; }
 .sidebar-section-label button { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 7px 12px; border-radius: 7px; text-align: left; }
@@ -1255,7 +1259,10 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .library-heading p { margin-top: 7px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.7; }
 .library-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
 .library-content { --library-gutter: 30px; width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 40px 80px; }
-.library-toolbar { position: sticky; top: 0; z-index: 2; padding: 6px 0 14px; background: linear-gradient(to bottom, var(--background) 76%, transparent); }
+/* The sticky bar reaches into the checkbox gutter like the rows do. Without that, a row
+   scrolling under the opaque bar still shows its check in the uncovered gutter over
+   the search and filter rows. The gutter column stays opaque past the bar's soft fade. */
+.library-toolbar { position: sticky; top: 0; z-index: 2; margin-left: calc(-1 * var(--library-gutter)); padding: 6px 0 14px var(--library-gutter); background: linear-gradient(to right, var(--background) 0, var(--background) var(--library-gutter), transparent var(--library-gutter)) no-repeat, linear-gradient(to bottom, var(--background) 76%, transparent); }
 .library-toolbar-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .library-toolbar-row + .library-toolbar-row { margin-top: 10px; }
 /* The filter row and every file row reach 30px into the content gutter so their hover
@@ -1269,7 +1276,8 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
    focus, but always visible once a selection exists so its state can be read. */
 .library-select-all .library-item-check { opacity: 0; }
 .library-filter-row:hover .library-select-all .library-item-check, .library-select-all-input:focus-visible + .library-item-check, .library-select-all .library-item-check.is-checked { opacity: 1; }
-.library-select-all-input:disabled + .library-item-check { opacity: .5; }
+/* While "select all" walks the remaining pages the box is disabled; dim it if hovered. */
+.library-filter-row:hover .library-select-all-input:disabled + .library-item-check { opacity: .5; }
 .library-download-selected, .library-delete-selected { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; }
 .library-search { display: flex; flex: 1 1 220px; align-items: center; gap: 8px; min-width: 160px; max-width: 340px; min-height: 38px; padding: 0 6px 0 11px; border: 1px solid var(--border); border-radius: 12px; background: var(--background); color: var(--muted-text); transition: border-color 140ms, color 140ms; }
 .library-search:focus-within { border-color: var(--primary); color: var(--foreground); }
@@ -1329,6 +1337,9 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .library-item-meta { color: var(--muted-text); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .library-item-actions { position: relative; display: flex; flex: none; align-items: center; opacity: 0; transition: opacity 140ms; }
 .library-item:hover .library-item-actions, .library-item:has(:focus-visible) .library-item-actions, .library-item.is-selected .library-item-actions, .library-item.is-menu-open .library-item-actions { opacity: 1; }
+/* Rows isolate themselves for the outline layer, so an open menu has to lift its own row
+   above the later rows; otherwise the next row's hover/selected background covers it. */
+.library-item.is-menu-open { z-index: 1; }
 /* Per-row settings menu: download, rename and delete live behind one button. */
 .library-item-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 6; display: flex; flex-direction: column; min-width: 148px; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--popover); box-shadow: 0 8px 24px color-mix(in srgb, var(--foreground) 12%, transparent); }
 .library-item-menu > a, .library-item-menu > button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border-radius: 7px; color: var(--foreground); font-size: var(--text-small); text-align: left; }
@@ -1352,6 +1363,10 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .library-placeholder strong { font-size: var(--text-body); font-family: var(--font-medium); font-weight: 400; }
 .library-placeholder p { max-width: 380px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.8; }
 .library-placeholder-action { display: inline-flex; align-items: center; gap: 7px; margin-top: 10px; }
+/* An empty or unavailable Library fills the scroll viewport. A fixed 320px card plus the
+   content's bottom padding overflowed on short screens, showing a scrollbar with no files. */
+.library-content:has(> .library-placeholder) { display: flex; flex-direction: column; min-height: 100%; }
+.library-content:has(> .library-placeholder) > .library-placeholder { flex: 1; min-height: 0; }
 .library-sentinel { height: 1px; }
 .library-loading-more { padding: 18px 0 4px; color: var(--muted-text); font-size: var(--text-caption); text-align: center; }
 @media (max-width: 760px) {

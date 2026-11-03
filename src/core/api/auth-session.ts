@@ -140,8 +140,9 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
       update({ status: 'authenticated', user, error: null });
       return user;
     } catch (error) {
-      if (version === generation) update({ status: 'anonymous', user: null,
-        error: error instanceof Error ? error.message : '登录失败，请重试。' });
+      // The login dialog owns this failure. Storing it in shared state would make the
+      // account page show it as page content and replay it every time the dialog reopens.
+      if (version === generation) update({ status: 'anonymous', user: null, error: null });
       throw error;
     }
   }

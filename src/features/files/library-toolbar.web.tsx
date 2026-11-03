@@ -40,11 +40,12 @@ export function LibraryToolbar({
     </div>
 
     <div className="library-toolbar-row library-filter-row">
-      <label className="library-select-all">
-        <input className="library-select-all-input" type="checkbox" checked={active} disabled={!total || selectingAll}
+      {/* An empty library has nothing to select, so the box only exists once rows do. */}
+      {total > 0 && <label className="library-select-all">
+        <input className="library-select-all-input" type="checkbox" checked={active} disabled={selectingAll}
           onChange={onToggleSelectAll} aria-label={active ? '取消选择' : '全选全部文件'} />
         <span className={`library-item-check${active ? ' is-checked is-indeterminate' : ''}`} aria-hidden="true" />
-      </label>
+      </label>}
       <div className="library-kinds" role="group" aria-label="文件类型">
         {KIND_OPTIONS.map((option) => <button key={option.id} type="button"
           className={`library-kind${kind === option.id ? ' is-active' : ''}`}

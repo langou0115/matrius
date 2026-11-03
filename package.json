@@ -43,7 +43,7 @@
     "deploy": "node scripts/deploy.mjs",
     "test:deploy": "node --test --test-isolation=none tests/deploy.test.mjs tests/compose.test.mjs",
     "test:dev": "node --test --test-isolation=none tests/dev.test.mjs",
-    "test:auth": "node --import ./tests/register.mjs --test --test-isolation=none tests/auth-session.test.mjs tests/password-input.test.mjs tests/account-sync.test.mjs tests/cloud-workspace.test.mjs",
+    "test:auth": "node --import ./tests/register.mjs --test --test-isolation=none tests/auth-session.test.mjs tests/login-dialog.test.mjs tests/password-input.test.mjs tests/account-sync.test.mjs tests/cloud-workspace.test.mjs",
     "export:web": "expo export --platform web && node scripts/inject-pwa.mjs",
     "serve": "node scripts/server.mjs",
     "lint": "expo lint",
@@ -51,7 +51,7 @@
     "assets:katex": "node scripts/sync-katex.mjs",
     "postinstall": "node scripts/sync-katex.mjs",
     "test:models": "node --import ./tests/register.mjs --test --test-isolation=none tests/model-runtime.test.mjs tests/model-storage.test.mjs tests/model-diagnostics.test.mjs",
-    "test:files": "node --import ./tests/register.mjs --test --test-isolation=none tests/file-tool.test.mjs tests/context-files.test.mjs tests/workspace-message-files.test.mjs tests/file-upload.test.mjs tests/cloud-workspace-files.test.mjs tests/account-sync-files.test.mjs tests/file-library-hook.test.mjs tests/mock-library.test.mjs"
+    "test:files": "node --import ./tests/register.mjs --test --test-isolation=none tests/file-tool.test.mjs tests/context-files.test.mjs tests/workspace-message-files.test.mjs tests/file-upload.test.mjs tests/cloud-workspace-files.test.mjs tests/account-sync-files.test.mjs tests/file-library-hook.test.mjs tests/mock-library.test.mjs tests/library-toolbar.test.mjs"
   },
   "private": true
 }

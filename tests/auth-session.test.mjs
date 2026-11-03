@@ -64,6 +64,16 @@ test('account switching and logout reject stale login results', async () => {
   assert.equal(store.read(), null);
 });
 
+test('a rejected login stays with the dialog instead of the shared account state', async () => {
+  const auth = createAuthSession(storage(), async () => response({
+    error: { code: 'unauthorized', message: '用户名或密码错误。' },
+  }, 401));
+  await assert.rejects(auth.login('alice', 'wrong-password'), /用户名或密码错误/);
+  assert.equal(auth.getSnapshot().status, 'anonymous');
+  assert.equal(auth.getSnapshot().user, null);
+  assert.equal(auth.getSnapshot().error, null, 'the account page must not keep the login failure');
+});
+
 test('network errors hide entitlements; expired tokens are cleared', async () => {
   let mode = 'ok';
   const store = storage('token');
