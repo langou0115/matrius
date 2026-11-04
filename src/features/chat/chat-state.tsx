@@ -47,7 +47,19 @@ type Action =
   | { type: 'visible'; value: boolean }
   | { type: 'sidebar' };
 
-function reducer(state: ChatState, action: Action): ChatState {
+/**
+ * The sidebar sorts by "new activity", and only finished work counts: a new message, or a reply
+ * that has finished writing its body. Reasoning and body text stream many times per second, so
+ * advancing the order time on every update makes concurrent replies fight over the top spot.
+ * The order time is overwritten at those two moments, not advanced again by later deltas.
+ */
+function isOrderEvent(previous: Message | undefined, next: Message): boolean {
+  return !previous || (previous.status !== 'complete' && next.status === 'complete'
+    && next.role === 'assistant' && !!next.content.trim());
+}
+
+/** Exported for the state-management tests; React consumers go through `useChat`. */
+export function chatReducer(state: ChatState, action: Action): ChatState {
   switch (action.type) {
     case 'feedback':
       return { ...state, conversations: state.conversations.map((conversation) => conversation.id !== action.conversationId ? conversation : {
@@ -61,10 +73,13 @@ function reducer(state: ChatState, action: Action): ChatState {
     case 'reply':
       return { ...state, conversations: state.conversations.map((conversation) => {
         if (conversation.id !== action.conversationId) return conversation;
-        const exists = conversation.messages.some((message) => message.id === action.message.id);
-        const next = { ...conversation, updatedAt: Date.now(), messages: exists
-          ? conversation.messages.map((message) => message.id === action.message.id ? action.message : message)
-          : [...conversation.messages, action.message] };
+        const existing = conversation.messages.find((message) => message.id === action.message.id);
+        // Every reasoning or body delta replaces the message anyway, but only the moments above
+        // may replace the order time; otherwise two concurrent runs fight over the top spot.
+        const next = { ...conversation, ...(isOrderEvent(existing, action.message) ? { updatedAt: Date.now() } : {}),
+          messages: existing
+            ? conversation.messages.map((message) => message.id === action.message.id ? action.message : message)
+            : [...conversation.messages, action.message] };
         if (action.message.status === 'error') {
           next.errorReadAt = state.activeId === conversation.id ? Date.now() : null;
           delete next.completedReadAt;
@@ -244,7 +259,7 @@ function initializeChatState(initialState?: PersistedChatState): ChatState {
 }
 
 function useChatState(initialState?: PersistedChatState) {
-  const [state, dispatch] = useReducer(reducer, initialState, initializeChatState);
+  const [state, dispatch] = useReducer(chatReducer, initialState, initializeChatState);
   return useMemo(() => ({ ...state, dispatch }), [state]);
 }
 const ChatContext = createContext<ReturnType<typeof useChatState> | null>(null);

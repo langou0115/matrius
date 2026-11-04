@@ -1,5 +1,5 @@
-import { Check, ChevronRight, ChevronUp, CircleAlert, FilePenLine, FilePlus2, FileText, Globe2, Save, Search, Sparkles, Square } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { Brain, Check, ChevronRight, ChevronUp, CircleAlert, FilePenLine, FilePlus2, FileText, Globe2, Save, Search, Square, Trash2 } from 'lucide-react';
+import { memo, useEffect, useId, useRef, useState } from 'react';
 
 import type { ProcessActivity, ThinkingActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
 import { fileContentUrl } from '@/features/files/files-api.web';
@@ -8,6 +8,9 @@ import { formatFileSize } from './attachment-list.web';
 import { MessageContent } from './message-content.web';
 
 export type ReasoningState = 'running' | 'complete' | 'stopped' | 'error';
+
+/** The footer control only earns its space once the expanded transcript is taller than this. */
+const COLLAPSE_AFTER_HEIGHT = 420;
 
 export function getReasoningState(message: Pick<Message, 'status' | 'content' | 'reasoning' | 'reasoningActive' | 'activities'>): ReasoningState {
   // The header describes the whole reply, not just the current thinking token block.
@@ -49,6 +52,7 @@ const FILE_OPERATION_NAMES: Record<string, string> = {
   create: '创建文档',
   edit: '编辑文档',
   save: '保存文件',
+  delete: '删除文件',
 };
 
 function fileOperationName(operation: string | undefined): string {
@@ -64,7 +68,7 @@ function fileActivityLabel(activity: WebActivity): string {
   return `已${name}`;
 }
 
-function FileActivityRow({ activity }: { activity: WebActivity }) {
+const FileActivityRow = memo(function FileActivityRow({ activity }: { activity: WebActivity }) {
   const running = activity.status === 'running';
   const failed = activity.status === 'error';
   const finished = !running;
@@ -76,7 +80,8 @@ function FileActivityRow({ activity }: { activity: WebActivity }) {
   const Glyph = failed ? CircleAlert
     : activity.operation === 'create' ? FilePlus2
       : activity.operation === 'edit' ? FilePenLine
-        : activity.operation === 'save' ? Save : FileText;
+        : activity.operation === 'save' ? Save
+          : activity.operation === 'delete' ? Trash2 : FileText;
   return <div className={`web-activity file-activity is-${activity.status}`}>
     <button type="button" className="web-activity-toggle" aria-expanded={open} aria-controls={bodyId}
       onClick={() => setExpansion({ finished, open: !open })}>
@@ -106,7 +111,7 @@ function FileActivityRow({ activity }: { activity: WebActivity }) {
       {activity.error && <span className={failed ? 'web-activity-error' : 'web-activity-empty'}>{activity.error}</span>}
     </div>
   </div>;
-}
+});
 
 /** The site's own root favicon keeps requests on the result's domain; a 404 or a broken
     response falls back to the neutral globe instead of leaving a broken image. */
@@ -132,7 +137,7 @@ function SearchResults({ results }: { results: WebSearchResult[] }) {
   </span>;
 }
 
-function WebActivityRow({ activity }: { activity: WebActivity }) {
+const WebActivityRow = memo(function WebActivityRow({ activity }: { activity: WebActivity }) {
   const running = activity.status === 'running';
   const failed = activity.status === 'error';
   const finished = !running;
@@ -176,7 +181,7 @@ function WebActivityRow({ activity }: { activity: WebActivity }) {
       {activity.error ? <span className={failed ? 'web-activity-error' : 'web-activity-empty'}>{activity.error}</span> : null}
     </div>
   </div>;
-}
+});
 
 /** A snippet for the folded row: markdown syntax and newlines read as noise on one line. Bounded
     before cleaning, so re-rendering a folded transcript mid-stream stays cheap. */
@@ -194,8 +199,14 @@ function thinkingPreview(content: string): string {
  * being written, folded as soon as the model stops writing it, so a long process stays a list
  * instead of a wall of text. `expanded` is that live default; the reader's own choice outranks it
  * until the segment starts or finishes streaming.
+ *
+ * The live segment renders as plain text on purpose: thought blocks of 10k+ characters arrive in
+ * 50 ms batches, and re-parsing Markdown around an unclosed fence or table on every batch made the
+ * tall block reflow — with the transcript pinned to the bottom, that reads as flickering. Markdown
+ * is parsed once the segment stops streaming, when its text is final.
  */
-function ThinkingRow({ activity, streaming, expanded }: { activity: ThinkingActivity; streaming: boolean; expanded: boolean }) {
+const ThinkingRow = memo(function ThinkingRow({ activity, streaming, expanded }:
+  { activity: ThinkingActivity; streaming: boolean; expanded: boolean }) {
   const failed = activity.status === 'error';
   const [expansion, setExpansion] = useState<{ key: string; open: boolean } | null>(null);
   const key = `${activity.status}:${expanded}`;
@@ -203,7 +214,7 @@ function ThinkingRow({ activity, streaming, expanded }: { activity: ThinkingActi
   const bodyId = useId();
   // The folded row says what that thought was about; open, the text below already says it.
   const preview = open ? '' : thinkingPreview(activity.content);
-  const Glyph = failed ? CircleAlert : Sparkles;
+  const Glyph = failed ? CircleAlert : Brain;
   return <div className={`thinking-step is-${activity.status}`}>
     <button type="button" className="thinking-toggle" aria-expanded={open} aria-controls={bodyId}
       onClick={() => setExpansion({ key, open: !open })}>
@@ -213,10 +224,12 @@ function ThinkingRow({ activity, streaming, expanded }: { activity: ThinkingActi
       <ChevronRight size={14} className="thinking-chevron" aria-hidden="true" />
     </button>
     <div className="thinking-body" id={bodyId} hidden={!open}>
-      {open && <MessageContent content={activity.content} streaming={streaming} />}
+      {open && (streaming
+        ? <div className="thinking-text">{activity.content}</div>
+        : <MessageContent content={activity.content} />)}
     </div>
   </div>;
-}
+});
 
 function useElapsed(startedAt: number | null) {
   const [now, setNow] = useState(Date.now);
@@ -262,6 +275,19 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     ...(activities ?? []),
   ];
   const visibleSteps = steps.filter((step) => step.kind !== 'thinking' || step.content.trim());
+  const stepsRef = useRef<HTMLDivElement>(null);
+  const [showCollapse, setShowCollapse] = useState(false);
+  useEffect(() => {
+    const element = stepsRef.current;
+    if (!open || !element) { setShowCollapse(false); return; }
+    const measure = () => setShowCollapse(element.scrollHeight > COLLAPSE_AFTER_HEIGHT);
+    measure();
+    // The transcript grows while the reply streams; keep the footer control in step with it.
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [open, visibleSteps.length]);
   // Keep counting through reasoning, tools, the gap before the answer, and answer streaming.
   const live = running && startedAt !== null;
   const seconds = useElapsed(live ? startedAt : null);
@@ -279,7 +305,7 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     header.current?.focus({ preventScroll: true });
   }
   const label = '思考过程';
-  const StatusIcon = state === 'stopped' ? Square : state === 'error' ? CircleAlert : running ? Sparkles : Check;
+  const StatusIcon = state === 'stopped' ? Square : state === 'error' ? CircleAlert : running ? Brain : Check;
   const line = <>
     <StatusIcon size={17} strokeWidth={1.75} className={`reasoning-icon${running ? ' is-running' : ''}`} aria-hidden="true" />
     <span className={running ? 'reasoning-label is-running' : 'reasoning-label'}>{label}</span>
@@ -295,17 +321,21 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     <button ref={header} type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>{line}</button>
     <div className="reasoning-body" id={bodyId} hidden={!open}>
       {open && visibleSteps.length ? <>
-        <div className="reasoning-steps">{visibleSteps.map((step) => <div key={step.id}
+        <div className="reasoning-steps" ref={stepsRef}>{visibleSteps.map((step) => <div key={step.id}
           className={`reasoning-process-step${step.kind === 'thinking' ? ' thinking-step' : ''}`}>
           {step.kind === 'thinking'
             ? <ThinkingRow activity={step} streaming={running && step.status === 'running'}
-              expanded={step.status === 'running'} />
+              // While the reply runs, finished segments stay open: folding each one as it ends
+              // made the tall block shrink and grow again at every boundary, and the pinned
+              // transcript showed that as the content jumping up and down. The whole block folds
+              // when the reply ends, or when the reader collapses it.
+              expanded={running} />
             : step.kind === 'file' ? <FileActivityRow activity={step} /> : <WebActivityRow activity={step} />}
         </div>)}</div>
-        <button type="button" className="reasoning-collapse" onClick={collapse}>
+        {showCollapse && <button type="button" className="reasoning-collapse" onClick={collapse}>
           <ChevronUp size={14} strokeWidth={1.75} aria-hidden="true" />
           <span>收起思考过程</span>
-        </button>
+        </button>}
       </> : null}
     </div>
   </div>;

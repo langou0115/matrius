@@ -11,7 +11,11 @@ const conversation = { id: 'server-c', clientId: 'old-client-c', revision: 3, ti
   contextSummary, updatedAt: 20, readState: { completed: { state: 'unread' }, error: { state: 'absent' } } };
 const message = { id: 'server-m', clientId: 'old-client-m', revision: 4, role: 'assistant', content: 'cloud reply', status: 'complete', feedback: 'good',
   activities: [{ id: 'call-1', kind: 'search', status: 'complete', query: '资料', tookMs: 12,
-    results: [{ title: 'A', url: 'https://a.test/x', domain: 'a.test', rank: 1, snippet: '省略', engine: 'ddg' }] }] };
+    results: [{ title: 'A', url: 'https://a.test/x', domain: 'a.test', rank: 1, snippet: '省略', engine: 'ddg' }] }],
+  process: [
+    { id: 'thinking:1:0', kind: 'thinking', content: '先想一下', status: 'complete', startedAt: 1, endedAt: 2 },
+    { id: 'call-1', kind: 'search', status: 'complete', query: '资料', tookMs: 12 },
+  ] };
 function fixture({ fail } = {}) {
   const calls = [];
   const request = async (path, init = {}) => {
@@ -67,6 +71,8 @@ test('cloud reads only REST, retains imported identities, and unchanged data cau
   assert.deepEqual(activity.results[0], { title: 'A', url: 'https://a.test/x', domain: 'a.test', rank: 1, snippet: '', engine: '' },
     'cloud history keeps the tool steps but not their snippets');
   assert.deepEqual(data.chat.conversations[0].contextSummary, contextSummary);
+  assert.deepEqual(data.chat.conversations[0].messages[0].process.map((step) => step.kind), ['thinking', 'search'],
+    'the ordered process survives a cloud reload');
   calls.length = 0;
   await repo.save(data);
   assert.deepEqual(calls, []);
@@ -91,6 +97,8 @@ test('cloud edits, streaming, feedback removal and preferences use REST revision
   assert.equal(patch.body.status, 'stopped', 'reload never restores a live stream');
   assert.deepEqual(patch.body.activities[0].results[0], { title: 'A', url: 'https://a.test/x', domain: 'a.test', rank: 1 },
     'the server payload drops snippets and engines');
+  assert.equal(patch.body.process[0].content, '先想一下', 'the full process is written with the message');
+  assert.deepEqual(patch.body.process.map((step) => step.kind), ['thinking', 'search']);
   const conversationPatch = calls.find((call) => call.path === '/api/conversations/server-c').body;
   assert.equal(conversationPatch.baseRevision, 3);
   assert.deepEqual(conversationPatch.contextSummary, c.contextSummary, 'the rolling summary syncs with metadata');

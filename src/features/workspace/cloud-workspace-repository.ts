@@ -4,7 +4,7 @@ import { ApiError } from '@/core/api/auth-session';
 import type { ApiRequest } from '@/features/auth/account-sync.web';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
-import { parseWorkspace, type WorkspaceData } from './workspace-repository.web';
+import { parseWorkspace, readProcess, type WorkspaceData } from './workspace-repository.web';
 
 type RecordVersion = { id: string; revision: number; clientId?: string | null };
 type Marker = { state: 'absent' | 'unread' | 'read'; readAt?: number };
@@ -26,6 +26,7 @@ const metadata = (value: Conversation) => ({
 });
 const messageBody = (value: Message) => ({
   role: value.role, content: value.content, quote: value.quote ?? null, reasoning: value.reasoning ?? null,
+  process: value.process ?? null,
   thinkingMs: value.thinkingMs ?? null, feedback: value.feedback ?? null,
   status: value.status === 'streaming' ? 'stopped' : value.status ?? 'complete', error: value.error ?? null,
   ...(value.role === 'user' && value.steering ? { steering: true } : {}),
@@ -84,7 +85,11 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
             `/api/conversations/${encodeURIComponent(remote.id)}?messageLimit=100${before ? `&before=${encodeURIComponent(before)}` : ''}`,
           );
           pages.unshift(detail.messages.map((item) => {
+            // The server validates the stored process; re-read it so a malformed row cannot
+            // break the reasoning panel with an unexpected shape.
+            const process = readProcess(item.process);
             const value: Message = { ...messageBody(item), id: item.clientId || item.id,
+              ...(process ? { process } : {}),
               ...(item.files?.length ? { files: item.files } : {}) } as Message;
             messages.set(JSON.stringify([id, value.id]), { remote: item, value });
             return value;

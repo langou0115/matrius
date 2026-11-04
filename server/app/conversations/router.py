@@ -15,6 +15,7 @@ from app.conversations.schemas import (
     MessageCreate,
     MessagePatch,
     activities_payload,
+    process_payload,
 )
 from app.conversations.serializers import conversation_out, message_out
 from app.db import get_db
@@ -361,6 +362,7 @@ async def create_message(
         feedback=payload.feedback,
         reasoning=payload.reasoning,
         activities=activities_payload(payload.activities),
+        process=process_payload(payload.process),
         thinking_ms=payload.thinkingMs,
         status=status,
         error=payload.error,
@@ -423,6 +425,8 @@ async def update_message(
         setattr(message, _snake(name), fields[name])
     if "activities" in fields:
         message.activities = activities_payload(payload.activities)
+    if "process" in fields:
+        message.process = process_payload(payload.process)
 
     attached: list[StoredFile] = []
     if "fileIds" in fields:

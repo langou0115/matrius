@@ -94,6 +94,45 @@ async def test_message_positions_and_read_state(client, create_user):
     assert stale.json()["error"]["current"]["revision"] == body["revision"]
 
 
+async def test_message_process_round_trips_and_can_be_cleared(client, create_user):
+    _, headers = await create_user()
+    conversation = await _create_conversation(client, headers)
+    process = [
+        {"id": "thinking:1:0", "kind": "thinking", "content": "先想一下", "status": "complete",
+         "startedAt": 1, "endedAt": 2},
+        {"id": "call-1", "kind": "search", "status": "complete", "query": "资料",
+         "results": [{"title": "A", "url": "https://a.test/x", "domain": "a.test", "rank": 1}]},
+    ]
+    created = await _post_message(
+        client, headers, conversation["id"], "assistant", "回答", reasoning="先想一下", process=process
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["process"] == process
+
+    detail = (await client.get(f"/api/conversations/{conversation['id']}", headers=headers)).json()
+    assert detail["messages"][0]["process"] == process
+
+    patched = await client.patch(
+        f"/api/messages/{created.json()['id']}",
+        headers=headers,
+        json={
+            "baseRevision": created.json()["revision"],
+            "process": [{"id": "thinking:2:0", "kind": "thinking", "content": "再想一下", "status": "complete"}],
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert [step["kind"] for step in patched.json()["process"]] == ["thinking"]
+    assert patched.json()["process"][0]["content"] == "再想一下"
+
+    cleared = await client.patch(
+        f"/api/messages/{created.json()['id']}",
+        headers=headers,
+        json={"baseRevision": patched.json()["revision"], "process": []},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["process"] is None
+
+
 async def test_steering_flag_round_trips_and_is_limited_to_user_messages(client, create_user):
     _, headers = await create_user()
     conversation = await _create_conversation(client, headers)

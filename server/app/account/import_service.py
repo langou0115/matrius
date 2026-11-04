@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.account.schemas import ImportConversation, ImportMessage, ImportReadState, ImportRequest
-from app.conversations.schemas import activities_payload
+from app.conversations.schemas import activities_payload, process_payload
 from app.errors import invalid
 from app.models import (
     Conversation,
@@ -117,6 +117,11 @@ def _apply_message(existing: Message, message: ImportMessage) -> bool:
         if getattr(existing, name) != value:
             setattr(existing, name, value)
             changed = True
+    # Older clients do not send a process. Keep the stored copy instead of clearing it.
+    process = process_payload(message.process)
+    if process is not None and existing.process != process:
+        existing.process = process
+        changed = True
     if changed:
         existing.revision += 1
         existing.updated_at = utcnow()
@@ -258,6 +263,7 @@ async def _create_conversation(
                 feedback=message.feedback,
                 reasoning=message.reasoning,
                 activities=activities_payload(message.activities),
+                process=process_payload(message.process),
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,
@@ -307,6 +313,7 @@ async def _merge_conversation(
                 feedback=message.feedback,
                 reasoning=message.reasoning,
                 activities=activities_payload(message.activities),
+                process=process_payload(message.process),
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,

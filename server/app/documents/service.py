@@ -150,6 +150,8 @@ async def run(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) ->
     if operation == "save":
         draft = await draft_store.drafts.get(user_id, payload.fileId or "")
         return await _persist(db, user_id, draft, payload.filename)
+    if operation == "delete":
+        return await _delete(db, user_id, payload)
     if operation == "help":
         return await _help(user_id, payload)
 
@@ -410,6 +412,28 @@ async def _persist(
 
     await draft_store.drafts.delete(user_id, draft.id)
     return {"operation": "save", "file": file_out(stored)}
+
+
+async def _delete(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
+    file_id = payload.fileId or ""
+    if _draft_ref(file_id):
+        draft = await draft_store.drafts.get(user_id, file_id)
+        await draft_store.drafts.delete(user_id, file_id)
+        return {"operation": "delete", "fileId": file_id, "filename": draft.filename, "draft": True}
+
+    try:
+        stored_id = uuid.UUID(file_id)
+    except ValueError as exc:
+        raise invalid("fileId 不合法。") from exc
+    stored = await get_owned_file(db, user_id, stored_id)
+    filename = stored.filename
+    # Match the Library endpoint: remove the object first, then the row. An orphaned object is
+    # recoverable, but a row pointing at a deleted object is not.
+    await db.close()
+    await asyncio.to_thread(delete_object, stored.object_key)
+    await db.delete(stored)
+    await db.commit()
+    return {"operation": "delete", "fileId": str(stored_id), "filename": filename}
 
 
 async def _engine_call(coro: Coroutine[Any, Any, Any]) -> Any:

@@ -115,7 +115,13 @@ async def test_import_is_idempotent(client, create_user):
                              "id": "call-1", "kind": "fetch", "status": "complete",
                              "url": "https://a.test/x", "urls": ["https://a.test/x"],
                              "title": "A", "tookMs": 9,
-                         }]},
+                         }],
+                         "process": [
+                             {"id": "thinking:1:0", "kind": "thinking", "content": "先想",
+                              "status": "complete", "startedAt": 1, "endedAt": 2},
+                             {"id": "call-1", "kind": "fetch", "status": "complete",
+                              "url": "https://a.test/x", "title": "A", "tookMs": 9},
+                         ]},
                     ],
                 }
             ]
@@ -150,6 +156,12 @@ async def test_import_is_idempotent(client, create_user):
         "id": "call-1", "kind": "fetch", "status": "complete",
         "url": "https://a.test/x", "urls": ["https://a.test/x"], "title": "A", "tookMs": 9,
     }]
+    assert detail["messages"][1]["process"] == [
+        {"id": "thinking:1:0", "kind": "thinking", "content": "先想",
+         "status": "complete", "startedAt": 1, "endedAt": 2},
+        {"id": "call-1", "kind": "fetch", "status": "complete",
+         "url": "https://a.test/x", "title": "A", "tookMs": 9},
+    ]
 
     preferences = (await client.get("/api/preferences", headers=headers)).json()
     assert preferences["themeId"] == "catppuccin"

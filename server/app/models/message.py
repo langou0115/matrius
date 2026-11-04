@@ -46,8 +46,10 @@ class Message(RevisionMixin, TimestampMixin, Base):
     quote: Mapped[str | None] = mapped_column(Text, nullable=True)
     feedback: Mapped[str | None] = mapped_column(String(8), nullable=True)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Web search/fetch steps for this reply. Local-only `process` is rebuilt from these.
+    # Web search/fetch/file steps for this reply, compacted for display.
     activities: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Full ordered process: thinking segments and tool calls interleaved, as they happened.
+    process: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     thinking_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="complete", nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

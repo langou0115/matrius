@@ -1,4 +1,4 @@
-import { memo, useId } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkCjkFriendly from 'remark-cjk-friendly/parseOnly';
 import remarkGfm from 'remark-gfm';
@@ -66,12 +66,62 @@ function rehypeFormulaSource(options?: { streaming?: boolean }) {
   return (tree: HastNode) => { downgrade(tree); };
 }
 
+/**
+ * Token-by-token replies arrive every ~50 ms. Parsing Markdown for every intermediate string makes
+ * a tall block change shape constantly — an open fence, a half-built table or a paragraph that is
+ * about to become a list has a different layout each time — and with the transcript pinned to the
+ * bottom that reads as flicker. Parse at most this often while streaming; the final text is always
+ * parsed immediately, and the element is memoized so a skipped update costs nothing.
+ */
+const STREAM_PARSE_INTERVAL_MS = 120;
+/** Kept in sync with the `.message-markdown.is-replacing` animation in global.css. */
+const REPLACE_ANIMATION_MS = 320;
+// Layout effects run before paint in the browser, so the swap animation is in place on the first
+// painted frame. Node-side rendering and tests fall back to the ordinary effect.
+const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+function useStreamedContent(content: string, streaming: boolean): string {
+  const [parsed, setParsed] = useState(content);
+  const lastParse = useRef(0);
+  useEffect(() => {
+    if (!streaming) return;
+    const wait = Math.max(0, STREAM_PARSE_INTERVAL_MS - (Date.now() - lastParse.current));
+    const timer = setTimeout(() => { lastParse.current = Date.now(); setParsed(content); }, wait);
+    return () => clearTimeout(timer);
+  }, [content, streaming]);
+  if (!streaming) return content;
+  // A regenerated reply that no longer extends what is on screen must not keep the old answer.
+  return content.startsWith(parsed) ? parsed : content;
+}
+
 export const MessageContent = memo(function MessageContent({ content, streaming = false }: { content: string; streaming?: boolean }) {
   const id = useId();
-  return <div className="message-markdown"><Markdown
+  const rendered = useStreamedContent(content, streaming);
+  const previous = useRef(content);
+  const replaceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  useBrowserLayoutEffect(() => {
+    const before = previous.current;
+    previous.current = content;
+    // Ordinary streaming extends what is already on screen. A rewrite means an interim body
+    // (for example a "let me check…" preamble) was replaced by the next message or the answer;
+    // animate that swap so the text does not appear to mutate in place.
+    if (!before || !content || content.startsWith(before)) return;
+    setReplacing(true);
+    if (replaceTimer.current) clearTimeout(replaceTimer.current);
+    replaceTimer.current = setTimeout(() => {
+      replaceTimer.current = null;
+      setReplacing(false);
+    }, REPLACE_ANIMATION_MS);
+  }, [content]);
+  useEffect(() => () => {
+    if (replaceTimer.current) clearTimeout(replaceTimer.current);
+  }, []);
+  const body = useMemo(() => <Markdown
     components={components}
     remarkPlugins={[remarkGfm, remarkCjkFriendly, remarkMath]}
     remarkRehypeOptions={{ clobberPrefix: `message-${id}-`, footnoteLabel: '注释' }}
     rehypePlugins={[[rehypeKatex, { trust: false, strict: 'ignore', maxExpand: 1000, maxSize: 20 }], [rehypeFormulaSource, { streaming }]]}
-  >{normalizeMarkdown(content)}</Markdown></div>;
+  >{normalizeMarkdown(rendered)}</Markdown>, [rendered, streaming, id]);
+  return <div className={`message-markdown${replacing ? ' is-replacing' : ''}`}>{body}</div>;
 });

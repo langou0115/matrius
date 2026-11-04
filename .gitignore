@@ -55,3 +55,6 @@ example
 
 # KaTeX assets generated from the installed dependency by postinstall
 /public/vendor/katex/
+
+# Interrupted vendor binary downloads
+*.update.partial

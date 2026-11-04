@@ -4,6 +4,7 @@ import type { AssistantMessage } from '@mariozechner/pi-ai';
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
+import { thinkingBudgetsFor } from './thinking-budget';
 import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, WebActivity } from './types';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import { buildContext, buildSteeringMessage } from './context';
@@ -78,10 +79,16 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     initialState: { model, messages: buildContext(messages, config), systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
     getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream(streamFn),
     transport: 'sse', maxRetryDelayMs: 5000,
+    // Keep reasoning from eating the whole reply window; document writes need the tokens.
+    thinkingBudgets: thinkingBudgetsFor(config.maxOutput),
     // Match OpenStudio: serialize model tool calls, while each fetch batches four pages.
     // Parallel four-page calls otherwise overflow the account's four-request cap.
     toolExecution: 'sequential',
   });
+  // A truncated reply carries no text and no usable tool call, so retrying it with less
+  // thinking and a smaller chunk is strictly better than surfacing the failure to the user.
+  const MAX_OUTPUT_RETRIES = 2;
+  let outputRetries = 0;
   let stopped = false;
   let timedOut = false;
   let durationExceeded = false;
@@ -94,6 +101,38 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     return durationExceeded ? '本轮生成时间过长，已保留收到的内容。'
       : '响应超时：服务商长时间未返回新内容。已生成内容已保留。';
   }
+
+  function outputRetryDirective(attempt: number): string {
+    return [
+      '[系统提示] 上一轮回复在输出长度上限处被截断，没有产生正文或完整的工具调用，这次尝试已丢弃。',
+      attempt === 1
+        ? '请立刻继续原任务：不要重复分析，不要输出长篇思考，直接调用 file 工具，并把这一批缩小到 1 个块（PPT 1-2 页、Word 1 个小节、表格不超过 20 行，且最多 20 条命令）。'
+        : '请把范围再缩小一半：只完成剩余内容的第一小块，直接调用 file 工具，不要写解释。',
+      '如果已经开了草稿，先用 list 找回草稿再继续，不要重建整个文档。',
+    ].join('\n');
+  }
+
+  /** Only a reply with no visible text is unusable; a truncated answer keeps what it wrote. */
+  function shouldRetryTruncatedReply(): boolean {
+    if (outputRetries >= MAX_OUTPUT_RETRIES) return false;
+    if (finalMessage?.stopReason !== 'length') return false;
+    return !finalMessage.content.some((block) => block.type === 'text' && block.text.trim());
+  }
+
+  function retryTruncatedReply() {
+    outputRetries += 1;
+    // Drop the truncated assistant message: it has no text and would make `continue()`
+    // illegal while replaying a partial tool call to the next request.
+    if (agent.state.messages.at(-1)?.role === 'assistant') agent.state.messages = agent.state.messages.slice(0, -1);
+    const level = agent.state.thinkingLevel;
+    agent.state.thinkingLevel = outputRetries > 1 ? 'off'
+      : level === 'high' || level === 'xhigh' ? 'medium'
+        : level === 'medium' ? 'low' : 'off';
+    diagnostics.outputRetry(outputRetries, String(agent.state.thinkingLevel));
+    agent.state.messages = [...agent.state.messages, {
+      role: 'user', content: outputRetryDirective(outputRetries), timestamp: Date.now(),
+    }];
+  }
   let finalMessage: AssistantMessage | undefined;
   let unsupportedTool = false;
   let reasoningActive = false;
@@ -101,9 +140,11 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   // A new assistant message does not reopen steering; only a tool call clears it, because text
   // before a tool is usually a transition rather than the answer.
   let answerStarted = false;
-  // A tool-using run produces several assistant messages. Keep the visible answer cumulative
-  // instead of letting each new message erase the text that introduced its tool call.
-  const contentTurns: string[] = [];
+  // A tool-using run produces several assistant messages. Text in a message that also calls a
+  // tool is a transition ("let me check…"), not part of the answer: the next message overwrites
+  // it instead of letting every preamble pile up in the final reply. Messages without a tool
+  // call are answers, so a supplement that legitimately continues the reply stays cumulative.
+  const contentTurns: { text: string; answer: boolean }[] = [];
   const reasoningTurns: string[] = [];
   let activities: WebActivity[] = [];
   let process: ProcessActivity[] = [];
@@ -114,10 +155,29 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     if (target.length) target[target.length - 1] = value;
     else target.push(value);
   }
+  function setLastContent(value: string) {
+    const last = contentTurns.at(-1);
+    if (last) last.text = value;
+    else contentTurns.push({ text: value, answer: false });
+  }
+  /** Answers stay joined; the newest transition text is only a draft until replaced. */
+  function visibleContent(): string {
+    const answers: string[] = [];
+    let draft = '';
+    for (const turn of contentTurns) {
+      if (!turn.answer) {
+        if (turn.text) draft = turn.text;
+        continue;
+      }
+      if (turn.text) answers.push(turn.text);
+      draft = '';
+    }
+    return [...answers, ...(draft ? [draft] : [])].join('\n\n');
+  }
   function emit() {
     onUpdate({
       reasoningActive,
-      content: contentTurns.filter(Boolean).join('\n\n'),
+      content: visibleContent(),
       reasoning: reasoningTurns.filter(Boolean).join('\n\n'),
       activities,
       process,
@@ -180,7 +240,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       const message = event.message;
       if (event.type === 'message_start') {
         assistantIndex++;
-        contentTurns.push('');
+        contentTurns.push({ text: '', answer: false });
         reasoningTurns.push('');
       }
       if (event.type === 'message_update') {
@@ -209,8 +269,13 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         };
         process = previous ? process.map((item) => item.kind === 'thinking' && item.id === id ? next : item) : [...process, next];
       });
-      setLast(contentTurns, message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''));
+      setLastContent(message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''));
       setLast(reasoningTurns, message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join(''));
+      if (event.type === 'message_end') {
+        // A message that requested a tool is a transition; only a tool-free message is an answer.
+        const lastContent = contentTurns.at(-1);
+        if (lastContent) lastContent.answer = !message.content.some((block) => block.type === 'toolCall');
+      }
       emit();
       if (event.type === 'message_end') {
         finalMessage = message;
@@ -241,10 +306,13 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       try {
         await agent.continue();
         // A steer can land while the loop is deciding to stop. Continue from the queued
-        // message instead of dropping it or making the caller start a second run.
+        // message instead of dropping it or making the caller start a second run. A reply
+        // cut off before its body is treated the same way, with less thinking and a
+        // smaller chunk, because the user would otherwise just see an error.
         while (!stopped && !timedOut && !unsupportedTool
           && finalMessage?.stopReason !== 'error' && finalMessage?.stopReason !== 'aborted'
-          && agent.hasQueuedMessages()) {
+          && (agent.hasQueuedMessages() || shouldRetryTruncatedReply())) {
+          if (!agent.hasQueuedMessages()) retryTruncatedReply();
           await agent.continue();
         }
         if (timedOut) return diagnostics.finish({ status: 'error', error: timeoutError() }, durationExceeded ? 'duration_timeout' : 'idle_timeout');
@@ -255,7 +323,9 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         const hasText = finalMessage.content.some((block) => block.type === 'text' && block.text.trim());
         if (finalMessage.stopReason === 'length') return diagnostics.finish(hasText
           ? { status: 'complete', error: '已达到最大输出长度，可继续追问。' }
-          : { status: 'error', error: '已达到最大输出长度，但尚未生成回答正文。请调大模型的最大输出或降低思考深度后重试。' }, 'output_limit');
+          : { status: 'error', error: outputRetries
+            ? `已达到最大输出长度，但尚未生成回答正文。已自动降低思考并拆分重试 ${outputRetries} 次仍未成功：请把模型设置里的「最大输出」调到 8192 以上，或把思考强度调到低/关闭后重试。`
+            : '已达到最大输出长度，但尚未生成回答正文。请调大模型的最大输出或降低思考深度后重试。' }, 'output_limit');
         if (!hasText) return diagnostics.finish({ status: 'error', error: finalMessage.content.some((block) => block.type === 'thinking')
           ? '模型仅返回了思考内容，没有回答正文。已保留思考和工具记录。'
           : '模型本次回复没有回答正文。已保留之前收到的内容和工具记录。' }, 'no_final_text');

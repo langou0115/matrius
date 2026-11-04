@@ -74,7 +74,7 @@ export const ConversationSelect = memo(function ConversationSelect({ title, acti
       : status === 'running'
         ? <span className="conversation-status-indicator conversation-spinner" role="status" aria-label="正在生成回复" />
         : status === 'completed'
-          ? <span className="conversation-status-indicator conversation-completed-indicator" role="img" aria-label="回复已完成，尚未查看"><Icon name="check" size={15} /></span>
+          ? <span className="conversation-status-indicator conversation-completed-indicator" role="img" aria-label="回复已完成，尚未查看" />
           : null}
   </button>;
 });

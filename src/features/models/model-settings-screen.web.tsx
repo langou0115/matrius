@@ -20,7 +20,7 @@ function newProvider(): ProviderForm {
 }
 
 function newModel(): ProviderModelConfig {
-  return { id: createId('model'), name: '', modelId: '', supportsImage: false, contextWindow: 128000, maxOutput: 4096 };
+  return { id: createId('model'), name: '', modelId: '', supportsImage: false, contextWindow: 128000, maxOutput: 16384 };
 }
 
 function errorMessage(reason: unknown) {
@@ -120,7 +120,7 @@ export default function ModelSettingsScreen() {
     setCatalogError(null);
     try {
       await models.saveModel(provider.id, {
-        id: createId('model'), name: item.name, modelId: item.id, supportsImage: false, contextWindow: 128000, maxOutput: 4096,
+        id: createId('model'), name: item.name, modelId: item.id, supportsImage: false, contextWindow: 128000, maxOutput: 16384,
       });
     } catch (reason) {
       setCatalogError(errorMessage(reason));
@@ -238,7 +238,7 @@ export default function ModelSettingsScreen() {
         <fieldset disabled={disabled}>
           <label className="model-form-field">显示名称<input className="text-field" value={modelForm.name} onChange={(event) => setModelForm({ ...modelForm, name: event.target.value })} placeholder="例如：日常对话" required maxLength={100} /></label>
           <label className="model-form-field">模型 ID<input className="text-field" value={modelForm.modelId} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} placeholder="服务商返回的准确模型 ID" required autoCapitalize="none" spellCheck={false} /></label>
-          <label className="model-key-toggle model-image-toggle"><input className="model-checkbox-input" type="checkbox" checked={modelForm.supportsImage} onChange={(event) => setModelForm({ ...modelForm, supportsImage: event.target.checked })} /><span className="model-checkbox" aria-hidden="true" /><span className="model-toggle-copy"><strong>支持图片输入</strong><small>仅在服务商和该模型本身支持视觉输入时开启。</small></span></label>
+          <div className="model-key-toggle model-image-toggle"><span className="model-toggle-copy"><strong>支持图片输入</strong><small>仅在服务商和该模型本身支持视觉输入时开启。</small></span><label className="model-switch-label"><input className="model-checkbox-input" type="checkbox" checked={modelForm.supportsImage} onChange={(event) => setModelForm({ ...modelForm, supportsImage: event.target.checked })} aria-label="支持图片输入" /><span className="toggle-switch" aria-hidden="true" /></label></div>
           <div className="model-form-columns">
             <label className="model-form-field">上下文窗口<input className="text-field" type="number" min={512} step={1} value={modelForm.contextWindow} onChange={(event) => setModelForm({ ...modelForm, contextWindow: Number(event.target.value) })} required /></label>
             <label className="model-form-field">最大输出 tokens<input className="text-field" type="number" min={1} step={1} value={modelForm.maxOutput} onChange={(event) => setModelForm({ ...modelForm, maxOutput: Number(event.target.value) })} required /></label>

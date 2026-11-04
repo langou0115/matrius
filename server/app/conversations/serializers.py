@@ -52,6 +52,7 @@ def message_out(
         "feedback": message.feedback,
         "reasoning": message.reasoning,
         "activities": message.activities,
+        "process": message.process,
         "thinkingMs": message.thinking_ms,
         "status": message.status,
         "error": message.error,

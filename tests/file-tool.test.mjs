@@ -9,6 +9,7 @@ import {
   getFileActivityEnd,
   getFileActivityStart,
   normalizeFile,
+  salvageTruncatedArguments,
 } from '../src/core/agent/file-tools.ts';
 
 const file = (id, filename = `${id}.pdf`, size = 1024, revision = 1) => ({
@@ -78,33 +79,48 @@ test('saved files enter the generated list and drafts stay available only', asyn
   assert.deepEqual(collectGeneratedFiles(draftResult), []);
 });
 
-test('call, write and save budgets are enforced per reply', async () => {
+test('delete removes a file or draft from the available lists and reports its name', async () => {
+  const { tool, calls } = harness([
+    { operation: 'create', file: file('saved-1', 'old.pdf') },
+    { operation: 'delete', fileId: 'saved-1', filename: 'old.pdf' },
+  ]);
+  await tool.tool.execute('create-1', { operation: 'create', format: 'pdf', save: true }, undefined);
+  assert.deepEqual(tool.getGeneratedFiles().map((item) => item.id), ['saved-1']);
+  assert.ok(JSON.stringify(tool.tool.parameters.properties.operation).includes('delete'));
+
+  const result = await tool.tool.execute('delete-1', { operation: 'delete', fileId: 'saved-1' }, undefined);
+  assert.deepEqual(calls[1].body, { operation: 'delete', fileId: 'saved-1', conversationId: 'conv-1' });
+  assert.match(result.content[0].text, /old\.pdf/);
+  assert.equal(result.details.operation, 'delete');
+  assert.deepEqual(tool.getAvailableFiles(), []);
+  assert.deepEqual(tool.getGeneratedFiles(), []);
+
+  const drafts = harness([
+    { operation: 'delete', fileId: 'draft:1', filename: 'scratch.pdf', draft: true },
+  ], { availableFiles: [draft()] });
+  const removed = await drafts.tool.tool.execute('delete-2', { operation: 'delete', fileId: 'draft:1' }, undefined);
+  assert.match(removed.content[0].text, /Deleted draft: scratch\.pdf/);
+  assert.deepEqual(drafts.tool.getAvailableFiles(), []);
+});
+
+test('a reply may make as many file calls, writes and saves as the task needs', async () => {
   const calls = harness([{ operation: 'list', files: [] }]);
-  for (let index = 0; index < 12; index += 1) {
-    await calls.tool.tool.execute(`list-${index}`, { operation: 'list' }, undefined);
+  for (let index = 0; index < 30; index += 1) {
+    const result = await calls.tool.tool.execute(`list-${index}`, { operation: 'list' }, undefined);
+    assert.doesNotMatch(result.content[0].text, /budget|次数已达上限/i);
   }
-  await assert.rejects(
-    calls.tool.tool.execute('list-13', { operation: 'list' }, undefined),
-    /次数已达上限/,
-  );
 
   const writes = harness([{ operation: 'create', draft: draft() }]);
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 20; index += 1) {
     await writes.tool.tool.execute(`write-${index}`, { operation: 'create', format: 'pdf' }, undefined);
   }
-  await assert.rejects(
-    writes.tool.tool.execute('write-9', { operation: 'create', format: 'pdf' }, undefined),
-    /写入次数已达上限/,
-  );
 
   const saves = harness([{ operation: 'create', file: file('f') }]);
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 10; index += 1) {
     await saves.tool.tool.execute(`save-${index}`, { operation: 'create', format: 'pdf', save: true }, undefined);
   }
-  await assert.rejects(
-    saves.tool.tool.execute('save-4', { operation: 'create', format: 'pdf', save: true }, undefined),
-    /最多保存 3 个文件/,
-  );
+
+  assert.doesNotMatch(calls.tool.tool.description, /at most \d+ (calls|writes|saves)/i);
 });
 
 test('tool errors are human-readable and AbortError keeps its meaning', async () => {
@@ -188,4 +204,66 @@ test('file metadata and the system prompt stay conservative', () => {
   assert.match(prompt, /绝不写出 fileId/);
   assert.match(prompt, /不可信资料/);
   assert.match(prompt, /replace_page/);
+});
+
+test('one write call is capped so it can finish inside the model output window', () => {
+  const { tool } = harness([{ operation: 'list', files: [] }]);
+  const schema = tool.tool.parameters;
+  assert.equal(schema.properties.commands.maxItems, 20);
+  assert.equal(schema.properties.pdfChanges.maxItems, 20);
+  const props = schema.properties.commands.items.anyOf?.[0]?.properties?.props;
+  const textLimits = JSON.stringify(props);
+  assert.match(textLimits, /"maxLength":6000/);
+});
+
+test('document guidance splits large documents into bounded, resumable batches', () => {
+  const prompt = fileToolsSystemPrompt();
+  assert.match(prompt, /20 条命令/);
+  assert.match(prompt, /6000/);
+  assert.match(prompt, /5-10 行大纲/);
+  assert.match(prompt, /PPT 1-2 页/);
+  assert.match(prompt, /list 找回草稿/);
+  assert.match(prompt, /"type":"markdown"/);
+  assert.match(prompt, /type:"textbox"/);
+  assert.match(prompt, /思考要短/);
+});
+
+test('a truncated batch runs its complete prefix and tells the model where to resume', async () => {
+  const { tool, calls } = harness([{ operation: 'edit', draft: draft('draft:1') }]);
+  const prepared = tool.tool.prepareArguments({
+    operation: 'edit',
+    fileId: 'draft:1',
+    commands: [
+      { command: 'add', parent: '/body', type: 'paragraph', props: { text: '第一段' } },
+      { command: 'add', parent: '/body' },
+    ],
+  });
+
+  assert.equal(prepared.commands.length, 1);
+  const result = await tool.tool.execute('call-1', prepared, undefined);
+  assert.equal(calls[0].body.commands.length, 1);
+  assert.match(result.content[0].text, /前 1 条/);
+  assert.match(result.content[0].text, /第 2 条/);
+  assert.match(result.details.warning, /截断/);
+});
+
+test('salvage keeps complete batches and unusable batches untouched', () => {
+  const complete = { operation: 'edit', fileId: 'draft:1', commands: [
+    { command: 'add', parent: '/body', type: 'paragraph', props: { text: 'a' } },
+    { command: 'set', path: '/body/p[1]', props: { text: 'b' } },
+  ] };
+  assert.equal(salvageTruncatedArguments(complete), null);
+
+  const unusable = { operation: 'edit', fileId: 'draft:1', commands: [{ command: 'add' }] };
+  assert.equal(salvageTruncatedArguments(unusable), null);
+
+  const pdf = salvageTruncatedArguments({
+    operation: 'edit', fileId: 'draft:1', pdfChanges: [
+      { operation: 'draw_text', page: 1, text: '标题' },
+      { operation: 'draw_text', page: 2 },
+    ],
+  });
+  assert.equal(pdf.kept, 1);
+  assert.equal(pdf.dropped, 1);
+  assert.equal(pdf.args.pdfChanges.length, 1);
 });

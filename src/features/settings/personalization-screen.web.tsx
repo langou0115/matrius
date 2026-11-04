@@ -51,7 +51,7 @@ function WebToolsSection() {
         {busy && <LoaderCircle className="login-spinner account-row-spinner" size={16} strokeWidth={2} aria-hidden="true" />}
         <input className="model-checkbox-input" type="checkbox" checked={enabled} disabled={busy}
           onChange={(event) => void setEnabled(event.target.checked)} />
-        <span className="account-switch" aria-hidden="true" />
+        <span className="toggle-switch" aria-hidden="true" />
       </label>
     </div>
     {error && <p className="account-message is-error" role="alert">

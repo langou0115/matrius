@@ -26,6 +26,74 @@ test('collapsed thinking stays lightweight and the waiting header remains clicka
 
 });
 
+test('the live thinking segment renders as plain text until it stops streaming', () => {
+  const step = { id: 'thinking:1:0', kind: 'thinking', content: '**流式思考**', status: 'running' };
+  const live = renderToStaticMarkup(createElement(ReasoningBlock, { state: 'running', process: [step], open: true }));
+  // 50 ms batches re-parse Markdown around unclosed fences and reflow the tall block, which read
+  // as flicker while the transcript is pinned to the bottom; the live text stays plain.
+  assert.ok(live.includes('thinking-text'));
+  assert.ok(live.includes('**流式思考**'), 'live text is shown verbatim, not as parsed Markdown');
+  assert.ok(!live.includes('message-markdown'));
+});
+
+test('streamed markdown commits on a short throttle and the final text renders immediately', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const render = (content, streaming) => act(async () => { root.render(createElement(MessageContent, { content, streaming })); });
+  try {
+    await render('第一段', true);
+    assert.ok(document.body.textContent.includes('第一段'));
+    await render('第一段 继续', true);
+    // The update may be held for up to ~120 ms, but it must commit without another prop change.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+    assert.ok(document.body.textContent.includes('继续'), 'the throttled update still lands');
+    // Once the reply completes, the final text renders immediately.
+    await render('第一段 继续 结束', false);
+    assert.ok(document.body.textContent.includes('结束'));
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('a replaced body animates once instead of mutating the previous transition text', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const render = (content, streaming) => act(async () => { root.render(createElement(MessageContent, { content, streaming })); });
+  const body = () => document.querySelector('.message-markdown');
+  try {
+    await render('先搜索官方文档。', true);
+    assert.equal(body().classList.contains('is-replacing'), false, 'normal streaming is not an animation');
+
+    await render('这是最终回答。', true);
+    assert.equal(body().classList.contains('is-replacing'), true, 'a rewritten body is animated');
+    assert.ok(!document.body.textContent.includes('先搜索官方文档。'));
+
+    await render('这是最终回答。继续', true);
+    assert.equal(body().classList.contains('is-replacing'), true,
+      'ordinary growth after the swap neither restarts nor cancels the animation');
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 360)); });
+    assert.equal(body().classList.contains('is-replacing'), false, 'the class is released after the animation');
+    assert.ok(document.body.textContent.includes('这是最终回答。继续'));
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
 test('stopping is neutral and historical failures without a retry callback have no retry button', () => {
   for (const status of ['stopped', 'error']) {
     const { document } = parseHTML(renderToStaticMarkup(createElement(ReplyStatus, { message: { status } })));
@@ -116,13 +184,15 @@ test('thinking disclosure keeps its open state and content across tool, answer a
       await render({ state, reasoning: '已收到的思考', activities: [{ id: 'search', kind: 'search', query: '资料', status: state === 'running' ? 'running' : 'complete', results: [] }] });
       assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
       assert.equal(document.querySelector('.reasoning-label').textContent, '思考过程');
-      // Once a tool step follows it, the thought is a folded row; its text is one click away.
-      assert.equal(document.querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
-      assert.equal(document.querySelector('.thinking-body').hidden, true);
-      await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      // A finished thought stays open while the reply runs and folds once it ends; either way
+      // its text is one click away.
+      const live = state === 'running';
+      assert.equal(document.querySelector('.thinking-toggle').getAttribute('aria-expanded'), String(live));
+      assert.equal(document.querySelector('.thinking-body').hidden, !live);
+      if (!live) await act(async () => { document.querySelector('.thinking-toggle').click(); });
       assert.ok(document.querySelector('.thinking-body').textContent.includes('已收到的思考'));
       assert.equal(document.querySelector('.thinking-body').hidden, false);
-      await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      if (!live) await act(async () => { document.querySelector('.thinking-toggle').click(); });
       assert.equal(document.querySelector('.response-sources'), null);
     }
     await act(async () => { document.querySelector('.reasoning-toggle').click(); });
@@ -135,7 +205,7 @@ test('thinking disclosure keeps its open state and content across tool, answer a
   }
 });
 
-test('only the thought being written stays open and it folds as soon as it stops streaming', async () => {
+test('thoughts stay open while the reply runs and fold once it ends', async () => {
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window;
@@ -144,7 +214,9 @@ test('only the thought being written stays open and it folds as soon as it stops
   const root = createRoot(document.getElementById('root'));
   const thought = (status, extra = {}) => ({ id: 't1', kind: 'thinking', content: '先想一下', status, ...extra });
   const search = { id: 's1', kind: 'search', status: 'complete', query: '资料', results: [] };
-  const render = (process) => act(async () => { root.render(createElement(ReasoningBlock, { open: true, state: 'running', process })); });
+  const render = (process, state = 'running') => act(async () => {
+    root.render(createElement(ReasoningBlock, { open: true, state, process }));
+  });
   const rows = () => [...document.querySelectorAll('.thinking-toggle')];
   try {
     // The newest step is the one being produced, so it reads inline while it streams.
@@ -153,32 +225,27 @@ test('only the thought being written stays open and it folds as soon as it stops
     assert.equal(document.querySelector('.thinking-body').hidden, false);
     assert.equal(rows()[0].textContent, '思考', 'an open thought repeats nothing above its own text');
 
-    // It stops streaming, so it folds on its own: only a thought that is still being written
-    // stays open by default. The opened text is one click away again.
+    // It stops streaming but the reply continues: keeping it open avoids the shrink/grow at every
+    // segment boundary, which the pinned transcript showed as content jumping up and down.
     await render([thought('complete')]);
-    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
-    assert.equal(document.querySelector('.thinking-body').hidden, true);
-    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'true');
+    assert.equal(document.querySelector('.thinking-body').hidden, false);
+    assert.equal(rows()[0].querySelector('.thinking-preview'), null);
 
-    // A following step does not reopen it: the finished thought stays a row with icon, 思考, and
-    // the opening of that thought. No state or timing column.
-    await render([thought('complete'), { ...search, status: 'running', results: [] }]);
-    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
-    assert.equal(document.querySelector('.thinking-body').hidden, true);
-    assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'true');
-    assert.equal(rows()[0].querySelector('.thinking-label').textContent, '思考');
-    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
-    assert.equal(document.querySelector('.thinking-state, .thinking-time'), null);
-
-    // A thought the reader opens again is not folded a second time by later steps.
+    // The reader can still fold it by hand, and that choice holds for the rest of the run.
     await act(async () => { rows()[0].click(); });
-    assert.equal(document.querySelector('.thinking-preview'), null, 'an open row drops the preview');
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
+    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
     await render([thought('complete'), search, thought('running', { id: 't2', content: '再想一下' })]);
-    assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['true', 'true']);
+    assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['false', 'true']);
+
+    // The reply ends, so the transcript folds back into one row per segment.
+    await render([thought('complete'), search, thought('complete', { id: 't2', content: '再想一下' })], 'complete');
+    assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['false', 'false']);
+    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
 
     // The snippet is one line of prose: fences, links and markdown markers do not reach the row.
-    await render([thought('complete', { content: '**结论**：先看 [官方文档](https://example.com/a)\n\n```ts\nconst x = 1;\n```\n后面还有内容' }), search]);
-    await act(async () => { rows()[0].click(); });
+    await render([thought('complete', { content: '**结论**：先看 [官方文档](https://example.com/a)\n\n```ts\nconst x = 1;\n```\n后面还有内容' }), search], 'complete');
     assert.match(rows()[0].querySelector('.thinking-preview').textContent, /^结论：先看 官方文档/);
     assert.ok(!rows()[0].querySelector('.thinking-preview').textContent.includes('```'));
   } finally {
@@ -196,13 +263,28 @@ test('a long transcript closes from its own end instead of the header far above'
   globalThis.document = document;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
+  // linkedom has no layout: a readable transcript height is stubbed so the footer control can
+  // prove it follows content height instead of a block count.
+  let stepsHeight = 120;
+  Object.defineProperty(window.HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get() { return this.classList?.contains('reasoning-steps') ? stepsHeight : 0; },
+  });
   const render = (props) => act(async () => { root.render(createElement(ReasoningBlock, props)); });
   try {
     await render({ state: 'complete', reasoning: '很长的思考' });
     assert.equal(document.querySelector('.reasoning-collapse'), null, 'a closed block has nothing to close');
 
     await act(async () => { document.querySelector('.reasoning-toggle').click(); });
+    assert.equal(document.querySelector('.reasoning-collapse'), null,
+      'a short transcript keeps the fold control out of the way');
+
+    stepsHeight = 600;
+    // The height observer is unavailable in linkedom; reopening re-measures the transcript.
+    await act(async () => { document.querySelector('.reasoning-toggle').click(); });
+    await act(async () => { document.querySelector('.reasoning-toggle').click(); });
     const collapse = document.querySelector('.reasoning-collapse');
+    assert.ok(collapse, 'a tall transcript gets a footer control');
     assert.equal(collapse.parentElement.className, 'reasoning-body');
     assert.equal(collapse.parentElement.lastElementChild, collapse, 'the control follows the transcript');
     assert.equal(collapse.textContent, '收起思考过程');
@@ -266,10 +348,11 @@ test('the process renders separate thinking segments around search and fetch in 
   })));
   const steps = [...document.querySelector('.reasoning-steps').children];
   assert.equal(steps.length, 4);
-  // The finished thought folded itself away; the one still being written is inline.
-  assert.equal(steps[0].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
-  assert.equal(steps[0].querySelector('.thinking-preview').textContent, '先搜索');
-  assert.equal(steps[0].querySelector('.thinking-body').hidden, true);
+  // While the reply runs, a finished thought keeps its text inline; the whole transcript folds
+  // only when the run ends, so the block never shrinks and grows again mid-stream.
+  assert.equal(steps[0].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
+  assert.ok(steps[0].querySelector('.thinking-body').textContent.includes('先搜索'));
+  assert.equal(steps[0].querySelector('.thinking-preview'), null);
   assert.ok(steps[1].querySelector('.web-activity'));
   assert.ok(steps[2].querySelector('.web-activity'));
   assert.equal(steps[3].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');

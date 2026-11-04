@@ -114,7 +114,7 @@ test('diagnostic history bounds both runs and per-run events and supports cleari
   assert.deepEqual(JSON.parse(replyDiagnostics.export()).runs, []);
 });
 
-test('a tool round followed by thinking-only truncation preserves earlier progress and records the failing round', async () => {
+test('a thinking-only truncation after tool use is retried and keeps earlier progress', async () => {
   replyDiagnostics.clear();
   let calls = 0;
   const updates = [];
@@ -126,15 +126,41 @@ test('a tool round followed by thinking-only truncation preserves earlier progre
         execute: async () => ({ content: [{ type: 'text', text: 'PRIVATE_TOOL_RESULT' }], details: {} }) }],
       streamFn: () => ++calls === 1
         ? assistant([{ type: 'text', text: '正在创建。' }, { type: 'toolCall', id: 'test_call', name: 'file', arguments: {} }], 'toolUse')
-        : assistant([{ type: 'thinking', thinking: 'PRIVATE_THINKING' }], 'length'),
+        : calls === 2
+          ? assistant([{ type: 'thinking', thinking: 'PRIVATE_THINKING' }], 'length')
+          : assistant([{ type: 'text', text: '补完了。' }], 'stop'),
+    }).start();
+    assert.equal(result.status, 'complete');
+    assert.equal(calls, 3);
+    assert.equal(updates.at(-1).content, '补完了。', 'the tool transition is replaced by the final answer');
+    assert.ok(updates.some((update) => update.content.includes('正在创建。')), 'the transition stays visible while the tool runs');
+    const entries = JSON.parse(replyDiagnostics.export()).runs[0].entries;
+    assert.deepEqual(entries.filter((entry) => entry.event === 'message_end').map((entry) => entry.stopReason), ['toolUse', 'length', 'stop']);
+    assert.equal(entries.find((entry) => entry.event === 'tool_end').isError, false);
+    const retry = entries.find((entry) => entry.event === 'output_retry');
+    assert.equal(retry.attempt, 1);
+    assert.equal(retry.thinkingLevel, 'off');
+    assert.equal(entries.at(-1).rounds, 3);
+    assert(!replyDiagnostics.export().includes('PRIVATE_'));
+  } finally { console.info = original; }
+});
+
+test('an always-truncated reply gives up with actionable budget advice after bounded retries', async () => {
+  replyDiagnostics.clear();
+  let calls = 0;
+  const original = console.info;
+  console.info = () => {};
+  try {
+    const result = await createReplyRun({ config, apiKey: 'PRIVATE_KEY', messages, onUpdate() {},
+      streamFn: () => { calls++; return assistant([{ type: 'thinking', thinking: 'PRIVATE_THINKING' }], 'length'); },
     }).start();
     assert.equal(result.status, 'error');
-    assert.match(result.error, /最大输出长度/);
-    assert.equal(updates.at(-1).content, '正在创建。');
+    assert.equal(calls, 3, 'one attempt plus two bounded retries');
+    assert.match(result.error, /8192/);
+    assert.match(result.error, /思考强度/);
     const entries = JSON.parse(replyDiagnostics.export()).runs[0].entries;
-    assert.deepEqual(entries.filter((entry) => entry.event === 'message_end').map((entry) => entry.stopReason), ['toolUse', 'length']);
-    assert.equal(entries.find((entry) => entry.event === 'tool_end').isError, false);
-    assert.equal(entries.at(-1).rounds, 2);
+    assert.deepEqual(entries.filter((entry) => entry.event === 'output_retry').map((entry) => entry.attempt), [1, 2]);
+    assert.equal(entries.at(-1).outcome, 'output_limit');
     assert(!replyDiagnostics.export().includes('PRIVATE_'));
   } finally { console.info = original; }
 });
@@ -181,4 +207,38 @@ test('real provider transports report HTTP metadata and effective payload limits
       assert(!replyDiagnostics.export().includes('PRIVATE_'));
     } finally { globalThis.fetch = originalFetch; console.info = originalInfo; }
   });
+});
+
+test('a high thinking level is capped so the visible answer keeps at least its floor', async () => {
+  replyDiagnostics.clear();
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  console.info = () => {};
+  const events = [
+    { type: 'message_start', message: { id: 'msg_test', type: 'message', role: 'assistant', content: [], model: 'test-model', usage: { input_tokens: 5, output_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'PRIVATE_ANSWER' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+    { type: 'message_stop' },
+  ];
+  let payload;
+  globalThis.fetch = async (_url, init) => {
+    payload = JSON.parse(init.body);
+    const source = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+    return new Response(source, { headers: { 'content-type': 'text/event-stream' } });
+  };
+  try {
+    const result = await createReplyRun({
+      config: { ...config, protocol: 'message', baseUrl: 'https://test.invalid', maxOutput: 16384 },
+      apiKey: 'PRIVATE_KEY', messages, thinkingEffort: 'high', onUpdate() {},
+    }).start();
+    assert.equal(result.status, 'complete');
+    // 16384 requested + 8192 thinking would overflow the 16384 cap, so pi-ai must not let
+    // the thinking budget collapse the answer window to ~1024 tokens again.
+    assert.equal(payload.max_tokens, 16384);
+    assert.equal(payload.thinking?.budget_tokens, 8192);
+    assert.ok(payload.max_tokens - payload.thinking.budget_tokens >= 4096);
+    assert(!replyDiagnostics.export().includes('PRIVATE_'));
+  } finally { globalThis.fetch = originalFetch; console.info = originalInfo; }
 });

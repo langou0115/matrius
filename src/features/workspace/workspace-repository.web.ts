@@ -70,7 +70,7 @@ export function readActivities(value: unknown): WebActivity[] | undefined {
   }
   return activities.length ? activities : undefined;
 }
-function readProcess(value: unknown): ProcessActivity[] | undefined {
+export function readProcess(value: unknown): ProcessActivity[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const process: ProcessActivity[] = [];
   const ids = new Set<string>();

@@ -1,7 +1,7 @@
 import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
 import type { Conversation, Message } from '@/features/chat/chat-state';
-import { readActivities, readFileIds, readMessageFiles } from '@/features/workspace/workspace-repository.web';
+import { readActivities, readFileIds, readMessageFiles, readProcess } from '@/features/workspace/workspace-repository.web';
 import type { PersonalizationPreferences } from '@/features/settings/personalization';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { readLocalValue, writeLocalValue } from '@/core/database/browser-store.web';
@@ -46,6 +46,7 @@ type RemoteMessage = {
   feedback?: unknown;
   reasoning?: unknown;
   activities?: unknown;
+  process?: unknown;
   thinkingMs?: unknown;
   status?: unknown;
   error?: unknown;
@@ -61,6 +62,7 @@ type ImportMessagePayload = {
   feedback?: 'good' | 'bad';
   reasoning?: string;
   activities?: unknown[];
+  process?: Message['process'];
   thinkingMs?: number;
   status?: 'complete' | 'stopped' | 'error';
   error?: string;
@@ -128,6 +130,7 @@ function toLocalMessage(value: RemoteMessage): Message | null {
   const status = value.status === 'complete' || value.status === 'stopped' || value.status === 'error'
     ? value.status : undefined;
   const activities = value.role === 'assistant' ? readActivities(value.activities) : undefined;
+  const process = value.role === 'assistant' ? readProcess(value.process) : undefined;
   const fileIds = readFileIds(value.fileIds);
   const files = readMessageFiles(value.files);
   return {
@@ -140,6 +143,7 @@ function toLocalMessage(value: RemoteMessage): Message | null {
     ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
     ...(activities ? { activities } : {}),
+    ...(process ? { process } : {}),
     ...(typeof value.thinkingMs === 'number' && Number.isFinite(value.thinkingMs) ? { thinkingMs: value.thinkingMs } : {}),
     ...(status ? { status } : {}),
     ...(typeof value.error === 'string' ? { error: value.error } : {}),
@@ -154,8 +158,9 @@ function toImportMessage(message: Message): ImportMessagePayload {
     content: message.content,
     ...(message.quote ? { quote: message.quote } : {}),
     ...(message.role === 'assistant' && message.feedback ? { feedback: message.feedback } : {}),
-    ...(message.reasoning ? { reasoning: message.reasoning } : {}),
+    ...(message.role === 'assistant' && message.reasoning ? { reasoning: message.reasoning } : {}),
     ...(activities ? { activities } : {}),
+    ...(message.role === 'assistant' && message.process ? { process: message.process } : {}),
     ...(typeof message.thinkingMs === 'number' ? { thinkingMs: message.thinkingMs } : {}),
     ...(message.status && message.status !== 'streaming' ? { status: message.status } : {}),
     ...(message.error ? { error: message.error } : {}),

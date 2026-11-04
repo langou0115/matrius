@@ -28,8 +28,8 @@ class WebSearchResult(BaseModel):
 class WebActivity(BaseModel):
     """A web search, page read or document operation made while composing a reply.
 
-    Shape mirrors the client's `WebActivity`; `process` stays local-only and is rebuilt
-    from `reasoning` plus these entries when the history is opened.
+    Shape mirrors the client's `WebActivity`. The full ordered `process` (thinking segments
+    and tools interleaved) travels separately so history keeps the real sequence.
     """
 
     id: str = Field(min_length=1, max_length=128)
@@ -55,6 +55,30 @@ class WebActivity(BaseModel):
 
 def activities_payload(values: list[WebActivity] | None) -> list[dict[str, Any]] | None:
     return [value.model_dump(exclude_none=True, exclude_defaults=True) for value in values] if values else None
+
+
+class ThinkingActivity(BaseModel):
+    """One reasoning segment; display-only and never sent back to the model."""
+
+    id: str = Field(min_length=1, max_length=128)
+    kind: Literal["thinking"]
+    content: str = Field(default="", max_length=1_000_000)
+    status: Literal["running", "complete", "stopped", "error"]
+    startedAt: int | None = Field(default=None, ge=0)
+    endedAt: int | None = Field(default=None, ge=0)
+
+
+ProcessActivity = Annotated[ThinkingActivity | WebActivity, Field(discriminator="kind")]
+
+
+def process_payload(values: list[ProcessActivity] | None) -> list[dict[str, Any]] | None:
+    """Keep the event order: thinking segments and tool calls are interleaved on purpose."""
+    if not values:
+        return None
+    return [
+        value.model_dump(exclude_none=True, exclude_defaults=isinstance(value, WebActivity))
+        for value in values
+    ]
 
 
 class ReadMarker(BaseModel):
@@ -109,6 +133,7 @@ class MessageCreate(BaseModel):
     feedback: Literal["good", "bad"] | None = None
     fileIds: list[uuid.UUID] = Field(default_factory=list)
     activities: list[WebActivity] = Field(default_factory=list, max_length=50)
+    process: list[ProcessActivity] | None = Field(default=None, max_length=100)
 
 
 class MessagePatch(BaseModel):
@@ -122,3 +147,4 @@ class MessagePatch(BaseModel):
     feedback: Literal["good", "bad"] | None = None
     fileIds: list[uuid.UUID] | None = Field(default=None, max_length=20)
     activities: list[WebActivity] | None = Field(default=None, max_length=50)
+    process: list[ProcessActivity] | None = Field(default=None, max_length=100)

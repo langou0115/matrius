@@ -147,6 +147,65 @@ async def test_create_edit_and_save_office_document(client, create_user):
     assert "第一段" in read.json()["text"]
 
 
+async def test_docx_markdown_section_expands_in_one_command(client, create_user):
+    _, headers = await create_user("regular")
+
+    created = await _call(client, headers, operation="create", format="docx", filename="方案.docx")
+    draft = created.json()["draft"]
+
+    edited = await _call(
+        client,
+        headers,
+        operation="edit",
+        fileId=draft["id"],
+        commands=[
+            {
+                "command": "add",
+                "parent": "/body",
+                "type": "markdown",
+                "props": {"markdown": "# 背景\n\n- 第一点\n- 第二点\n"},
+            }
+        ],
+        save=True,
+    )
+    assert edited.status_code == 200, edited.text
+
+    read = await _call(client, headers, operation="read", fileId=edited.json()["file"]["id"])
+    assert read.status_code == 200, read.text
+    text = read.json()["text"]
+    assert "背景" in text
+    assert "第一点" in text
+
+
+async def test_pptx_textbox_accepts_a_body_text_shape(client, create_user):
+    _, headers = await create_user("regular")
+
+    created = await _call(client, headers, operation="create", format="pptx", filename="演示.pptx")
+    draft = created.json()["draft"]
+
+    edited = await _call(
+        client,
+        headers,
+        operation="edit",
+        fileId=draft["id"],
+        commands=[
+            {"command": "add", "parent": "/", "type": "slide"},
+            {
+                "command": "add",
+                "parent": "/slide[1]",
+                "type": "textbox",
+                "props": {"text": "封面标题", "x": "2cm", "y": "2cm", "width": "20cm", "height": "3cm"},
+            },
+        ],
+        save=True,
+    )
+    assert edited.status_code == 200, edited.text
+
+    read = await _call(client, headers, operation="read", fileId=edited.json()["file"]["id"])
+    assert read.status_code == 200, read.text
+    assert "封面标题" in read.json()["text"]
+
+
 async def test_read_and_grep_uploaded_text(client, create_user):
     _, headers = await create_user("regular")
     file = await _upload(client, headers, "notes.txt", b"alpha\nbeta\ngamma\n")
@@ -283,6 +342,7 @@ async def test_validation_rejects_unknown_operations_and_unsafe_paths(client, cr
 
     cases = [
         {"operation": "delete_all"},
+        {"operation": "delete"},
         {"operation": "create"},
         {"operation": "create", "fileId": "draft:abc", "format": "pdf"},
         {"operation": "edit", "fileId": "draft:abc"},
@@ -347,6 +407,35 @@ async def test_missing_and_foreign_files_are_not_found(client, create_user):
 
     listing = (await _call(client, other_headers, operation="list")).json()
     assert listing["files"] == []
+
+
+async def test_delete_removes_library_files_and_drafts(client, create_user):
+    _, headers = await create_user("regular")
+    uploaded = await _upload(client, headers, "obsolete.txt", b"old")
+
+    _, other_headers = await create_user("other")
+    foreign = await _call(client, other_headers, operation="delete", fileId=uploaded["id"])
+    assert foreign.status_code == 404
+
+    deleted = await _call(client, headers, operation="delete", fileId=uploaded["id"])
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {
+        "operation": "delete", "fileId": uploaded["id"], "filename": "obsolete.txt",
+    }
+    assert (await client.get("/api/files", headers=headers)).json()["items"] == []
+    assert (await client.get(f"/api/files/{uploaded['id']}/content", headers=headers)).status_code == 404
+
+    created = await _call(
+        client, headers, operation="create", format="pdf", filename="scratch.pdf"
+    )
+    draft_id = created.json()["draft"]["id"]
+    removed = await _call(client, headers, operation="delete", fileId=draft_id)
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["draft"] is True
+    assert removed.json()["filename"] == "scratch.pdf"
+    gone = await _call(client, headers, operation="save", fileId=draft_id)
+    assert gone.status_code == 404
+    assert gone.json()["error"]["code"] == "draft_not_found"
 
 
 async def test_drafts_are_private_and_expire_after_save(client, create_user):

@@ -142,7 +142,7 @@ PATCH  /api/messages/{id}
 DELETE /api/messages/{id}?baseRevision=
 ```
 
-- 字段：`role`（`user|assistant`）、`content`、`steering`（用户补充消息）、`quote`、`reasoning`、`activities`（联网搜索/读取步骤，客户端上传前去掉 snippet/engine）、`thinkingMs`、`status`（`complete|stopped|error`）、`error`、`feedback`（`good|bad`）、`fileIds`、服务端 `position`。
+- 字段：`role`（`user|assistant`）、`content`、`steering`（用户补充消息）、`quote`、`reasoning`、`activities`（联网搜索/读取步骤，客户端上传前去掉 snippet/engine）、`process`（完整思考与工具事件顺序，仅用于展示）、`thinkingMs`、`status`（`complete|stopped|error`）、`error`、`feedback`（`good|bad`）、`fileIds`、服务端 `position`。
 - `steering=true` 只用于真正注入当前 run 的用户补充/纠正；服务端只接受用户消息上的该标记。`position` 仍按追加顺序分配，客户端加载时依据该标记把消息显示在被插话的助手回复之前。回复正文已开始后发送的消息作为下一轮普通用户消息保存，不带该标记，位置就在已完成的回复之后。
 - `status=streaming` 返回 422；用户消息固定 `complete`。
 - `position` 在锁定会话行后取 `max(position)+1`，多设备并发追加不会重号。
@@ -269,17 +269,17 @@ POST /api/admin/tools/test
 ```text
 POST /api/tools/file
 {
-  operation: list|read|grep|help|inspect|create|edit|save,
+  operation: list|read|grep|help|inspect|create|edit|save|delete,
   conversationId?, fileId?（UUID 或 draft:<uuid>）, filename?, format?,
   element?, path?, commands?, pdfChanges?, save?, start?, end?, maxChars?,
   pattern?, context?, maxMatches?
 }
 ```
 
-- 仅对所有者为本人的文件可用，并要求账号具备 `files` 功能；响应为 `{ operation, file?, draft?, text?, truncated?, files? }`，`file` 复用 `file_out`。
-- 读类操作（list/read/grep/help/inspect）每账号 60 次/分钟，写类（create/edit/save）20 次/分钟；每账号最多 2 个在途文档操作。
-- 操作级校验在请求模型中完成：`create` 不能带 `fileId`，`edit` 必须提供与格式匹配的 `commands` 或 `pdfChanges`，`save` 只接受草稿，`read`/`grep` 必须有 `fileId`。PDF 拒绝 `commands`，Office 拒绝 `pdfChanges`。
-- Office 属性白名单、文档路径（必须以 `/` 开头，禁止 `..`/NUL/CRLF，≤500 字符）、命令与 PDF 变更均限最多 100 条；不接收 raw XML、任意 CLI 参数、图片导入或外部资源。
+- 仅对所有者为本人的文件可用，并要求账号具备 `files` 功能；响应为 `{ operation, file?, draft?, fileId?, filename?, text?, truncated?, files? }`，`file` 复用 `file_out`。
+- 读类操作（list/read/grep/help/inspect）每账号 60 次/分钟，写类（create/edit/save/delete）20 次/分钟；每账号最多 2 个在途文档操作。
+- 操作级校验在请求模型中完成：`create` 不能带 `fileId`，`edit` 必须提供与格式匹配的 `commands` 或 `pdfChanges`，`save` 只接受草稿，`read`/`grep`/`delete` 必须有 `fileId`。PDF 拒绝 `commands`，Office 拒绝 `pdfChanges`。`delete` 接受资料库文件 UUID 或 `draft:<uuid>`：删除已保存文件时先删对象再删行，历史消息保留文件名和引用。
+- Office 属性白名单、文档路径（必须以 `/` 开头，禁止 `..`/NUL/CRLF，≤500 字符）、命令与 PDF 变更均限最多 100 条；不接收 raw XML、任意 CLI 参数、图片导入或外部资源。`add` 允许 `markdown`（DOCX 展开标题/列表/GFM 表格）与 `textbox`（DOCX/PPTX 浮动文本框）元素，`markdown` 属性只接受内联文本，不接受 `src` 文件路径。
 - Office 操作经 vendored OfficeCLI 子进程执行，不使用 shell，环境变量白名单，超时杀进程组，stdout/stderr 累计超限即终止。PDF 使用 pypdf + reportlab，在 `asyncio.to_thread` 中运行。
 - 单次结果约 30,000 字符并标记 `truncated`；文档内容按不可信资料返回。
 - Office 批量命令失败返回命令序号、引擎错误码及修复建议，不回显命令正文；例如新建 Excel 已有 `Sheet1`，再次添加同名表会提示先检查已有表。文件工具参数校验失败把字段位置和校验原因返回给客户端 Agent，以便修正下一次调用。
@@ -297,7 +297,7 @@ POST /api/tools/file
 | 文件上传 | 用户 20/分钟，并发解析 2 |
 | 搜索/网页读取 | 用户 30/分钟，并发 4 |
 | 文档工具读（list/read/grep/help/inspect） | 用户 60/分钟，并发 2 |
-| 文档工具写（create/edit/save） | 用户 20/分钟，并发 2 |
+| 文档工具写（create/edit/save/delete） | 用户 20/分钟，并发 2 |
 
 计数保存在 API 进程内，重启后清零；只影响频率限制，不影响账号与数据隔离。
 

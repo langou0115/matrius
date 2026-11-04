@@ -128,6 +128,9 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .conversation-error-indicator { color: var(--destructive); }
 .conversation-status-indicator { color: var(--sidebar-foreground); }
 .conversation-spinner { width: 14px; height: 14px; border: 2px solid color-mix(in srgb, var(--sidebar-foreground) 18%, transparent); border-top-color: var(--sidebar-foreground); border-radius: 50%; animation: conversation-spin 700ms linear infinite; }
+/* A plain solid dot marks a finished, unread reply. It inherits the status colour, so it stays
+   visible on a dark sidebar instead of being literal black on a dark background. */
+.conversation-completed-indicator::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 @keyframes conversation-spin { to { transform: rotate(1turn); } }
 /* The row action owns the right edge once the pointer or keyboard is on it. Keyboard focus is
    narrowed to :focus-visible so clicking a conversation does not leave the row action showing
@@ -197,20 +200,20 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .navigator-bars > span { width: 12px; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--foreground) 22%, var(--background)); }
 .navigator-bars > .is-current { width: 20px; background: var(--foreground); }
 .navigator-mobile-icon { display: none; }
-.conversation-navigator-card { position: absolute; right: calc(100% + 10px); top: 50%; transform: translateY(-50%); width: min(300px, calc(100vw - 80px)); padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--popover); color: var(--foreground); box-shadow: 0 6px 24px color-mix(in srgb, var(--foreground) 9%, transparent); }
-.conversation-navigator-card > header { display: flex; align-items: center; gap: 8px; padding: 4px 6px 10px; font-size: var(--text-caption); }
+.conversation-navigator-card { position: absolute; right: calc(100% + 10px); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; width: min(300px, calc(100vw - 80px)); max-height: min(420px, 56dvh); padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--popover); color: var(--foreground); box-shadow: 0 6px 24px color-mix(in srgb, var(--foreground) 9%, transparent); }
+.conversation-navigator-card > header { display: flex; flex: none; align-items: center; gap: 8px; padding: 4px 6px 10px; font-size: var(--text-caption); }
 .conversation-navigator-card > header strong { font-family: var(--font-medium); font-weight: 400; }
 .conversation-navigator-card > header > span { color: var(--muted-text); }
 .conversation-navigator-card > header > button { display: grid; place-items: center; margin-left: auto; width: 28px; height: 28px; border-radius: 50%; }
 .conversation-navigator-card > header > button:hover { background: var(--soft); }
-.conversation-navigator-list { position: relative; max-height: min(420px, 60dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.conversation-navigator-list { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .conversation-navigator-list > button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 7px 9px; border-radius: 8px; text-align: left; font-size: var(--text-small); }
 .conversation-navigator-list > button > span:first-child { min-width: 20px; flex-shrink: 0; color: var(--muted-text); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .conversation-navigator-list > button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-navigator-list > button:hover, .conversation-navigator-list > button[aria-current] { background: var(--soft); }
 .conversation-navigator-list > button[aria-current] { font-family: var(--font-medium); }
 .conversation-navigator-list > button:focus-visible { outline-offset: -2px; }
-@media (max-width: 1100px) { .conversation-navigator { right: 16px; top: 26px; } .navigator-bars { display: none; } .navigator-mobile-icon { display: block; } .conversation-navigator-trigger { width: 36px; } .conversation-navigator-card { top: 100%; right: 0; transform: none; width: min(300px, calc(100vw - 48px)); } .chat-screen .chat-topbar { padding-right: 60px; } }
+@media (max-width: 1100px) { .conversation-navigator { right: 16px; top: 26px; } .navigator-bars { display: none; } .navigator-mobile-icon { display: block; } .conversation-navigator-trigger { width: 36px; } .conversation-navigator-card { top: 100%; right: 0; transform: none; width: min(300px, calc(100vw - 48px)); max-height: min(420px, calc(100dvh - 80px)); } .chat-screen .chat-topbar { padding-right: 60px; } }
 @media (pointer: coarse) { .selection-quote-action { min-height: 44px; } .quote-card-remove { min-width: 44px; min-height: 44px; } .conversation-navigator-trigger, .conversation-navigator-list > button, .conversation-navigator-card > header > button { min-height: 44px; } }
 .chat-topbar { display: flex; align-items: center; gap: 10px; height: var(--header-height); flex-shrink: 0; padding: 0 28px 0 24px; }
 .sidebar-collapsed .chat-topbar { padding-left: 16px; gap: 12px; }
@@ -220,7 +223,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .sidebar-expand:hover::before { background: var(--soft); border-color: color-mix(in srgb, var(--foreground) 16%, var(--background)); }
 .sidebar-expand:active::before { background: color-mix(in srgb, var(--foreground) 7%, var(--background)); }
 .sidebar-expand:focus-visible { outline-offset: 2px; }
-.chat-main.has-messages { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; overscroll-behavior-y: contain; scroll-padding-top: calc(var(--header-height) + 16px); }
+.chat-main.has-messages { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; overscroll-behavior-y: contain; scroll-padding-top: calc(var(--header-height) + 16px); overflow-anchor: none; }
 .chat-main.has-messages > .chat-topbar { position: sticky; top: 0; z-index: 2; background: var(--background); }
 .chat-topbar .conversation-title { min-width: 0; max-width: min(360px, 100%); margin: 0; font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-topbar .conversation-title-field { position: relative; display: inline-flex; min-width: 0; max-width: min(360px, 100%); }
@@ -812,6 +815,15 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .message-markdown { min-width: 0; }
 .message-markdown > :first-child { margin-top: 0; }
 .message-markdown > :last-child { margin-bottom: 0; }
+/* A replaced body (an interim preamble yielding to the answer) fades in instead of mutating in
+   place. The class is only held for the animation, so ordinary token-by-token growth never
+   re-runs it. */
+@keyframes message-body-replace {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.message-markdown.is-replacing { animation: message-body-replace 320ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .message-markdown.is-replacing { animation: none; } }
 .message-markdown p { margin: 0 0 16px; white-space: normal; }
 .message-markdown strong { font-family: var(--font-semibold); font-weight: 400; }
 .message-markdown h1, .message-markdown h2, .message-markdown h3, .message-markdown h4, .message-markdown h5, .message-markdown h6 { margin: 28px 0 12px; line-height: 1.4; font-family: var(--font-semibold); font-weight: 400; }
@@ -1049,9 +1061,9 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .model-checkbox-input:focus-visible + .model-checkbox { outline: 2px solid var(--primary); outline-offset: 2px; }
 .model-checkbox-input:disabled + .model-checkbox { opacity: .45; }
 .model-key-toggle:has(.model-checkbox-input:disabled) { cursor: default; }
-/* Pill switch for the network tools row. The hidden native checkbox keeps keyboard and
-   screen-reader semantics; only this row uses the switch shape. */
-.account-switch {
+/* Pill switch shared by the network tools row and the model image toggle. The hidden native
+   checkbox keeps keyboard and screen-reader semantics; only the track is painted here. */
+.toggle-switch {
   position: relative;
   flex-shrink: 0;
   width: 42px;
@@ -1060,7 +1072,7 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
   background: color-mix(in srgb, var(--foreground) 14%, var(--background));
   transition: background 160ms;
 }
-.account-switch::before {
+.toggle-switch::before {
   content: '';
   position: absolute;
   top: 2px;
@@ -1072,19 +1084,24 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
   box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
   transition: transform 160ms cubic-bezier(.2, .8, .2, 1);
 }
-.account-toggle-row:hover .model-checkbox-input:not(:checked):not(:disabled) + .account-switch {
+.account-toggle-row:hover .model-checkbox-input:not(:checked):not(:disabled) + .toggle-switch,
+.model-switch-label:hover .model-checkbox-input:not(:checked):not(:disabled) + .toggle-switch {
   background: color-mix(in srgb, var(--foreground) 22%, var(--background));
 }
-.model-checkbox-input:checked + .account-switch { background: var(--primary); }
-.model-checkbox-input:checked + .account-switch::before { transform: translateX(18px); }
-.model-checkbox-input:focus-visible + .account-switch { outline: 2px solid var(--primary); outline-offset: 2px; }
-.model-checkbox-input:disabled + .account-switch { opacity: .45; }
+.model-checkbox-input:checked + .toggle-switch { background: var(--primary); }
+.model-checkbox-input:checked + .toggle-switch::before { transform: translateX(18px); }
+.model-checkbox-input:focus-visible + .toggle-switch { outline: 2px solid var(--primary); outline-offset: 2px; }
+.model-checkbox-input:disabled + .toggle-switch { opacity: .45; }
 .model-toggle-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .model-toggle-copy strong { font-weight: 400; }
 .model-toggle-copy small { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
-.model-image-toggle { align-items: flex-start; }
-.model-image-toggle .model-checkbox { margin-top: 2px; }
-.model-image-toggle .model-toggle-copy { display: flex; flex-direction: column; gap: 2px; }
+/* Image capability reads as a setting, not a checklist item: the copy keeps the row's left
+   edge and the switch sits at the far right, matching the network tools row. Only the switch
+   is clickable here, so the copy must not advertise itself as a target. */
+.model-image-toggle { align-items: center; cursor: default; }
+.model-switch-label { position: relative; display: flex; flex-shrink: 0; align-items: center; min-height: 44px; cursor: pointer; }
+.model-image-toggle:has(.model-checkbox-input:disabled) .model-switch-label { cursor: default; }
+.model-image-toggle .model-toggle-copy { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .model-image-toggle .model-toggle-copy strong { font-weight: 400; }
 .model-image-toggle .model-toggle-copy small { font-size: var(--text-caption); color: var(--muted-text); }
 .model-form-error { margin-top: 12px; color: var(--destructive); font-size: var(--text-caption); line-height: 1.7; }
@@ -1160,6 +1177,8 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
 .thinking-toggle[aria-expanded='true'] .thinking-chevron { transform: rotate(90deg); }
 /* The transcript keeps the timeline's gutter so a folded segment stays on the same axis. */
 .thinking-body { min-width: 0; margin-top: 4px; padding-left: 25px; overflow-wrap: anywhere; }
+/* The segment being written renders as plain text: Markdown is parsed once it stops streaming. */
+.thinking-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-text); font-size: 13px; line-height: 1.5; }
 
 /* Tool calls use plain activity rows; source lists expand independently of the reasoning. */
 .web-activities { display: flex; flex-direction: column; gap: 12px; margin-bottom: 0; }
@@ -1217,7 +1236,7 @@ kbd { font-family: var(--font-display); border: 1px solid var(--border); font-si
   .reasoning-label.is-running { animation: none; background: none; -webkit-text-fill-color: currentColor; }
   .reasoning-icon.is-running { animation: none; }
   .reasoning-chevron, .web-activity-chevron, .thinking-chevron, .web-activity-result { transition: none; }
-  .model-checkbox, .model-checkbox::before, .account-switch, .account-switch::before { transition: none; }
+  .model-checkbox, .model-checkbox::before, .toggle-switch, .toggle-switch::before { transition: none; }
 }
 @media (max-width: 600px) {
   .model-section-heading { align-items: flex-start; }

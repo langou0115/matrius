@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from app.conversations.schemas import ContextSummary, WebActivity
+from app.conversations.schemas import ContextSummary, ProcessActivity, WebActivity
 
 MemoryType = Literal["identity", "workflow", "voice", "instruction"]
 MemorySource = Literal["manual", "tool", "extracted"]
@@ -68,6 +68,7 @@ class ImportMessage(BaseModel):
     # Cloud file ids only; local exports predate cloud storage and leave this empty.
     fileIds: list[uuid.UUID] = Field(default_factory=list, max_length=20)
     activities: list[WebActivity] = Field(default_factory=list, max_length=50)
+    process: list[ProcessActivity] | None = Field(default=None, max_length=100)
 
 
 class ImportReadMarker(BaseModel):

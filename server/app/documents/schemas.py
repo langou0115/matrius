@@ -24,7 +24,7 @@ OFFICE_PROPERTIES = frozenset(
     merge hidden layout notes margin padding halign wrap alignment.horizontal
     alignment.vertical alignment.wraptext alignment.indent alignment.shrinktofit
     alignment.textrotation alignment.readingorder font.name font.size font.color font.bold
-    font.italic autofit shape geometry strokecolor strokewidth stroke
+    font.italic autofit shape geometry strokecolor strokewidth stroke markdown
     """.split()
 )
 
@@ -68,7 +68,11 @@ def _validate_props(props: dict[str, OfficePropValue]) -> dict[str, OfficePropVa
 class OfficeAddCommand(BaseModel):
     command: Literal["add"]
     parent: OfficePath
-    type: Literal["paragraph", "run", "table", "row", "cell", "sheet", "slide", "shape"]
+    # ``markdown`` (docx) expands a whole heading/list/table section in one command;
+    # ``textbox`` (docx/pptx) is the engine's name for a floating text body.
+    type: Literal[
+        "paragraph", "run", "table", "row", "cell", "sheet", "slide", "shape", "markdown", "textbox"
+    ]
     props: dict[str, OfficePropValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -157,7 +161,9 @@ PdfChange = Annotated[
 
 
 class FileToolRequest(BaseModel):
-    operation: Literal["list", "read", "grep", "help", "inspect", "create", "edit", "save"]
+    operation: Literal[
+        "list", "read", "grep", "help", "inspect", "create", "edit", "save", "delete"
+    ]
     conversationId: uuid.UUID | None = None
     # UUID for a stored file, or ``draft:<uuid>`` for an in-progress document.
     fileId: str | None = Field(default=None, max_length=80)
@@ -180,7 +186,7 @@ class FileToolRequest(BaseModel):
         operation = self.operation
         if operation == "list":
             return self
-        if operation in {"read", "grep", "inspect", "edit", "save"} and not self.fileId:
+        if operation in {"read", "grep", "inspect", "edit", "save", "delete"} and not self.fileId:
             raise ValueError(f"{operation} 需要 fileId。")
         if operation == "grep" and not (self.pattern and self.pattern.strip()):
             raise ValueError("grep 需要非空的 pattern。")

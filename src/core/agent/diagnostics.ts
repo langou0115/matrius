@@ -87,6 +87,8 @@ export function createReplyDiagnostics(config: ModelConfig, thinkingEffort: stri
       });
     },
     toolEnd(isError: boolean) { record('tool_end', { round, isError }); },
+    /** A reply was cut off without any body text; the runner retries with less thinking. */
+    outputRetry(attempt: number, thinkingLevel: string) { record('output_retry', { attempt, thinkingLevel }); },
     finish(result: ReplyResult, outcome: string): ReplyResult {
       record('finish', { status: result.status, outcome, rounds: round });
       // Serialize now so DevTools cannot show later mutations of a live object.

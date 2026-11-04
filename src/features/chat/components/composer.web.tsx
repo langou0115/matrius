@@ -57,6 +57,9 @@ const effortOptions: { value: ThinkingEffort; label: string; description: string
 // (header + four effort rows) is the reference: the model list is capped to it so switching
 // pages does not resize the card. The fallback below still wins on short viewports.
 const PICKER_CARD_MAX_HEIGHT = 294;
+// Narrower than the trigger's own cap: each row is an icon plus a model name, so extra width
+// only adds empty space beside short names.
+const PICKER_CARD_WIDTH = 248;
 
 export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, onModelChange, quote, onRemoveQuote, onNotice }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
@@ -155,7 +158,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       const bounds = trigger.getBoundingClientRect();
       const viewportWidth = document.documentElement.clientWidth;
       const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      const width = Math.min(280, Math.max(0, viewportWidth - 24));
+      const width = Math.min(PICKER_CARD_WIDTH, Math.max(0, viewportWidth - 24));
       const left = Math.max(12, Math.min(bounds.left, viewportWidth - width - 12));
       const nextPosition = {
         left,

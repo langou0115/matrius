@@ -1141,8 +1141,9 @@ test('real pi tool loop searches, reads evidence, then answers without losing pr
     requestPrompts.push(body.messages.find((message) => message.role === 'system')?.content);
     const index = calls++;
     if (index === 2) assert.match(JSON.stringify(body.messages), /waits for all tasks/);
-    const delta = index < 2 ? { role: 'assistant', tool_calls: [{ index: 0, id: `tool-${index}`, type: 'function',
-      function: { name: index === 0 ? 'web_search' : 'web_fetch', arguments: JSON.stringify(index === 0 ? { query: 'Python TaskGroup' } : { url }) } }] }
+    const delta = index < 2 ? { role: 'assistant', content: index === 0 ? '先搜索官方文档。' : '页面已读，开始整理答案。',
+      tool_calls: [{ index: 0, id: `tool-${index}`, type: 'function',
+        function: { name: index === 0 ? 'web_search' : 'web_fetch', arguments: JSON.stringify(index === 0 ? { query: 'Python TaskGroup' } : { url }) } }] }
       : { role: 'assistant', content: `TaskGroup 等待组内任务完成。参考[文档](${url})。` };
     const chunks = [...(index === 0 || index === 2 ? [{ choices: [{ index: 0, delta: { role: 'assistant', reasoning_content: index === 0 ? '先检索官方文档。' : '读取完成，核对资料后作答。' }, finish_reason: null }] }] : []),
       { choices: [{ index: 0, delta, finish_reason: null }] },
@@ -1158,6 +1159,9 @@ test('real pi tool loop searches, reads evidence, then answers without losing pr
     assert.deepEqual(toolRequests, ['/api/tools/search', '/api/tools/fetch']);
     assert.deepEqual(updates.at(-1).activities.map((activity) => activity.status), ['complete', 'complete']);
     assert.match(updates.at(-1).content, /参考\[文档\]/);
+    assert.ok(!updates.at(-1).content.includes('先搜索官方文档'), 'the first transition is replaced, not accumulated');
+    assert.ok(!updates.at(-1).content.includes('页面已读'), 'each transition text replaces the previous one');
+    assert.ok(updates.some((update) => update.content.includes('先搜索官方文档')), 'the transition stays visible while it runs');
     assert.ok(updates.some((update) => update.activities.some((activity) => activity.status === 'running')));
     assert.deepEqual(updates.find((update) => update.activities.some((step) => step.kind === 'search' && step.status === 'running')).process.map((step) => step.kind), ['thinking', 'search']);
     assert.deepEqual(updates.find((update) => update.activities.some((step) => step.kind === 'fetch' && step.status === 'running')).process.map((step) => step.kind), ['thinking', 'search', 'fetch']);
