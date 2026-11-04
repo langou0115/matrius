@@ -306,11 +306,17 @@ test('conversation navigation tracks reading, opens the question card and jumps 
   try {
     await act(async () => { root.render(createElement(Harness, { count: 3 })); });
     assert.equal(document.querySelector('nav'), null, 'short conversations stay uncluttered');
-    await act(async () => { root.render(createElement(Harness)); });
+    // The navigator measures the scroller as soon as it mounts; install the fake metrics while
+    // the short conversation is on screen so its first sync sees the real reading position.
     const container = document.getElementById('chat');
     Object.defineProperties(container, { clientHeight: { value: 800 }, scrollHeight: { value: 11000 }, scrollTop: { writable: true, value: 0 } });
     container.getBoundingClientRect = () => ({ top: 0 });
-    for (const element of container.children) element.getBoundingClientRect = () => ({ top: Number(element.dataset.offset) - container.scrollTop });
+    const positionChildren = () => {
+      for (const element of container.children) element.getBoundingClientRect = () => ({ top: Number(element.dataset.offset) - container.scrollTop });
+    };
+    positionChildren();
+    await act(async () => { root.render(createElement(Harness)); });
+    positionChildren();
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
     assert.equal(document.querySelectorAll('.navigator-bars > span').length, 15, 'the compact rail stays bounded');
     await act(async () => { document.querySelector('.conversation-navigator-trigger').click(); });

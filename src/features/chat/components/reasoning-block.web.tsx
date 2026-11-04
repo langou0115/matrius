@@ -325,11 +325,10 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
           className={`reasoning-process-step${step.kind === 'thinking' ? ' thinking-step' : ''}`}>
           {step.kind === 'thinking'
             ? <ThinkingRow activity={step} streaming={running && step.status === 'running'}
-              // While the reply runs, finished segments stay open: folding each one as it ends
-              // made the tall block shrink and grow again at every boundary, and the pinned
-              // transcript showed that as the content jumping up and down. The whole block folds
-              // when the reply ends, or when the reader collapses it.
-              expanded={running} />
+              // Only the segment being written is open by default. When it ends and the next
+              // tool or thought starts, this row folds back to its one-line preview; a manual
+              // open/close on that segment still wins for as long as its status does not change.
+              expanded={running && step.status === 'running'} />
             : step.kind === 'file' ? <FileActivityRow activity={step} /> : <WebActivityRow activity={step} />}
         </div>)}</div>
         {showCollapse && <button type="button" className="reasoning-collapse" onClick={collapse}>

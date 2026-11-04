@@ -184,15 +184,14 @@ test('thinking disclosure keeps its open state and content across tool, answer a
       await render({ state, reasoning: '已收到的思考', activities: [{ id: 'search', kind: 'search', query: '资料', status: state === 'running' ? 'running' : 'complete', results: [] }] });
       assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
       assert.equal(document.querySelector('.reasoning-label').textContent, '思考过程');
-      // A finished thought stays open while the reply runs and folds once it ends; either way
-      // its text is one click away.
-      const live = state === 'running';
-      assert.equal(document.querySelector('.thinking-toggle').getAttribute('aria-expanded'), String(live));
-      assert.equal(document.querySelector('.thinking-body').hidden, !live);
-      if (!live) await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      // Legacy transcripts have no live segment, so they stay folded until the reader opens them.
+      assert.equal(document.querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
+      assert.equal(document.querySelector('.thinking-body').hidden, true);
+      await act(async () => { document.querySelector('.thinking-toggle').click(); });
       assert.ok(document.querySelector('.thinking-body').textContent.includes('已收到的思考'));
       assert.equal(document.querySelector('.thinking-body').hidden, false);
-      if (!live) await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      assert.equal(document.querySelector('.thinking-body').hidden, true);
       assert.equal(document.querySelector('.response-sources'), null);
     }
     await act(async () => { document.querySelector('.reasoning-toggle').click(); });
@@ -205,7 +204,7 @@ test('thinking disclosure keeps its open state and content across tool, answer a
   }
 });
 
-test('thoughts stay open while the reply runs and fold once it ends', async () => {
+test('only the thinking segment being written stays open', async () => {
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window;
@@ -225,24 +224,27 @@ test('thoughts stay open while the reply runs and fold once it ends', async () =
     assert.equal(document.querySelector('.thinking-body').hidden, false);
     assert.equal(rows()[0].textContent, '思考', 'an open thought repeats nothing above its own text');
 
-    // It stops streaming but the reply continues: keeping it open avoids the shrink/grow at every
-    // segment boundary, which the pinned transcript showed as content jumping up and down.
+    // It finished: fold back to the one-line preview instead of stacking completed segments open.
     await render([thought('complete')]);
-    assert.equal(rows()[0].getAttribute('aria-expanded'), 'true');
-    assert.equal(document.querySelector('.thinking-body').hidden, false);
-    assert.equal(rows()[0].querySelector('.thinking-preview'), null);
-
-    // The reader can still fold it by hand, and that choice holds for the rest of the run.
-    await act(async () => { rows()[0].click(); });
     assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
+    assert.equal(document.querySelector('.thinking-body').hidden, true);
     assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
+
+    // The next thinking block opens; the previous one stays folded when the new one arrives.
     await render([thought('complete'), search, thought('running', { id: 't2', content: '再想一下' })]);
     assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['false', 'true']);
 
-    // The reply ends, so the transcript folds back into one row per segment.
+    // The reply ends, so even the active segment folds back into its preview row.
     await render([thought('complete'), search, thought('complete', { id: 't2', content: '再想一下' })], 'complete');
     assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['false', 'false']);
     assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
+
+    // A manual open on a finished segment still holds while its status does not change.
+    await act(async () => { rows()[0].click(); });
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'true');
+    await render([thought('complete'), search, thought('complete', { id: 't2', content: '再想一下' })], 'complete');
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'true', 'the reader choice survives a re-render');
+    await act(async () => { rows()[0].click(); });
 
     // The snippet is one line of prose: fences, links and markdown markers do not reach the row.
     await render([thought('complete', { content: '**结论**：先看 [官方文档](https://example.com/a)\n\n```ts\nconst x = 1;\n```\n后面还有内容' }), search], 'complete');
@@ -263,13 +265,6 @@ test('a long transcript closes from its own end instead of the header far above'
   globalThis.document = document;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
-  // linkedom has no layout: a readable transcript height is stubbed so the footer control can
-  // prove it follows content height instead of a block count.
-  let stepsHeight = 120;
-  Object.defineProperty(window.HTMLElement.prototype, 'scrollHeight', {
-    configurable: true,
-    get() { return this.classList?.contains('reasoning-steps') ? stepsHeight : 0; },
-  });
   const render = (props) => act(async () => { root.render(createElement(ReasoningBlock, props)); });
   try {
     await render({ state: 'complete', reasoning: '很长的思考' });
@@ -279,10 +274,11 @@ test('a long transcript closes from its own end instead of the header far above'
     assert.equal(document.querySelector('.reasoning-collapse'), null,
       'a short transcript keeps the fold control out of the way');
 
-    stepsHeight = 600;
-    // The height observer is unavailable in linkedom; reopening re-measures the transcript.
-    await act(async () => { document.querySelector('.reasoning-toggle').click(); });
-    await act(async () => { document.querySelector('.reasoning-toggle').click(); });
+    // linkedom has no layout or ResizeObserver. Measure a tall transcript on the instance and
+    // re-render with one more step so the height effect runs again.
+    Object.defineProperty(document.querySelector('.reasoning-steps'), 'scrollHeight', { configurable: true, value: 600 });
+    await render({ state: 'complete', reasoning: '很长的思考',
+      activities: [{ id: 'search', kind: 'search', status: 'complete', query: '资料', results: [] }] });
     const collapse = document.querySelector('.reasoning-collapse');
     assert.ok(collapse, 'a tall transcript gets a footer control');
     assert.equal(collapse.parentElement.className, 'reasoning-body');
@@ -348,11 +344,10 @@ test('the process renders separate thinking segments around search and fetch in 
   })));
   const steps = [...document.querySelector('.reasoning-steps').children];
   assert.equal(steps.length, 4);
-  // While the reply runs, a finished thought keeps its text inline; the whole transcript folds
-  // only when the run ends, so the block never shrinks and grows again mid-stream.
-  assert.equal(steps[0].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
-  assert.ok(steps[0].querySelector('.thinking-body').textContent.includes('先搜索'));
-  assert.equal(steps[0].querySelector('.thinking-preview'), null);
+  // Only the segment still being written is open; earlier ones fold to their preview line.
+  assert.equal(steps[0].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
+  assert.equal(steps[0].querySelector('.thinking-body').textContent, '');
+  assert.equal(steps[0].querySelector('.thinking-preview').textContent, '先搜索');
   assert.ok(steps[1].querySelector('.web-activity'));
   assert.ok(steps[2].querySelector('.web-activity'));
   assert.equal(steps[3].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
