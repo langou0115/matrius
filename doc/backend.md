@@ -279,11 +279,11 @@ POST /api/tools/file
 - 仅对所有者为本人的文件可用，并要求账号具备 `files` 功能；响应为 `{ operation, file?, draft?, fileId?, filename?, text?, truncated?, files? }`，`file` 复用 `file_out`。
 - 读类操作（list/read/grep/help/inspect）每账号 60 次/分钟，写类（create/edit/save/delete）20 次/分钟；每账号最多 2 个在途文档操作。
 - 操作级校验在请求模型中完成：`create` 不能带 `fileId`，`edit` 必须提供与格式匹配的 `commands` 或 `pdfChanges`，`save` 只接受草稿，`read`/`grep`/`delete` 必须有 `fileId`。PDF 拒绝 `commands`，Office 拒绝 `pdfChanges`。`delete` 接受资料库文件 UUID 或 `draft:<uuid>`：删除已保存文件时先删对象再删行，历史消息保留文件名和引用。
-- Office 属性白名单、文档路径（必须以 `/` 开头，禁止 `..`/NUL/CRLF，≤500 字符）、命令与 PDF 变更均限最多 100 条；不接收 raw XML、任意 CLI 参数、图片导入或外部资源。`add` 允许 `markdown`（DOCX 展开标题/列表/GFM 表格）与 `textbox`（DOCX/PPTX 浮动文本框）元素，`markdown` 属性只接受内联文本，不接受 `src` 文件路径。
+- Office 属性白名单由 vendored OfficeCLI 的 `help all --json` 生成并随仓库提交（`app/documents/office_properties.json`，升级引擎后用 `scripts/generate_office_properties.py` 重新生成），按属性名大小写不敏感匹配；`src`/`data`/`image` 等会读取本地文件或 URL 的属性、`background=image:...` 之类的值仍被拒绝。文档路径（必须以 `/` 开头，禁止 `..`/NUL/CRLF，≤500 字符）、命令与 PDF 变更均限最多 100 条；不接收 raw XML、任意 CLI 参数、图片导入或外部资源。`add` 允许 `markdown`（DOCX 展开标题/列表/GFM 表格）与 `textbox`（DOCX/PPTX 浮动文本框）元素，`markdown` 属性只接受内联文本，不接受 `src` 文件路径。
 - Office 操作经 vendored OfficeCLI 子进程执行，不使用 shell，环境变量白名单，超时杀进程组，stdout/stderr 累计超限即终止。PDF 使用 pypdf + reportlab，在 `asyncio.to_thread` 中运行。
 - 单次结果约 30,000 字符并标记 `truncated`；文档内容按不可信资料返回。
-- Office 批量命令失败返回命令序号、引擎错误码及修复建议，不回显命令正文；例如新建 Excel 已有 `Sheet1`，再次添加同名表会提示先检查已有表。文件工具参数校验失败把字段位置和校验原因返回给客户端 Agent，以便修正下一次调用。
-- 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{userId}/{draftId}/`；TTL 默认 30 分钟，每用户最多 10 个、总计 60 MiB，跨用户 404。保存成功后删除草稿。
+- Office 批量命令失败返回命令序号、引擎错误码及修复建议，不回显命令；结构性诊断（找不到路径、幻灯片父路径错误、取值不合法）会一并返回，可能包含文档正文的诊断则替换为固定提示。例如新建 Excel 已有 `Sheet1`，再次添加同名表会提示先检查已有表。`help` 带 `element` 时返回紧凑的路径 + 可写属性表，不再把整个 schema JSON 截断后交给模型。文件工具参数校验失败把字段位置和校验原因返回给客户端 Agent，以便修正下一次调用。
+- 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{userId}/{draftId}/`；`create`/`edit` 的草稿结果带 `draft:<uuid>` 句柄，客户端 Agent 继续编辑同一草稿时必须回传该句柄，否则会从已保存版本重新开始。TTL 默认 30 分钟，每用户最多 10 个、总计 60 MiB，跨用户 404。保存成功后删除草稿。
 - 保存编辑结果时检查 `StoredFile.revision == base_revision`，不一致返回 409；先写新对象再更新行，提交后 best-effort 删除旧对象。旧版 Office 编辑后的保存会新建文件，不改原件。
 - 兼容保留 `POST /api/tools/files/read|grep`：按行读取（单次最多 50,000 字符）与正则匹配（最多 200 条）。
 

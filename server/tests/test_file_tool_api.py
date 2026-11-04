@@ -206,6 +206,56 @@ async def test_pptx_textbox_accepts_a_body_text_shape(client, create_user):
     assert "封面标题" in read.json()["text"]
 
 
+async def test_pptx_accepts_the_engines_documented_styling_properties(client, create_user):
+    _, headers = await create_user("regular")
+
+    created = await _call(
+        client,
+        headers,
+        operation="create",
+        format="pptx",
+        filename="styled.pptx",
+        save=True,
+        commands=[
+            {"command": "set", "path": "/", "props": {"slideSize": "widescreen"}},
+            {"command": "add", "parent": "/", "type": "slide", "props": {"background": "#0B1220"}},
+            {
+                "command": "add",
+                "parent": "/slide[1]",
+                "type": "textbox",
+                "props": {
+                    "text": "OpenAI",
+                    "x": "2cm",
+                    "y": "2cm",
+                    "width": "20cm",
+                    "height": "4cm",
+                    "gradient": "FF0000-0000FF-45",
+                    "line": "#FFFFFF:1.5:dash",
+                    "lineSpacing": "1.5x",
+                    "spacing": "2",
+                },
+            },
+        ],
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["file"]["filename"] == "styled.pptx"
+
+
+async def test_resource_loading_properties_and_values_are_rejected(client, create_user):
+    _, headers = await create_user("regular")
+
+    for props in ({"src": "/etc/passwd"}, {"data": "a,b"}, {"background": "image:/etc/passwd"}):
+        response = await _call(
+            client,
+            headers,
+            operation="create",
+            format="pptx",
+            commands=[{"command": "add", "parent": "/", "type": "slide", "props": props}],
+        )
+        assert response.status_code == 422, (props, response.text)
+
+
+
 async def test_read_and_grep_uploaded_text(client, create_user):
     _, headers = await create_user("regular")
     file = await _upload(client, headers, "notes.txt", b"alpha\nbeta\ngamma\n")
@@ -398,6 +448,7 @@ async def test_missing_and_foreign_files_are_not_found(client, create_user):
 
     invalid_id = await _call(client, headers, operation="read", fileId="not-a-uuid")
     assert invalid_id.status_code == 422
+    assert "不要传文件名" in invalid_id.json()["error"]["message"]
 
     # A second user can call the tool but cannot read the first user's file.
     _, other_headers = await create_user("other")

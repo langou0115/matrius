@@ -123,7 +123,7 @@ API 容器入口会在 uvicorn 启动前执行 `alembic upgrade head`、`alembic
 API 镜像内置 Linux x64 版 OfficeCLI（`server/vendor/officecli/linux-x64/officecli`），并安装 `libreoffice-writer`、`libreoffice-calc`、`libreoffice-impress` 与 `fonts-noto-cjk`：
 
 - 首次构建更慢、镜像明显变大，属于单容器自部署的取舍；Windows 二进制已从 Docker 上下文排除，只供本机开发。
-- `OFFICECLI_PATH` 与 `LIBREOFFICE_PATH` 已写入镜像和 compose，不需要手工配置。升级 OfficeCLI 时同步更新 `server/vendor/officecli/` 下的 `VERSION`、`SHA256SUMS` 和 README，`binaries.py` 会在运行时校验 SHA-256。
+- `OFFICECLI_PATH` 与 `LIBREOFFICE_PATH` 已写入镜像和 compose，不需要手工配置。升级 OfficeCLI 时同步更新 `server/vendor/officecli/` 下的 `VERSION`、`SHA256SUMS` 和 README，`binaries.py` 会在运行时校验 SHA-256；同时在 `server/` 下运行 `uv run --no-sync python scripts/generate_office_properties.py`，刷新文档工具的属性白名单（`app/documents/office_properties.json`），否则新版本新增的属性会被参数校验拒绝。
 - 旧版 DOC/XLS/PPT 的转换需要 `/tmp` 空间；compose 将 `/tmp` 设为 512 MiB tmpfs，不要改回 64 MiB。
 - 文档草稿是进程内状态，容器重启后失效；已保存到资料库（`/data/files`）的文件不受影响。API 必须保持单 uvicorn worker。
 - macOS 不内置引擎；本机开发需设置 `OFFICECLI_PATH` 指向官方 macOS 构建，否则文档工具返回 503。缺少 LibreOffice 时仅旧版 Office 转换失败。

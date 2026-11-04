@@ -26,6 +26,124 @@ def test_officecli_batch_errors_explain_repair_without_echoing_document_content(
     assert "private" not in caught.value.message
 
 
+def test_officecli_structural_errors_reach_the_model():
+    import json
+
+    from app.documents.officecli import _check
+    from app.documents.process import ProcessResult
+
+    missing = ProcessResult(1, json.dumps({"success": False, "error": {
+        "error": "Slide 1 not found (total: 0)",
+        "code": "not_found",
+        "suggestion": "No Slide elements exist. Add one first.",
+    }}).encode(), b"")
+    with pytest.raises(AppError) as caught:
+        _check(missing, "查看文档结构")
+    assert "Slide 1 not found (total: 0)" in caught.value.message
+    assert "Add one first." in caught.value.message
+
+    bad_parent = ProcessResult(1, json.dumps({"success": False, "data": {"results": [{
+        "index": 0, "success": False, "code": "invalid_value",
+        "error": "Invalid parent '/presentation' for --type slide: a slide can only be added at '/'.",
+    }]}}).encode(), b"")
+    with pytest.raises(AppError) as caught:
+        _check(bad_parent, "编辑文档")
+    assert "can only be added at '/'" in caught.value.message
+
+
+def test_office_properties_follow_the_engine_schema_and_block_resource_loads():
+    from pydantic import ValidationError
+
+    from app.documents.schemas import OfficeSetCommand
+
+    accepted = OfficeSetCommand(
+        command="set",
+        path="/slide[1]/shape[1]",
+        props={"lineSpacing": "1.5x", "GRADIENT": "FF0000-0000FF-45", "slideSize": "widescreen"},
+    )
+    assert accepted.props["lineSpacing"] == "1.5x"
+
+    radial = OfficeSetCommand(
+        command="set", path="/slide[1]", props={"background": "radial:FF0000-0000FF-tr"}
+    )
+    assert radial.props["background"].startswith("radial:")
+
+    with pytest.raises(ValidationError, match="不支持的文档属性：macro"):
+        OfficeSetCommand(command="set", path="/body", props={"macro": "rm -rf"})
+    for blocked in ("data", "src", "image", "password", "mermaid"):
+        with pytest.raises(ValidationError):
+            OfficeSetCommand(command="set", path="/slide[1]", props={blocked: "x"})
+    with pytest.raises(ValidationError, match="不支持图片、文件或 URL 引用"):
+        OfficeSetCommand(command="set", path="/slide[1]", props={"background": "image:/etc/passwd"})
+
+
+def test_compact_help_keeps_only_paths_and_writable_properties():
+    import json
+
+    from app.documents.officecli import _compact_help
+
+    raw = json.dumps({
+        "format": "pptx",
+        "element": "shape",
+        "parent": "slide",
+        "paths": {"positional": ["/slide[N]/shape[@id=ID]", "/slide[N]/shape[N]"]},
+        "note": "A floating shape.",
+        "properties": {
+            "text": {"type": "string", "add": True, "set": True, "description": "plain text"},
+            "lineSpacing": {"type": "string", "add": True, "set": True, "aliases": ["linespacing"]},
+            "effective.size": {"type": "length", "add": False, "set": False, "get": True},
+            "src": {"type": "string", "add": True, "set": True},
+        },
+    })
+    text = _compact_help("pptx", "shape", raw)
+    assert "paths: /slide[N]/shape[@id=ID]" in text
+    assert "text (string)" in text
+    assert "lineSpacing (string)" in text
+    assert "effective.size" not in text
+    assert "src" not in text
+    assert len(text) < 2_000
+
+
+async def test_office_property_allowlist_is_in_sync_with_the_vendored_engine():
+    """Regression guard: a stale hand-written list rejected documented engine props."""
+
+    import json
+
+    from app.documents.officecli import _ENGINE_ENV
+    from app.documents.properties import BLOCKED_PROPERTIES, load_property_names
+
+    try:
+        binary = binaries.resolve_officecli()
+    except AppError:
+        pytest.skip("no vendored OfficeCLI for this platform")
+    # Use the app's bounded runner: it disables the engine's resident/updater (which would
+    # keep the stdout pipe open) and kills the process group on timeout.
+    result = await run_process(
+        [str(binary), "help", "all", "--json"], timeout_seconds=60, env=_ENGINE_ENV
+    )
+    assert result.returncode == 0, result.stderr
+    rows = json.loads(result.stdout.decode("utf-8-sig"))["data"]
+
+    expected: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("kind") != "PROP":
+            continue
+        name = row.get("name")
+        ops = row.get("ops") or ""
+        if not isinstance(name, str) or not name or name.startswith("effective."):
+            continue
+        if "a" not in ops and "s" not in ops:
+            continue
+        for item in [name, *(row.get("aliases") or [])]:
+            normalized = str(item).strip().lower()
+            if normalized and normalized not in BLOCKED_PROPERTIES:
+                expected.add(normalized)
+
+    assert load_property_names() == expected, (
+        "office_properties.json is out of date; run scripts/generate_office_properties.py"
+    )
+
+
 async def test_run_process_feeds_stdin_and_filters_environment(monkeypatch):
     monkeypatch.setenv("MATRIUS_TEST_SECRET", "leaked")
     code = (

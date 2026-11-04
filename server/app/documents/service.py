@@ -49,6 +49,7 @@ CONTENT_TYPES = {
     "pdf": "application/pdf",
 }
 MODERN_FORMATS = {"docx", "xlsx", "pptx", "pdf"}
+_FILE_ID_HINT = "请传 list 返回的 UUID 或草稿句柄（draft:…），不要传文件名。"
 
 PDF_HELP = (
     "PDF 编辑支持：draw_text（在页面绘制文字）、replace_page（清空并重建整页）、"
@@ -115,7 +116,7 @@ async def _resolve(db: AsyncSession, user_id: uuid.UUID, file_id: str | None) ->
     try:
         stored_id = uuid.UUID(file_id)
     except ValueError as exc:
-        raise invalid("fileId 不合法。") from exc
+        raise invalid(f"fileId 不合法。{_FILE_ID_HINT}") from exc
     stored = await get_owned_file(db, user_id, stored_id)
     data = await load_file_bytes(stored)
     await db.close()
@@ -227,7 +228,7 @@ async def _read(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) 
     try:
         stored_id = uuid.UUID(payload.fileId or "")
     except ValueError as exc:
-        raise invalid("fileId 不合法。") from exc
+        raise invalid(f"fileId 不合法。{_FILE_ID_HINT}") from exc
     stored = await get_owned_file(db, user_id, stored_id)
     await db.close()
     if payload.operation == "read":
@@ -424,7 +425,7 @@ async def _delete(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest
     try:
         stored_id = uuid.UUID(file_id)
     except ValueError as exc:
-        raise invalid("fileId 不合法。") from exc
+        raise invalid(f"fileId 不合法。{_FILE_ID_HINT}") from exc
     stored = await get_owned_file(db, user_id, stored_id)
     filename = stored.filename
     # Match the Library endpoint: remove the object first, then the row. An orphaned object is

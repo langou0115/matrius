@@ -74,6 +74,8 @@ test('saved files enter the generated list and drafts stay available only', asyn
   const draftResult = await drafts.tool.tool.execute('call-2', { operation: 'create', format: 'pdf' }, undefined);
   assert.equal(draftResult.details.fileId, 'draft:1');
   assert.equal(draftResult.details.savedFileId, undefined);
+  assert.match(draftResult.content[0].text, /Draft fileId: draft:1/);
+  assert.match(draftResult.content[0].text, /next edit or save/);
   assert.deepEqual(drafts.tool.getGeneratedFiles(), []);
   assert.ok(drafts.tool.getAvailableFiles().some((item) => item.id === 'draft:1'));
   assert.deepEqual(collectGeneratedFiles(draftResult), []);
@@ -226,6 +228,10 @@ test('document guidance splits large documents into bounded, resumable batches',
   assert.match(prompt, /"type":"markdown"/);
   assert.match(prompt, /type:"textbox"/);
   assert.match(prompt, /思考要短/);
+  assert.match(prompt, /help 可带 format 和 element/);
+  assert.match(prompt, /draft: 句柄/);
+  assert.match(prompt, /父路径是 "\/"/);
+  assert.match(prompt, /不要为了试验在资料库里留下文件/);
 });
 
 test('a truncated batch runs its complete prefix and tells the model where to resume', async () => {

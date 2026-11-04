@@ -16,7 +16,7 @@ import { NetworkToolsProvider } from '../src/features/auth/network-tools-state.w
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
 import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
-import { createWebTools, getWebActivityEnd } from '../src/core/agent/web-tools.ts';
+import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
 import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.web.ts';
 import { ApiError } from '../src/core/api/auth-session.ts';
 import { syncAccount } from '../src/features/auth/account-sync.web.ts';
@@ -121,6 +121,27 @@ test('live replies pause development updates and protect navigation until every 
   assert.equal(resumes, 1);
   protection.dispose();
   assert.equal(listeners.size, 0);
+});
+
+test('web tools are preferred over memory unless the task needs no outside facts', () => {
+  const prompt = webToolsSystemPrompt();
+  assert.match(prompt, /Prefer them over answering from memory/);
+  assert.match(prompt, /Search before answering/);
+  assert.match(prompt, /Answer directly only for simple tasks/);
+  assert.match(prompt, /current, changing or externally verifiable facts/);
+});
+
+test('a one-item urls array fetches a single page instead of failing schema validation', async () => {
+  const requested = [];
+  const tools = createWebTools(async (_path, init) => {
+    requested.push(JSON.parse(init.body).url);
+    return { url: 'https://example.com/a', title: 'A', text: 'Only page' };
+  });
+  assert.equal(tools[1].parameters.properties.urls.minItems, 1);
+  const result = await tools[1].execute('single', { urls: ['https://example.com/a'] });
+  assert.deepEqual(requested, ['https://example.com/a']);
+  assert.match(result.content[0].text, /Fetched webpage: A/);
+  assert.deepEqual(result.details.urls, ['https://example.com/a']);
 });
 
 test('batch fetch exposes only successful sources and warns about missing and truncated evidence', async () => {

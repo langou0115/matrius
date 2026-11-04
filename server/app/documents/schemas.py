@@ -5,28 +5,35 @@ no extra CLI flags, no filesystem paths. The schemas mirror openstudio's
 ``document-schema.ts`` so the two implementations accept the same documents.
 """
 
+import difflib
+import re
 import uuid
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
+from app.documents.properties import load_property_names
+
 OfficeFormat = Literal["docx", "xlsx", "pptx", "pdf"]
 OFFICE_FORMATS = {"docx", "xlsx", "pptx"}
 
-# Attributes the model may add or change. Anything else is rejected instead of
-# being forwarded to OfficeCLI.
-OFFICE_PROPERTIES = frozenset(
-    """
-    text value formula name title background color fill font size fontsize bold italic
-    underline strike highlight align alignment valign style styleid liststyle numlevel
-    spacebefore spaceafter linespacing linerule indent firstline width height left top x y
-    rotation opacity border bordercolor borderwidth cols rows numberformat format wraptext
-    merge hidden layout notes margin padding halign wrap alignment.horizontal
-    alignment.vertical alignment.wraptext alignment.indent alignment.shrinktofit
-    alignment.textrotation alignment.readingorder font.name font.size font.color font.bold
-    font.italic autofit shape geometry strokecolor strokewidth stroke markdown
-    """.split()
+# Attributes the model may add or change. The allowlist is generated from the vendored
+# OfficeCLI schema (see app/documents/properties.py); anything else is rejected instead
+# of being forwarded to the engine.
+PROPERTY_NAMES = load_property_names()
+_SORTED_PROPERTIES = tuple(sorted(PROPERTY_NAMES))
+
+# A few style properties accept `image:` fills or other resource references as values.
+# The tool's contract is no external resources, so those values are refused even when
+# the property name itself is allowed. Gradient forms (`radial:`, `path:`, `linear:`)
+# are not resource references and stay allowed.
+_RESOURCE_PROPERTIES = frozenset(
+    {"background", "fill", "gradient", "line", "linegradient", "textfill", "fillbg"}
 )
+_RESOURCE_VALUE = re.compile(
+    r"^\s*(?:image:|https?://|file:|data:|ftp:|[\\/]|[a-z]:[\\/])", re.IGNORECASE
+)
+
 
 MAX_COMMANDS = 100
 MAX_TEXT = 50_000
@@ -58,10 +65,18 @@ OfficePropValue = str | int | float | bool
 
 def _validate_props(props: dict[str, OfficePropValue]) -> dict[str, OfficePropValue]:
     for key, value in props.items():
-        if key not in OFFICE_PROPERTIES:
-            raise ValueError(f"不支持的文档属性：{key}")
+        normalized = key.strip().lower()
+        if normalized not in PROPERTY_NAMES:
+            suggestion = difflib.get_close_matches(normalized, _SORTED_PROPERTIES, n=1, cutoff=0.85)
+            hint = f"是否想用 {suggestion[0]}？" if suggestion else "属性名以 help 输出的元素属性表为准。"
+            raise ValueError(f"不支持的文档属性：{key}。{hint}")
         if isinstance(value, str) and len(value) > MAX_TEXT:
             raise ValueError(f"属性 {key} 的文本过长。")
+        if normalized in _RESOURCE_PROPERTIES and isinstance(value, str):
+            if _RESOURCE_VALUE.match(value):
+                raise ValueError(
+                    f"属性 {key} 不支持图片、文件或 URL 引用，只接受颜色、渐变或样式值。"
+                )
     return props
 
 
