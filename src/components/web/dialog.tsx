@@ -2,9 +2,15 @@ import { useEffect, useId, useRef, type PropsWithChildren } from 'react';
 
 import { Icon } from './icon';
 
-type Props = PropsWithChildren<{ title: string; onClose: () => void; className?: string }>;
+type Props = PropsWithChildren<{
+  title: string;
+  onClose: () => void;
+  className?: string;
+  /** Keep the accessible name but let the panel draw its own header. */
+  hideHeader?: boolean;
+}>;
 
-export function Dialog({ title, onClose, className = '', children }: Props) {
+export function Dialog({ title, onClose, className = '', hideHeader = false, children }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const backdropPress = useRef(false);
   const titleId = useId();
@@ -36,10 +42,12 @@ export function Dialog({ title, onClose, className = '', children }: Props) {
       }}
       onPointerCancel={() => { backdropPress.current = false; }}>
       <div className="dialog-panel">
-        <header className="dialog-header">
-          <h2 id={titleId}>{title}</h2>
-          <button type="button" className="icon-button" aria-label="关闭弹窗" onClick={onClose}><Icon name="close" /></button>
-        </header>
+        {hideHeader
+          ? <h2 id={titleId} className="sr-only">{title}</h2>
+          : <header className="dialog-header">
+            <h2 id={titleId}>{title}</h2>
+            <button type="button" className="icon-button" aria-label="关闭弹窗" onClick={onClose}><Icon name="close" /></button>
+          </header>}
         {children}
       </div>
     </dialog>

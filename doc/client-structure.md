@@ -48,6 +48,7 @@ src/
 │   │   ├── chat-route.web.tsx          URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
 │   │   ├── conversation-route-state.ts  URL 对话选择与有效性状态
+│   │   ├── conversation-search.ts      搜索匹配、命中片段、高亮分段与相对时间
 │   │   ├── markdown/                   公式/货币规范化与高亮语言按需加载
 │   │   └── components/
 │   │       ├── sidebar.web.tsx         侧栏、会话管理与设置入口
@@ -69,7 +70,7 @@ src/
 │   │       ├── attachment-list.web.tsx  附件卡片、文件类型图标与全屏图片预览
 │   │       ├── file-type-icon.web.tsx   后缀匹配与本地 Material 专用文件图标
 │   │       ├── scroll-to-bottom.web.tsx  跟随滚动与回到最新消息按钮
-│   │       └── search-dialog.web.tsx   标题与正文搜索、结果片段
+│   │       └── search-dialog.web.tsx   标题与正文搜索、命中高亮、键盘选择、滚动分页与结果片段
 │   ├── files/
 │   │   ├── files-api.web.ts            上传、列表、用量、重命名、批量删除与内容地址
 │   │   ├── use-file-library.ts          搜索防抖、筛选排序、游标分页、刷新时保留旧列表与多选状态
