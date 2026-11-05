@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { ApiError, createAdminSession, createAuthSession } from '../src/core/api/auth-session.ts';
 import { hasFeature } from '../src/core/features/capabilities.ts';
+import { AUTH_RETRY_DELAYS_MS, createAuthRetry, retryDelay } from '../src/features/auth/auth-retry.ts';
 import { visibleSettings } from '../src/features/settings/settings-catalog.ts';
 
 const account = (id, features = []) => ({ id, username: id, isAdmin: false, mustChangePassword: false, features });
@@ -204,4 +205,60 @@ test('changing the initial password refreshes capabilities without storing crede
   assert.deepEqual(calls, ['/api/auth/login', '/api/auth/change-password', '/api/auth/me']);
   assert.equal(store.read(), 'session-only');
   assert(!JSON.stringify(auth.getSnapshot()).includes('password'));
+});
+
+test('an unreachable account check backs off and recovers without a reload', () => {
+  assert.deepEqual([...AUTH_RETRY_DELAYS_MS], [2000, 4000, 8000, 15000, 30000]);
+  assert.equal(retryDelay(-1), 2000);
+  assert.equal(retryDelay(2), 8000);
+  assert.equal(retryDelay(99), 30000);
+
+  let status = 'unavailable';
+  const listeners = new Set();
+  const timers = [];
+  let refreshes = 0;
+  const retry = createAuthRetry({
+    getStatus: () => status,
+    refresh: () => { refreshes += 1; },
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    setTimer: (callback, ms) => { const handle = { callback, ms }; timers.push(handle); return handle; },
+    clearTimer: (handle) => { const index = timers.indexOf(handle); if (index >= 0) timers.splice(index, 1); },
+  });
+  const notify = () => { for (const listener of [...listeners]) listener(); };
+  // A timer that fires leaves the scheduler, so the bookkeeping mirrors the controller.
+  const fire = () => {
+    const handle = timers.at(-1);
+    timers.splice(timers.indexOf(handle), 1);
+    handle.callback();
+  };
+  try {
+    assert.equal(timers.length, 1, 'an unavailable session retries immediately');
+    assert.equal(timers[0].ms, 2000);
+
+    // The refresh itself reports "checking" first; that must not stack another timer.
+    status = 'checking'; notify();
+    assert.equal(timers.length, 0);
+
+    status = 'unavailable'; notify();
+    assert.equal(timers.at(-1).ms, 4000, 'the next failure waits longer');
+    fire();
+    assert.equal(refreshes, 1);
+
+    status = 'authenticated'; notify();
+    status = 'unavailable'; notify();
+    assert.equal(timers.at(-1).ms, 2000, 'a success resets the backoff');
+  } finally {
+    retry.dispose();
+  }
+  assert.equal(listeners.size, 0);
+  assert.equal(timers.length, 0);
+
+  const idle = createAuthRetry({
+    getStatus: () => 'authenticated',
+    refresh: () => {},
+    subscribe: () => () => {},
+    setTimer: () => { throw new Error('must not schedule'); },
+    clearTimer: () => {},
+  });
+  idle.dispose();
 });

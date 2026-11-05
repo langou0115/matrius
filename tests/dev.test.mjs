@@ -10,17 +10,36 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devBackendEnv, devDataDir, devEnvironment, devPorts,
-  resetDatabase, resetTargets, sqliteUrl, supervise,
+  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devBackendEnv, devDataDir, devEnvironment, devExpoArgs,
+  devExpoEnv, devPorts, resetDatabase, resetTargets, sqliteUrl, supervise,
 } from '../scripts/dev.mjs';
 import { migrationEnvironment } from '../scripts/db-migrate.mjs';
 const { handleDevApi } = createRequire(import.meta.url)('../scripts/dev-api-proxy.cjs');
+const { handleStaticMiss } = createRequire(import.meta.url)('../scripts/static-guard.cjs');
 
 test('development ports validate overrides', () => {
   assert.deepEqual(devPorts({}), [8081, 8000]);
   assert.deepEqual(devPorts({ DEV_WEB_PORT: '8082', DEV_API_PORT: '8001' }), [8082, 8001]);
   for (const value of ['0', '-1', '65536', 'abc', '80;bad']) assert.throws(() => devPorts({ DEV_WEB_PORT: value }));
   assert.throws(() => devPorts({ DEV_WEB_PORT: '8000' }), /differ/);
+});
+
+test('Expo keeps Metro cache inside the repo and rebuilds it on demand', () => {
+  assert.deepEqual(devExpoArgs(8081), ['start', '--web', '--port', '8081', '--max-workers', '4']);
+  assert.deepEqual(devExpoArgs(8081, { clear: true }).at(-1), '--clear');
+  assert.equal(devExpoArgs(8081, { clear: false }).includes('--clear'), false);
+
+  // A cold transform cache is the difference between a ~60s refresh and a ~3s one, so the
+  // cache must live where cleaners and antivirus do not reach it.
+  const tempDir = 'D:/repo/node_modules/.cache/expo-temp';
+  const env = devExpoEnv({ env: { PATH: '/bin' }, apiPort: 8000, tempDir });
+  assert.equal(env.TEMP, tempDir);
+  assert.equal(env.TMP, tempDir);
+  assert.equal(env.TMPDIR, tempDir);
+  assert.equal(env.MATRIUS_DEV_API_URL, 'http://127.0.0.1:8000');
+  assert.equal(env.BROWSER, 'none');
+  assert.equal(env.EXPO_NO_DOTENV, '1');
+  assert.equal(env.PATH, '/bin');
 });
 
 test('SQLite URLs work on POSIX and Windows without a shell', () => {
@@ -274,4 +293,43 @@ test('API failure returns a safe 502; malformed target cannot forward off-machin
     assert.equal(handleDevApi({ url: '/api/auth/me' }, { set statusCode(value) { status = value; }, end() {} }, target), true);
     assert.equal(status, 502);
   }
+});
+
+function staticResponse() {
+  return {
+    statusCode: 200, body: null, headers: {},
+    setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
+    end(body) { this.body = body ?? null; },
+  };
+}
+
+test('missing public assets answer 404 instead of the dev server SPA fallback', async (t) => {
+  const publicDir = await mkdtemp(join(tmpdir(), 'matrius-static-'));
+  t.after(() => rm(publicDir, { recursive: true, force: true }));
+  await mkdir(join(publicDir, 'brand'), { recursive: true });
+  await writeFile(join(publicDir, 'brand', 'present.svg'), '<svg/>');
+
+  const present = staticResponse();
+  assert.equal(handleStaticMiss({ method: 'GET', url: '/brand/present.svg' }, present, publicDir), false);
+  assert.equal(present.statusCode, 200);
+
+  const missing = staticResponse();
+  assert.equal(handleStaticMiss({ method: 'GET', url: '/brand/missing.svg?v=2' }, missing, publicDir), true);
+  assert.equal(missing.statusCode, 404);
+  assert.match(String(missing.body), /Missing public asset/);
+
+  // Metro's own bundle and asset URLs are not ours to reject.
+  for (const url of ['/_expo/static/js/web/entry.js', '/node_modules/react/index.js', '/', '/settings']) {
+    const response = staticResponse();
+    assert.equal(handleStaticMiss({ method: 'GET', url }, response, publicDir), false, url);
+  }
+
+  const head = staticResponse();
+  assert.equal(handleStaticMiss({ method: 'HEAD', url: '/icons/missing.png' }, head, publicDir), true);
+  assert.equal(head.statusCode, 404);
+  assert.equal(head.body, null);
+
+  const traversal = staticResponse();
+  assert.equal(handleStaticMiss({ method: 'GET', url: '/brand/..%2f..%2fsecret.svg' }, traversal, publicDir), true);
+  assert.equal(traversal.statusCode, 404);
 });

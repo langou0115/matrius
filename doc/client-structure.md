@@ -32,6 +32,7 @@ src/
 ├── components/web/
 │   ├── link-anchor.tsx                 Expo Router 链接的 DOM 属性适配
 │   ├── app-frame.tsx                   配色变量、系统明暗模式
+│   ├── brand-mark.tsx                  彩色品牌标志，复用 public/brand/matrius-color.svg
 │   ├── demo-toolbar.tsx                开发示例的重置、退出入口
 │   ├── local-workspace.tsx             浏览器数据加载、保存队列与错误反馈
 │   ├── workspace.tsx                   侧栏布局、搜索入口与 Ctrl/Cmd+K
@@ -104,7 +105,7 @@ src/
 └── global.css                         Web 样式、字体、布局、焦点与选区
 ```
 
-- 路径别名 `@/` 指向 `src/`；本地字体在 `assets/fonts/`，通过根布局的 expo-font 加载。
+- 路径别名 `@/` 指向 `src/`；本地字体在 `assets/fonts/`，通过根布局的 expo-font 加载。品牌标志源文件是 `public/brand/matrius-color.svg`，favicon 使用透明底彩色 PNG，PWA/Apple 图标是同图渲染的深梅色底板彩色 PNG（`assets/images/favicon.png`、`public/icons/`）。
 - 模板 Explore、标签导航、启动动画组件和 reset-project 脚本已移除。
 - `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 9 个专项会话。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需加一个路由文件与一条清单记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；`src/app/mock/_layout.tsx` 用 `__DEV__` 统一保护所有子路由，生产模式跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
 - `/mock/process` 通过 `features/mock/process-preview.web.tsx` 复用思考折叠区、正文和中断提示；阶段切换保留展开状态及连续计时，包含等待、思考、搜索、读取、再次思考、回答和结束，可验证按发生顺序追加步骤及整轮完成状态。模拟数据位于 `dev/fixtures/process-preview.ts`，不调用模型或写入聊天记录。

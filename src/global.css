@@ -83,7 +83,8 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 /* The brand row keeps the topbar's 52px alignment; a 4px gap is all the separation the
    primary nav needs after it, so Matrius and 新对话 read as one cluster. */
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; height: var(--header-height); flex-shrink: 0; padding: 0 6px 0 8px; margin-bottom: 4px; }
-.brand { display: inline-flex; align-items: center; font-size: 17px; font-family: var(--font-semibold); font-weight: 400; letter-spacing: -.5px; line-height: 1; }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-size: 17px; font-family: var(--font-semibold); font-weight: 600; letter-spacing: -.5px; line-height: 1; }
+.brand-mark { display: block; flex: none; object-fit: contain; }
 .sidebar-header-actions { display: flex; align-items: center; gap: 4px; }
 .sidebar .icon-button { color: var(--sidebar-text-muted); }
 .sidebar .icon-button:hover { background: var(--sidebar-selected); color: var(--sidebar-foreground); }
@@ -231,7 +232,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .chat-topbar .conversation-title-input { position: absolute; inset: 0; width: 100%; padding: 5px 14px; font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; color: var(--foreground); background: none; border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: 999px; outline: none; caret-color: var(--primary); }
 .welcome-scroll { overflow-y: auto; flex: 1; display: flex; flex-direction: column; padding: 24px 40px 100px; }
 .welcome-content { width: 100%; max-width: var(--chat-column); margin: auto; padding-bottom: 5vh; }
-.welcome-heading { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 34px; }
+.welcome-heading { display: flex; align-items: center; justify-content: center; gap: 12px; text-align: center; margin-bottom: 34px; }
 .welcome-heading h1 { font-size: 30px; font-family: var(--font-medium); font-weight: 400; letter-spacing: -.8px; line-height: 1.5; }
 .composer { border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: var(--radius-xl); padding: 14px 16px 11px; background: var(--soft); transition: border-color 160ms; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--foreground) 26%, var(--background)); }
@@ -325,6 +326,11 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
    the input instead. */
 .messages-content > :is(.assistant-message, .user-message, .reasoning):last-child { margin-bottom: 0; }
 .user-message { display: flex; flex-direction: column; align-items: flex-end; margin: 0 0 28px; }
+/* The hover-only copy row always occupies its height, so the standard turn gap stacked on
+   top of it and left a hole between the bubble and the reply (or the waiting reasoning row).
+   The actions row already separates the two turns; after it the reply only needs to clear
+   the row. Consecutive user messages keep the standard gap. */
+.user-message:has(+ :is(.assistant-message, .reasoning)) { margin-bottom: 16px; }
 /* A supplement waiting for the streaming reply to end. It is not saved yet, so it has no
    message actions and sits back visually until it moves below the finished reply. */
 .user-message[data-pending='true'] { opacity: .7; }
@@ -333,7 +339,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .message-action:hover { color: var(--foreground); background: var(--soft); }
 .message-action[aria-pressed='true'] { color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--background)); }
 .message-action.copy-failed { color: var(--destructive); }
-.user-message > .message-actions { opacity: 0; pointer-events: none; transition: opacity 140ms; }
+.user-message > .message-actions { opacity: 0; pointer-events: none; transition: opacity 140ms; min-height: 28px; margin-top: 4px; }
 .user-message:hover > .message-actions, .user-message:focus-within > .message-actions { opacity: 1; pointer-events: auto; }
 .message-actions .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (hover: none) { .user-message > .message-actions { opacity: 1; pointer-events: auto; } }
@@ -785,8 +791,8 @@ input[type='password']::-ms-clear { display: none; }
 .mock-card:hover .mock-card-arrow { color: var(--primary); opacity: 1; }
 
 @media (max-width: 1150px) { .theme-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .settings-row { align-items: flex-start; flex-direction: column; } }
-@media (max-width: 800px) { .sidebar { width: 220px; min-width: 220px; } .sidebar-header { padding-left: 8px; } .brand { font-size: 17px; } .sidebar-header-actions { gap: 2px; } .welcome-scroll { padding: 24px 24px 70px; } .welcome-heading h1 { font-size: 25px; } .settings-sidebar { width: 224px; min-width: 224px; } .settings-content { padding: 30px 24px 64px; } .theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .theme-card-label { font-size: var(--text-caption); } }
-@media (max-width: 600px) { .sidebar { width: 190px; min-width: 190px; padding-inline: 8px; } .sidebar-header { padding-inline: 4px; } .brand { font-size: 16px; gap: 7px; } .sidebar-header-actions { gap: 0; } .sidebar-header-actions .icon-button { width: 26px; } .user-entry-text > span { display: none; } .user-entry { padding: 10px 6px; gap: 7px; } .welcome-scroll { padding: 24px 18px 48px; } .welcome-content { padding-bottom: 0; } .welcome-heading h1 { font-size: 23px; } .chat-topbar { padding-inline: 16px; } .theme-grid { grid-template-columns: minmax(0, 1fr); } .mode-switch { flex-wrap: wrap; } .mode-switch button { padding-inline: 8px; } .settings-sidebar { width: 190px; min-width: 190px; padding-inline: 8px; } .settings-content { padding: 24px 18px 56px; } .conversation-more { opacity: 1; } }
+@media (max-width: 800px) { .sidebar { width: 220px; min-width: 220px; } .sidebar-header { padding-left: 8px; } .brand { font-size: 17px; } .sidebar-header-actions { gap: 2px; } .welcome-scroll { padding: 24px 24px 70px; } .welcome-heading h1 { font-size: 25px; } .welcome-mark { width: 34px; height: 34px; } .settings-sidebar { width: 224px; min-width: 224px; } .settings-content { padding: 30px 24px 64px; } .theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .theme-card-label { font-size: var(--text-caption); } }
+@media (max-width: 600px) { .sidebar { width: 190px; min-width: 190px; padding-inline: 8px; } .sidebar-header { padding-inline: 4px; } .brand { font-size: 16px; gap: 7px; } .sidebar-header-actions { gap: 0; } .sidebar-header-actions .icon-button { width: 26px; } .user-entry-text > span { display: none; } .user-entry { padding: 10px 6px; gap: 7px; } .welcome-scroll { padding: 24px 18px 48px; } .welcome-content { padding-bottom: 0; } .welcome-heading h1 { font-size: 23px; } .welcome-mark { width: 30px; height: 30px; } .chat-topbar { padding-inline: 16px; } .theme-grid { grid-template-columns: minmax(0, 1fr); } .mode-switch { flex-wrap: wrap; } .mode-switch button { padding-inline: 8px; } .settings-sidebar { width: 190px; min-width: 190px; padding-inline: 8px; } .settings-content { padding: 24px 18px 56px; } .conversation-more { opacity: 1; } }
 @media (max-width: 900px) {
   .admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-table-head { display: none; }
@@ -1157,10 +1163,15 @@ input[type='password']::-ms-clear { display: none; }
 .reply-retry:hover { color: var(--primary); }
 .reply-retry:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 @media (pointer: coarse) { .reply-retry { min-height: 44px; } }
-.reasoning { min-width: 0; width: 100%; color: var(--muted-text); }
+/* The transcript and the step subheads that introduce it ("思考", "搜索资料", "读取网页") share the
+   project's small tier, so they stay in step with the rest of the UI on large canvases (13/14px)
+   instead of sitting a tier below it; only the folded title row is larger, at the answer's size. */
+.reasoning { min-width: 0; width: 100%; color: var(--muted-text); --reasoning-text: var(--text-small); }
 .assistant-message > .reasoning { margin-bottom: 12px; }
 .messages-content > .reasoning { margin-bottom: 32px; }
-.reasoning-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 18px; width: 100%; padding: 0; margin: 0; border: 0; border-radius: 0; background: none; color: var(--muted-text); font-size: 14px; line-height: 18px; text-align: left; cursor: pointer; }
+/* Folded away, this title row is the whole of the process that stays on screen, so it reads at
+   the answer's own size; the expanded transcript below stays one step smaller as supporting detail. */
+.reasoning-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 18px; width: 100%; padding: 0; margin: 0; border: 0; border-radius: 0; background: none; color: var(--muted-text); font-size: var(--text-body); line-height: 1.5; text-align: left; cursor: pointer; }
 .reasoning-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .reasoning-icon, .reasoning-chevron { pointer-events: none; }
 .reasoning-icon { flex: none; color: var(--primary); }
@@ -1170,7 +1181,7 @@ input[type='password']::-ms-clear { display: none; }
 .reasoning-label.is-running { color: var(--muted-text); background: linear-gradient(100deg, var(--muted-text) 30%, var(--foreground) 48%, var(--muted-text) 65%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: reasoning-light 2.6s linear infinite; }
 @keyframes reasoning-light { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .reasoning-meta { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--muted-text); }
-.reasoning-time { flex: none; font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
+.reasoning-time { flex: none; font-size: var(--text-body); font-variant-numeric: tabular-nums; }
 .reasoning-chevron, .web-activity-chevron, .thinking-chevron { flex: none; transition: opacity 140ms ease, transform 180ms ease; }
 .reasoning-toggle[aria-expanded='true'] .reasoning-chevron, .web-activity-toggle[aria-expanded='true'] .web-activity-chevron, .thinking-toggle[aria-expanded='true'] .thinking-chevron { transform: rotate(90deg); }
 .reasoning-body { min-width: 0; padding: 8px 0 2px; }
@@ -1179,7 +1190,7 @@ input[type='password']::-ms-clear { display: none; }
 /* A transcript that runs past a screen puts its header out of reach, so the body ends with the
    same toggle, flush with the step rows instead of indented into the timeline gutter, where the
    reader already is when they are done. */
-.reasoning-collapse { display: inline-flex; align-items: center; gap: 4px; margin: 14px 0 2px; padding: 2px 0; color: var(--muted-text); font-size: var(--text-small); line-height: 18px; text-align: left; transition: color 140ms; }
+.reasoning-collapse { display: inline-flex; align-items: center; gap: 4px; margin: 14px 0 2px; padding: 2px 0; color: var(--muted-text); font-size: var(--text-body); line-height: 1.5; text-align: left; transition: color 140ms; }
 .reasoning-collapse > svg { flex: none; pointer-events: none; }
 .reasoning-collapse:hover { color: var(--foreground); }
 .reasoning-collapse:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
@@ -1196,7 +1207,7 @@ input[type='password']::-ms-clear { display: none; }
 .thinking-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .thinking-icon { flex: none; color: var(--muted-text); pointer-events: none; }
 .thinking-step.is-error .thinking-icon { color: var(--destructive); }
-.thinking-label { flex: none; color: var(--foreground); font-family: var(--font-medium); font-size: 13px; white-space: nowrap; }
+.thinking-label { flex: none; color: var(--foreground); font-family: var(--font-medium); font-size: var(--reasoning-text); white-space: nowrap; }
 /* The folded row carries the opening of that thought, one line, so the list still says what each
    segment was about without being opened. */
 .thinking-preview { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--muted-text); font-size: var(--text-caption); white-space: nowrap; text-overflow: ellipsis; }
@@ -1205,7 +1216,7 @@ input[type='password']::-ms-clear { display: none; }
 /* The transcript keeps the timeline's gutter so a folded segment stays on the same axis. */
 .thinking-body { min-width: 0; margin-top: 4px; padding-left: 25px; overflow-wrap: anywhere; }
 /* The segment being written renders as plain text: Markdown is parsed once it stops streaming. */
-.thinking-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-text); font-size: 13px; line-height: 1.5; }
+.thinking-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-text); font-size: var(--reasoning-text); line-height: 1.5; }
 
 /* Tool calls use plain activity rows; source lists expand independently of the reasoning. */
 .web-activities { display: flex; flex-direction: column; gap: 12px; margin-bottom: 0; }
@@ -1215,7 +1226,7 @@ input[type='password']::-ms-clear { display: none; }
 .web-activity-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .web-activity-icon { flex: none; color: var(--muted-text); pointer-events: none; }
 .web-activity.is-error .web-activity-icon { color: var(--destructive); }
-.web-activity-label { color: var(--foreground); font-family: var(--font-medium); font-size: 13px; }
+.web-activity-label { color: var(--foreground); font-family: var(--font-medium); font-size: var(--reasoning-text); }
 .web-activity-state, .web-activity-time { color: var(--muted-text); font-size: 11px; }
 .web-activity-time { font-variant-numeric: tabular-nums; }
 .web-activity-details { display: flex; flex-direction: column; gap: 4px; padding-left: 25px; margin-top: 4px; max-height: 160px; overflow-y: auto; overscroll-behavior: contain; }
@@ -1236,7 +1247,7 @@ input[type='password']::-ms-clear { display: none; }
 .web-activity-error { color: var(--destructive); font-size: var(--text-caption); line-height: 1.5; overflow-wrap: anywhere; }
 /* Reasoning is supporting detail: the answer's typography demoted one step and tightened,
    so headings inside it never compete with the headings of the answer itself. */
-.reasoning-body .message-markdown { color: var(--muted-text); font-size: 13px; line-height: 1.5; }
+.reasoning-body .message-markdown { color: var(--muted-text); font-size: var(--reasoning-text); line-height: 1.5; }
 .reasoning-body .message-markdown p { margin: .35em 0; }
 .reasoning-body .message-markdown > :first-child { margin-top: 0; }
 .reasoning-body .message-markdown > :last-child { margin-bottom: 0; }
@@ -1461,3 +1472,12 @@ input[type='password']::-ms-clear { display: none; }
   .library-sort { margin-left: 0; }
   .library-search { max-width: none; }
 }
+
+/* Last-resort panel when a render error would otherwise blank the page. It can sit outside
+   `.matrius-app`, so every colour carries a literal fallback instead of a theme variable. */
+.app-error { display: grid; place-items: center; min-height: 100vh; padding: 24px; background: var(--background, #faf9f7); color: var(--foreground, #1c1b19); }
+.app-error-card { width: 100%; max-width: 540px; padding: 26px 28px; border: 1px solid color-mix(in srgb, var(--foreground, #1c1b19) 13%, transparent); border-radius: 18px; background: var(--soft, #f2efea); }
+.app-error-card h1 { margin: 0 0 8px; font-size: 20px; font-family: var(--font-semibold, sans-serif); font-weight: 400; }
+.app-error-card p { margin: 0 0 14px; color: var(--muted-text, #6b6862); font-size: 13px; line-height: 1.6; }
+.app-error-card pre { margin: 0 0 18px; padding: 12px 14px; overflow: auto; border-radius: 10px; background: var(--background, #faf9f7); color: var(--destructive, #b3261e); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-error-actions { display: flex; flex-wrap: wrap; gap: 10px; }

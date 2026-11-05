@@ -66,6 +66,7 @@ Windows、macOS、Linux 使用同一入口。本机只需 Node.js 24、npm 和 [
 npm ci
 npm run dev -- --check       # 校验工具、端口与路径，不启动服务
 npm run dev                  # 常驻：迁移数据库 + FastAPI reload + Expo Web
+npm run dev -- --clear       # 清空 Metro 转换缓存后启动（刷新异常缓慢或解析错误时用）
 npm run db:migrate           # 只迁移 server/.data/dev.db，不启动服务
 npm run web                  # 仅本机前端与模型中继
 ```
@@ -98,6 +99,14 @@ npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再
 `--reset-db` 只删除 `server/.data/dev.db*` 和 `server/.data/files/`，不会碰其他文件。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
 
 默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`。端口被占用时失败退出，不自动切换。Metro 先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置。脚本不自动打开浏览器。
+
+### 刷新速度与 Metro 缓存
+
+刷新慢几乎总是 Metro 的转换缓存为空，不是网络或后端：本机 14 核、4 worker、约 4,200 个模块、15 MB 开发包实测——缓存为空时首次出包约 57 秒；缓存命中后重启开发服务首次出包约 3.5 秒，同一会话再次刷新约 0.6 秒。
+
+缓存通过 `TEMP` / `TMP` / `TMPDIR` 固定在 `node_modules/.cache/expo-temp/metro-cache`，不再位于系统临时目录，避免被 Windows 清理工具和杀毒软件删除；`npm ci` 会连同 `node_modules` 一起清掉它，后首次刷新会重新付一次冷构建。`npm run dev -- --clear` 会主动清空缓存重建，适合在出现“文件确实存在却 Unable to resolve”之后使用，也适合升级 Expo/Babel/React Compiler 之后使用。
+
+每个开发会话重启都要重新出包（缓存命中时约 3.5 秒）；修改源码后刷新会重建整包（3–10 秒）。Metro 关闭懒分包是为避免模型回复中途整页刷新，代价就是刷新要等整包，不要为了快单独打开它。
 
 命令持续挂起，前后端保存即热更新。Ctrl+C 清理本机进程树；任何常驻子进程退出也会结束整个开发会话。服务器和正式数据不受影响。
 

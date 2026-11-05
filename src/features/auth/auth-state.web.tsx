@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState, useSyncExternalStore, t
 import { createAuthSession } from '@/core/api/auth-session';
 import { hasFeature } from '@/core/features/capabilities';
 import { browserSessionStore } from '@/core/platform/auth-session.web';
+import { createAuthRetry } from './auth-retry';
 
 const AuthContext = createContext<ReturnType<typeof createAuthSession> | null>(null);
 
@@ -17,7 +18,21 @@ export function AuthProvider({ children, preview }: PropsWithChildren<{ preview:
     void session.refresh();
     const refresh = () => { if (document.visibilityState === 'visible') void session.refresh(); };
     document.addEventListener('visibilitychange', refresh);
-    return () => { document.removeEventListener('visibilitychange', refresh); session.dispose(); };
+    // The API restarts on every backend save; reconnecting on its own beats making the
+    // reader hide and show the tab before the library and account entry come back.
+    window.addEventListener('online', refresh);
+    const retry = createAuthRetry({
+      getStatus: () => session.getSnapshot().status,
+      refresh: session.refresh,
+      subscribe: session.subscribe,
+      isVisible: () => document.visibilityState === 'visible',
+    });
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('online', refresh);
+      retry.dispose();
+      session.dispose();
+    };
   }, [session, preview]);
   return <AuthContext value={session}>{children}</AuthContext>;
 }

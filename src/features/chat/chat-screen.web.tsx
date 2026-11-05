@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
+import { BrandMark } from '@/components/web/brand-mark';
 import type { MessageFile } from '@/core/agent/types';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { Composer } from './components/composer.web';
@@ -194,7 +195,7 @@ export default function ChatScreen() {
         </div>
       </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
-      <div className="welcome-heading"><h1>Matrius</h1></div>
+      <div className="welcome-heading"><BrandMark size={42} className="welcome-mark" /><h1>Matrius</h1></div>
       <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
     </div></div>}
   </main>

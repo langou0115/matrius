@@ -142,17 +142,20 @@ export default function LibraryScreen() {
         <LibraryPlaceholder
           title={unavailable ? '暂时无法验证账号' : auth.user ? '资料库尚未开放' : '登录后使用资料库'}
           body={unavailable
-            ? '无法连接账号服务，请稍后刷新页面重试。'
+            ? '无法连接账号服务，正在自动重试；也可以立即重新验证。'
             : auth.user
               ? '当前账号还没有开通文件功能，请联系管理员。'
               : '登录账号后，对话中上传的图片和文档会保存到云端，可在这里搜索、下载和管理。'}
-          action={!auth.user && !unavailable
-            ? <Link href="/settings/account" asChild>
-              <LinkAnchor className="primary-button library-placeholder-action">
-                <LogIn size={16} strokeWidth={1.75} aria-hidden="true" />前往登录
-              </LinkAnchor>
-            </Link>
-            : undefined}
+          action={unavailable
+            ? <button type="button" className="primary-button library-placeholder-action"
+              onClick={() => void auth.refresh()}>重新验证</button>
+            : !auth.user
+              ? <Link href="/settings/account" asChild>
+                <LinkAnchor className="primary-button library-placeholder-action">
+                  <LogIn size={16} strokeWidth={1.75} aria-hidden="true" />前往登录
+                </LinkAnchor>
+              </Link>
+              : undefined}
         />
       </div></div>
     </main>;

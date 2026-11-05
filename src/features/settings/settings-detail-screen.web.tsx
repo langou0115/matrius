@@ -2,6 +2,7 @@ import { Cloud } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 import { Icon } from '@/components/web/icon';
+import { BrandMark } from '@/components/web/brand-mark';
 import { useResolvedColorMode } from '@/components/web/app-frame';
 import { useAuth } from '@/features/auth/auth-state.web';
 import { resolveTheme } from '@/theme/resolve-theme';
@@ -42,7 +43,7 @@ export function AboutSettingsScreen() {
   const mode = signedIn ? '云端账号' : status === 'checking' ? '正在验证' : status === 'anonymous' ? '本地模式' : '状态未知';
   return <SettingsPage title="关于 Matrius" description="应用信息与本地数据说明。">
       <section className="settings-section" aria-labelledby="about-heading"><h2 id="about-heading">关于</h2>
-        <div className="about-card"><span className="about-logo"><Icon name="sparkle" size={23} /></span><div><h3>Matrius</h3><p>一个安静、自由的 AI 对话空间。</p></div><span className="version-label">v1.0.0</span></div>
+        <div className="about-card"><span className="about-logo"><BrandMark size={38} /></span><div><h3>Matrius</h3><p>一个安静、自由的 AI 对话空间。</p></div><span className="version-label">v1.0.0</span></div>
         <div className="about-row"><span>运行模式</span><span>{signedIn ? <Cloud size={15} strokeWidth={1.75} aria-hidden="true" /> : <Icon name="shield" size={15} />}{mode}</span></div>
       </section>
   </SettingsPage>;

@@ -4,7 +4,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import ts from 'typescript';
 
+// expo-router's shipped build cannot be evaluated outside Metro (Node fails while loading it),
+// and these tests never navigate. Route-dependent components get the stand-in instead.
+const ROUTER_STUB = new URL('./stubs/expo-router.mjs', import.meta.url);
+
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === 'expo-router' || specifier === 'expo-router/head') {
+    return { url: ROUTER_STUB.href, shortCircuit: true };
+  }
   const local = specifier.startsWith('@/')
     ? pathToFileURL(resolvePath('src', specifier.slice(2)))
     : specifier.startsWith('.') && context.parentURL ? new URL(specifier, context.parentURL) : null;

@@ -54,6 +54,28 @@ export function devApiArgs(apiPort, platform = process.platform) {
     '--port', String(apiPort), '--reload', '--reload-dir', 'app'];
 }
 
+/** Metro's CLI arguments; `--clear` drops the transform cache before building. */
+export function devExpoArgs(webPort, { clear = false } = {}) {
+  return ['start', '--web', '--port', String(webPort), '--max-workers', '4', ...(clear ? ['--clear'] : [])];
+}
+
+/**
+ * Metro keeps its transform cache in `os.tmpdir()`, which Windows cleaners and antivirus
+ * delete routinely. With the cache gone, the next refresh pays the full cold build — about a
+ * minute for this app — so point the Expo process at a directory inside the repo instead.
+ */
+export function devExpoEnv({ env = {}, apiPort, tempDir }) {
+  return {
+    ...env,
+    MATRIUS_DEV_API_URL: `http://127.0.0.1:${apiPort}`,
+    EXPO_NO_DOTENV: '1',
+    BROWSER: 'none',
+    TEMP: tempDir,
+    TMP: tempDir,
+    TMPDIR: tempDir,
+  };
+}
+
 export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
   const admin = devAdminCredentials(env);
   return {
@@ -213,17 +235,18 @@ async function ready(url, signal) {
 
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
   if (args.includes('--help')) {
-    console.log('npm run dev [-- --check | --reset-db]\n'
+    console.log('npm run dev [-- --check | --reset-db | --clear]\n'
       + 'Runs FastAPI + Expo Web entirely on this machine; no Docker, SSH or WSL required.\n'
       + 'Data lives in server/.data (SQLite + uploaded files) and is never synced to the server.\n'
       + 'Requires Node.js, npm ci and uv (uv installs Python 3.12 itself).\n'
       + '--check validates local configuration, tools, ports and paths without starting services.\n'
       + '--reset-db deletes server/.data/dev.db* and server/.data/files before migrating; stop the API first.\n'
+      + '--clear rebuilds Metro\'s transform cache from scratch; use it after an unexpected "Unable to resolve" error.\n'
       + 'The development administrator comes from INITIAL_ADMIN_* in .env.local\n'
       + '(defaults: admin / dev-password). Production env files are never read.');
     return;
   }
-  if (args.some((arg) => !['--check', '--reset-db'].includes(arg))) throw new Error('Unknown option. Use --help.');
+  if (args.some((arg) => !['--check', '--reset-db', '--clear'].includes(arg))) throw new Error('Unknown option. Use --help.');
   const readEnv = async (file) => {
     try { return parseEnv(await readFile(file, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; return {}; }
@@ -296,9 +319,16 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal);
     abort.signal.throwIfAborted();
 
-    const expo = runner.start(process.execPath, [join(root, 'node_modules/expo/bin/cli'), 'start', '--web',
-      '--port', String(webPort)], { cwd: root, env: { ...env, MATRIUS_DEV_API_URL: `http://127.0.0.1:${apiPort}`,
-        EXPO_NO_DOTENV: '1', BROWSER: 'none' } });
+    // Metro spawns one Node worker per logical CPU (nine here), each with its own
+    // heap and Babel/React Compiler cache. Alongside Chrome, VS Code and the API
+    // that leaves no memory headroom, and a slow build turns into a freeze of the
+    // whole dev server. Four workers keep the loop responsive; the first cold
+    // build is somewhat slower.
+    const expoTemp = join(root, 'node_modules', '.cache', 'expo-temp');
+    await mkdir(expoTemp, { recursive: true });
+    const expo = runner.start(process.execPath,
+      [join(root, 'node_modules/expo/bin/cli'), ...devExpoArgs(webPort, { clear: args.includes('--clear') })],
+      { cwd: root, env: devExpoEnv({ env, apiPort, tempDir: expoTemp }) });
     runner.watch(expo, 'Expo');
     console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
       + `sign in as ${adminUser}. Ctrl+C stops local services only.`);
