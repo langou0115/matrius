@@ -8,7 +8,7 @@ import {
   readFileIds,
   readMessageFiles,
   stripMessageImages,
-} from '../src/features/workspace/workspace-repository.web.ts';
+} from '../src/features/workspace/workspace-repository.ts';
 
 const report = { id: 'f1', filename: '报告.pdf', contentType: 'application/pdf', size: 2048, revision: 3 };
 

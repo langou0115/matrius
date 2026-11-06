@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { LibraryToolbar } from '../src/features/files/library-toolbar.web.tsx';
+import { LibraryToolbar } from '../src/features/files/library-toolbar.tsx';
 
 const noop = () => undefined;
 

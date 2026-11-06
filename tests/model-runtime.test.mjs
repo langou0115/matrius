@@ -7,21 +7,21 @@ import { findRecentStart, getContextBudget, prepareHistory } from '../src/core/a
 import { withoutFailedReplies } from '../src/core/agent/history.ts';
 import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
-import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.web.ts';
+import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.ts';
 import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
 import { searchSettings } from '../src/features/settings/settings-catalog.ts';
 import { PersonalizationProvider, usePersonalization } from '../src/features/settings/personalization-state.tsx';
 import { MemoryProvider } from '../src/features/memory/memory-state.tsx';
-import { AuthProvider } from '../src/features/auth/auth-state.web.tsx';
-import { NetworkToolsProvider } from '../src/features/auth/network-tools-state.web.tsx';
+import { AuthProvider } from '../src/features/auth/auth-state.tsx';
+import { NetworkToolsProvider } from '../src/features/auth/network-tools-state.tsx';
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
 import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
 import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
-import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.web.ts';
+import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.ts';
 import { ApiError } from '../src/core/api/auth-session.ts';
-import { syncAccount } from '../src/features/auth/account-sync.web.ts';
-import { parseWorkspace } from '../src/features/workspace/workspace-repository.web.ts';
+import { syncAccount } from '../src/features/auth/account-sync.ts';
+import { parseWorkspace } from '../src/features/workspace/workspace-repository.ts';
 
 test('account sync sends persistent deletions before uploads and excludes remote tombstones across pages', async () => {
   const calls = [];
@@ -1746,7 +1746,7 @@ test('common file extensions use dedicated local Material icons, including upper
   const { renderToStaticMarkup } = await import('react-dom/server');
   const { parseHTML } = await import('linkedom');
   const { existsSync } = await import('node:fs');
-  const { FileTypeIcon } = await import('../src/features/chat/components/file-type-icon.web.tsx');
+  const { FileTypeIcon } = await import('../src/features/chat/components/file-type-icon.tsx');
   const cases = [
     ['report.doc', 'word'], ['report.DOCX', 'word'], ['budget.xls', 'table'], ['budget.xlsx', 'table'],
     ['slides.ppt', 'powerpoint'], ['slides.pptx', 'powerpoint'], ['report.pdf', 'pdf'],
@@ -1766,7 +1766,7 @@ test('common file extensions use dedicated local Material icons, including upper
 test('model brand icons recognise spaced GPT names instead of falling back', async () => {
   const { createElement } = await import('react');
   const { renderToStaticMarkup } = await import('react-dom/server');
-  const { ModelIcon } = await import('../src/features/chat/components/model-icon.web.tsx');
+  const { ModelIcon } = await import('../src/features/chat/components/model-icon.tsx');
   const Openai = (await import('@thesvg/react/openai')).default;
   const brand = renderToStaticMarkup(createElement(Openai, { width: 16, height: 16, 'aria-hidden': true, focusable: false, variant: 'light' }));
   const render = (props) => renderToStaticMarkup(createElement(ModelIcon, { ...props, size: 16 }));
@@ -1785,15 +1785,23 @@ test('composer reports validation in a compact chat notice without blocking inpu
   const { ChatProvider } = await import('../src/features/chat/chat-state.tsx');
   const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
   const { ChatRuntimeProvider } = await import('../src/features/chat/chat-runtime.tsx');
-  const { Composer } = await import('../src/features/chat/components/composer.web.tsx');
-  const { ChatNotice } = await import('../src/features/chat/components/chat-notice.web.tsx');
+  const { Composer } = await import('../src/features/chat/components/composer.tsx');
+  const { ChatNotice } = await import('../src/features/chat/components/chat-notice.tsx');
   const { conversationHref } = await import('../src/features/chat/conversation-href.ts');
   assert.equal(conversationHref(null), '/');
   assert.equal(conversationHref('a/b'), '/c/a%2Fb');
   assert.equal(conversationHref('demo', true), '/mock/chat/c/demo');
-  const previous = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.HTMLElement = window.HTMLElement; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  // Documents need the `files` capability and finish uploading before they can be sent,
+  // so this test signs in and answers the upload endpoint.
+  globalThis.fetch = async (path) => {
+    if (path === '/api/auth/me') {
+      return Response.json({ id: 'files-user', username: 'files-user', isAdmin: false, mustChangePassword: false, features: ['files'] });
+    }
+    return Response.json({ id: 'uploaded-file', filename: 'notes.pdf', size: 8, contentType: 'application/pdf', createdAt: 1 });
+  };
   window.HTMLElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   window.HTMLElement.prototype.close = function () { this.removeAttribute('open'); };
   const root = createRoot(document.getElementById('root'));
@@ -1824,10 +1832,18 @@ test('composer reports validation in a compact chat notice without blocking inpu
     await act(async () => { (document.querySelector('[aria-label="关闭提示"]') ?? document.querySelector('[aria-label="关闭弹窗"]')).click(); });
   }
   try {
-    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(AuthProvider, { preview: false }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    // Wait for the signed-in account's `files` capability: the picker drops its
+    // image-only filter and document uploads become available.
+    for (let attempt = 0; attempt < 100 && document.querySelector('input[type="file"]')?.hasAttribute('accept'); attempt++) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
     assert.equal(document.querySelector('.composer-attach').disabled, false);
     assert.equal(document.querySelector('input[type="file"]').hasAttribute('accept'), false);
     await choose(new File(['document'], 'notes.pdf', { type: 'application/pdf' }));
+    for (let attempt = 0; attempt < 100 && document.querySelector('.attachment-meta')?.textContent === '上传中…'; attempt++) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
     assert.equal(document.querySelector('.composer-attachment').getAttribute('title'), 'notes.pdf');
     assert.equal(document.querySelector('.composer-attachment .file-type-icon').getAttribute('data-file-icon'), 'pdf');
     assert.equal(document.querySelector('.attachment-name').textContent, 'notes.pdf');
@@ -1837,9 +1853,6 @@ test('composer reports validation in a compact chat notice without blocking inpu
     assert.match(document.querySelector('.chat-notice').textContent, /添加并选择模型/);
     await closePopup();
     await act(async () => { await models.save(config, 'key'); });
-    await submit();
-    assert.match(document.querySelector('.chat-notice').textContent, /暂不支持文件/);
-    await closePopup();
     await act(async () => { document.querySelector('.composer-attachment-remove').click(); });
     await choose(new File(['image'], 'photo.png', { type: 'image/png' }));
     assert.equal(document.querySelector('dialog'), null);
@@ -1863,6 +1876,7 @@ test('composer reports validation in a compact chat notice without blocking inpu
     assert.match(document.querySelector('.chat-notice').textContent, /图片输入/);
   } finally {
     await act(async () => { root.unmount(); });
+    globalThis.fetch = previous.fetch;
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.HTMLElement = previous.HTMLElement; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
   }
 });
@@ -1919,7 +1933,7 @@ test('the process header stays running after thinking ends and measures through 
     assert.ok(Object.keys(runtime.runs).length > 0, 'the request is still running after thinking_end');
     assert.equal(thinkingFinished.status, 'streaming');
     assert.equal(thinkingFinished.content, '', 'thinking ends before the first answer token');
-    const { getReasoningState, ReasoningBlock } = await import('../src/features/chat/components/reasoning-block.web.tsx');
+    const { getReasoningState, ReasoningBlock } = await import('../src/features/chat/components/reasoning-block.tsx');
     const { renderToStaticMarkup } = await import('react-dom/server');
     assert.equal(getReasoningState(thinkingFinished), 'running');
     const markup = renderToStaticMarkup(createElement(ReasoningBlock, { reasoning: thinkingFinished.reasoning, state: getReasoningState(thinkingFinished), elapsedMs: thinkingFinished.thinkingMs }));

@@ -112,7 +112,7 @@ REMOTE_HOST=服务器IP
 npm run deploy
 ```
 
-`npm run deploy` 每次都执行同一套流程：同步源码 → 构建 Web/API 生产镜像 → 备份现有数据库 → 执行迁移并刷新管理员密码 → 更新 Web/API 与 Caddy → 健康检查。新服务器首次执行时会自动生成缺失配置、创建 `matrius_prod_api_data` 数据卷和空库管理员。配置未变化的 Web 容器保持运行；API 每次重建以应用迁移和最新密码。Docker 缓存复用未变化的依赖与构建层。Web 使用静态生产构建；API 使用普通 Uvicorn（单 worker）。两者源码直接放进镜像，不挂载源码，也不运行 Metro 或热重载。
+`npm run deploy` 每次都执行同一套流程：同步源码 → 构建 Web/API 生产镜像 → 备份现有数据库 → 执行迁移并刷新管理员密码 → 更新 Web/API 与 Caddy → 健康检查。新服务器首次执行时会自动生成缺失配置、创建 `matrius_prod_api_data` 数据卷和空库管理员。配置未变化的 Web 容器保持运行；API 每次重建以应用迁移和最新密码。Docker 缓存复用未变化的依赖与构建层。Web 使用静态生产构建（`Dockerfile.web` 内执行 `npm run build`）；API 使用普通 Uvicorn（单 worker）。两者源码直接放进镜像，不挂载源码，也不运行 Vite 开发服务或热重载。
 
 `docker compose up` 带 `--remove-orphans`，会自动停止并删除旧拓扑遗留的 `migrate` / `postgres` / `redis` / `rustfs` / `openserp` 容器；旧数据卷不会被自动删除，可按需手动清理。
 

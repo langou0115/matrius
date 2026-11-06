@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type PropsWithChildren } from 'react';
 
 import { useChat } from '@/features/chat/chat-state';
-import { SearchDialog } from '@/features/chat/components/search-dialog.web';
-import { Sidebar } from '@/features/chat/components/sidebar.web';
+import { SearchDialog } from '@/features/chat/components/search-dialog';
+import { Sidebar } from '@/features/chat/components/sidebar';
 
 export function Workspace({ children }: PropsWithChildren) {
   const { sidebarOpen } = useChat();

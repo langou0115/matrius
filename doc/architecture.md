@@ -7,7 +7,7 @@
 保持项目简单。
 
 ```text
-Expo Web 客户端（React Native Web）
+React 19 + Vite Web 客户端（SPA，React Router 7）
 ├── 本地模式：浏览器 IndexedDB 保存对话、消息、设置
 └── 本地 Agent Runtime：上下文、Agent Loop、流式事件、工具调度、取消
     ├── 本地模式 → 用户自带 key → 模型服务商（不注册云端工具）
@@ -105,7 +105,7 @@ server/app/
 
 ```text
 src/
-├── app/            # 仅 Expo Router 路由页面与 _layout.tsx
+├── router/         # 唯一路由表与导航 API（React Router 7；routes.tsx + index.tsx）
 ├── features/       # chat / memory / files / usage / settings / admin / auth
 ├── core/
 │   ├── database/   # 本地模式数据库适配、迁移、schema 版本
@@ -118,7 +118,7 @@ src/
 └── constants/      # 主题、尺寸等公共常量
 ```
 
-以上为目标结构，尚未存在的目录随功能创建。当前真实文件见[客户端结构说明](client-structure.md)。路由文件负责导航与组装，功能页面、状态、组件放在 `features/`，不能把非路由代码放进 `src/app/`。
+以上为目标结构，尚未存在的目录随功能创建。当前真实文件见[客户端结构说明](client-structure.md)。路由表集中在 `src/router/routes.tsx`，负责路径到页面组件的映射；功能页面、状态、组件放在 `features/`，不能把非路由代码放进路由表文件。
 
 ### 结构规则
 

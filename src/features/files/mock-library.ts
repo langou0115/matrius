@@ -1,4 +1,4 @@
-import { fileExtension, type LibraryFile } from './files-api.web';
+import { fileExtension, type LibraryFile } from './files-api';
 
 /**
  * Development-only Library dataset. The preview routes have no account and no server, so

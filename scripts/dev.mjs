@@ -54,25 +54,16 @@ export function devApiArgs(apiPort, platform = process.platform) {
     '--port', String(apiPort), '--reload', '--reload-dir', 'app'];
 }
 
-/** Metro's CLI arguments; `--clear` drops the transform cache before building. */
-export function devExpoArgs(webPort, { clear = false } = {}) {
-  return ['start', '--web', '--port', String(webPort), '--max-workers', '4', ...(clear ? ['--clear'] : [])];
+/** Vite's CLI arguments; `--force` rebuilds the dependency pre-bundle before starting. */
+export function devWebArgs(webPort, { clear = false } = {}) {
+  return ['--port', String(webPort), '--strictPort', ...(clear ? ['--force'] : [])];
 }
 
-/**
- * Metro keeps its transform cache in `os.tmpdir()`, which Windows cleaners and antivirus
- * delete routinely. With the cache gone, the next refresh pays the full cold build — about a
- * minute for this app — so point the Expo process at a directory inside the repo instead.
- */
-export function devExpoEnv({ env = {}, apiPort, tempDir }) {
+/** The dev server reads the API origin for its same-origin `/api/` proxy. */
+export function devWebEnv({ env = {}, apiPort }) {
   return {
     ...env,
     MATRIUS_DEV_API_URL: `http://127.0.0.1:${apiPort}`,
-    EXPO_NO_DOTENV: '1',
-    BROWSER: 'none',
-    TEMP: tempDir,
-    TMP: tempDir,
-    TMPDIR: tempDir,
   };
 }
 
@@ -236,12 +227,12 @@ async function ready(url, signal) {
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
   if (args.includes('--help')) {
     console.log('npm run dev [-- --check | --reset-db | --clear]\n'
-      + 'Runs FastAPI + Expo Web entirely on this machine; no Docker, SSH or WSL required.\n'
+      + 'Runs FastAPI + Vite entirely on this machine; no Docker, SSH or WSL required.\n'
       + 'Data lives in server/.data (SQLite + uploaded files) and is never synced to the server.\n'
       + 'Requires Node.js, npm ci and uv (uv installs Python 3.12 itself).\n'
       + '--check validates local configuration, tools, ports and paths without starting services.\n'
       + '--reset-db deletes server/.data/dev.db* and server/.data/files before migrating; stop the API first.\n'
-      + '--clear rebuilds Metro\'s transform cache from scratch; use it after an unexpected "Unable to resolve" error.\n'
+      + '--clear rebuilds Vite\'s dependency pre-bundle from scratch; use it after a dependency change.\n'
       + 'The development administrator comes from INITIAL_ADMIN_* in .env.local\n'
       + '(defaults: admin / dev-password). Production env files are never read.');
     return;
@@ -260,7 +251,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   await capture('uv', ['--version']).catch(() => {
     throw new Error('Install uv first: https://docs.astral.sh/uv/getting-started/installation/');
   });
-  await readFile(join(root, 'node_modules/expo/bin/cli')).catch(() => { throw new Error('Run npm ci first.'); });
+  await readFile(join(root, 'node_modules/vite/bin/vite.js')).catch(() => { throw new Error('Run npm ci first.'); });
 
   if (args.includes('--check')) {
     await availablePort(webPort);
@@ -319,17 +310,13 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal);
     abort.signal.throwIfAborted();
 
-    // Metro spawns one Node worker per logical CPU (nine here), each with its own
-    // heap and Babel/React Compiler cache. Alongside Chrome, VS Code and the API
-    // that leaves no memory headroom, and a slow build turns into a freeze of the
-    // whole dev server. Four workers keep the loop responsive; the first cold
-    // build is somewhat slower.
-    const expoTemp = join(root, 'node_modules', '.cache', 'expo-temp');
-    await mkdir(expoTemp, { recursive: true });
-    const expo = runner.start(process.execPath,
-      [join(root, 'node_modules/expo/bin/cli'), ...devExpoArgs(webPort, { clear: args.includes('--clear') })],
-      { cwd: root, env: devExpoEnv({ env, apiPort, tempDir: expoTemp }) });
-    runner.watch(expo, 'Expo');
+    // Vite starts in under a second, serves modules on demand and hot-replaces a
+    // changed module without rebuilding the graph, so the development server needs
+    // no worker or cache tuning of its own.
+    const web = runner.start(process.execPath,
+      [join(root, 'node_modules/vite/bin/vite.js'), ...devWebArgs(webPort, { clear: args.includes('--clear') })],
+      { cwd: root, env: devWebEnv({ env, apiPort }) });
+    runner.watch(web, 'Vite');
     console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
       + `sign in as ${adminUser}. Ctrl+C stops local services only.`);
 

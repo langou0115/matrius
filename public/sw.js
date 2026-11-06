@@ -1,10 +1,10 @@
 /* Matrius PWA service worker: precache the app shell, then serve it offline.
    Bump CACHE_NAME whenever the shell or the caching strategy changes. */
-const CACHE_NAME = 'matrius-v4';
+const CACHE_NAME = 'matrius-v5';
 const APP_SHELL = [
   '/',
   '/manifest.json',
-  '/favicon.ico',
+  '/favicon.png',
   '/brand/matrius-color.svg',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -35,11 +35,11 @@ function isCacheable(request) {
   // API traffic is account data and streaming responses; never cache it.
   if (url.pathname.startsWith('/api/')) return false;
   if (url.pathname === '/sw.js') return false;
-  // Metro bundles and hot-update files only exist on the dev server. The dev and production
-  // servers share port 8081, so a worker left over from `npm run serve` would otherwise serve
-  // an old development bundle after the code changed.
-  if (url.searchParams.has('dev') || url.pathname.endsWith('.bundle') || url.pathname.startsWith('/node_modules/')
-    || url.pathname.startsWith('/@') || url.pathname.startsWith('/__expo')) return false;
+  // Vite's module graph and dependency pre-bundle only exist on the dev server. The dev
+  // and production servers share port 8081, so a worker left over from `npm run build`
+  // plus `serve` would otherwise answer with stale development modules.
+  if (url.searchParams.has('dev') || url.searchParams.has('t') || url.pathname.startsWith('/node_modules/')
+    || url.pathname.startsWith('/src/') || url.pathname.startsWith('/@')) return false;
   return true;
 }
 

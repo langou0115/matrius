@@ -14,11 +14,11 @@ import { useModels } from '@/features/models/model-state';
 import { useMemory } from '@/features/memory/memory-state';
 import { pickMemoryModel } from '@/features/memory/memory-model';
 import { usePersonalization } from '@/features/settings/personalization-state';
-import { recordTokenUsage } from '@/features/usage/usage-api.web';
+import { recordTokenUsage } from '@/features/usage/usage-api';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
-import { protectBrowserRun } from '@/core/platform/run-protection.web';
-import { useAuth } from '@/features/auth/auth-state.web';
-import { useNetworkTools } from '@/features/auth/network-tools-state.web';
+import { protectBrowserRun } from '@/core/platform/run-protection';
+import { useAuth } from '@/features/auth/auth-state';
+import { useNetworkTools } from '@/features/auth/network-tools-state';
 import { deriveConversationTitle, useChat, type Conversation, type Message, type MessageImage } from './chat-state';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }

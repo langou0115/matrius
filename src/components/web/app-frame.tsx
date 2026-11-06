@@ -4,9 +4,9 @@ import { useAppearance } from '@/theme/appearance';
 import { themePresets } from '@/theme/presets';
 import { resolveTheme } from '@/theme/resolve-theme';
 import { useIsPreview } from '@/features/workspace/preview-context';
-import { useAdminColorMode } from '@/features/admin/admin-theme.web';
+import { useAdminColorMode } from '@/features/admin/admin-theme';
 
-const DemoToolbar = __DEV__
+const DemoToolbar = import.meta.env.DEV
   ? lazy(() => import('./demo-toolbar').then((module) => ({ default: module.DemoToolbar })))
   : null;
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { pullWorkspace, pushWorkspace } from '../src/features/auth/account-sync.web.ts';
+import { pullWorkspace, pushWorkspace } from '../src/features/auth/account-sync.ts';
 
 const file = {
   id: 'f1', filename: '报告.pdf', contentType: 'application/pdf', size: 2048, revision: 2,

@@ -3,8 +3,8 @@ import test from 'node:test';
 import { act, createElement, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import { AuthProvider } from '../src/features/auth/auth-state.web.tsx';
-import { LoginDialog } from '../src/features/auth/login-dialog.web.tsx';
+import { AuthProvider } from '../src/features/auth/auth-state.tsx';
+import { LoginDialog } from '../src/features/auth/login-dialog.tsx';
 
 test('a rejected login is reported once inside the login dialog', async () => {
   const keys = ['window', 'document', 'HTMLElement', 'fetch', 'IS_REACT_ACT_ENVIRONMENT'];

@@ -27,7 +27,7 @@ test('source selection rejects secrets, traversal, generated files and unsafe fi
     '../outside', '/absolute', 'a/../outside', 'a\\b', 'a\nb', '.remote-sync-manifest']) {
     assert.equal(canSync(path), false, path);
   }
-  for (const path of ['src/app/index.web.tsx', 'server/app/main.py', '.env.local.example',
+  for (const path of ['src/main.tsx', 'server/app/main.py', '.env.local.example',
     'docker-compose/.env.production.example', 'assets/a b.png']) assert.equal(canSync(path), true, path);
 });
 
@@ -206,7 +206,7 @@ test('remote deploys production once per invocation and locks concurrent session
 
     // Representative production image build inputs.
     const initial = {
-      'package.json': '{}', 'package-lock.json': '{}', 'Dockerfile.web': 'FROM node',
+      'package.json': '{}', 'package-lock.json': '{}', 'Dockerfile': 'FROM node',
       'scripts/sync-katex.mjs': '// katex', 'server/pyproject.toml': '[project]',
       'server/uv.lock': 'lock', 'server/Dockerfile': 'FROM python',
       'server/scripts/select-index.py': '# indexes', 'server/scripts/install-python-deps.sh': '# deps',

@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Matrius 是 Expo Web（React Native Web）前端与 FastAPI 后端的自部署 AI 对话应用。
+Matrius 是 React 19 + TypeScript（Vite 8）前端与 FastAPI 后端的自部署 AI 对话应用。
 
 ## 开始前
 
-- Expo 每个 SDK 都有破坏性变更，不要凭记忆写 API。先看 `package.json` 中的 `expo` 版本，再查 `https://docs.expo.dev/versions/v<major>.0.0/`。
+- 前端是普通 React Web 应用，使用 Vite 8 构建、React Router 7 路由；不要再引入 Expo、React Native Web 或 Metro。
 - 按任务阅读对应文档：
 
 | 任务 | 文档 |
@@ -21,20 +21,16 @@ Matrius 是 Expo Web（React Native Web）前端与 FastAPI 后端的自部署 A
 
 ```bash
 npm ci
-npm run dev                 # 本机迁移 + Expo + FastAPI 热更新，SQLite 与文件都在 server/.data
+npm run dev                 # 本机迁移 + Vite + FastAPI 热更新，SQLite 与文件都在 server/.data
+npm run build               # Vite 生产构建到 dist/（Dockerfile.web 使用，日常开发不需要）
+npm run deploy              # 唯一生产发布入口
 npm run db:migrate          # 只迁移本机开发库，不启动服务
-npm run web                 # Web 开发（Metro，可访问 /mock）
-npx expo start              # Metro 开发服务
-npx expo lint
-npx tsc --noEmit
-npm run test:rendering
-npm run test:models
-npm run test:files
-npm run test:auth
-npm run test:deploy
-npm run test:dev
-npx expo install <package>  # 安装 SDK 兼容版本，不要用 npm install 装 Expo 相关包
+npm run test                # 全部测试，按文件串行执行
+npx tsc --noEmit            # TypeScript 类型检查
+npx eslint .                # 使用 eslint.config.mjs 检查，可选
 ```
+
+`npm run dev` 支持 `--check`、`--reset-db` 和 `--clear`（重建 Vite 依赖预构建）；`npm run dev -- --clear` 等价于给 Vite 传 `--force`。
 
 后端检查：
 
@@ -45,12 +41,14 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest
 ```
 
-## Expo 约定
+## 前端约定
 
-- 路由只用 Expo Router，页面在 `src/app/`，组件和 hooks 放在路由目录外。
-- 只维护 Web 构建：不添加原生依赖、`ios/` / `android/` 工程或 EAS 配置。
-- Web 路由使用 `X.web.tsx`，并必须在同一目录保留 `X.tsx` fallback；缺少 fallback 时 Expo Router 会在开发模式报错。非路由的平台适配组件同样使用 `.web.tsx`。共享状态与业务契约不直接依赖 DOM。
-- 生产 Web 支持 PWA：`public/manifest.json`、`public/sw.js` 与导出后注入逻辑 `scripts/inject-pwa.mjs`。
+- 前端是 React 19 + TypeScript 的普通 Web 应用，Vite 8 构建、React Router 7 路由；入口是根目录 `index.html` 与 `src/main.tsx`。
+- 路由只有一个事实源：`src/router/routes.tsx`。新增页面必须在其中注册；除聊天路由外页面使用 `React.lazy`；`/mock/*` 由 `MockOnly` 保护，生产构建直接回到 `/`，未知 URL 也重定向到 `/`。
+- 导航统一从 `@/router` 导入 `Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href`；功能代码不要直接导入 `react-router-dom`。
+- 不再有 `.web.tsx` / `.web.ts` 后缀、平台 fallback 兄弟文件或 `src/app/`；所有页面与组件都是普通 `X.tsx` / `X.ts`，只维护 Web + PWA 目标。
+- 页面外壳在 `src/components/web/app-shell.tsx`；只在 Web 端运行，不添加原生工程、移动端壳或第二套路由。
+- 生产 Web 支持 PWA：`index.html` 直接包含 manifest 链接、主题色与 Apple 触摸图标元数据，`public/sw.js` 缓存应用外壳；不再有导出后 HTML 注入步骤。
 
 ## 架构与边界
 
@@ -72,8 +70,8 @@ uv run --no-sync pytest
 
 ## 部署
 
-- 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Metro 或 Uvicorn 热重载。
-- `npm run dev` 完全在本机常驻运行 Expo 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
+- 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Vite 或 Uvicorn 热重载。
+- `npm run dev` 完全在本机常驻运行 Vite 与 FastAPI，数据在 `server/.data/dev.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
 - 部署成功后，`registry.py` 中登记的功能立即对所有账号开放。
 - 生产只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite + 上传文件）。API 镜像额外包含 Linux OfficeCLI、LibreOffice 与中文字体，镜像会明显增大；`/tmp` 使用 512 MiB tmpfs 供转换使用。
 - API 必须保持单 uvicorn worker：文档草稿与限流都在进程内，多 worker 会不可见且互相拆分限额。`npm run deploy` 没有子命令：首次执行自动初始化，之后每次都会备份数据库、应用迁移、刷新管理员密码、更新 Web/API 与 Caddy；`--remove-orphans` 会清理旧拓扑遗留容器。
@@ -83,7 +81,7 @@ uv run --no-sync pytest
 
 ## 完成前
 
-- 运行 `npx expo lint`、`npx tsc --noEmit` 和受影响测试，如实报告结果。
-- 未实测的平台行为要说明范围，不把推断写成已验证。
+- 运行 `npx tsc --noEmit` 和 `npm run test`，如实报告结果；涉及代码风格时可再运行 `npx eslint .`。
+- 未实测的浏览器行为要说明范围，不把推断写成已验证。
 - 产品边界、持久化、目录职责或命令变化时同步更新 `doc/` 和 README。
 - 不提交密钥、令牌或真实用户数据。

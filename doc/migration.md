@@ -4,13 +4,13 @@
 
 ## 当前范围
 
-旧工程位于 `../matrius-old`，Flutter/Dart 界面需用 React 组件重写。当前项目已有 Expo SDK 57 与 Expo Router，无需重新初始化工程。当前只做 Web；移动 Web 响应式适配后续按单独要求进行。
+旧工程位于 `../matrius-old`，Flutter/Dart 界面需用 React 组件重写。当前项目使用 Vite + React Router，前端迁移已完成，无需重新初始化工程。当前只做 Web；移动 Web 响应式适配后续按单独要求进行。
 
 ## 已完成
 
 1. 迁移产品与开发文档，明确 Agent Runtime 在客户端本地运行，网络搜索与文件处理在云端执行。
 2. 替换模板导航：移除 Explore 与 Home/Explore 标签栏，使用 `/` 聊天和 `/settings` 设置路由。
-3. Web 页面放在 `X.web.tsx`，同目录保留 `X.tsx` fallback；业务组件放在 `src/app/` 外。
+3. 迁移初期 Web 页面使用 `X.web.tsx` 与 `X.tsx` fallback；后续切换 Vite 后已统一为普通 `X.tsx` / `X.ts`，见[客户端结构](client-structure.md)。
 4. 迁移字体资源和 10 套 tweakcn 配色，保留 Twitter 默认配色，支持浅色、深色与跟随系统。主题切换只改变配色。
 5. 重建聊天外壳：侧栏、收起/展开、新对话、欢迎页、输入框与消息区。
 6. 实现会话的新建、切换、搜索标题与正文、置顶、重命名及确认删除。

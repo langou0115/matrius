@@ -1,6 +1,6 @@
 import {
   DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, fileExtension,
-} from './files-api.web';
+} from './files-api';
 
 export type LibraryKind = 'all' | 'image' | 'file';
 export type LibrarySort = 'created' | 'name' | 'size';

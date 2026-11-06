@@ -5,12 +5,12 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { IDBFactory } from 'fake-indexeddb';
 
-import { AuthProvider, useAuth } from '../src/features/auth/auth-state.web.tsx';
+import { AuthProvider, useAuth } from '../src/features/auth/auth-state.tsx';
 import { LocalWorkspace } from '../src/components/web/local-workspace.tsx';
 import { useChat } from '../src/features/chat/chat-state.tsx';
-import { useNetworkTools } from '../src/features/auth/network-tools-state.web.tsx';
+import { useNetworkTools } from '../src/features/auth/network-tools-state.tsx';
 import { useModels } from '../src/features/models/model-state.tsx';
-import { readWorkspace, writeWorkspace } from '../src/core/database/browser-store.web.ts';
+import { readWorkspace, writeWorkspace } from '../src/core/database/browser-store.ts';
 
 // Exercise the real provider tree: account changes must replace every workspace state
 // while retaining the same browser model configuration and credential vault.
@@ -96,6 +96,9 @@ test('login and account changes isolate workspaces while models and keys stay lo
     assert.equal(models.selectedId, 'model');
     assert.equal(models.getKey('provider'), 'local-test-key');
   } finally {
+    // Let pending preference loads land while the fake window still exists; a late
+    // setState after the globals are restored reads through an undefined `window`.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     await act(async () => root.unmount());
     globalThis.window = previous.window; globalThis.document = previous.document; globalThis.indexedDB = previous.indexedDB;
     globalThis.fetch = previous.fetch; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act; globalThis.__DEV__ = previous.dev;

@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 import modelProxy from './model-proxy.cjs';
 
 /**
- * Production web server: serves the exported `dist/` and the same-origin model relay.
- * Run `npx expo export --platform web` first, then `npm run serve` (or `node scripts/server.mjs`).
+ * Production web server: serves the built `dist/` and the same-origin model relay.
+ * Run `npm run build` first, then `node scripts/server.mjs`.
  *
  * Environment:
  *   PORT | HOST                      listen address (default 8081 / 0.0.0.0)
@@ -65,8 +65,7 @@ function findStaticFile(pathname) {
 }
 
 function isAssetPath(pathname) {
-  return pathname.startsWith('/_expo/')
-    || pathname.startsWith('/assets/')
+  return pathname.startsWith('/assets/')
     || pathname.startsWith('/vendor/')
     || pathname.includes('.');
 }
@@ -98,7 +97,7 @@ const server = http.createServer((req, res) => {
   }
 
   res.setHeader('Content-Type', MIME_TYPES[extname(file).toLowerCase()] || 'application/octet-stream');
-  if (file.includes(`${sep}_expo${sep}static${sep}`)) {
+  if (file.includes(`${sep}assets${sep}`)) {
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   }
   // The service worker, manifest and SPA shell must be revalidated so a new

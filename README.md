@@ -21,8 +21,8 @@
 
 | 部分 | 选型 |
 | --- | --- |
-| 客户端 | Expo SDK 57、Expo Router、React Native Web、React、TypeScript |
-| 路由 | Expo Router（`src/app/`） |
+| 客户端 | React 19、TypeScript、Vite 8 |
+| 路由 | React Router 7（`src/router/routes.tsx`） |
 | 后端 | Python 3.12、FastAPI、SQLite、SQLAlchemy、Alembic |
 | 运行时能力 | 进程内缓存/限流、本地文件存储、DuckDuckGo 优先（Bing 回退）搜索、trafilatura 正文提取 |
 | 基础设施 | Caddy（生产只运行 Caddy / Web / API 三个容器） |
@@ -41,12 +41,13 @@ npm run dev
 
 打开 `http://localhost:8081`，在「设置 → 模型服务」添加服务商和模型后即可对话。
 
-`npm run dev` 完全在本机运行 Expo、FastAPI 与 SQLite：数据保存在 `server/.data/dev.db` 和 `server/.data/files`（已加入 `.gitignore`），不连接服务器。前后端保存后热更新，Ctrl+C 一并停止本机进程。启动时会自动迁移开发库；开发会话已在运行时，可用 `npm run db:migrate` 单独升级同一个开发库而不重启服务。开发管理员使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，未设置时回退到 `admin` / `dev-password`；密码仍是 `change-me` 时拒绝启动。`npm run dev` 不读取 `docker-compose/.env.production`。已有开发管理员会在启动时同步为当前配置的密码。`npm run dev -- --reset-db` 会清空本地开发数据后重新迁移。
+`npm run dev` 完全在本机运行 Vite、FastAPI 与 SQLite：数据保存在 `server/.data/dev.db` 和 `server/.data/files`（已加入 `.gitignore`），不连接服务器。前后端保存后热更新，Ctrl+C 一并停止本机进程。启动时会自动迁移开发库；开发会话已在运行时，可用 `npm run db:migrate` 单独升级同一个开发库而不重启服务。开发管理员使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，未设置时回退到 `admin` / `dev-password`；密码仍是 `change-me` 时拒绝启动。`npm run dev` 不读取 `docker-compose/.env.production`。已有开发管理员会在启动时同步为当前配置的密码。`npm run dev -- --reset-db` 会清空本地开发数据后重新迁移；`npm run dev -- --check` 只校验工具、端口与路径；`npm run dev -- --clear` 会重建 Vite 的依赖预构建。
 
-只调试前端也可用 `npm run web`。两种开发方式都可访问 `/mock`，其中 `/mock/process` 可预览思考过程、工具步骤和中断状态，不调用模型；回答末尾的来源区留待后续实现。生成期间会暂缓开发热更新，避免代码保存打断回答；本次更新后需手动重启开发命令以应用 Metro 配置。正式 Web 使用静态生产构建。
+开发模式可访问 `/mock`，其中 `/mock/process` 可预览思考过程、工具步骤和中断状态，`/mock/storage` 可预览保存失败提示，均不调用模型；回答末尾的来源区留待后续实现。Vite 的 HMR 会自行重连，模型回复生成期间不再暂停热更新；刷新或离开页面时仍保留 `beforeunload` 确认，避免误丢正在进行的回复。正式 Web 使用静态生产构建。
 
 ```bash
-npm run export:web && npm run serve   # 本地验证生产构建
+npm run build   # Vite 生产构建到 dist/（Dockerfile.web 使用）
+npm run test    # 全部测试，按文件串行执行
 ```
 
 ## 部署
@@ -81,13 +82,9 @@ Web/API 源码直接打入各自镜像，不挂载源码、不运行开发服务
 ## 验证
 
 ```bash
-npx expo lint
 npx tsc --noEmit
-npm run test:rendering
-npm run test:models
-npm run test:auth
-npm run test:deploy
-npm run test:dev
+npx eslint .        # 可选，使用 eslint.config.mjs
+npm run test
 ```
 
 后端测试见[后端 README](server/README.md)。

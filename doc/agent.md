@@ -30,7 +30,7 @@
 
 未登录时不注册云端工具，Runtime 只运行纯对话与记忆注入。登录后通过统一能力集开放工具，沿用同一套循环。
 
-共享核心集中在客户端 `src/core/agent/`，不依赖 React、DOM、Expo 页面、聊天状态或设置模块。界面层通过同一接口提交请求、订阅运行状态和接收回复：
+共享核心集中在客户端 `src/core/agent/`，不依赖 React、DOM、路由页面、聊天状态或设置模块。界面层通过同一接口提交请求、订阅运行状态和接收回复：
 
 ```text
 src/core/agent/
@@ -166,12 +166,12 @@ execute()
 - `core/agent/runner.ts` 创建真实 pi Agent；`core/llm/model-config.ts` 映射模型元数据；`features/chat/chat-runtime.tsx` 连接当前工作区、上下文、生命周期与消息状态。Thinking Effort 支持 Default、Low、Medium、High，由 pi-agent-core 映射到模型请求；每个会话独立保存设置，新会话沿用最近选择，旧会话读取时默认为 Default，重试沿用会话设置。一个工作区同时生成一条回复，切换聊天或进入设置不卸载 Runtime，删除正在生成的会话会取消，不重建已删会话。
 - 思考预算由 `core/agent/thinking-budget.ts` 按模型的最大输出换算：至少给正文/工具调用留 4,096 token，思考上限 8,192。pi-ai 把思考算在同一个 `max_tokens` 窗口里，早期版本的 “medium/high” 在 4096 输出的模型上只给正文留下约 1,024 token，生成文档时会“还没写正文就达到最大输出长度”。
 - 截断恢复：如果某一轮以 `stopReason=length` 结束且没有任何正文，runner 会丢弃这条半成品回复，把思考降一档（再不行就关闭）、追加一条“缩小批次、直接调用 file 工具、先用 list 找回草稿”的系统提示并自动续跑，最多 2 次；仍失败才显示带具体设置建议的错误。诊断里记录 `output_retry` 事件，可在 `matriusDiagnostics` 中看到重试次数和降档结果。带正文的截断不重试，保留已生成内容。
-- `features/models/model-settings-screen.web.tsx` 管理 Provider 与其模型；模型目录由 `core/llm/provider-catalog.web.ts` 从服务商直接获取。API key 按 Provider ID 单独存储，持久化的模型配置只保存字段白名单。
+- `features/models/model-settings-screen.tsx` 管理 Provider 与其模型；模型目录由 `core/llm/provider-catalog.ts` 从服务商直接获取。API key 按 Provider ID 单独存储，持久化的模型配置只保存字段白名单。
 - 输入校验通过后才提交消息并清空草稿；未配置模型或缺 key 时保留草稿。流式界面约 50ms 合并一次更新；存储约 300ms 写入最新正文，结束时立即提交最终状态。停止和错误保留收到的文本；刷新时将 streaming 状态恢复为 stopped，不自动继续付费请求。
 - 工具轮之间的过渡正文（例如“我先搜索一下”）只作为当前草稿显示；下一条 assistant 消息的正文会覆盖它，最终回复只保留回答正文，不会把每轮过渡句拼进答案。思考与工具记录仍累计完整过程；正文被覆盖时，客户端对替换后的正文播放一次短暂淡入/上移动效。
 - 上下文包含当前会话已有文本，不混入其他会话或隐藏思考。输入接近窗口时，Runtime 在对话请求创建前按 OpenStudio 的预算静默压缩较早历史：按 UTF-8 字节保守估算 token，预留输出、系统提示和安全余量，保留最近完整轮次原文（不切断用户轮次或补充消息），把更早内容分批合并为滚动摘要，再以 `<conversation_summary>` 参考块加入系统提示。摘要作为会话的 `contextSummary` 元数据随本地工作区持久化，并随工作区同步到云端（服务端 `conversations.context_summary` 列）；刷新、重新登录或换设备后继续复用，不会重新压缩。摘要不属于消息历史，不改变消息顺序、未读状态或会话更新时间；分支、删除等导致覆盖标记失效时自动丢弃并重新压缩。旧数据没有该字段时按需生成。压缩请求失败、超时、缺少凭据或用户停止时静默回退，不显示压缩状态、提示或错误；只有压缩后仍超出窗口（例如单条消息本身过大）才显示原有的上下文超限提示。默认空闲超时 120 秒，思考/正文增量和工具开始/结束均重置计时；独立总时限为 15 分钟。持续有输出的长回复不会因为达到两分钟被切断。本地模式不执行模型返回的工具调用。
 - Web 密钥按工作区独立存放，与模型元数据分表，不写日志或同步；模型请求走同源中继。错误归一为安全、可操作的提示，不持久化 SDK 原始响应。末条失败回复下将错误和重试放在同一个紧凑提示容器内；点击后立即进入 streaming，不重复提交用户问题。发送新消息或已有回复运行时，旧回复的重试按钮隐藏，历史错误说明保留。主动停止为中性提示，不提供该错误重试按钮。后续消息保留原问题和半截回复；模型上下文把中断回复标为已结束，并明确后续用户消息是新的独立请求，只有用户要求继续时才续写。没有正文的中断回复也保留为中断占位（例如在思考阶段停止），避免旧问题与新问题变成两段连续的用户消息；仅排除空错误占位和错误元数据。手动刷新恢复 streaming 为 stopped，并停止在途工具指示，不自动重新请求模型。同步的迟到快照不能覆盖正在生成或已更新的本地消息。
-- `core/platform/run-protection.web.ts` 在运行期间保护离开/刷新操作，并暂停 SDK 57 的开发 HMR；所有会话都空闲后等待 1.5 秒，让最终状态提交再恢复热更新。`dev-refresh-client.web.js` 隔离 Expo 私有开发 API 及其类型依赖，升级 SDK 时需验证。真实整页刷新仍会销毁客户端 Runtime，不能假装请求继续运行。
-- 旧 pi 的聚合入口含 Metro 不支持的动态 Node 导入。`metro.config.js` 在 Web 中把 pi-ai 聚合入口映射为 `pi-agent-bridge.ts` 的官方事件/校验工具导出，并把 Node 环境密钥发现映射为 `pi-browser-credentials.ts`；请求由显式 streamFn 只加载三种协议，未改写依赖文件。升级 pi 时需同时检查这些固定版本的内部工具路径。
+- `core/platform/run-protection.ts` 在运行期间只保留 `beforeunload` 离开/刷新确认，避免误关页面丢掉生成中的回复；Vite 的 HMR 不再暂停，修改源码不会中断本轮生成，HMR 连接断开后由 Vite 客户端自行重连。真实整页刷新仍会销毁客户端 Runtime，不能假装请求继续运行。
+- 旧 pi 的聚合入口含浏览器不支持的动态 Node 导入。`vite.config.ts` 在 Web 构建中把 pi-ai 聚合入口映射为 `pi-agent-bridge.ts` 的官方事件/校验工具导出，并把 Node 环境密钥发现映射为 `pi-browser-credentials.ts`；请求由显式 streamFn 只加载三种协议，未改写依赖文件。升级 pi 时需同时检查这些固定版本的内部工具路径。
 
 - Runtime 的 `ReplyUpdate.reasoningActive` 仍跟随 pi 的 `thinking_start/delta/end` 更新，作为内部阶段标记；整个过程头部则依据消息 streaming/complete/stopped/error 显示整轮状态，不能把 thinking_end 当成回复完成。`ReplyUpdate.process` 按事件顺序保存每段思考与工具调用，计时包含等待、所有模型子轮次、工具和答案生成；只有整轮结束才冻结。工具进度事件也会重置空闲超时。

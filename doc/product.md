@@ -14,7 +14,7 @@ Matrius 是一个轻量、多用户、可自行部署的 AI 对话应用。
 
 核心栈：
 
-* **客户端：** Expo Web（React Native Web）/ TypeScript
+* **客户端：** React 19 + TypeScript（Vite 8 构建，React Router 7 路由）
 * **客户端存储：** 浏览器 IndexedDB
 * **后端：** Python 3.12 + FastAPI + SQLAlchemy 2 / Alembic
 * **数据库：** SQLite（WAL 模式，单服务器单实例）
@@ -103,7 +103,7 @@ Matrius 是一个轻量、多用户、可自行部署的 AI 对话应用。
 已完成：
 
 ```text
-1. Expo Web 应用外壳、Expo Router 路由与主题
+1. Web 应用外壳、React Router 路由与主题
 2. Web 本地存储（IndexedDB）、版本迁移与仓储边界
 3. 客户端模型直连：SSE 分帧 + 三协议解码器 + 统一事件模型
 4. 本地模式：BYOK 配置与安全存储

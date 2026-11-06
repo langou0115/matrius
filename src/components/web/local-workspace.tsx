@@ -1,24 +1,24 @@
 import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
-import { router, type Href } from 'expo-router';
+import { router, type Href } from '@/router';
 
 import { ApiError } from '@/core/api/auth-session';
-import { LocalDataConflict, writeWorkspace } from '@/core/database/browser-store.web';
-import { StorageErrorToast } from '@/components/web/storage-error-toast.web';
+import { LocalDataConflict, writeWorkspace } from '@/core/database/browser-store';
+import { StorageErrorToast } from '@/components/web/storage-error-toast';
 import { ChatProvider, useChat } from '@/features/chat/chat-state';
 import { DraftProvider } from '@/features/chat/draft-state';
 import { resumeHref } from '@/features/chat/conversation-route-state';
-import { loadWorkspace, stripMessageImages, type LoadedWorkspace, type WorkspaceData } from '@/features/workspace/workspace-repository.web';
+import { loadWorkspace, stripMessageImages, type LoadedWorkspace, type WorkspaceData } from '@/features/workspace/workspace-repository';
 import { AppearanceProvider, useAppearance } from '@/theme/appearance';
 import { PreviewContext } from '@/features/workspace/preview-context';
 import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
 import { MemoryProvider, useMemory } from '@/features/memory/memory-state';
-import { useAuth } from '@/features/auth/auth-state.web';
+import { useAuth } from '@/features/auth/auth-state';
 import { createCloudWorkspaceRepository } from '@/features/workspace/cloud-workspace-repository';
 import { workspaceScope } from '@/features/workspace/workspace-mode';
-import { NetworkToolsProvider } from '@/features/auth/network-tools-state.web';
-import { readLastConversation, readLastRouteId, writeLastConversation } from '@/features/chat/last-conversation.web';
+import { NetworkToolsProvider } from '@/features/auth/network-tools-state';
+import { readLastConversation, readLastRouteId, writeLastConversation } from '@/features/chat/last-conversation';
 
 const ERROR_MIN_VISIBLE_MS = 5000;
 type ErrorTimers = { shownAt: number; timer: ReturnType<typeof setTimeout> | undefined };
@@ -166,7 +166,7 @@ function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ previ
     let active = true;
     if (scope === 'pending') return;
     async function load() {
-      if (__DEV__ && preview) {
+      if (import.meta.env.DEV && preview) {
         const { createDemoWorkspace } = await import('../../../dev/fixtures/chat-workspace');
         return { data: createDemoWorkspace(), revision: 0, preview: true };
       }

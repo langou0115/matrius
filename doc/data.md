@@ -7,7 +7,7 @@
 助手消息的 `process` 字段保存按运行事件排序的思考与工具步骤，保留「思考 → 搜索 → fetch → 再思考」顺序；重新加载时将仍在运行的步骤恢复为 stopped。旧消息没有该字段时继续使用原有 reasoning/activities 展示，不推断历史顺序。`thinkingMs` 对新回复记录整轮耗时（包含工具和回答生成）；旧记录保留原值。云端模式随消息同步完整 `process`，同时保留精简后的 `activities`（去掉搜索 snippet 与 engine）用于兼容和轻量展示；旧数据没有 `process` 时用 `reasoning` + `activities` 复原，工具步骤统一排在思考文本之后。服务端字段校验会拒绝非 http(s) 链接。
 
 - 旧工程的 drift 是 Dart 库，新客户端不再沿用；保留本地优先、迁移和仓储边界。
-- “本地”按运行平台定义：Web 保存在当前浏览器，App 保存在手机应用本地目录，与是否登录是两回事。
+- “本地”指当前浏览器：Web 数据保存在打开应用的浏览器，与是否登录是两回事。
 - Web 已接入浏览器 IndexedDB：数据库 `matrius`、版本 2。`state.workspace` 保存版本化的会话元数据、消息键列表、当前会话、侧栏状态和外观偏好；`messages` store 独立保存消息正文、回复状态、实际返回的推理与安全错误提示。Thinking Effort 按会话和最近选择保存在工作区元数据；读取旧会话时补为 Default。未发送草稿仍仅保存在页面内存。
 - 分支对话复用现有会话结构：创建新会话 ID 与新消息 ID，复制源会话开头至选中 AI 回复（含本条）的原文及反馈；原会话不改写。正常模式沿现有保存队列写入 IndexedDB，Mock 模式仅在内存中更新，不新增数据库结构。
 - 助手消息的可选 `feedback` 保存为 `good` 或 `bad`，赞踩互斥，再次点击取消并删除该字段。反馈与消息一起持久化，刷新和切换页面后保留；旧记录不补默认评分，加载时忽略用户消息和非法值上的反馈。下一次模型请求由共享 Agent 上下文组装反馈，不单独调用外部评分接口。
@@ -20,10 +20,10 @@
 - 首次渲染先完成数据库读取与结构校验，再挂载业务 Provider，避免空初始状态覆盖已有数据。读取失败明确提示并允许重试，不覆盖旧数据。
 - 页面重新加载后，保存中的 `streaming` 消息与 `running` 工具活动均恢复为中性停止状态，保留部分正文并说明中断原因，不重新发起模型请求。发送后续问题保留上一轮记录；本地和云端工作区独立，不再用同步响应合并会话。
 - 保存按操作顺序排队，以数据库事务完成作为成功。读取和写入均检查版本；其他标签页改写后，本页后续保存会提示冲突，不静默覆盖。当前不提供多标签页自动合并。
-- v2 升级迁移在 `core/database/browser-store.web.ts` 的 `onupgradeneeded` 中创建 `messages` store；旧版快照保留可读，在下一次保存事务中原子转换。流式正文按独立消息增量写入，元数据和消息共享 workspace revision 校验。这些记录仅服务本地模式。
-- App 的手机本地数据库尚未接入，后续优先评估 [Expo SQLite（SDK 57）](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/)。平台适配与 Web 实现分离，页面不直接访问数据库。
+- v2 升级迁移在 `core/database/browser-store.ts` 的 `onupgradeneeded` 中创建 `messages` store；旧版快照保留可读，在下一次保存事务中原子转换。流式正文按独立消息增量写入，元数据和消息共享 workspace revision 校验。这些记录仅服务本地模式。
+- 当前只维护 Web + PWA，本地模式只使用浏览器存储；平台适配与 Web 实现分离，页面不直接访问数据库。
 - 旧版账号的同步范围选择保存在 `state.account-sync-preferences`，以 `users[userId]` 区分账号，记录聊天记录、已读和未读、个人设置、界面外观四类的布尔值；与工作区一样走 revision 校验和写队列，冲突时重读后重试一次。旧版最后同步时间保存在 `state.account-sync-state`，同样按账号区分。登录状态由服务端 HttpOnly Cookie 维持，跨标签页共享，不写入工作区或同步载荷。
-- 模型 API key 通过安全存储适配层管理，不存入普通业务表或同步载荷。Web 把它单独写入 `state.model-credentials` 记录（未加密，与 `model-preferences` 分离）；App 后续交给手机本地数据库。浏览器登录令牌不落 JS 存储，由服务端 HttpOnly Cookie 保存。浏览器端限制见[客户端约定](client.md)。
+- 模型 API key 通过安全存储适配层管理，不存入普通业务表或同步载荷。Web 把它单独写入 `state.model-credentials` 记录（未加密，与 `model-preferences` 分离）。浏览器登录令牌不落 JS 存储，由服务端 HttpOnly Cookie 保存。浏览器端限制见[客户端约定](client.md)。
 - 不自动导入旧工程设备数据库或历史用户数据；后续如需导入，单独定义导出格式、版本映射与回滚流程。
 
 ## 本地与云端隔离

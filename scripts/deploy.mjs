@@ -214,7 +214,7 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
   if (config.productionProxy) sharedEnv.WEBTOOL_PROXY_URL = config.productionProxy;
   const appEnv = appEnvOverrides(sharedEnv);
   const current = await snapshot(root);
-  for (const required of ['package.json', 'package-lock.json', 'Dockerfile.web',
+  for (const required of ['package.json', 'package-lock.json', 'Dockerfile',
     'docker-compose/docker-compose.yml', 'docker-compose/Caddyfile', 'server/app/main.py',
     'server/scripts/entrypoint.sh']) {
     if (!current.has(required)) throw new Error(`Missing sync source: ${required}`);

@@ -1,25 +1,10 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# Learn more https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
 node_modules/
 
-# Expo
-.expo/
+# build output
 dist/
-web-build/
-expo-env.d.ts
-
-# Native
-.kotlin/
-*.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
-
-# Metro
-.metro-health-check*
 
 # debug
 npm-debug.*
@@ -47,14 +32,8 @@ server/.data/
 # typescript
 *.tsbuildinfo
 
-example
-
-# generated native folders
-/ios
-/android
-
-# KaTeX assets generated from the installed dependency by postinstall
-/public/vendor/katex/
+# generated vendor assets
+public/vendor/katex/
 
 # Interrupted vendor binary downloads
 *.update.partial

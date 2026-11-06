@@ -1,4 +1,4 @@
-import { Link, usePathname } from 'expo-router';
+import { Link, usePathname } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 
 import { mockItemForPath } from '@/features/mock/mock-items';

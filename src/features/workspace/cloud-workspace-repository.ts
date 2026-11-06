@@ -1,7 +1,7 @@
 import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
 import { ApiError } from '@/core/api/auth-session';
-import type { ApiRequest } from '@/features/auth/account-sync.web';
+import type { ApiRequest } from '@/features/auth/account-sync';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
 import {
@@ -11,7 +11,7 @@ import {
   serializeMemoryField,
   type MemoryPreferences,
 } from '@/core/agent/memory';
-import { parseWorkspace, readProcess, type WorkspaceData } from './workspace-repository.web';
+import { parseWorkspace, readProcess, type WorkspaceData } from './workspace-repository';
 
 type RecordVersion = { id: string; revision: number; clientId?: string | null };
 type Marker = { state: 'absent' | 'unread' | 'read'; readAt?: number };

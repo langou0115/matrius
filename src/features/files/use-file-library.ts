@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { bulkDeleteFiles, listFiles, renameFile, type LibraryFile } from './files-api.web';
+import { bulkDeleteFiles, listFiles, renameFile, type LibraryFile } from './files-api';
 import type { LibraryKind, LibraryOrder, LibrarySort } from './types';
 
 type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;

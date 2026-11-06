@@ -1,4 +1,4 @@
-import type { UsageDay } from './usage-api.web';
+import type { UsageDay } from './usage-api';
 
 /** The three granularities of the activity panel, in tab order. */
 export type UsageView = 'day' | 'week' | 'total';

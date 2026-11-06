@@ -4,8 +4,8 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { PasswordInput } from '../src/components/web/password-input.tsx';
-import { AuthProvider } from '../src/features/auth/auth-state.web.tsx';
-import { ChangePasswordDialog } from '../src/features/auth/change-password-dialog.web.tsx';
+import { AuthProvider } from '../src/features/auth/auth-state.tsx';
+import { ChangePasswordDialog } from '../src/features/auth/change-password-dialog.tsx';
 
 test('restored first-login sessions show only new password fields; normal changes require the current password', async () => {
   const keys = ['window', 'document', 'HTMLElement', 'fetch', 'IS_REACT_ACT_ENVIRONMENT'];

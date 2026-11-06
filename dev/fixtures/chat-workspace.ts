@@ -1,6 +1,6 @@
 import type { MessageFile } from '../../src/core/agent/types';
 import type { Conversation } from '../../src/features/chat/chat-state';
-import type { WorkspaceData } from '../../src/features/workspace/workspace-repository.web';
+import type { WorkspaceData } from '../../src/features/workspace/workspace-repository';
 
 // Inspired by OpenStudio's software-test seed: bulk multi-turn threads plus
 // focused Markdown, math and 50-round cases. Loaded only by the dev preview.

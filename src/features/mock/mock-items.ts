@@ -1,4 +1,4 @@
-import type { Href } from 'expo-router';
+import type { Href } from '@/router';
 import type { IconName } from '@/components/web/icon';
 
 // app.json 开启了 experiments.typedRoutes，路由类型是字面量联合而不是 string，

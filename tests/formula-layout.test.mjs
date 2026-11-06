@@ -6,7 +6,7 @@ import { parseHTML } from 'linkedom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 
-import { MessageContent } from '../src/features/chat/components/message-content.web.tsx';
+import { MessageContent } from '../src/features/chat/components/message-content.tsx';
 
 /**
  * Inline math alignment, pinned at the two layers a browser actually consults.

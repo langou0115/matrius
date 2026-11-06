@@ -6,7 +6,7 @@ import {
   DOCUMENT_EXTENSIONS, MAX_UPLOAD_BYTES, MAX_UPLOADS, bulkDeleteFiles, fileContentUrl,
   fileExtension, getFileUsage, isAllowedAttachment, isDocumentFile, isImageAttachment,
   listFiles, renameFile, toMessageFile, uploadFile,
-} from '../src/features/files/files-api.web.ts';
+} from '../src/features/files/files-api.ts';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status, headers: { 'Content-Type': 'application/json' },

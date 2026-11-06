@@ -1,4 +1,4 @@
-import type { Href } from 'expo-router';
+import type { Href } from '@/router';
 
 export function conversationHref(id: string | null, preview = false): Href {
   const root = preview ? '/mock/chat' : '';

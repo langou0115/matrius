@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { parseHTML } from 'linkedom';
 
-import { MessageContent } from '../src/features/chat/components/message-content.web.tsx';
+import { MessageContent } from '../src/features/chat/components/message-content.tsx';
 import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
 
 const render = (content) => renderToStaticMarkup(createElement(MessageContent, { content }));

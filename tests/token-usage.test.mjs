@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { TokenUsageSection } from '../src/features/usage/token-usage-section.web.tsx';
+import { TokenUsageSection } from '../src/features/usage/token-usage-section.tsx';
 import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import {
   addDays, buildCumulative, buildHeatmap, buildWeekly, formatCompactTokens, formatMonthYear,

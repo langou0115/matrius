@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { resumeHref } from '../src/features/chat/conversation-route-state.ts';
-import { readLastRouteId, writeLastRoute } from '../src/features/chat/last-conversation.web.ts';
+import { readLastRouteId, writeLastRoute } from '../src/features/chat/last-conversation.ts';
 
 const conversations = [{ id: 'a' }, { id: 'b' }];
 
