@@ -21,6 +21,7 @@ server/
 │   ├── conversations/       # 会话、消息、已读状态
 │   ├── account/             # 偏好、画像、记忆、存量导入
 │   ├── files/               # 上传、下载、解析（PDF/Office/纯文本）
+│   ├── usage/               # 每账号每日 Token 用量上报与查询
 │   ├── tools/               # DuckDuckGo/Bing 搜索、网页读取、文件读/检索
 │   └── models/              # SQLAlchemy 表
 ├── alembic/versions/        # 数据库迁移
@@ -125,6 +126,10 @@ GET    /api/files?conversationId=
 GET    /api/files/{id}
 GET    /api/files/{id}/content
 DELETE /api/files/{id}
+
+GET    /api/usage?days=366                # 每日累计 + 全量合计
+POST   /api/usage                         # 每轮回复的 token 用量
+POST   /api/usage/backfill                # 每账号一次，估算历史会话
 
 POST   /api/tools/search
 POST   /api/tools/fetch

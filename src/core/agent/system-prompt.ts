@@ -1,3 +1,4 @@
+import type { MemoryPreferences } from './memory';
 import type { AgentProfile } from './types';
 
 export const DEFAULT_SYSTEM_PROMPT = 'You are Matrius, a helpful assistant. Respond in the user’s language.';
@@ -21,15 +22,25 @@ export function withCurrentContext(systemPrompt: string, now = new Date(), timeZ
   ].join('\n');
 }
 
-export function buildSystemPrompt(preferences: AgentProfile): string {
+const MEMORY_TAG = /<\/?(?:user_memory|user_instructions|user_profile|current_context)>/gi;
+/** Memory is model-written text. Encode wrapper tags so a summary cannot break the prompt. */
+function sanitizeMemoryTags(value: string): string {
+  return value.replace(MEMORY_TAG, (tag) => tag.replace('<', '&lt;').replace('>', '&gt;'));
+}
+
+export function buildSystemPrompt(preferences: AgentProfile, memory?: MemoryPreferences): string {
   const profile = [
     preferences.aboutName.trim() ? `称呼：${preferences.aboutName.trim()}` : '',
     preferences.occupation.trim() ? `职业：${preferences.occupation.trim()}` : '',
     preferences.aboutMore.trim() ? `更多信息：${preferences.aboutMore.trim()}` : '',
   ].filter(Boolean);
+  const memoryBlock = memory?.enabled && memory.summary.trim()
+    ? `<user_memory>\n以下是记忆助手从过去的对话中整理的长期记忆。它可能已经过时；与用户当前的说法冲突时，以当前对话为准。\n${sanitizeMemoryTags(memory.summary.trim())}\n</user_memory>`
+    : '';
   return [
     withCurrentContext(DEFAULT_SYSTEM_PROMPT),
     preferences.customInstructions.trim() ? `<user_instructions>\n${preferences.customInstructions.trim()}\n</user_instructions>` : '',
     profile.length ? `<user_profile>\n以下是用户主动提供的资料，按与当前任务的相关性使用：\n${profile.join('\n')}\n</user_profile>` : '',
+    memoryBlock,
   ].filter(Boolean).join('\n\n');
 }

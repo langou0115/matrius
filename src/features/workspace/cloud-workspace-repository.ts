@@ -4,6 +4,13 @@ import { ApiError } from '@/core/api/auth-session';
 import type { ApiRequest } from '@/features/auth/account-sync.web';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
+import {
+  defaultMemoryPreferences,
+  parseMemoryField,
+  readMemoryPreferences,
+  serializeMemoryField,
+  type MemoryPreferences,
+} from '@/core/agent/memory';
 import { parseWorkspace, readProcess, type WorkspaceData } from './workspace-repository.web';
 
 type RecordVersion = { id: string; revision: number; clientId?: string | null };
@@ -62,8 +69,11 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
   const messages = new Map<string, { remote: RecordVersion; value: Message }>();
   let appearance: WorkspaceData['appearance'];
   let personalization: NonNullable<WorkspaceData['personalization']>;
+  let memory: MemoryPreferences;
   let appearanceRevision = 0;
   let profileRevision = 0;
+  // `null` means the account has no memory field yet, so the first write has no base revision.
+  let memoryRevision: number | null = null;
   let loaded = false;
 
   async function load() {
@@ -72,6 +82,15 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
     loaded = false;
     const preferences = await request<WorkspaceData['appearance'] & { revision: number }>('/api/preferences');
     const profile = await request<NonNullable<WorkspaceData['personalization']> & { revision: number }>('/api/profile');
+    memory = { ...defaultMemoryPreferences };
+    memoryRevision = null;
+    try {
+      const field = await request<{ value: string; revision: number }>('/api/profile/fields/memory');
+      memory = parseMemoryField(field.value);
+      memoryRevision = field.revision;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+    }
     const values: Conversation[] = [];
     let cursor: string | null = null;
     do {
@@ -111,10 +130,11 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
     } while (cursor);
     const result = parseWorkspace({
       schemaVersion: 1, chat: { conversations: values, activeId: null, sidebarOpen: true },
-      appearance: preferences, personalization: profile,
+      appearance: preferences, personalization: profile, memory,
     });
     appearance = structuredClone(result.data.appearance);
     personalization = structuredClone(result.data.personalization ?? defaultPersonalization);
+    memory = structuredClone(result.data.memory ?? { ...defaultMemoryPreferences });
     appearanceRevision = preferences.revision;
     profileRevision = profile.revision;
     loaded = true;
@@ -186,6 +206,30 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
       });
       profileRevision = remote.revision;
       personalization = structuredClone(nextProfile);
+    }
+    const nextMemory = readMemoryPreferences(data.memory ?? { ...defaultMemoryPreferences });
+    if (!same(memory, nextMemory)) {
+      let baseRevision = memoryRevision;
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const remote = await request<{ revision: number }>('/api/profile/fields/memory', {
+            method: 'PUT',
+            body: JSON.stringify({
+              value: serializeMemoryField(nextMemory),
+              source: 'tool',
+              updatedAt: Date.now(),
+              ...(baseRevision === null ? {} : { baseRevision }),
+            }),
+          });
+          memoryRevision = remote.revision;
+          break;
+        } catch (error) {
+          const current = conflictRevision(error);
+          if (attempt > 0 || current === undefined || current === baseRevision) throw error;
+          baseRevision = current;
+        }
+      }
+      memory = structuredClone(nextMemory);
     }
   }
   return { load, save };

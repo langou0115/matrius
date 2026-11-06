@@ -136,6 +136,19 @@ test('storage needs the files feature and a signed-in account', () => {
     'preview mode stays inside the mock settings catalogue');
 });
 
+test('usage is its own account category behind the usage feature', () => {
+  const usage = (features, authenticated) => visibleSettings(features, false, authenticated).find((item) => item.id === 'usage');
+  assert.equal(usage([], false), undefined, 'local mode gets no usage category');
+  assert.equal(usage(['usage'], false), undefined, 'usage requires an authenticated session');
+  assert.equal(usage([], true), undefined, 'the usage feature is required');
+  assert.equal(usage(['usage'], true)?.group, '账号');
+  assert.equal(usage(['usage'], true)?.description.includes('Token'), true);
+  const ids = visibleSettings(['files', 'usage'], false, true).map((item) => item.id);
+  assert.equal(ids.indexOf('usage'), ids.indexOf('storage') + 1, 'usage sits directly below storage');
+  assert.equal(visibleSettings(['usage'], true, true).some((item) => item.id === 'usage'), false,
+    'preview mode stays inside the mock settings catalogue');
+});
+
 test('admin sessions use admin-scoped cookie endpoints and never touch the user session', async () => {
   const store = storage();
   const calls = [];

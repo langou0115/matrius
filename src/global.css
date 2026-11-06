@@ -115,6 +115,10 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .sidebar-section-label svg { width: 16px; height: 16px; transition: transform 160ms ease; }
 .sidebar-section-label button[aria-expanded='false'] svg { transform: rotate(-90deg); }
 .conversation-group { margin-bottom: 8px; }
+/* A folded group collapses to its heading. Keeping the 8px section gap there leaves a hole
+   between 置顶 and 最近, so drop it while the group is folded and let the label's own 3px
+   tail be the only separation. */
+.conversation-group:has(> [hidden]) { margin-bottom: 0; }
 .conversation-item { position: relative; display: flex; align-items: center; min-height: 36px; flex-shrink: 0; border-radius: 8px; margin-bottom: 2px; }
 .conversation-item:hover, .conversation-item.menu-open { background: var(--sidebar-hover); }
 .conversation-item.is-active { background: var(--sidebar-selected); }
@@ -403,6 +407,35 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .secondary-button { background: var(--soft); border: 1px solid var(--border); }
 .danger-button { background: var(--destructive); color: var(--destructive-foreground); }
 
+/* Memory manager: one scrollable page that combines the current summary with the only editor
+   it has, a conversation. It is sized like a small chat page rather than a form dialog. */
+.dialog.memory-dialog { width: min(780px, calc(100vw - 32px)); max-width: calc(100vw - 32px); height: min(86dvh, 900px); max-height: min(86dvh, 900px); overflow: hidden; }
+.memory-dialog .dialog-panel { display: flex; flex-direction: column; height: 100%; max-height: none; overflow: hidden; padding: 0; border: 0; }
+.memory-dialog-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px 4px; }
+.memory-dialog-title { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.memory-dialog-title > h2 { font-size: 17px; font-family: var(--font-semibold); font-weight: 400; }
+.memory-updated-at { color: var(--muted-text); font-size: var(--text-caption); white-space: nowrap; }
+.memory-dialog-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 20px 20px; }
+.memory-summary-card { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.memory-summary-content { font-size: var(--text-body); line-height: 1.75; overflow-wrap: anywhere; }
+.memory-summary-content .message-markdown h1,
+.memory-summary-content .message-markdown h2,
+.memory-summary-content .message-markdown h3,
+.memory-summary-content .message-markdown h4 { margin: 16px 0 8px; font-size: var(--text-ui); line-height: 1.5; }
+.memory-summary-content .message-markdown h1 { font-size: 18px; }
+.memory-summary-content .message-markdown h2 { font-size: 16px; }
+.memory-summary-empty { color: var(--muted-text); font-size: var(--text-body); line-height: 1.8; }
+.memory-dialog-error { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--destructive) 30%, var(--border)); border-radius: 10px; color: var(--destructive); background: color-mix(in srgb, var(--destructive) 6%, var(--background)); font-size: var(--text-caption); line-height: 1.6; }
+.memory-dialog-error > svg { flex: none; margin-top: 1px; }
+/* Reuse the chat composer styling; only the outer spacing and growth cap are specific to this dialog. */
+.memory-dialog-composer { flex: none; margin: 0 20px max(16px, env(safe-area-inset-bottom)); }
+.memory-dialog-composer textarea { max-height: 128px; }
+@media (max-width: 640px) {
+  .dialog.memory-dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); height: min(90dvh, 900px); max-height: min(90dvh, 900px); }
+  .memory-dialog-header, .memory-dialog-body { padding-inline: 14px; }
+  .memory-dialog-composer { margin-inline: 14px; }
+}
+
 /* Login dialog: two quiet fields above one full-width action, shared by the sidebar and the
    account page. Icons sit inside the field so the form does not grow a second column. */
 .login-dialog { width: 440px; }
@@ -594,6 +627,18 @@ input[type='password']::-ms-clear { display: none; }
 .account-toggle-row:has(.model-checkbox-input:disabled) { cursor: default; }
 .account-row-spinner { flex: none; color: var(--muted-text); }
 .account-row-action { flex: none; min-height: 38px; }
+.memory-model-row { align-items: center; }
+/* The model picker is a popover: the rounded account list must not clip it. */
+.memory-settings-list { overflow: visible; }
+.memory-settings-list .account-row:first-child { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.memory-settings-list .account-row:last-child { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.memory-model-select { flex: none; width: min(280px, 42%); min-width: 190px; }
+.memory-model-select .select-field { gap: 0; }
+.memory-model-select .select-field > span:first-child { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 640px) {
+  .memory-model-row { align-items: flex-start; }
+  .memory-model-select { width: 100%; min-width: 0; }
+}
 .account-link-row { display: flex; align-items: center; gap: 14px; margin-top: 18px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); transition: border-color 140ms, background 140ms; }
 .account-link-row:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); background: var(--soft); }
 .account-link-icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--soft); color: var(--primary); }
@@ -1407,6 +1452,65 @@ input[type='password']::-ms-clear { display: none; }
 .storage-category-copy strong { color: var(--foreground); font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
 .storage-category-copy > span { color: var(--muted-text); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .storage-login-action { display: inline-flex; align-items: center; gap: 7px; margin-top: 18px; }
+/* Usage settings page: heading and view switch, then the activity charts. */
+.usage-section-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.usage-section-head h2 { font-size: var(--text-body); font-family: var(--font-semibold); font-weight: 400; }
+.usage-section-caption { margin-top: 5px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; }
+.usage-tabs { display: flex; flex-wrap: wrap; gap: 3px; flex: none; padding: 3px; border: 1px solid var(--border); border-radius: 12px; background: var(--soft); }
+.usage-tabs button { min-height: 34px; padding: 5px 13px; border-radius: 9px; color: var(--muted-text); font-size: var(--text-small); transition: background 140ms, color 140ms; }
+.usage-tabs button:hover { color: var(--foreground); }
+.usage-tabs button.is-active { background: var(--background); color: var(--foreground); font-family: var(--font-medium); box-shadow: 0 1px 2px #00000012; }
+.usage-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 24px; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--background); }
+.usage-stat { min-width: 0; padding: 14px 18px; border-left: 1px solid var(--border); }
+.usage-stat:first-child { border-left: 0; }
+.usage-stat.is-total { background: color-mix(in srgb, var(--primary) 5%, var(--background)); }
+.usage-stat dt { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.4; }
+.usage-stat dd { margin-top: 5px; overflow: hidden; color: var(--foreground); font-size: clamp(17px, 1.7vw, 24px); line-height: 1.25; font-family: var(--font-medium); font-weight: 400; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.usage-split { display: flex; height: 5px; margin-top: 18px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 8%, var(--background)); }
+.usage-split-prompt { background: var(--primary); }
+.usage-split-output { background: color-mix(in srgb, var(--primary) 38%, var(--background)); }
+.usage-split-copy { margin-top: 9px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.7; font-variant-numeric: tabular-nums; }
+.usage-heatmap { --usage-cell: 13px; --usage-gap: 2px; margin-top: 22px; }
+.usage-heatmap-scroll { overflow-x: auto; padding-bottom: 2px; }
+.usage-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, var(--usage-cell)); gap: var(--usage-gap); }
+.usage-months { display: grid; column-gap: var(--usage-gap); margin-top: 8px; align-items: start; }
+.usage-months span { color: var(--muted-text); font-size: 12px; line-height: 15px; white-space: nowrap; justify-self: start; }
+.usage-cell { display: block; width: 100%; height: var(--usage-cell); border-radius: 3.5px; background: color-mix(in srgb, var(--foreground) 9%, var(--background)); }
+.usage-cell.is-empty { background: transparent; }
+.usage-cell.level-1 { background: color-mix(in srgb, var(--primary) 26%, var(--background)); }
+.usage-cell.level-2 { background: color-mix(in srgb, var(--primary) 48%, var(--background)); }
+.usage-cell.level-3 { background: color-mix(in srgb, var(--primary) 72%, var(--background)); }
+.usage-cell.level-4 { background: var(--primary); }
+.usage-cell[title]:hover { outline: 1px solid var(--foreground); outline-offset: 1px; }
+.usage-legend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 10px; color: var(--muted-text); font-size: var(--text-caption); }
+.usage-legend .usage-cell { width: 11px; height: 11px; border-radius: 3px; }
+.usage-legend > span:first-child { margin-right: 2px; }
+.usage-legend > span:last-child { margin-left: 2px; }
+.usage-bars { display: flex; gap: 8px; height: 180px; margin-top: 24px; }
+.usage-bar { display: flex; flex: 1; flex-direction: column; gap: 8px; min-width: 0; }
+.usage-bar-track { display: flex; flex: 1; align-items: flex-end; min-height: 0; overflow: hidden; border-radius: 6px; background: color-mix(in srgb, var(--foreground) 5%, var(--background)); }
+.usage-bar-fill { width: 100%; border-radius: 5px; background: color-mix(in srgb, var(--primary) 76%, var(--background)); transition: height 260ms ease; }
+.usage-bar-fill.is-current { background: var(--primary); }
+.usage-bar-label { overflow: hidden; color: var(--muted-text); font-size: 12px; line-height: 1.5; text-align: center; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-area { margin-top: 26px; }
+.usage-area-chart { display: block; width: 100%; height: 180px; }
+.usage-area-fill { fill: url(#usage-cumulative-fill); }
+.usage-area-stop-top { stop-color: var(--primary); stop-opacity: .3; }
+.usage-area-stop-bottom { stop-color: var(--primary); stop-opacity: .02; }
+.usage-area-line { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.usage-axis { display: flex; justify-content: space-between; margin-top: 8px; color: var(--muted-text); font-size: var(--text-caption); }
+.usage-empty { margin-top: 24px; padding: 26px 20px; border: 1px dashed var(--border); border-radius: 14px; color: var(--muted-text); text-align: center; }
+.usage-empty strong { display: block; color: var(--foreground); font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
+.usage-empty p { max-width: 430px; margin: 6px auto 0; font-size: var(--text-caption); line-height: 1.8; }
+.usage-note { margin-top: 14px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.7; }
+@media (max-width: 600px) {
+  .usage-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .usage-stat:nth-child(3) { border-top: 1px solid var(--border); border-left: 0; }
+  .usage-stat:nth-child(4) { border-top: 1px solid var(--border); }
+  .usage-tabs { width: 100%; }
+  .usage-tabs button { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .usage-bar-fill { transition: none; } }
 .library-list { display: flex; flex-direction: column; gap: 2px; transition: opacity 120ms ease; }
 /* The previous page stays visible while the next filter loads; dimming marks it stale
    without the skeleton flash a full list swap produces. */

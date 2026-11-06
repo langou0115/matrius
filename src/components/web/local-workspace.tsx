@@ -13,6 +13,7 @@ import { PreviewContext } from '@/features/workspace/preview-context';
 import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
+import { MemoryProvider, useMemory } from '@/features/memory/memory-state';
 import { useAuth } from '@/features/auth/auth-state.web';
 import { createCloudWorkspaceRepository } from '@/features/workspace/cloud-workspace-repository';
 import { workspaceScope } from '@/features/workspace/workspace-mode';
@@ -60,7 +61,8 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
   const { conversations, deletedConversationIds, activeId, sidebarOpen } = useChat();
   const { themeId, mode } = useAppearance();
   const { preferences: personalization } = usePersonalization();
-  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), ...(deletedConversationIds?.length ? { deletedConversationIds } : {}), activeId, sidebarOpen }, appearance: { themeId, mode }, personalization }), [conversations, deletedConversationIds, activeId, sidebarOpen, themeId, mode, personalization]);
+  const { enabled: memoryEnabled, summary: memorySummary, updatedAt: memoryUpdatedAt } = useMemory();
+  const data: WorkspaceData = useMemo(() => ({ schemaVersion: 1, chat: { conversations: stripMessageImages(conversations), ...(deletedConversationIds?.length ? { deletedConversationIds } : {}), activeId, sidebarOpen }, appearance: { themeId, mode }, personalization, memory: { enabled: memoryEnabled, summary: memorySummary, updatedAt: memoryUpdatedAt } }), [conversations, deletedConversationIds, activeId, sidebarOpen, themeId, mode, personalization, memoryEnabled, memorySummary, memoryUpdatedAt]);
   const revision = useRef(initial.revision);
   const saved = useRef(JSON.stringify(initial.data));
   const queue = useRef(Promise.resolve());
@@ -129,7 +131,9 @@ export function LocalWorkspace({ children, preview }: PropsWithChildren<{ previe
   // Keep the last resolved workspace mounted while the check runs; a real sign-in/out still
   // switches scope as soon as the new state resolves.
   const lastResolved = useRef<string | null>(null);
+  // eslint-disable-next-line react-hooks/refs -- keep the last non-pending scope while auth re-validates
   if (resolved !== 'pending') lastResolved.current = resolved;
+  // eslint-disable-next-line react-hooks/refs -- read the ref once per render on purpose
   const scope = resolved === 'pending' && lastResolved.current ? lastResolved.current : resolved;
   // Models and credentials belong to this browser, independent of the workspace/account.
   return <ModelProvider preview={preview}><ScopedWorkspace key={scope} scope={scope} preview={preview}>{children}</ScopedWorkspace></ModelProvider>;
@@ -202,9 +206,9 @@ function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ previ
   </div>;
 
   return <AppearanceProvider initialPreferences={loaded.data.appearance}>
-    <PersonalizationProvider initialPreferences={loaded.data.personalization}><ChatProvider initialState={loaded.data.chat}><DraftProvider>
+    <PersonalizationProvider initialPreferences={loaded.data.personalization}><MemoryProvider initialPreferences={loaded.data.memory}><ChatProvider initialState={loaded.data.chat}><DraftProvider>
       {cloud && <RememberLastConversation scope={scope} />}
       <PreviewContext value={loaded.preview}><NetworkToolsProvider><ChatRuntimeProvider><WorkspacePersistence initial={loaded} preview={loaded.preview} cloud={cloud}>{children}</WorkspacePersistence></ChatRuntimeProvider></NetworkToolsProvider></PreviewContext>
-    </DraftProvider></ChatProvider></PersonalizationProvider>
+    </DraftProvider></ChatProvider></MemoryProvider></PersonalizationProvider>
   </AppearanceProvider>;
 }

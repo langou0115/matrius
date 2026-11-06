@@ -8,19 +8,19 @@ async def test_features_are_available_to_every_password_ready_account(client, cr
 
     for headers in (regular, admin):
         me = await client.get("/api/auth/me", headers=headers)
-        assert me.json()["features"] == ["files"]
+        assert me.json()["features"] == ["files", "usage"]
         assert me.headers["cache-control"] == "no-store"
 
         response = await client.get("/api/features", headers=headers)
         features = response.json()["features"]
-        assert [item["id"] for item in features] == ["files"]
+        assert [item["id"] for item in features] == ["files", "usage"]
         assert response.headers["cache-control"] == "no-store"
 
         # Client-provided identity never changes the feature list.
         spoofed = await client.get("/api/features", headers={
             **headers, "X-Username": "someone-else", "X-Feature": "files",
         })
-        assert [item["id"] for item in spoofed.json()["features"]] == ["files"]
+        assert [item["id"] for item in spoofed.json()["features"]] == ["files", "usage"]
 
     client.cookies.clear()
     assert (await client.get("/api/auth/me")).status_code == 401
@@ -38,7 +38,7 @@ async def test_first_password_change_is_required_before_features(client, create_
         "currentPassword": "password123", "newPassword": "another-password",
     })
     assert response.status_code == 200
-    assert (await client.get("/api/auth/me", headers=headers)).json()["features"] == ["files"]
+    assert (await client.get("/api/auth/me", headers=headers)).json()["features"] == ["files", "usage"]
 
 
 async def test_disabled_account_loses_features(client, create_user, session_factory):

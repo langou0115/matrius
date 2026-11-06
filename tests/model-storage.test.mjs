@@ -37,6 +37,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     assert.equal((await loadWorkspace()).data.chat.conversations[0].messages[0].content, 'preserve my history');
     assert.equal((await loadWorkspace()).data.chat.conversations[0].modelId, undefined, 'legacy conversations are not bound to a model');
     assert.deepEqual((await loadWorkspace()).data.personalization, { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' }, 'legacy workspaces receive empty personalization without losing data');
+    assert.deepEqual((await loadWorkspace()).data.memory, { enabled: true, summary: '', updatedAt: null }, 'legacy workspaces start with an empty enabled memory');
     assert.equal(await writeWorkspace(initial, 4), 5);
     database = await open(2);
     const metadata = await requestResult(database.transaction('state').objectStore('state').get('workspace'));
@@ -49,6 +50,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     next.chat.conversations[0].messages[0].quote = '引用的原文\n跨段落内容';
     next.chat.conversations[0].contextSummary = { coveredUntilMessageId: 'u', summary: '早期要点' };
     next.personalization = { customInstructions: '先给结论', aboutName: '小林', occupation: '设计师', aboutMore: '学习编程' };
+    next.memory = { enabled: false, summary: '# 本地记忆\n- 喜欢简洁', updatedAt: 1234 };
     next.chat.conversations[0].messages.push({ id: 'a', role: 'assistant', content: 'partial', reasoning: 'visible provider reasoning', thinkingMs: 4200, status: 'streaming', feedback: 'bad',
       activities: [{ id: 'search', kind: 'search', status: 'running', query: 'Python' }],
       process: [{ id: 'first', kind: 'thinking', content: '先搜索', status: 'complete' },
@@ -65,6 +67,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     assert.equal(restored.data.chat.conversations[0].messages[0].quote, '引用的原文\n跨段落内容', 'quotes survive a database reload');
     assert.deepEqual(restored.data.chat.conversations[0].contextSummary, { coveredUntilMessageId: 'u', summary: '早期要点' }, 'the rolling summary survives a database reload');
     assert.deepEqual(restored.data.personalization, next.personalization, 'all personalization fields survive reloading from IndexedDB');
+    assert.deepEqual(restored.data.memory, next.memory, 'the memory summary survives reloading from IndexedDB');
     assert.equal(restored.data.chat.conversations[0].messages[1].content, 'partial reply');
     assert.equal(restored.data.chat.conversations[0].messages[1].status, 'stopped');
     assert.match(restored.data.chat.conversations[0].messages[1].error, /页面重新加载/);
@@ -120,10 +123,13 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     await assert.rejects(saveModelPreferences({ models: [], selectedId: null }, 0), LocalDataConflict);
     const legacyPreferences = await loadModelPreferences();
     assert.equal(legacyPreferences.data.titleModelId, null, 'preferences saved before this feature follow the conversation model');
-    await saveModelPreferences({ models: [config], selectedId: 'model', titleModelId: 'model' }, legacyPreferences.revision);
+    assert.equal(legacyPreferences.data.memoryModelId, null, 'preferences saved before memory follow the conversation model');
+    await saveModelPreferences({ models: [config], selectedId: 'model', titleModelId: 'model', memoryModelId: 'model' }, legacyPreferences.revision);
     assert.equal((await loadModelPreferences()).data.titleModelId, 'model', 'an explicit title model survives reloading');
-    await saveModelPreferences({ models: [config], selectedId: 'model', titleModelId: 'deleted-model' }, (await loadModelPreferences()).revision);
+    assert.equal((await loadModelPreferences()).data.memoryModelId, 'model', 'an explicit memory model survives reloading');
+    await saveModelPreferences({ models: [config], selectedId: 'model', titleModelId: 'deleted-model', memoryModelId: 'deleted-model' }, (await loadModelPreferences()).revision);
     assert.equal((await loadModelPreferences()).data.titleModelId, null, 'a dangling title model falls back to the conversation model');
+    assert.equal((await loadModelPreferences()).data.memoryModelId, null, 'a dangling memory model falls back to the conversation model');
     assert.equal(await writeLocalValue('other-key', { value: 1 }, 0), 1);
     assert.equal((await readLocalValue('other-key')).value.value, 1);
     const latest = await readWorkspace();

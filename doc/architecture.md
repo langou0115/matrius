@@ -47,6 +47,7 @@ user_preferences
 user_profiles
 user_profile_fields
 memory_entries
+token_usage_daily, token_usage_estimate_daily, usage_backfills
 ```
 
 读取、修改、删除用户资源前，必须在服务端验证归属。不要依赖客户端传入的 `userId`。
@@ -95,6 +96,7 @@ server/app/
 ├── conversations/   # 会话、消息、已读状态
 ├── account/         # 偏好、画像、记忆、账号导入与合并
 ├── files/           # 本地存储、配额、文本提取
+├── usage/           # 每账号每日 Token 用量上报与查询
 ├── tools/           # 搜索、网页读取、URL 校验、文件读/grep
 └── models/          # SQLAlchemy 表
 ```
@@ -104,7 +106,7 @@ server/app/
 ```text
 src/
 ├── app/            # 仅 Expo Router 路由页面与 _layout.tsx
-├── features/       # chat / memory / files / settings / admin / auth
+├── features/       # chat / memory / files / usage / settings / admin / auth
 ├── core/
 │   ├── database/   # 本地模式数据库适配、迁移、schema 版本
 │   ├── api/        # 云端模式 REST 客户端、认证与错误映射

@@ -16,15 +16,23 @@ const message = { id: 'server-m', clientId: 'old-client-m', revision: 4, role: '
     { id: 'thinking:1:0', kind: 'thinking', content: '先想一下', status: 'complete', startedAt: 1, endedAt: 2 },
     { id: 'call-1', kind: 'search', status: 'complete', query: '资料', tookMs: 12 },
   ] };
-function fixture({ fail } = {}) {
+function fixture({ fail, memory = { enabled: true, summary: '# 记忆\n- 喜欢简洁' } } = {}) {
   const calls = [];
   const request = async (path, init = {}) => {
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ path, method: init.method ?? 'GET', body });
     if (fail?.(path, init)) throw new Error('conflict');
-    if (init.method) return { id: path.includes('/messages') ? 'server-m' : 'server-c', revision: (body?.baseRevision ?? 0) + 1 };
+    if (init.method) {
+      // The memory summary uses the generic profile-field endpoint, not /api/profile.
+      if (path === '/api/profile/fields/memory') return { revision: (body?.baseRevision ?? 0) + 1 };
+      return { id: path.includes('/messages') ? 'server-m' : 'server-c', revision: (body?.baseRevision ?? 0) + 1 };
+    }
     if (path === '/api/preferences') return { ...appearance, revision: 2 };
     if (path === '/api/profile') return { ...profile, revision: 5 };
+    if (path === '/api/profile/fields/memory') {
+      if (memory === null) throw new ApiError(404, 'not_found', '记忆字段不存在。');
+      return { key: 'memory', value: JSON.stringify(memory), source: 'tool', updatedAt: 10, revision: 3 };
+    }
     if (path.startsWith('/api/conversations?')) return { items: [conversation], nextCursor: null };
     if (path.startsWith('/api/conversations/server-c?')) return { messages: [message], nextCursor: null };
     throw new Error(`Unexpected request: ${path}`);
@@ -71,6 +79,7 @@ test('cloud reads only REST, retains imported identities, and unchanged data cau
   assert.deepEqual(activity.results[0], { title: 'A', url: 'https://a.test/x', domain: 'a.test', rank: 1, snippet: '', engine: '' },
     'cloud history keeps the tool steps but not their snippets');
   assert.deepEqual(data.chat.conversations[0].contextSummary, contextSummary);
+  assert.deepEqual(data.memory, { enabled: true, summary: '# 记忆\n- 喜欢简洁', updatedAt: null }, 'the memory summary loads from a profile field');
   assert.deepEqual(data.chat.conversations[0].messages[0].process.map((step) => step.kind), ['thinking', 'search'],
     'the ordered process survives a cloud reload');
   calls.length = 0;
@@ -179,4 +188,26 @@ test('cloud new conversations and messages use idempotent client ids and do not 
   await repo.save(data);
   assert.equal(calls.find((call) => call.path === '/api/conversations').body.clientId, 'new-c');
   assert.equal(calls.find((call) => call.path === '/api/conversations/server-c/messages').body.clientId, 'new-m');
+});
+
+test('memory summary writes through its own profile-field revision', async () => {
+  const { repo, calls } = fixture();
+  const { data } = await repo.load();
+  calls.length = 0;
+  data.memory = { enabled: false, summary: '# 新摘要\n- 偏好中文', updatedAt: 789 };
+  await repo.save(data);
+  const write = calls.find((call) => call.path === '/api/profile/fields/memory');
+  assert.equal(write.method, 'PUT');
+  assert.equal(write.body.baseRevision, 3);
+  assert.deepEqual(JSON.parse(write.body.value), { enabled: false, summary: '# 新摘要\n- 偏好中文', updatedAt: 789 });
+  assert.deepEqual(calls.map((call) => call.path), ['/api/profile/fields/memory']);
+  calls.length = 0;
+  await repo.save(data);
+  assert.deepEqual(calls, [], 'unchanged memory causes no write');
+});
+
+test('an account without a memory field starts with an empty memory', async () => {
+  const { repo } = fixture({ memory: null });
+  const { data } = await repo.load();
+  assert.deepEqual(data.memory, { enabled: true, summary: '', updatedAt: null });
 });

@@ -38,6 +38,7 @@ app/admin/              管理员登录与用户管理
 app/conversations/      会话、消息、已读状态、keyset 分页
 app/account/            偏好、画像、画像字段、记忆、账号导入与合并
 app/files/              上传、下载、删除、配额、文本提取
+app/usage/              每账号每日 Token 用量上报与查询
 app/tools/              搜索、URL 校验、网页读取、文件读/grep
 app/models/             SQLAlchemy 表
 alembic/                迁移
@@ -163,7 +164,7 @@ PATCH/DELETE /api/memories/{id}
 
 - `preferences`、`profile` 为账号单例，首次读取时创建。
 - `preferences.mode` 为 `light|dark|system`；主题 id 为客户端主题标识。
-- 画像字段按 key 唯一；删除字段不删除账号。
+- 画像字段按 key 唯一；删除字段不删除账号。客户端记忆摘要使用 key `memory`，值为 `{"enabled":boolean,"summary":string,"updatedAt":number|null}` 的 JSON 字符串，随工作区保存；该字段不是 `memory_entries` 的替代，服务端仍保留条目级记忆 API 供后续使用。
 - 记忆字段：`scope`（`global|conversation`）、`type`（`identity|workflow|voice|instruction`）、`status`（`active|archived`）、`content`、`source`（`manual|tool|extracted`）。
 - 删除记忆为归档（`status=archived`），不是硬删除。
 - 记忆与画像的分页均为 keyset（`updated_at + id`）。
@@ -220,6 +221,21 @@ DELETE /api/files/{id}
 - 重命名只改数据库文件名，不改对象键，`revision` 递增；空名或改扩展名返回 422。
 - 解析：PDF 用 pypdf；DOCX/XLSX/PPTX 用 python-docx/openpyxl/python-pptx；旧版 Office 先经 LibreOffice 转换；其他白名单文件按纯文本解码（UTF-8，失败时使用 charset-normalizer）。不做 OCR。
 - 单次提取上限 2,000,000 字符；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
+
+## 用量
+
+```text
+POST /api/usage   { date?, inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens? }
+GET  /api/usage?days=1..1095                    → { items: [...], lifetime, estimated, backfilled }
+POST /api/usage/backfill { utcOffsetMinutes }   # 每账号一次，估算历史会话
+```
+
+- 模型请求由 Web 容器的无状态中继转发，API 进程看不到服务商的 usage；每轮回复结束后由浏览器上报输入、输出与缓存 token，服务端只做累加。
+- 每个账号每天一行（`token_usage_daily`，`unique(user_id, day)`），不保存消息级明细。`date` 是客户端按本机时区计算出的日期，允许与服务器 UTC 日期相差 2 天；缺失时按 UTC 当天。
+- 单次上报每个计数上限 1 亿；全为 0 的请求直接返回 `{"ok": true}`，不写行。`requests` 每次有效上报 +1，表示回复轮次数。
+- 历史记录没有真实计数，`POST /api/usage/backfill` 用已保存的消息按与客户端相同的估算公式重算，写入独立的 `token_usage_estimate_daily`（`unique(user_id, day)`）。`usage_backfills` 标记已估算，重复调用直接返回 `skipped`。`utcOffsetMinutes` 使用浏览器 `getTimezoneOffset()`，把历史归入当时的本地日期；每次助手回复的输入按其之前的完整上下文估算。
+- `GET` 返回窗口内按日期升序的每日累计（含明天，兼容东八区等本机日期）、全量 `lifetime`、仅估算的 `estimated` 汇总与 `backfilled` 标记；每日项带 `estimated` 表示当天含估算。客户端据本机日期计算今日/近 7 天/近 30 天，并明确标注估算部分。
+- 接口要求账号具备 `usage` 功能（登记于 `app/features/registry.py`），并复用读写限流。
 
 ## 云端工具
 
@@ -310,7 +326,7 @@ POST /api/tools/file
 
 ## 数据库
 
-表与约束由 `alembic/versions/0001_initial.py` 建立：
+表与约束由 `alembic/versions/` 下的迁移建立（初始表在 `0001_initial.py`）：
 
 ```text
 users, auth_sessions
@@ -318,12 +334,14 @@ conversations, messages
 memory_entries
 user_profiles, user_profile_fields, user_preferences
 files
+token_usage_daily, token_usage_estimate_daily, usage_backfills
 ```
 
 关键约束：
 
 - `users` 对 `lower(username)` 唯一。
 - `conversations/messages/memory_entries/files` 的 `(user_id, client_id)` 唯一（`client_id` 为 NULL 时不受限）。
+- `token_usage_daily` / `token_usage_estimate_daily` 的 `(user_id, day)` 唯一，写入使用 SQLite upsert；`usage_backfills` 以 `user_id` 为主键，记录历史估算已执行。
 - `messages` 的 `(conversation_id, position)` 唯一。
 - 角色、状态、反馈、标题来源、已读状态均有 CHECK。
 - 用户删除级联业务数据；会话删除级联消息；文件随会话删除仅置空关联。

@@ -25,6 +25,7 @@ from app.health import router as health_router
 from app.logging import configure_logging
 from app.tools.router import router as tools_router
 from app.tools.search import close_bing_client
+from app.usage.router import router as usage_router
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,7 @@ def create_app() -> FastAPI:
     app.include_router(conversations_router)
     app.include_router(account_router)
     app.include_router(files_router)
+    app.include_router(usage_router)
     app.include_router(tools_router)
     app.include_router(documents_router)
     app.include_router(features_router)

@@ -50,6 +50,9 @@ def test_upgrade_and_check_pass_on_a_fresh_sqlite_database(tmp_path):
         "user_profiles",
         "user_preferences",
         "memory_entries",
+        "token_usage_daily",
+        "token_usage_estimate_daily",
+        "usage_backfills",
         "alembic_version",
     } <= tables
 

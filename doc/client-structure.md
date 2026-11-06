@@ -27,7 +27,8 @@ src/
 │   ├── library.web.tsx                 资料库路由（保留侧栏）
 │   ├── library.tsx                     未适配平台的占位 fallback
 │   ├── settings.web.tsx                设置路由
-│   ├── settings/storage.*              存储设置（用量、文件与图像分类）
+│   ├── settings/storage.*              存储设置（已用空间、文件与图像分类）
+│   ├── settings/usage.*                Token 用量设置（每日热力图、周柱状图与累计曲线）
 │   └── admin.web.tsx                   管理员页面
 ├── components/web/
 │   ├── link-anchor.tsx                 Expo Router 链接的 DOM 属性适配
@@ -79,10 +80,19 @@ src/
 │   │   ├── library-toolbar.web.tsx      搜索、筛选与排序
 │   │   ├── library-item.web.tsx         文件行、多选、重命名与下载
 │   │   ├── mock-library.ts              预览用 500 个文件与内存版 `/api/files`
-│   │   ├── storage-screen.web.tsx       存储设置页：用量、进度条与分类入口
+│   │   ├── storage-screen.web.tsx       存储设置页：已用空间、进度条与分类入口
 │   │   └── types.ts                     文件与列表响应契约
+│   ├── usage/
+│   │   ├── usage-api.web.ts             用量读取、历史估算触发与每轮回复的 token 上报
+│   │   ├── usage-stats.ts               本地日期、热力图/周/累计序列与格式化
+│   │   ├── token-usage-section.web.tsx  统计卡、输入输出占比、估算标注与三种趋势图
+│   │   └── usage-screen.web.tsx         用量设置页、登录与功能门禁
 │   ├── workspace/workspace-repository.web.ts  工作区存储结构校验
 │   ├── settings/settings-screen.web.tsx  独立全页设置
+│   ├── memory/
+│   │   ├── memory-state.tsx            记忆开关、摘要与更新状态
+│   │   ├── memory-model.ts             记忆助手模型的跟随/指定解析
+│   │   └── memory-dialog.web.tsx       摘要查看、对话式修改与清空确认
 │   └── mock/
 │       ├── mock-items.ts               预览项清单与按路径反查
 │       └── mock-index-screen.web.tsx   独立全页预览索引
@@ -145,17 +155,18 @@ src/
 
 ## 设置模块
 
-- `/settings` 是可搜索的设置目录；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/about` 展示应用信息；旧 display/theme 路径跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫。
+- `/settings` 是可搜索的设置目录；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 display/theme 路径跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；账号、存储与用量是云端整页路由，不进入 Mock 分类。
 - `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-screen.web.tsx` 渲染目录，`settings-detail-screen.web.tsx` 复用原有设置控件，`settings-page.web.tsx` 管理共用页面框架与返回入口。
 - 设置子页均不卸载根工作区 Provider，导航期间保留会话、草稿与外观状态。
-- `/settings/personalization` 与 `/mock/chat/settings/personalization` 提供自定义指令和关于你的表单，入口与搜索集中在 `settings-catalog.ts`。`personalization.ts` 定义字段、默认值与校验，`personalization-state.tsx` 保存共享状态，`personalization-screen.web.tsx` 实现 Web 表单；根工作区通过已有仓储恢复和自动保存，Runtime 在每次请求开始时组装系统提示。记忆入口尚未提供。
+- `/settings/personalization` 与 `/mock/chat/settings/personalization` 提供记忆、自定义指令和关于你的表单，入口与搜索集中在 `settings-catalog.ts`。`personalization.ts` 定义字段、默认值与校验，`personalization-state.tsx` 保存共享状态，`personalization-screen.web.tsx` 实现 Web 表单；根工作区通过已有仓储恢复和自动保存，Runtime 在每次请求开始时组装系统提示。
+- 个性化页的记忆区位于“关于你”和“其他设置”之间，包含记忆助手模型、启用开关与摘要管理。`core/agent/memory.ts` 定义摘要契约、记忆工具、后台整理请求与系统提示注入；`memory-state.tsx` 保存开关和摘要；`memory-dialog.web.tsx` 用输入指令调用 `memory` 工具直接改摘要，不显示助手回复；标题旁显示更新时间与图标删除按钮，删除需二次确认。摘要非空且启用时进入每次对话的系统提示；回复完成后由记忆助手模型在后台整理，按会话每分钟最多一次，失败静默。记忆助手模型保存在本机 `model-preferences.memoryModelId`，为空时跟随会话模型。
 
 ## 模型与 Runtime 入口
 
 - `features/models/model-settings-screen.web.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型三类对话框；删除 Provider 或模型直接执行，不弹确认框。`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.web.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.web.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
 - `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.web.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现。
 - `core/agent/runtime.ts`：无 React/DOM 依赖的共享运行入口，按会话持有一组活动请求（`runs`）、批量回复和运行状态；同一会话不可重复启动，不同会话可并发，`stop(id)` 只取消对应会话。`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
-- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。
+- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到账号。
 
 - 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部本地用户行；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
 
@@ -168,10 +179,12 @@ src/
 - `features/auth/auth-state.web.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。
 - `features/auth/account-screen.web.tsx`：设置账号页、登录、改密与退出；根工作区按认证状态切换数据源。
 - `features/files/storage-screen.web.tsx`：设置中的“存储”分类（位于账号下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
+- `features/usage/usage-screen.web.tsx`：设置中的“用量”分类（位于存储下方），仅云端登录且具备 `usage` 功能时可见；`token-usage-section.web.tsx` 展示累计/今日/近 7 天/近 30 天、输入输出占比，以及每天热力图、每周柱状图与累计总量面积图；`usage-api.web.ts` 读取统计并在每轮回复后上报 token。
 - `features/admin/admin-screen.web.tsx`：`/admin` 管理页，管理员独立登录后按用户名创建用户，展示一次初始密码。
 - `settings-catalog.ts` / `settings-page.web.tsx`：分类与搜索按功能能力统一过滤。
 - `src/app/settings/account.*`：账号设置路由组装。
 - `src/app/settings/storage.*`：存储设置路由组装，仅在账号具备 `files` 功能时出现在导航中。
+- `src/app/settings/usage.*`：用量设置路由组装，仅在账号具备 `usage` 功能时出现在导航中。
 
 ## 开发与发布脚本
 

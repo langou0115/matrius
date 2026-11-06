@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ApiError } from '../src/core/api/auth-session.ts';
 import { defaultPersonalization } from '../src/features/settings/personalization.ts';
 import { createCloudWorkspaceRepository } from '../src/features/workspace/cloud-workspace-repository.ts';
 
@@ -19,6 +20,7 @@ function fakeRequest() {
     calls.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : undefined });
     if (path === '/api/preferences') return { themeId: 'twitter', mode: 'system', revision: 1 };
     if (path === '/api/profile') return { ...defaultPersonalization, revision: 1 };
+    if (path === '/api/profile/fields/memory') throw new ApiError(404, 'not_found', '记忆字段不存在。');
     if (path === '/api/conversations?limit=100') return { items: [conversation], nextCursor: null };
     if (path === '/api/conversations/srv-1?messageLimit=100') {
       return {

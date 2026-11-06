@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useReducer, useRef, 
 import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
 import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
+import { generateMemorySummary } from '@/core/agent/memory';
 import { generateConversationTitle } from '@/core/agent/title';
 import type { MessageFile, SteerOutcome } from '@/core/agent/types';
 import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
@@ -10,7 +11,10 @@ import type { AgentTool } from '@mariozechner/pi-agent-core';
 import { hasFeature } from '@/core/features/capabilities';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
+import { useMemory } from '@/features/memory/memory-state';
+import { pickMemoryModel } from '@/features/memory/memory-model';
 import { usePersonalization } from '@/features/settings/personalization-state';
+import { recordTokenUsage } from '@/features/usage/usage-api.web';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
 import { protectBrowserRun } from '@/core/platform/run-protection.web';
 import { useAuth } from '@/features/auth/auth-state.web';
@@ -54,6 +58,7 @@ function useRuntime() {
   const { conversations, activeId, chatVisible, dispatch } = useChat();
   const models = useModels();
   const { preferences } = usePersonalization();
+  const memory = useMemory();
   const auth = useAuth();
   const networkTools = useNetworkTools();
   const [notifications, setNotifications] = useState<BackgroundNotification[]>([]);
@@ -63,6 +68,11 @@ function useRuntime() {
   const chatVisibleRef = useRef(chatVisible);
   const conversationsRef = useRef(conversations);
   const modelsRef = useRef(models);
+  const authRef = useRef(auth);
+  const memoryRef = useRef(memory);
+  const memoryAbort = useRef<AbortController | null>(null);
+  const memoryChain = useRef(Promise.resolve());
+  const lastMemoryUpdateAt = useRef(new Map<string, number>());
   // Title requests run beside the reply, so each conversation keeps at most one in flight.
   const titleControllers = useRef(new Map<string, AbortController>());
   // Guards against two synchronous sends from the same empty screen creating two chats.
@@ -88,10 +98,68 @@ function useRuntime() {
       if (titleControllers.current.get(conversationId) === controller) titleControllers.current.delete(conversationId);
     });
   }
+  /** Long-term memory is consolidated at most once per conversation per minute, and only
+      for a finished reply with actual text. The assistant itself never waits for it. */
+  function scheduleMemoryUpdate(conversation: Conversation, reply: Message) {
+    const state = memoryRef.current;
+    if (!state.enabled) return;
+    if (!reply.content.trim()) return;
+    const now = Date.now();
+    if (now - (lastMemoryUpdateAt.current.get(conversation.id) ?? 0) < 60_000) return;
+    const messages = [...conversation.messages];
+    const index = messages.findIndex((item) => item.id === reply.id);
+    if (index >= 0) messages[index] = reply;
+    else messages.push(reply);
+    const user = [...messages].reverse().find((item) => item.role === 'user' && !item.steering);
+    const userMessage = user ? user.content.trim() || user.quote?.trim() || '' : '';
+    if (!userMessage) return;
+    lastMemoryUpdateAt.current.set(conversation.id, now);
+    const task = {
+      conversationId: conversation.id,
+      modelId: conversation.modelId,
+      userMessage,
+      assistantMessage: reply.content,
+    };
+    memoryChain.current = memoryChain.current.then(async () => {
+      const current = memoryRef.current;
+      if (!current.enabled) return;
+      const config = pickMemoryModel(modelsRef.current, task.modelId);
+      if (!config) return;
+      const apiKey = config.requiresApiKey ? modelsRef.current.getKey(config.providerId) : '';
+      const controller = new AbortController();
+      memoryAbort.current = controller;
+      const baseSummary = current.summary;
+      const baseRevision = current.revision;
+      try {
+        const updated = await generateMemorySummary({
+          config, apiKey, currentSummary: baseSummary,
+          userMessage: task.userMessage, assistantMessage: task.assistantMessage,
+          signal: controller.signal,
+        });
+        const latest = memoryRef.current;
+        // A manual edit or clear during the request wins over the background result.
+        if (!latest.enabled || latest.revision !== baseRevision || latest.summary !== baseSummary) return;
+        if (updated === null || updated === baseSummary.trim()) return;
+        latest.replaceSummary(updated);
+      } catch {
+        // Memory is an enhancement: a provider error must not surface in the conversation.
+      } finally {
+        if (memoryAbort.current === controller) memoryAbort.current = null;
+      }
+    }).catch(() => {});
+  }
   // eslint-disable-next-line react-hooks/refs -- the callback reads these refs when a reply arrives, not during render
   const [agent] = useState(() => createAgentRuntime({
     // Compaction is invisible, so the summary only travels into the conversation record.
     onSummary: (conversationId, summary) => dispatch({ type: 'context-summary', conversationId, summary }),
+    // Token statistics belong to the signed-in account; local mode has no usage panel.
+    onUsage: (usage) => {
+      const current = authRef.current;
+      if (current.status !== 'authenticated' || !hasFeature(current.user, 'usage')) return;
+      void recordTokenUsage(current.request, usage).catch(() => {
+        // Best effort: a failed report never interrupts or retries the conversation.
+      });
+    },
     onReply: (conversationId, message) => {
       dispatch({ type: 'reply', conversationId, message });
       // The first title attempt may have failed with the first reply. `titleSource` stays
@@ -105,6 +173,7 @@ function useRuntime() {
           if (first && (first.content.trim() || first.quote?.trim() || first.files?.length)) requestTitle(conversationId, first.content, first.quote,
             modelsRef.current.titleModel ?? pickModel(modelsRef.current, conversation.modelId), deriveConversationTitle(first));
         }
+        if (conversation) scheduleMemoryUpdate(conversation, message);
       }
       // Only a finished reply is worth announcing, and only when the reader is elsewhere:
       // another conversation or a full-page route such as settings.
@@ -144,7 +213,7 @@ function useRuntime() {
         request: auth.request, conversationId, availableFiles: collectAvailableFiles(history),
       }).tool);
     }
-    const prompts = [buildSystemPrompt(preferences)];
+    const prompts = [buildSystemPrompt(preferences, memoryRef.current)];
     if (useWebTools) prompts.push(webToolsSystemPrompt());
     if (useFileTools) prompts.push(fileToolsSystemPrompt());
     const started = agent.start({
@@ -172,12 +241,15 @@ function useRuntime() {
     chatVisibleRef.current = chatVisible;
     conversationsRef.current = conversations;
     modelsRef.current = models;
+    authRef.current = auth;
+    memoryRef.current = memory;
   });
 
   useEffect(() => () => {
     agent.stop();
     titleControllers.current.forEach((controller) => controller.abort());
     titleControllers.current.clear();
+    memoryAbort.current?.abort();
   }, [agent]);
   // Opening the conversation — or coming back from settings — leaves its card no work to do.
   useEffect(() => {

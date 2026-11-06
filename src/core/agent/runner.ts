@@ -5,7 +5,7 @@ import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
 import { thinkingBudgetsFor } from './thinking-budget';
-import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, WebActivity } from './types';
+import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from './types';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import { buildContext, buildSteeringMessage } from './context';
 import { collectGeneratedFiles, getFileActivityEnd, getFileActivityStart } from './file-tools';
@@ -61,7 +61,12 @@ export function describeModelError(reason: unknown) {
   return '模型回复失败，请检查模型配置和服务商状态后重试。';
 }
 
-export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000 }: {
+/** Providers occasionally omit counters; never let NaN reach the reported total. */
+function tokenCount(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+}
+
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
@@ -71,6 +76,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   /** Maximum silence, reset by streamed output and tool progress. */
   timeoutMs?: number;
   maxDurationMs?: number;
+  /** Cancels auxiliary runs (memory, for example) that are not tracked by the chat runtime. */
+  signal?: AbortSignal;
 }) {
   const model = createAgentModel(config);
   const diagnostics = createReplyDiagnostics(config, thinkingEffort);
@@ -89,9 +96,25 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   // thinking and a smaller chunk is strictly better than surfacing the failure to the user.
   const MAX_OUTPUT_RETRIES = 2;
   let outputRetries = 0;
+  // A tool-using run makes several model calls, and retries still cost tokens; report the sum.
+  const tokenUsage: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  function countUsage(usage: AssistantMessage['usage']) {
+    tokenUsage.input += tokenCount(usage.input);
+    tokenUsage.output += tokenCount(usage.output);
+    tokenUsage.cacheRead += tokenCount(usage.cacheRead);
+    tokenUsage.cacheWrite += tokenCount(usage.cacheWrite);
+  }
+  const hasUsage = () => tokenUsage.input + tokenUsage.output + tokenUsage.cacheRead + tokenUsage.cacheWrite > 0;
+  /** Usage travels with the result so the caller can report it to the account. */
+  const finish = (result: ReplyResult, outcome: string) => diagnostics.finish(
+    hasUsage() ? { ...result, usage: { ...tokenUsage } } : result, outcome,
+  );
   let stopped = false;
   let timedOut = false;
   let durationExceeded = false;
+  const abortFromSignal = () => { stopped = true; agent.abort(); };
+  if (signal?.aborted) stopped = true;
+  else signal?.addEventListener('abort', abortFromSignal, { once: true });
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
@@ -279,6 +302,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       emit();
       if (event.type === 'message_end') {
         finalMessage = message;
+        countUsage(message.usage);
         diagnostics.messageEnd(message);
         // With tools registered, tool calls are the expected loop. Without them, the local
         // mode cannot execute anything, so surface the request as an error instead of hanging.
@@ -300,7 +324,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       return 'steered';
     },
     async start(): Promise<ReplyResult> {
-      if (stopped) { unsubscribe(); return diagnostics.finish({ status: 'stopped' }, 'cancelled_before_start'); }
+      if (stopped) { unsubscribe(); return finish({ status: 'stopped' }, 'cancelled_before_start'); }
       resetIdleTimer();
       const deadline = setTimeout(() => { timedOut = true; durationExceeded = true; agent.abort(); }, maxDurationMs);
       try {
@@ -315,25 +339,25 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
           if (!agent.hasQueuedMessages()) retryTruncatedReply();
           await agent.continue();
         }
-        if (timedOut) return diagnostics.finish({ status: 'error', error: timeoutError() }, durationExceeded ? 'duration_timeout' : 'idle_timeout');
-        if (unsupportedTool) return diagnostics.finish({ status: 'error', error: '当前本地模式仅支持文本对话，模型请求了不可用的工具。' }, 'unsupported_tool');
-        if (stopped || finalMessage?.stopReason === 'aborted') return diagnostics.finish({ status: 'stopped' }, 'aborted');
-        if (finalMessage?.stopReason === 'error') return diagnostics.finish({ status: 'error', error: describeModelError(finalMessage.errorMessage) }, 'provider_error');
-        if (!finalMessage) return diagnostics.finish({ status: 'error', error: agent.state.errorMessage ? describeModelError(agent.state.errorMessage) : '服务商未返回有效回复，请检查模型配置。' }, 'missing_message');
+        if (timedOut) return finish({ status: 'error', error: timeoutError() }, durationExceeded ? 'duration_timeout' : 'idle_timeout');
+        if (unsupportedTool) return finish({ status: 'error', error: '当前本地模式仅支持文本对话，模型请求了不可用的工具。' }, 'unsupported_tool');
+        if (stopped || finalMessage?.stopReason === 'aborted') return finish({ status: 'stopped' }, 'aborted');
+        if (finalMessage?.stopReason === 'error') return finish({ status: 'error', error: describeModelError(finalMessage.errorMessage) }, 'provider_error');
+        if (!finalMessage) return finish({ status: 'error', error: agent.state.errorMessage ? describeModelError(agent.state.errorMessage) : '服务商未返回有效回复，请检查模型配置。' }, 'missing_message');
         const hasText = finalMessage.content.some((block) => block.type === 'text' && block.text.trim());
-        if (finalMessage.stopReason === 'length') return diagnostics.finish(hasText
+        if (finalMessage.stopReason === 'length') return finish(hasText
           ? { status: 'complete', error: '已达到最大输出长度，可继续追问。' }
           : { status: 'error', error: outputRetries
             ? `已达到最大输出长度，但尚未生成回答正文。已自动降低思考并拆分重试 ${outputRetries} 次仍未成功：请把模型设置里的「最大输出」调到 8192 以上，或把思考强度调到低/关闭后重试。`
             : '已达到最大输出长度，但尚未生成回答正文。请调大模型的最大输出或降低思考深度后重试。' }, 'output_limit');
-        if (!hasText) return diagnostics.finish({ status: 'error', error: finalMessage.content.some((block) => block.type === 'thinking')
+        if (!hasText) return finish({ status: 'error', error: finalMessage.content.some((block) => block.type === 'thinking')
           ? '模型仅返回了思考内容，没有回答正文。已保留思考和工具记录。'
           : '模型本次回复没有回答正文。已保留之前收到的内容和工具记录。' }, 'no_final_text');
-        return diagnostics.finish({ status: 'complete' }, 'complete');
+        return finish({ status: 'complete' }, 'complete');
       } catch (reason) {
-        return diagnostics.finish(stopped ? { status: 'stopped' } : { status: 'error', error: timedOut ? timeoutError() : describeModelError(reason) },
+        return finish(stopped ? { status: 'stopped' } : { status: 'error', error: timedOut ? timeoutError() : describeModelError(reason) },
           stopped ? 'aborted' : timedOut ? 'timeout' : 'exception');
-      } finally { clearTimeout(idleTimer); clearTimeout(deadline); unsubscribe(); }
+      } finally { clearTimeout(idleTimer); clearTimeout(deadline); signal?.removeEventListener('abort', abortFromSignal); unsubscribe(); }
     },
   };
 }

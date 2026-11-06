@@ -16,6 +16,7 @@ class Feature:
 # `useFeature`.
 FEATURES = {
     "files": Feature("files", "文件与资料库", "上传文档、让模型读取或生成 Office/PDF 文件。"),
+    "usage": Feature("usage", "Token 用量", "查看账号的模型 token 使用量与每日趋势。"),
 }
 
 

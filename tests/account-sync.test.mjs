@@ -45,6 +45,10 @@ test('login and account changes isolate workspaces while models and keys stay lo
     if (path === '/api/auth/me') return response(user(id));
     if (path === '/api/preferences') return response({ themeId: 'twitter', mode: 'system', revision: 1 });
     if (path === '/api/profile') return response({ revision: 1 });
+    if (path === '/api/profile/fields/memory') return new Response(
+      JSON.stringify({ error: { code: 'not_found', message: '记忆字段不存在。' } }),
+      { status: 404, headers: { 'Content-Type': 'application/json' } },
+    );
     if (path.startsWith('/api/conversations?')) return response({ items: [{
       id: `${id}-chat`, title: id, pinned: false, revision: 1, updatedAt: 1,
       readState: { completed: { state: 'absent' }, error: { state: 'absent' } },

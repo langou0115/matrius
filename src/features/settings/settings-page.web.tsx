@@ -1,5 +1,5 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from 'expo-router';
-import { ArrowLeft, Cloud, Cpu, HardDrive, Info, Palette, Search, SlidersHorizontal, UserRound, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, SlidersHorizontal, UserRound, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
@@ -23,6 +23,7 @@ const categoryIcons: Record<string, LucideIcon> = {
   about: Info,
   account: UserRound,
   storage: HardDrive,
+  usage: ChartColumn,
   sync: Cloud,
 };
 
@@ -48,9 +49,9 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
   );
   const pathname = usePathname().replace(/\/$/, '');
   const homeHref = conversationHref(conversationId, preview);
-  // Account, storage and sync are full app pages rather than preview chat settings, so
-  // they always live under /settings even when the rest of the catalogue is scoped to /mock.
-  const directRoutes = new Set(['account', 'storage']);
+  // Account, usage, storage and sync are full app pages rather than preview chat settings,
+  // so they always live under /settings even when the rest of the catalogue is scoped to /mock.
+  const directRoutes = new Set(['account', 'storage', 'usage']);
   // Routes are built from the catalogue IDs above; typed routes cannot express that a runtime
   // string is one of the generated static paths, so narrow at this single boundary.
   const itemHref = (id: string): Href => (directRoutes.has(id) ? `/settings/${id}` : `${root}/${id}`) as Href;

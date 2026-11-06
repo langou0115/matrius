@@ -5,6 +5,7 @@ from app.models.file import StoredFile
 from app.models.memory import MemoryEntry
 from app.models.message import Message
 from app.models.profile import UserPreference, UserProfile, UserProfileField
+from app.models.usage import TokenUsageDaily, TokenUsageEstimateDaily, UsageBackfill
 from app.models.user import AuthSession, User
 
 __all__ = [
@@ -15,6 +16,9 @@ __all__ = [
     "MemoryEntry",
     "Message",
     "StoredFile",
+    "TokenUsageDaily",
+    "TokenUsageEstimateDaily",
+    "UsageBackfill",
     "User",
     "UserPreference",
     "UserProfile",

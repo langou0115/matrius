@@ -6,8 +6,9 @@ import { orderSteeringMessages } from '@/features/chat/message-order';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
 import { readPersonalization, type PersonalizationPreferences } from '@/features/settings/personalization';
+import { defaultMemoryPreferences, readMemoryPreferences, type MemoryPreferences } from '@/core/agent/memory';
 
-export type WorkspaceData = { schemaVersion: 1; chat: PersistedChatState; appearance: AppearancePreferences; personalization?: PersonalizationPreferences };
+export type WorkspaceData = { schemaVersion: 1; chat: PersistedChatState; appearance: AppearancePreferences; personalization?: PersonalizationPreferences; memory?: MemoryPreferences };
 export type LoadedWorkspace = { data: WorkspaceData; revision: number };
 
 /** Attached images are request-only: keep their bytes out of every snapshot written to storage.
@@ -157,7 +158,7 @@ function readConversation(value: unknown): Conversation {
 
 export async function loadWorkspace(): Promise<LoadedWorkspace> {
   const stored = await readWorkspace();
-  if (!stored) return { revision: 0, data: { schemaVersion: 1, chat: { conversations: [], activeId: null, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' } } };
+  if (!stored) return { revision: 0, data: { schemaVersion: 1, chat: { conversations: [], activeId: null, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' }, memory: { ...defaultMemoryPreferences } } };
   return parseWorkspace(stored.value, stored.revision);
 }
 
@@ -172,6 +173,11 @@ export function parseWorkspace(value: unknown, revision = 0): LoadedWorkspace {
   const conversations = chat.conversations.map(readConversation).filter((item) => !deleted.has(item.id));
   if (new Set(conversations.map((conversation) => conversation.id)).size !== conversations.length) throw new Error('Duplicate stored conversations');
   const activeId = conversations.some((item) => item.id === chat.activeId) ? chat.activeId as string : null;
+  // Memory is rebuilt from conversation content, so a malformed auxiliary field must not
+  // prevent the conversation history itself from loading.
+  let memory = { ...defaultMemoryPreferences };
+  try { memory = readMemoryPreferences(value.memory); }
+  catch { /* keep an empty memory */ }
   return {
     revision,
     data: {
@@ -179,6 +185,7 @@ export function parseWorkspace(value: unknown, revision = 0): LoadedWorkspace {
       chat: { conversations, ...(deletedConversationIds.length ? { deletedConversationIds } : {}), activeId, sidebarOpen: chat.sidebarOpen },
       appearance: { themeId: appearance.themeId, mode: appearance.mode as AppearancePreferences['mode'] },
       personalization: readPersonalization(value.personalization),
+      memory,
     },
   };
 }

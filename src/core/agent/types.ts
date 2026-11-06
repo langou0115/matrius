@@ -103,7 +103,9 @@ export type ReplyUpdate = {
   /** Files saved to the Library during this reply, deduplicated by id. */
   files?: MessageFile[];
 };
-export type ReplyResult = { status: 'complete' | 'stopped' | 'error'; error?: string };
+/** Tokens billed for one reply run, summed over every model round it made. */
+export type TokenUsage = { input: number; output: number; cacheRead: number; cacheWrite: number };
+export type ReplyResult = { status: 'complete' | 'stopped' | 'error'; error?: string; usage?: TokenUsage };
 export type RuntimeRun = { conversationId: string; replyId: string; startedAt: number };
 /** `steered` joins the current run; `deferred` waits for the next turn; `false` has no run. */
 export type SteerOutcome = 'steered' | 'deferred' | false;

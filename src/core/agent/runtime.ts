@@ -5,7 +5,7 @@ import { validateAgentRequest, validateContextSize } from './context';
 import type { ConversationSummary } from './compaction';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import type { ThinkingEffort } from './thinking-effort';
-import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, WebActivity } from './types';
+import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, TokenUsage, WebActivity } from './types';
 import type { createReplyRun } from './runner';
 
 export type AgentRequest = {
@@ -40,6 +40,8 @@ type RuntimeOptions = {
   onReply: (conversationId: string, message: Message) => void;
   /** Persists the rolling summary, or clears it when compaction no longer applies. */
   onSummary?: (conversationId: string, summary: ConversationSummary | undefined) => void;
+  /** Tokens billed for one finished run, including stopped and failed replies. */
+  onUsage?: (usage: TokenUsage) => void;
   /** The default lazily loads pi-agent. Other clients/tests can supply a compatible runner. */
   loadRunner?: () => Promise<{ createReplyRun: typeof createReplyRun }>;
   /** The default lazily loads silent history compaction. */
@@ -48,7 +50,7 @@ type RuntimeOptions = {
 
 /** Platform-independent runtime: one active request per conversation, no React, storage or DOM. */
 export function createAgentRuntime({
-  onReply, onSummary, loadRunner = () => import('./runner'), loadCompactor = () => import('./compaction'),
+  onReply, onSummary, onUsage, loadRunner = () => import('./runner'), loadCompactor = () => import('./compaction'),
 }: RuntimeOptions) {
   let snapshot: RuntimeSnapshot = { runs: {}, error: null };
   const listeners = new Set<() => void>();
@@ -152,6 +154,9 @@ export function createAgentRuntime({
         pendingSteers = [];
         return run.start();
       }).then((result) => {
+        // The workspace may have been torn down by a logout or account switch while the
+        // provider was still answering; never bill that run to the next account.
+        if (result.usage && !disposed) onUsage?.(result.usage);
         const activities = settleActivities(latest.activities, cancelled || result.status === 'stopped');
         latest = {
           ...latest,

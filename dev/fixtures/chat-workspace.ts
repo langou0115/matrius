@@ -240,6 +240,59 @@ const specialThreads: Thread[] = [
   },
 ];
 
+const memoryCore = [
+  '# 概览',
+  '你是一位偏工程实践的全栈开发者，主要方向是 AI 应用、Agent 平台与嵌入式系统。你习惯先把问题拆成可验证的小步骤，再逐步实现和验证；比起一次性写完，更看重中间结果可运行、可回退。',
+  '你目前关注把模型、工具和真实工作流连接起来：从对话界面、工具调用、记忆与用户画像，到文件处理、数据分析和部署。你希望助手既能给出结论，也能说明取舍和风险。',
+  '# 教育与技术背景',
+  '你有电子信息工程背景，熟悉 C/C++、Python、TypeScript、嵌入式 Linux、Qt、ROS、Docker、网络编程与音视频处理。你做过网络摄像头、RTMP 推流、图像采集和硬件联调类项目，能读懂数据手册和底层日志。',
+  '你在前端方面使用 React、Expo Web 与 Next.js，后端使用 FastAPI、SQLite 和 REST；对 SSE、流式响应、中断恢复、上下文压缩和工具调用循环有实际排障经验。',
+  '# 职业方向与工作',
+  '你倾向于 AI Agent 工程师方向，关注 Agent Runtime、工具协议、记忆系统、评测与可观测性。你希望工作内容包括真实的业务落地，而不只是模型 API 调用。',
+  '你习惯把任务按优先级拆成 P0/P1/P2，先保证主链路可用，再补体验和边界情况。遇到不确定需求时，你希望助手先指出关键假设和风险，而不是直接给出大段代码。',
+  '# 项目与协作偏好',
+  '你正在维护一个自部署 AI 对话应用，前端是 Expo Web，后端是 FastAPI，数据以服务端为唯一事实源。你重视本地开发可复现、迁移可回滚、错误提示可操作。',
+  '你偏好小步提交、先验证再扩展；修改代码前先读现有实现和文档，避免凭记忆写 API。你不喜欢过度抽象，只有在重复出现或边界清晰时才引入新模块。',
+  '# 沟通与回答偏好',
+  '回答时优先使用中文，技术名词可以保留英文。先给结论，再给理由和步骤；涉及取舍时说明代价。代码要能直接运行，避免省略关键导入和错误处理。',
+  '不确定时明确说明不确定点，不要编造版本号、接口字段或测试结果。需要操作文件或执行命令时，先确认路径和影响范围。',
+].join('\n\n');
+
+const memoryTopics = [
+  '回答先给结论，再展开原因和具体步骤，避免先铺陈背景。',
+  '涉及代码时给出可运行的完整片段，并标出需要替换的配置。',
+  '优先使用项目现有依赖和约定，不随意引入新的状态管理或网络库。',
+  '修改前先阅读相关文件和文档，确认现有契约后再动手。',
+  '遇到错误先定位根因，不用静默重试掩盖问题。',
+  '对不确定的 API、版本和行为明确标注，不把推测写成事实。',
+  '重要改动补充最小回归测试，并说明未覆盖的范围。',
+  '长任务拆成可验证的小步，每一步都能运行和回滚。',
+  '解释架构时先画数据流，再说明模块职责和边界。',
+  '写文档时保持简洁，记录决策原因而不只是操作步骤。',
+  '优先保证主链路可用，再处理边缘体验。',
+  '处理用户数据时注意隐私，不记录密码、密钥和令牌。',
+  '网络请求失败时给出可操作的提示，保留用户已输入内容。',
+  '设计接口时考虑幂等、超时、取消和冲突重试。',
+  '前端交互保持安静，避免不必要的动画和弹窗。',
+  '移动端优先保证可点击区域和键盘可用性。',
+  '日志只记录定位所需的信息，不输出正文和凭据。',
+  '性能问题先用数据确认瓶颈，再决定是否优化。',
+  '部署前在本机验证，不能把未验证的行为写成已验证。',
+  '代码评审关注正确性、边界和可维护性，不纠结个人风格。',
+];
+
+// The production summary is capped at 4,000 characters; keep the preview at the same size so
+// wrapping, scrolling and the dialog layout are exercised with realistic content.
+const demoMemorySummary = [
+  memoryCore,
+  '# 长期偏好',
+  ...Array.from({ length: 120 }, (_, index) => {
+    const first = memoryTopics[index % memoryTopics.length];
+    const second = memoryTopics[(index * 7 + 3) % memoryTopics.length];
+    return `- ${first}${index % 2 === 0 ? second : ''}`;
+  }),
+].join('\n').slice(0, 4_000);
+
 export function createDemoWorkspace(): WorkspaceData {
   const now = Date.now();
   const threads = [...specialThreads, ...Array.from({ length: 100 }, (_, index) => createBulkThread(index))];
@@ -259,5 +312,5 @@ export function createDemoWorkspace(): WorkspaceData {
       };
     }),
   }));
-  return { schemaVersion: 1, chat: { conversations, activeId: conversations[0].id, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' } };
+  return { schemaVersion: 1, chat: { conversations, activeId: conversations[0].id, sidebarOpen: true }, appearance: { themeId: 'twitter', mode: 'system' }, memory: { enabled: true, summary: demoMemorySummary, updatedAt: Date.now() } };
 }

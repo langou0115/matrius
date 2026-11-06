@@ -1,10 +1,12 @@
-import { AlertCircle, Globe2, LoaderCircle } from 'lucide-react';
+import { AlertCircle, Brain, FileText, Globe2, LoaderCircle, Sparkles } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { SelectField } from '@/components/web/select-field.web';
 import { useNetworkTools } from '@/features/auth/network-tools-state.web';
 import { ModelIcon } from '@/features/chat/components/model-icon.web';
+import { MemoryDialog } from '@/features/memory/memory-dialog.web';
+import { useMemory } from '@/features/memory/memory-state';
 import { useModels } from '@/features/models/model-state';
 import { personalizationLimits } from './personalization';
 import { usePersonalization } from './personalization-state';
@@ -61,11 +63,71 @@ function WebToolsSection() {
   </section>;
 }
 
+function MemorySection() {
+  const { enabled, setEnabled } = useMemory();
+  const models = useModels();
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+  return <section className="settings-section" aria-labelledby="memory-heading">
+    <h2 id="memory-heading">记忆</h2>
+    <div className="account-list memory-settings-list">
+      <div className="account-row memory-model-row">
+        <span className="account-row-icon"><Sparkles size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="account-row-copy">
+          <strong>记忆助手模型</strong>
+          <span className="account-row-description">在后台整理偏好、生成记忆摘要时使用的模型。默认跟随当前对话模型。</span>
+        </span>
+        <div className="memory-model-select">
+          <SelectField
+            label="记忆助手模型"
+            value={models.memoryModelId ?? ''}
+            disabled={!models.ready}
+            options={[
+              { id: '', label: '跟随当前对话模型', icon: <Icon name="model" size={16} /> },
+              ...models.models.map((model) => ({
+                id: model.id,
+                label: `${model.name} · ${model.providerName}`,
+                icon: <ModelIcon modelId={model.modelId} name={model.name} providerName={model.providerName} size={16} />,
+              })),
+            ]}
+            onChange={(id) => {
+              setModelError(null);
+              void models.setMemoryModelId(id || null).catch(() => setModelError('记忆助手模型设置未能保存，请重试。'));
+            }}
+          />
+        </div>
+      </div>
+      <div className="account-row memory-toggle-row">
+        <span className="account-row-icon"><Brain size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="account-row-copy">
+          <strong>启用记忆</strong>
+          <span className="account-row-description">让记忆助手根据你的对话整理长期偏好，并在之后的回答中参考。关闭后不再更新或使用记忆。</span>
+        </span>
+        <label className="model-switch-label">
+          <input className="model-checkbox-input" type="checkbox" checked={enabled} aria-label="启用记忆"
+            onChange={(event) => setEnabled(event.target.checked)} />
+          <span className="toggle-switch" aria-hidden="true" />
+        </label>
+      </div>
+      <div className="account-row">
+        <span className="account-row-icon"><FileText size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="account-row-copy">
+          <strong>记忆摘要</strong>
+          <span className="account-row-description">记忆助手根据对话整理的长期偏好摘要。</span>
+        </span>
+        <button type="button" className="secondary-button account-row-action" onClick={() => setManageOpen(true)}>管理</button>
+      </div>
+    </div>
+    {modelError && <p className="settings-footnote" role="alert">{modelError}</p>}
+    {manageOpen && <MemoryDialog onClose={() => setManageOpen(false)} />}
+  </section>;
+}
+
 export default function PersonalizationSettingsScreen() {
   const { preferences, update } = usePersonalization();
   const models = useModels();
   const [modelError, setModelError] = useState<string | null>(null);
-  return <SettingsPage title="个性化" description="告诉模型你希望它如何回答，以及需要了解的个人信息。">
+  return <SettingsPage title="个性化" description="管理记忆、自定义指令与你希望模型了解的个人信息。">
     <section className="settings-section" aria-labelledby="title-model-heading">
       <h2 id="title-model-heading">对话标题</h2>
       <div className="personalization-fields">
@@ -107,6 +169,7 @@ export default function PersonalizationSettingsScreen() {
         <label className="personalization-field" htmlFor="about-more"><span>更多关于你</span><AutoSizeTextarea id="about-more" className="text-field" rows={1} maxLength={personalizationLimits.aboutMore} value={preferences.aboutMore} placeholder="可填写你的兴趣、背景或需要模型考虑的其他信息。" onChange={(event) => update({ aboutMore: event.target.value })} /><small>{preferences.aboutMore.length.toLocaleString()} / {personalizationLimits.aboutMore.toLocaleString()}</small></label>
       </div>
     </section>
+    <MemorySection />
     <WebToolsSection />
   </SettingsPage>;
 }

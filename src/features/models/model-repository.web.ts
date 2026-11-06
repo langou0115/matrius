@@ -1,7 +1,7 @@
 import { readLocalValue, writeLocalValue } from '@/core/database/browser-store.web';
 import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig } from '@/core/llm/model-config';
 
-export type ModelPreferences = { providers: ProviderConfig[]; selectedId: string | null; titleModelId: string | null };
+export type ModelPreferences = { providers: ProviderConfig[]; selectedId: string | null; titleModelId: string | null; memoryModelId: string | null };
 type LegacyModelPreferences = { models: ModelConfig[]; selectedId: string | null };
 const key = 'model-preferences';
 
@@ -49,22 +49,29 @@ function normalizePreferences(value: ModelPreferences | LegacyModelPreferences):
   if (new Set(providers.map((item) => item.id)).size !== providers.length) throw new Error('Duplicate provider IDs');
   if (new Set(models.map((item) => item.id)).size !== models.length) throw new Error('Duplicate model IDs');
   const titleModelId = (value as Partial<ModelPreferences>).titleModelId;
+  const memoryModelId = (value as Partial<ModelPreferences>).memoryModelId;
   return {
     providers,
     selectedId: models.some((item) => item.id === value.selectedId) ? value.selectedId : models[0]?.id ?? null,
-    // A title model removed in another tab must not leave a dangling reference.
+    // A title or memory model removed in another tab must not leave a dangling reference.
     titleModelId: typeof titleModelId === 'string' && models.some((item) => item.id === titleModelId) ? titleModelId : null,
+    memoryModelId: typeof memoryModelId === 'string' && models.some((item) => item.id === memoryModelId) ? memoryModelId : null,
   };
 }
 
 export async function loadModelPreferences() {
   const stored = await readLocalValue(key);
-  if (!stored) return { revision: 0, data: { providers: [], selectedId: null, titleModelId: null } as ModelPreferences };
+  if (!stored) return { revision: 0, data: { providers: [], selectedId: null, titleModelId: null, memoryModelId: null } as ModelPreferences };
   if (!stored.value || typeof stored.value !== 'object') throw new Error('Invalid model preferences');
   return { revision: stored.revision, data: normalizePreferences(stored.value as ModelPreferences | LegacyModelPreferences) };
 }
 
 export function saveModelPreferences(value: ModelPreferences | LegacyModelPreferences, revision: number) {
   const normalized = normalizePreferences(value);
-  return writeLocalValue(key, { providers: normalized.providers, selectedId: normalized.selectedId, titleModelId: normalized.titleModelId }, revision);
+  return writeLocalValue(key, {
+    providers: normalized.providers,
+    selectedId: normalized.selectedId,
+    titleModelId: normalized.titleModelId,
+    memoryModelId: normalized.memoryModelId,
+  }, revision);
 }
