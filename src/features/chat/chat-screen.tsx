@@ -1,10 +1,15 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
 import type { MessageFile } from '@/core/agent/types';
+import { buildSystemPrompt } from '@/core/agent/system-prompt';
+import { fileToolsSystemPrompt } from '@/core/agent/file-tools';
+import { webToolsSystemPrompt } from '@/core/agent/web-tools';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { Composer } from './components/composer';
+import { ContextMeter } from './components/context-meter';
+import { measureContextUsage } from './context-usage';
 import { ConversationTitle } from './components/conversation-title';
 import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom';
 import { useDrafts } from './draft-state';
@@ -17,6 +22,10 @@ import { ReasoningBlock, getReasoningState } from './components/reasoning-block'
 import { ReplyStatus } from './components/reply-status';
 import { useChatRuntime } from './chat-runtime';
 import { useModels } from '@/features/models/model-state';
+import { usePersonalization } from '@/features/settings/personalization-state';
+import { useMemory } from '@/features/memory/memory-state';
+import { useNetworkTools } from '@/features/auth/network-tools-state';
+import { useFeature } from '@/features/auth/auth-state';
 import { router } from '@/router';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from './conversation-href';
@@ -28,6 +37,7 @@ import { ConversationNavigator } from './components/conversation-navigator';
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 
 const RUNTIME_NOTICE_ID = 'runtime-error';
+const NO_MESSAGES: Message[] = [];
 
 function UserMessage({ message, pending = false }: { message: Message; pending?: boolean }) {
   return <article className="user-message" data-user-message-id={pending ? undefined : message.id}
@@ -48,6 +58,10 @@ export default function ChatScreen() {
   const { drafts, setDraft, quotes, setQuote } = useDrafts();
   const runtime = useChatRuntime();
   const models = useModels();
+  const { preferences } = usePersonalization();
+  const memory = useMemory();
+  const networkTools = useNetworkTools();
+  const filesEnabled = useFeature('files');
   const preview = useIsPreview();
   const [notices, setNotices] = useState<ChatNoticeItem[]>([]);
   const conversation = conversations.find((item) => item.id === activeId);
@@ -68,7 +82,17 @@ export default function ChatScreen() {
   const liveStartedAt = conversationRun?.startedAt ?? null;
   // Keep each disclosure independent through completion, new replies and conversation switches.
   const [reasoningOpen, setReasoningOpen] = useState<Record<string, boolean>>({});
-  const messages = conversation?.messages ?? [];
+  const messages = conversation?.messages ?? NO_MESSAGES;
+  // Mirror chat-runtime's prompt assembly so the meter counts the tool instructions the next
+  // request actually carries. The counts are estimates; the provider remains the authority.
+  const systemPrompt = useMemo(() => [
+    buildSystemPrompt(preferences, memory),
+    networkTools.ready && networkTools.enabled ? webToolsSystemPrompt() : '',
+    filesEnabled ? fileToolsSystemPrompt() : '',
+  ].filter(Boolean).join('\n\n'), [preferences, memory, networkTools.ready, networkTools.enabled, filesEnabled]);
+  const contextUsage = useMemo(() => models.selected
+    ? measureContextUsage(messages, systemPrompt, models.selected)
+    : null, [messages, models.selected, systemPrompt]);
   // Messages sent after the answer text started: shown here until this run ends, then saved.
   const pending = runtime.pendingMessages(activeId);
   const draftKey = activeId ?? 'new';
@@ -191,12 +215,14 @@ export default function ChatScreen() {
       <div className="bottom-composer">
         <div className="bottom-composer-body">
           <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
+          {contextUsage && <div className="composer-meta"><ContextMeter usage={contextUsage} /></div>}
           <ScrollToBottomButton generating={generating} visible={scrollToBottomVisible} onScrollToBottom={scrollToBottom} />
         </div>
       </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
       <div className="welcome-heading"><BrandMark size={42} className="welcome-mark" /><h1>Matrius</h1></div>
       <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
+      {contextUsage && <div className="composer-meta"><ContextMeter usage={contextUsage} /></div>}
     </div></div>}
   </main>
     <ChatNotice items={noticeItems} onClose={dismissNotice} />

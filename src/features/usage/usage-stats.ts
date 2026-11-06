@@ -5,7 +5,7 @@ export type UsageView = 'day' | 'week' | 'total';
 export type HeatLevel = 0 | 1 | 2 | 3 | 4;
 
 export type HeatCell = { date: string; value: number; level: HeatLevel; estimated: boolean };
-/** `cells[0]` is Monday; a null slot is a future day in the current week. */
+/** `cells[0]` is Monday; a null slot is outside the trailing window or still in the future. */
 export type HeatColumn = { key: string; cells: (HeatCell | null)[] };
 export type Heatmap = {
   columns: HeatColumn[];
@@ -60,11 +60,19 @@ export function heatLevel(value: number, max: number): HeatLevel {
   return 4;
 }
 
-/** A GitHub-style grid ending on `end`: one column per week, Monday through Sunday. */
-export function buildHeatmap(items: UsageDay[], end: Date, weeks = 53): Heatmap {
+/** A GitHub-style grid covering the `days`-day window ending on `end`, one column per week.
+    The grid is anchored to the Monday of the window's first week, so both edges stay partial
+    instead of painting days outside the window as zero usage; a week that only partly overlaps
+    the window adds a 54th column rather than dropping the window's first day. */
+export function buildHeatmap(items: UsageDay[], end: Date, days = 366): Heatmap {
   const byDate = usageByDate(items);
   const lastDay = localDateKey(end);
-  const firstWeek = addDays(startOfWeek(end), -(weeks - 1) * 7);
+  const firstDay = addDays(end, -(days - 1));
+  const firstDayKey = localDateKey(firstDay);
+  const firstWeek = startOfWeek(firstDay);
+  const lastWeek = startOfWeek(end);
+  let weeks = 1;
+  for (let cursor = addDays(firstWeek, 7); cursor <= lastWeek; cursor = addDays(cursor, 7)) weeks += 1;
   const columns: HeatColumn[] = [];
   const monthLabels: { column: number; label: string }[] = [];
   let max = 0;
@@ -76,8 +84,9 @@ export function buildHeatmap(items: UsageDay[], end: Date, weeks = 53): Heatmap 
     for (let offset = 0; offset < 7; offset++) {
       const date = addDays(start, offset);
       const key = localDateKey(date);
-      // ISO date keys sort chronologically, so this also hides the rest of the current week.
-      if (key > lastDay) { cells.push(null); continue; }
+      // ISO date keys sort chronologically: the same comparison hides the days that predate
+      // the window and the rest of the current week.
+      if (key < firstDayKey || key > lastDay) { cells.push(null); continue; }
       const item = byDate.get(key);
       const value = item?.total ?? 0;
       if (value > 0) activeDays += 1;

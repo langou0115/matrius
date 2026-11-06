@@ -69,7 +69,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
       </nav>
       <nav className="conversation-list" aria-label="历史对话">
         {groups.map((group) => (
-          <section className="conversation-group" key={group.name}>
+          <section className={`conversation-group${group.items.length === 0 ? ' is-empty' : ''}`} key={group.name}>
             <h2 className="sidebar-section-label"><button type="button" aria-expanded={!collapsed[group.name]} aria-controls={`sidebar-${group.name}`} onClick={() => setCollapsed((current) => ({ ...current, [group.name]: !current[group.name] }))}><span>{group.name}</span><Icon name="chevron" size={16} /></button></h2>
             <div id={`sidebar-${group.name}`} hidden={collapsed[group.name]}>
             {group.items.map((item) => {

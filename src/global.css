@@ -126,8 +126,10 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .conversation-group { margin-bottom: 8px; }
 /* A folded group collapses to its heading. Keeping the 8px section gap there leaves a hole
    between 置顶 and 最近, so drop it while the group is folded and let the label's own 3px
-   tail be the only separation. */
-.conversation-group:has(> [hidden]) { margin-bottom: 0; }
+   tail be the only separation. An empty group has no body to fold, so it keeps that same
+   compact spacing whether expanded or folded: the heading stays put, toggling never nudges
+   最近, and the empty group does not leave a hole above it. */
+.conversation-group:has(> [hidden]), .conversation-group.is-empty { margin-bottom: 0; }
 .conversation-item { position: relative; display: flex; align-items: center; min-height: 36px; flex-shrink: 0; border-radius: 8px; margin-bottom: 2px; }
 .conversation-item:hover, .conversation-item.menu-open { background: var(--sidebar-hover); }
 .conversation-item.is-active { background: var(--sidebar-selected); }
@@ -247,18 +249,36 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .welcome-content { width: 100%; max-width: var(--chat-column); margin: auto; padding-bottom: 5vh; }
 .welcome-heading { display: flex; align-items: center; justify-content: center; gap: 12px; text-align: center; margin-bottom: 34px; }
 .welcome-heading h1 { font-size: 30px; font-family: var(--font-medium); font-weight: 400; letter-spacing: -.8px; line-height: 1.5; }
-.composer { border: 1px solid color-mix(in srgb, var(--foreground) 13%, var(--background)); border-radius: var(--radius-xl); padding: 14px 16px 11px; background: var(--soft); transition: border-color 160ms; }
-.composer:focus-within { border-color: color-mix(in srgb, var(--foreground) 26%, var(--background)); }
+.composer { border: 1px solid color-mix(in srgb, var(--foreground) 12%, var(--background)); border-radius: var(--radius-xl); padding: 16px 18px 12px; background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 14px 32px -22px rgb(0 0 0 / 22%); transition: border-color 160ms, box-shadow 160ms; }
+.composer:focus-within { border-color: color-mix(in srgb, var(--foreground) 26%, var(--background)); box-shadow: 0 1px 2px rgb(0 0 0 / 5%), 0 18px 38px -22px rgb(0 0 0 / 28%); }
+/* The context meter sits outside the composer card, on the page below the input. */
+.composer-meta { display: flex; align-items: center; justify-content: center; min-height: 28px; margin-top: 6px; }
 .composer textarea { width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: var(--text-body); min-height: 54px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
 .composer textarea::placeholder { color: var(--muted-text); opacity: .8; }
 .composer-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 7px; }
 /* A clear, borderless entry point; the surface appears only during interaction. */
-.composer-attach { position: relative; display: grid; flex-shrink: 0; place-items: center; width: 36px; height: 36px; padding: 0; margin-right: auto; border-radius: var(--radius-sm); background: transparent; color: color-mix(in srgb, var(--foreground) 78%, var(--soft)); transition: background 140ms, color 140ms; touch-action: manipulation; }
+.composer-attach { position: relative; display: grid; flex-shrink: 0; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: var(--radius-sm); background: transparent; color: color-mix(in srgb, var(--foreground) 78%, var(--soft)); transition: background 140ms, color 140ms; touch-action: manipulation; }
 .composer-attach::before { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
 @media (hover: hover) { .composer-attach:hover { background: color-mix(in srgb, var(--foreground) 7%, var(--soft)); color: var(--foreground); } }
 .composer-attach:active { background: color-mix(in srgb, var(--foreground) 12%, var(--soft)); color: var(--foreground); }
 .composer-attach:focus-visible { outline-offset: 2px; background: color-mix(in srgb, var(--foreground) 7%, var(--soft)); color: var(--foreground); }
 @media (prefers-reduced-motion: reduce) { .composer-attach { transition: none; } }
+/* The control layer of the composer: estimated context, split into input and output tokens. */
+.composer-usage { display: inline-flex; align-items: center; gap: 7px; flex: none; height: 28px; padding: 0 9px; border-radius: 9px; background: color-mix(in srgb, var(--foreground) 5%, var(--card)); color: var(--muted-text); font-size: var(--text-caption); line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.composer-usage-ring { width: 16px; height: 16px; flex: none; }
+.composer-usage-track { fill: none; stroke: color-mix(in srgb, var(--foreground) 14%, var(--card)); stroke-width: 2.5; }
+.composer-usage-progress { fill: none; stroke: var(--primary); stroke-width: 2.5; stroke-linecap: round; transition: stroke 160ms; }
+.composer-usage.is-over .composer-usage-progress { stroke: var(--destructive); }
+.composer-usage.is-over .composer-usage-percent { color: var(--destructive); }
+.composer-usage-percent { color: var(--foreground); font-family: var(--font-medium); }
+.composer-usage-tokens { display: inline-flex; align-items: center; gap: 6px; padding-left: 7px; border-left: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent); }
+.composer-usage-token { display: inline-flex; align-items: center; gap: 2px; }
+.composer-usage-token svg { flex: none; }
+@media (max-width: 560px) {
+  .composer-usage { height: 26px; gap: 5px; padding: 0 7px; }
+  .composer-usage-tokens { display: none; }
+  .composer-usage-percent { font-size: 11px; }
+}
 /* Rendered but visually hidden: `display: none` can leave the page focus-stuck after the
    native picker is dismissed in some Chromium builds. */
 .composer-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
@@ -288,7 +308,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .image-preview-stage { display: grid; place-items: center; width: 100%; height: 100%; padding: 48px 16px; cursor: zoom-out; }
 .image-preview-stage img { display: block; max-width: min(96vw, 1400px, 100%); max-height: calc(100dvh - 96px); width: auto; height: auto; object-fit: contain; cursor: default; }
 .model-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--foreground); }
-.model-picker { display: inline-flex; align-items: center; gap: 8px; width: auto; min-width: 0; max-width: min(280px, 65vw); height: 32px; min-height: 32px; padding: 0 8px; border-radius: 9px; color: var(--foreground); font-size: var(--text-small); }
+.model-picker { display: inline-flex; align-items: center; gap: 8px; width: auto; min-width: 0; max-width: min(280px, 65vw); height: 32px; min-height: 32px; padding: 0 8px; margin-left: auto; border-radius: 9px; color: var(--foreground); font-size: var(--text-small); }
 .model-picker:hover, .model-picker.is-open { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
 .model-picker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-picker-chevron { width: 18px; height: 18px; stroke-width: 2.1; transition: transform 140ms ease; }
@@ -328,7 +348,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .thinking-effort-option:hover, .thinking-effort-option[aria-pressed='true'] { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
 .model-picker-empty { display: flex; min-height: 64px; align-items: center; justify-content: center; color: var(--muted-text); font-size: var(--text-caption); }
 .send-button { width: 36px; height: 36px; border-radius: 50%; background: var(--primary); color: var(--primary-foreground); display: grid; place-items: center; flex-shrink: 0; }
-.send-button:disabled { background: color-mix(in srgb, var(--foreground) 9%, var(--background)); color: color-mix(in srgb, var(--foreground) 45%, var(--background)); opacity: 1; }
+.send-button:disabled { background: color-mix(in srgb, var(--primary) 14%, var(--card)); color: color-mix(in srgb, var(--primary) 55%, var(--card)); opacity: 1; }
 .send-button:not(:disabled):hover { filter: brightness(.94); }
 .messages-scroll { flex: 1 0 auto; min-height: 0; background: transparent; }
 /* The 24px side padding keeps text off the edge on narrow screens; the content itself
@@ -377,7 +397,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .connection-notice > svg { margin-top: 2px; }
 .connection-notice strong { font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; }
 .connection-notice p { margin-top: 4px; line-height: 1.8; }
-.bottom-composer { position: sticky; bottom: 0; z-index: 2; width: 100%; padding: 12px 24px 24px; flex-shrink: 0; background: linear-gradient(to bottom, transparent calc(100% - 24px - var(--radius-xl)), var(--background) calc(100% - 24px - var(--radius-xl))); }
+.bottom-composer { position: sticky; bottom: 0; z-index: 2; width: 100%; padding: 12px 24px 10px; flex-shrink: 0; background: linear-gradient(to bottom, transparent calc(100% - 24px - var(--radius-xl)), var(--background) calc(100% - 24px - var(--radius-xl))); }
 /* The wrapper is the composer's own box, so the jump button can sit on its top-right corner
    without depending on the page padding or on how wide the chat column has become. */
 .bottom-composer-body { position: relative; width: 100%; max-width: var(--chat-column); margin: 0 auto; }
@@ -1479,7 +1499,10 @@ input[type='password']::-ms-clear { display: none; }
 .usage-split-prompt { background: var(--primary); }
 .usage-split-output { background: color-mix(in srgb, var(--primary) 38%, var(--background)); }
 .usage-split-copy { margin-top: 9px; color: var(--muted-text); font-size: var(--text-small); line-height: 1.7; font-variant-numeric: tabular-nums; }
-.usage-heatmap { --usage-cell: 13px; --usage-gap: 2px; margin-top: 22px; }
+/* The chart fills the content column and keeps its left edge aligned with the other blocks;
+   leave a small right inset so the current week's cells and the legend do not sit on the
+   column boundary and the last rounded edge does not read as a clipped cell. */
+.usage-heatmap { --usage-cell: 13px; --usage-gap: 2px; margin-top: 22px; padding-right: 4px; }
 .usage-heatmap-scroll { overflow-x: auto; padding-bottom: 2px; }
 .usage-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, var(--usage-cell)); gap: var(--usage-gap); }
 .usage-months { display: grid; column-gap: var(--usage-gap); margin-top: 8px; align-items: start; }

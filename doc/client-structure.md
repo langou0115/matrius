@@ -41,6 +41,7 @@ src/
 │   │   ├── draft-state.tsx             独立草稿状态，跨设置导航保留
 │   │   ├── message-text.ts            用户消息与引用的完整复制文本
 │   │   ├── chat-runtime.tsx            聊天状态/模型设置与共享 Agent 核心之间的 React 适配，含标题请求调度
+│   │   ├── context-usage.ts            按消息长度估算输入/输出 token 与上下文窗口占用
 │   │   ├── chat-screen.tsx             欢迎页、消息区、按会话保存的输入草稿
 │   │   ├── chat-route.tsx              URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
@@ -64,6 +65,7 @@ src/
 │   │       ├── code-block.tsx          代码高亮、复制与折叠
 │   │       ├── model-icon.tsx          theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.tsx            输入法、Enter/Shift+Enter、模型提示
+│   │       ├── context-meter.tsx       输入框下方的上下文环形进度与输入/输出 token 胶囊
 │   │       ├── chat-notice.tsx         聊天区顶部的非模态错误提示卡片
 │   │       ├── background-notifications.tsx 后台完成回复的临时卡片与跳转
 │   │       ├── selection-quote.tsx     助手正文选区与浮动引用操作

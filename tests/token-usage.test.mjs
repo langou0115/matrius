@@ -20,13 +20,17 @@ function day(date, total, extra = {}) {
   };
 }
 
-test('heatmap covers a year of Monday-first weeks and hides future days', () => {
+test('heatmap covers the trailing year and hides days outside the window and in the future', () => {
   const items = [day(addDays(END, -1), 100), day(addDays(END, -3), 50), day(addDays(END, -10), 10)];
   const heatmap = buildHeatmap(items, END);
 
   assert.equal(heatmap.columns.length, 53);
   const cells = heatmap.columns.flatMap((column) => column.cells);
   assert.equal(cells.length, 53 * 7);
+  // The window starts Thursday 6 November 2025; earlier days in that first week stay blank
+  // instead of being painted as zero usage, so the left edge is partial like the right one.
+  assert.deepEqual(heatmap.columns[0].cells.slice(0, 3), [null, null, null]);
+  assert.equal(heatmap.columns[0].cells[3].date, '2025-11-06');
   // Friday is the fifth slot; the weekend after END is still in the future.
   const currentWeek = heatmap.columns.at(-1).cells;
   assert.deepEqual(currentWeek.slice(5), [null, null]);
@@ -40,6 +44,17 @@ test('heatmap covers a year of Monday-first weeks and hides future days', () => 
   assert.equal(heatmap.activeDays, 3);
   assert.ok(heatmap.monthLabels.length >= 12);
   assert.deepEqual(heatmap.monthLabels[0].label, '12月');
+});
+
+test('a window that starts mid-week keeps its first day instead of folding it away', () => {
+  const monday = new Date(2026, 10, 2); // Monday 2 November 2026.
+  const heatmap = buildHeatmap([], monday);
+
+  // The window starts Sunday 2 November 2025, so the grid needs a 54th column rather than
+  // dropping that first day to keep a fixed 53-column year.
+  assert.equal(heatmap.columns.length, 54);
+  assert.deepEqual(heatmap.columns[0].cells.slice(0, 6), [null, null, null, null, null, null]);
+  assert.equal(heatmap.columns[0].cells[6].date, '2025-11-02');
 });
 
 test('summary, weekly buckets and cumulative totals follow local days', () => {
@@ -155,7 +170,8 @@ test('usage panel renders stats, heatmap and switches chart granularity', async 
     assert.match(caption, /3 天有使用记录/);
 
     const cells = document.querySelectorAll('.usage-grid .usage-cell');
-    assert.equal(cells.length, 53 * 7);
+    // The trailing window spans 53 or 54 Monday-first columns depending on today's weekday.
+    assert.ok(cells.length === 53 * 7 || cells.length === 54 * 7);
     assert.ok(document.querySelector('.usage-grid .usage-cell.level-4'));
 
     const tabs = document.querySelectorAll('.usage-tabs button');

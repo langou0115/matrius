@@ -14,8 +14,9 @@ const views: { id: UsageView; label: string }[] = [
   { id: 'total', label: '累计总量' },
 ];
 
-// 53 Monday-first week columns; the grid stretches to the content width so the chart never
-// needs a horizontal scrollbar on desktop. Narrow viewports keep a readable minimum.
+// One column per Monday-first week in the trailing window; the grid stretches to the content
+// width so the chart never needs a horizontal scrollbar on desktop. Narrow viewports keep a
+// readable minimum.
 const HEATMAP_MIN_WIDTH = 640;
 
 const CHART_WIDTH = 720;
@@ -137,7 +138,7 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
   }, [enabled, request, reloadKey]);
 
   const summary = useMemo(() => report ? summarizeUsage(report.items, now) : null, [report, now]);
-  const heatmap = useMemo(() => report ? buildHeatmap(report.items, now) : null, [report, now]);
+  const heatmap = useMemo(() => report ? buildHeatmap(report.items, now, USAGE_WINDOW_DAYS) : null, [report, now]);
   const weekly = useMemo(() => report ? buildWeekly(report.items, now) : null, [report, now]);
   const cumulative = useMemo(() => report ? buildCumulative(report.items, now) : null, [report, now]);
   const lifetime = report?.lifetime;
