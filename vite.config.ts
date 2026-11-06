@@ -48,8 +48,27 @@ function katexStylesheet(): Plugin {
   };
 }
 
+/**
+ * A production service worker registered on the same port would keep answering the
+ * dev server's requests from its cache (and can serve an old shell that no longer
+ * loads). Drop it before the app boots, not after.
+ */
+function dropStaleServiceWorker(): Plugin {
+  return {
+    name: 'matrius-drop-stale-service-worker',
+    apply: 'serve',
+    transformIndexHtml() {
+      return [{
+        tag: 'script',
+        children: "if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then((items) => items.forEach((item) => item.unregister()));",
+        injectTo: 'head-prepend',
+      }];
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), developmentMiddleware(), katexStylesheet()],
+  plugins: [react(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
   resolve: {
     alias: [
       // pi 0.73.1's umbrella entry imports Node credential discovery and every provider.
@@ -65,6 +84,9 @@ export default defineConfig({
     // A stale server on the configured port must fail loudly instead of moving to
     // another port that the API origin and the browser tab do not know about.
     strictPort: true,
+    // Transform the first screen right after startup, so the browser's first load
+    // does not pay for the whole module graph one request at a time.
+    warmup: { clientFiles: ['./src/main.tsx', './src/router/routes.tsx'] },
   },
   build: {
     outDir: 'dist',

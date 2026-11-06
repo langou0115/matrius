@@ -1,4 +1,5 @@
 import { spawn, execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
 import { dirname, join, resolve } from 'node:path';
@@ -312,7 +313,12 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
 
     // Vite starts in under a second, serves modules on demand and hot-replaces a
     // changed module without rebuilding the graph, so the development server needs
-    // no worker or cache tuning of its own.
+    // no worker or cache tuning of its own. The first run after `npm ci`, and the
+    // first run after the lockfile or vite config changes, pre-bundles the frontend
+    // dependencies; page requests wait for that pass, which is why it gets called out.
+    if (!existsSync(join(root, 'node_modules', '.vite', 'deps', '_metadata.json'))) {
+      console.log('Pre-bundling frontend dependencies (first run only; the page opens once it finishes)...');
+    }
     const web = runner.start(process.execPath,
       [join(root, 'node_modules/vite/bin/vite.js'), ...devWebArgs(webPort, { clear: args.includes('--clear') })],
       { cwd: root, env: devWebEnv({ env, apiPort }) });
