@@ -63,7 +63,7 @@ function validateModelValues(value: ProviderModelConfig): ProviderModelConfig {
     supportsImage: value.supportsImage === true,
     contextWindow: value.contextWindow,
     maxOutput: value.maxOutput,
-    thinkingEffort: isThinkingEffort(value.thinkingEffort) ? value.thinkingEffort : 'default',
+    thinkingEffort: isThinkingEffort(value.thinkingEffort) ? value.thinkingEffort : 'low',
   };
 }
 

@@ -1,9 +1,9 @@
-import { RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { RefreshCw, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { getTokenUsage, backfillTokenUsage, USAGE_WINDOW_DAYS, type ApiRequest, type TokenUsageReport } from './usage-api';
 import {
-  buildHeatmap, buildWeekly, formatCompactTokens, formatDateLabel,
+  buildTrendHeatmap, buildWeekly, formatCompactTokens,
   formatTokenCount, summarizeUsage, type Heatmap,
   type UsageView, type WeeklyTotal,
 } from './usage-stats';
@@ -16,24 +16,68 @@ const views: { id: UsageView; label: string }[] = [
 // One column per Monday-first week in the trailing window; the grid stretches to the content
 // width so the chart never needs a horizontal scrollbar on desktop. Narrow viewports keep a
 // readable minimum.
-const HEATMAP_MIN_WIDTH = 640;
+const HEATMAP_MIN_WIDTH = 320;
+
+type UsageDetail = { anchor: HTMLButtonElement; label: string; total: number; estimated: boolean };
+type ChartSelection = { selected: HTMLButtonElement | undefined; onSelect: (detail: UsageDetail) => void };
+
+function UsageDetailCard({ detail, onClose }: { detail: UsageDetail; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const card = ref.current;
+    if (!card) return;
+    const anchor = detail.anchor.getBoundingClientRect();
+    const { width, height } = card.getBoundingClientRect();
+    card.style.left = `${Math.max(8, Math.min(anchor.left + anchor.width / 2 - width / 2, window.innerWidth - width - 8))}px`;
+    card.style.top = `${anchor.bottom + height + 8 <= window.innerHeight ? anchor.bottom + 6 : Math.max(8, anchor.top - height - 6)}px`;
+  }, [detail]);
+  useEffect(() => {
+    function outside(event: PointerEvent) {
+      if (event.target instanceof Node && !ref.current?.contains(event.target) && !detail.anchor.contains(event.target)) onClose();
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key === 'Escape') { onClose(); detail.anchor.focus({ preventScroll: true }); }
+    }
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    window.addEventListener('resize', onClose);
+    window.addEventListener('scroll', onClose, true);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+      window.removeEventListener('resize', onClose);
+      window.removeEventListener('scroll', onClose, true);
+    };
+  }, [detail, onClose]);
+  return <div ref={ref} className="usage-detail-card" role="dialog" aria-label="Token 用量详情">
+    <header><span>{detail.label}</span><button type="button" className="icon-button" aria-label="关闭用量详情" onClick={onClose}><X size={14} aria-hidden="true" /></button></header>
+    <strong>{formatTokenCount(detail.total)} <span>tokens</span></strong>
+    {detail.estimated && <p>含历史估算</p>}
+  </div>;
+}
 
 
 function columnStyle(columns: number): CSSProperties {
   return {
     gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-    minWidth: HEATMAP_MIN_WIDTH,
+    minWidth: Math.min(HEATMAP_MIN_WIDTH, columns * 16),
   };
 }
 
-function DayHeatmap({ heatmap }: { heatmap: Heatmap }) {
+function DayHeatmap({ heatmap, selected, onSelect }: { heatmap: Heatmap } & ChartSelection) {
+  const scroll = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (scroll.current) scroll.current.scrollLeft = scroll.current.scrollWidth;
+  }, [heatmap]);
   return <div className="usage-heatmap">
-    <div className="usage-heatmap-scroll">
+    <div className="usage-heatmap-scroll" ref={scroll}>
       <div className="usage-grid" style={columnStyle(heatmap.columns.length)}
-        role="img" aria-label={`最近 12 个月 Token 活动，${heatmap.activeDays} 天有使用记录`}>
+        role="group" aria-label={`最近六个月 Token 活动，${heatmap.activeDays} 天有使用记录`}>
         {heatmap.columns.flatMap((column) => column.cells.map((cell, row) => cell
-          ? <span key={`${column.key}-${row}`} className={`usage-cell level-${cell.level}`}
-            title={`${formatDateLabel(cell.date)} · ${formatTokenCount(cell.value)} tokens${cell.estimated ? ' · 含估算' : ''}`} />
+          ? <button type="button" key={`${column.key}-${row}`} className={`usage-cell level-${cell.level}`}
+            aria-label={`${cell.date} · ${formatTokenCount(cell.value)} tokens${cell.estimated ? ' · 含估算' : ''}`}
+            aria-pressed={selected?.getAttribute('data-date') === cell.date} data-date={cell.date}
+            onClick={(event) => onSelect({ anchor: event.currentTarget, label: cell.date, total: cell.value, estimated: cell.estimated })} />
           : <span key={`${column.key}-${row}`} className="usage-cell is-empty" />))}
       </div>
       <div className="usage-months" style={columnStyle(heatmap.columns.length)} aria-hidden="true">
@@ -45,14 +89,17 @@ function DayHeatmap({ heatmap }: { heatmap: Heatmap }) {
   </div>;
 }
 
-function WeeklyChart({ weeks }: { weeks: WeeklyTotal[] }) {
+function WeeklyChart({ weeks, selected, onSelect }: { weeks: WeeklyTotal[] } & ChartSelection) {
   const max = Math.max(0, ...weeks.map((week) => week.total));
-  return <div className="usage-bars" role="img" aria-label="最近 12 周每周 Token 用量">
+  return <div className="usage-bars" role="group" aria-label="最近六周每周 Token 用量">
     {weeks.map((week, index) => <div className="usage-bar" key={week.key}>
-      <div className="usage-bar-track" title={`${formatDateLabel(week.key)} 起的一周 · ${formatTokenCount(week.total)} tokens`}>
+      <button type="button" className="usage-bar-track" data-week={week.key}
+        aria-label={`${week.key} 至 ${week.end} · ${formatTokenCount(week.total)} tokens`}
+        aria-pressed={selected?.getAttribute('data-week') === week.key}
+        onClick={(event) => onSelect({ anchor: event.currentTarget, label: `${week.key} 至 ${week.end}`, total: week.total, estimated: week.estimated })}>
         <span className={`usage-bar-fill ${index === weeks.length - 1 ? 'is-current' : ''}`}
           style={{ height: max > 0 ? `${Math.max(week.total > 0 ? 3 : 0, (week.total / max) * 100)}%` : '0%' }} />
-      </div>
+      </button>
       <span className="usage-bar-label">{week.label}</span>
     </div>)}
   </div>;
@@ -65,6 +112,8 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
   const [backfilling, setBackfilling] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [view, setView] = useState<UsageView>('day');
+  const [detail, setDetail] = useState<UsageDetail | null>(null);
+  const selectDetail = (next: UsageDetail) => setDetail((current) => current?.anchor === next.anchor ? null : next);
   // Frozen with each load so the "today" bucket and the charts agree.
   const [now, setNow] = useState(() => new Date());
 
@@ -102,7 +151,7 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
   }, [enabled, request, reloadKey]);
 
   const summary = useMemo(() => report ? summarizeUsage(report.items, now) : null, [report, now]);
-  const heatmap = useMemo(() => report ? buildHeatmap(report.items, now, USAGE_WINDOW_DAYS) : null, [report, now]);
+  const heatmap = useMemo(() => report ? buildTrendHeatmap(report.items, now) : null, [report, now]);
   const weekly = useMemo(() => report ? buildWeekly(report.items, now) : null, [report, now]);
   const lifetime = report?.lifetime;
   const hasUsage = Boolean(lifetime && lifetime.total > 0);
@@ -145,15 +194,16 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
 
       <div className="usage-chart-section">
         <div className="usage-chart-head">
-          <div><h3>用量趋势</h3><p>{view === 'week' ? '最近 12 周' : '最近 12 个月'} · {heatmap.activeDays} 个活跃日（近一年）</p></div>
+          <div><h3>用量趋势</h3><p>{view === 'week' ? '最近 6 周' : `最近 6 个月 · ${heatmap.activeDays} 个活跃日`}</p></div>
           <div className="usage-tabs" role="group" aria-label="切换用量视图">
             {views.map(({ id, label }) => <button key={id} type="button"
               className={view === id ? 'is-active' : ''} aria-pressed={view === id}
-              onClick={() => setView(id)}>{label}</button>)}
+              onClick={() => { setDetail(null); setView(id); }}>{label}</button>)}
           </div>
         </div>
-        {view === 'day' && <DayHeatmap heatmap={heatmap} />}
-        {view === 'week' && <WeeklyChart weeks={weekly} />}
+        {view === 'day' && <DayHeatmap heatmap={heatmap} selected={detail?.anchor} onSelect={selectDetail} />}
+        {view === 'week' && <WeeklyChart weeks={weekly} selected={detail?.anchor} onSelect={selectDetail} />}
+        {detail && <UsageDetailCard detail={detail} onClose={() => setDetail(null)} />}
 
       </div>
     </>}

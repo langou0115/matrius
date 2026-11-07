@@ -85,8 +85,9 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
                 <ConversationSelect title={item.title} active={activeId === item.id}
                   hasUnreadError={item.errorReadAt == null && last?.role === 'assistant' && last.status === 'error'}
                   status={status}
+                  onLongPress={mobile ? (anchor) => setMenu({ conversation: item, anchor }) : undefined}
                   onSelect={() => select(item.id)} />
-                <button className="icon-button conversation-more" aria-label={`对话操作：${item.title}`} aria-haspopup="menu" aria-expanded={menu?.conversation.id === item.id} aria-controls={menu?.conversation.id === item.id ? 'conversation-menu' : undefined} onClick={(event) => { setMenu(menu?.conversation.id === item.id ? null : { conversation: item, anchor: event.currentTarget }); }}><Icon name="more" size={17} /></button>
+                {(!mobile || activeId === item.id) && <button className="icon-button conversation-more" aria-label={`对话操作：${item.title}`} aria-haspopup="menu" aria-expanded={menu?.conversation.id === item.id} aria-controls={menu?.conversation.id === item.id ? 'conversation-menu' : undefined} onClick={(event) => { setMenu(menu?.conversation.id === item.id ? null : { conversation: item, anchor: event.currentTarget }); }}><Icon name="more" size={17} /></button>}
               </div>;
             })}
             </div>

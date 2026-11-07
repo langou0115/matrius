@@ -240,7 +240,7 @@ src/
 - `features/auth/auth-state.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。
 - `features/auth/account-screen.tsx`：设置账号页、登录、改密与退出；根工作区按认证状态切换数据源。
 - `features/files/storage-screen.tsx`：设置中的“存储”分类（位于账号下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
-- `features/usage/usage-screen.tsx`：设置中的“用量”分类（位于存储下方），仅云端登录且具备 `usage` 功能时可见；`token-usage-section.tsx` 展示累计/今日/近 7 天/近 30 天、输入输出占比，以及每天热力图、每周柱状图与累计总量面积图；`usage-api.ts` 读取统计并在每轮回复后上报 token。
+- `features/usage/usage-screen.tsx`：设置中的“用量”分类（位于存储下方），仅云端登录且具备 `usage` 功能时可见；`token-usage-section.tsx` 展示今日/近 7 天/近 30 天、输入输出占比，以及截至今天向前回溯六个月的日热力图和包含本周的最近六周柱状图，支持点击日格或周柱查看精确 token 数；`usage-api.ts` 读取统计并在每轮回复后上报 token。
 - `features/admin/admin-screen.tsx`：`/admin` 管理页，管理员独立登录后按用户名创建用户，展示一次初始密码。
 - `settings-catalog.ts` / `settings-page.tsx`：分类与搜索按功能能力统一过滤。
 - `src/router/routes.tsx` 中的 `/settings/account`、`/settings/storage`、`/settings/usage`：账号、存储与用量设置路由组装；存储与用量仅在账号具备对应功能时出现在导航中。

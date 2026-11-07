@@ -73,7 +73,7 @@ export default function ChatScreen() {
   // is bound back through the composer callback instead of this effect.
   const restoredFor = useRef<string | null | undefined>(undefined);
   // The effort follows the model: switching models shows the depth that model last used.
-  const thinkingEffort = models.selected?.thinkingEffort ?? 'default';
+  const thinkingEffort = models.selected?.thinkingEffort ?? 'low';
   const lastMessage = conversation?.messages.at(-1);
   // One indicator for the whole wait, instead of separate copy for "request sent" and "no token yet".
   // Until the reply message exists the line lives outside the list; once it does, the reply renders

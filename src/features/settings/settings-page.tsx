@@ -137,7 +137,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
       </nav>
     </aside>
     <div className="settings-panel">
-      <Link href={root} asChild><LinkAnchor className="settings-stack-back"><ArrowLeft size={18} aria-hidden="true" />设置</LinkAnchor></Link>
+      <Link href={root} asChild><LinkAnchor className="settings-stack-back"><ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" />返回设置</LinkAnchor></Link>
       <div className="settings-scroll">
         <div className="settings-content">
           <div className="settings-heading"><h1>{title}</h1><p>{description}</p></div>

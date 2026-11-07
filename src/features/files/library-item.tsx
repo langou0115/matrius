@@ -5,9 +5,10 @@ import { FileTypeIcon } from '@/features/chat/components/file-type-icon';
 import { fileContentUrl, type LibraryFile } from './files-api';
 import { formatBytes, formatDate, isImageFilename } from './types';
 
-export function LibraryItem({ file, selected, onToggle, onRename, onDelete }: {
+export function LibraryItem({ file, selected, selectable = true, onToggle, onRename, onDelete }: {
   file: LibraryFile;
   selected: boolean;
+  selectable?: boolean;
   onToggle: () => void;
   onRename: () => void;
   onDelete: () => void;
@@ -16,6 +17,7 @@ export function LibraryItem({ file, selected, onToggle, onRename, onDelete }: {
   const actions = useRef<HTMLDivElement>(null);
   const created = formatDate(file.createdAt);
   const contentUrl = file.previewUrl ?? fileContentUrl(file.id);
+  const Main = selectable ? 'button' : 'div';
 
   // One settings menu replaces the per-row buttons; outside clicks and Escape dismiss it.
   useEffect(() => {
@@ -35,11 +37,13 @@ export function LibraryItem({ file, selected, onToggle, onRename, onDelete }: {
   }, [menuOpen]);
 
   return <div className={`library-item${selected ? ' is-selected' : ''}${menuOpen ? ' is-menu-open' : ''}`} role="listitem">
-    <button type="button" className="library-item-main" aria-pressed={selected}
-      aria-label={`${selected ? '取消选择' : '选择'} ${file.filename}`} onClick={onToggle}>
-      <span className={`library-item-check${selected ? ' is-checked' : ''}`} aria-hidden="true">
+    <Main className="library-item-main" {...(selectable ? {
+      type: 'button' as const, 'aria-pressed': selected,
+      'aria-label': `${selected ? '取消选择' : '选择'} ${file.filename}`, onClick: onToggle,
+    } : {})}>
+      {selectable && <span className={`library-item-check${selected ? ' is-checked' : ''}`} aria-hidden="true">
         {selected && <Check size={13} strokeWidth={2.5} />}
-      </span>
+      </span>}
       <span className="library-item-artwork">
         {isImageFilename(file.filename)
           ? <img src={contentUrl} alt="" loading="lazy" decoding="async" />
@@ -49,7 +53,7 @@ export function LibraryItem({ file, selected, onToggle, onRename, onDelete }: {
         <span className="library-item-name" title={file.filename}>{file.filename}</span>
         <span className="library-item-meta">{formatBytes(file.size)}{created ? ` · ${created}` : ''}</span>
       </span>
-    </button>
+    </Main>
     <div className="library-item-actions" ref={actions}>
       <button type="button" className="icon-button" aria-label={`更多操作 ${file.filename}`}
         aria-haspopup="menu" aria-expanded={menuOpen} title="更多操作"

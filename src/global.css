@@ -305,6 +305,25 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .model-picker { display: inline-flex; align-items: center; gap: 8px; width: auto; min-width: 0; max-width: min(280px, 65vw); height: 32px; min-height: 32px; padding: 0 8px; margin-left: auto; border-radius: 9px; color: var(--foreground); font-size: var(--text-small); }
 .model-picker:hover, .model-picker.is-open { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
 .model-picker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker-effort { flex: none; color: var(--muted-text); font-size: var(--text-caption); }
+.composer-toolbar { gap: 8px; }
+.composer-toolbar .model-picker { flex: 0 1 auto; max-width: 280px; }
+.model-effort { flex: none; }
+.model-picker-divider { flex: none; height: 1px; margin: 8px 0; background: var(--border); }
+.model-effort-header { display: grid; grid-template-columns: 32px minmax(0, 1fr) 32px; align-items: center; }
+.model-effort-current { display: block; text-align: center; font-size: var(--text-small); }
+.model-effort-trigger { color: var(--foreground); font-size: var(--text-small); }
+.model-effort-value { margin-left: auto; color: var(--muted-text); }
+.model-effort-slider { padding: 8px 8px 10px; }
+.composer-effort-range { position: relative; height: 28px; }
+.composer-effort-range input { appearance: none; display: block; width: 100%; height: 28px; margin: 0; border-radius: 999px; background: transparent; cursor: pointer; }
+.composer-effort-range input::-webkit-slider-runnable-track { height: 24px; border-radius: 999px; background: linear-gradient(to right, var(--primary) var(--effort-progress), var(--soft) var(--effort-progress)); }
+.composer-effort-range input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; margin-top: -2px; border: 1px solid #0002; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0002; }
+.composer-effort-range input::-moz-range-track { height: 24px; border-radius: 999px; background: linear-gradient(to right, var(--primary) var(--effort-progress), var(--soft) var(--effort-progress)); }
+.composer-effort-range input::-moz-range-thumb { width: 28px; height: 28px; box-sizing: border-box; border: 1px solid #0002; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0002; }
+.composer-effort-range input:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.composer-effort-ticks { position: absolute; inset: 12px 14px auto; display: flex; justify-content: space-between; pointer-events: none; }
+.composer-effort-ticks i { width: 4px; height: 4px; border-radius: 50%; background: color-mix(in srgb, var(--foreground) 24%, var(--popover)); }
 .model-picker-chevron { width: 18px; height: 18px; stroke-width: 2.1; transition: transform 140ms ease; }
 .model-picker.is-open .model-picker-chevron { transform: rotate(180deg); }
 .model-picker-popover { position: fixed; z-index: 50; box-sizing: border-box; display: flex; flex-direction: column; gap: 0; overflow: hidden; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 8px 24px rgb(0 0 0 / 16%); }
@@ -318,28 +337,6 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .model-choice-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .model-choice-copy strong { overflow: hidden; font-size: var(--text-small); font-family: var(--font-medium); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .model-choice-copy small { overflow: hidden; color: var(--muted-text); font-size: var(--text-caption); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-/* The line is its own element rather than a border on the row below: a border rides the row's
-   top edge, which is the same edge its hover fill paints, so the two read as glued together.
-   Standing alone it keeps clear space on both sides — against the list and against the row. */
-.model-picker-divider { flex: none; height: 0; margin: 8px 0; border-top: 1px solid var(--border); }
-/* Shaped like a model row — same height, padding and rounded hover — so it never reads as a
-   foreign box. The right-pointing chevron marks it as a link into its own page. */
-.model-picker-thinking-link { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px; border-radius: 8px; color: var(--foreground); text-align: left; font-size: var(--text-small); }
-.model-picker-thinking-link:hover:not(:disabled) { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
-.model-picker-thinking-link:focus-visible, .model-picker-subpage-header button:focus-visible, .thinking-effort-option:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.model-picker-thinking-link > span:first-child { flex: 1; }
-/* The current effort, in the collapsed trigger and in the row that opens its page. Plain muted
-   text, never a chip: next to a model name a filled box reads as a second control glued on.
-   flex: none because it rides beside a model name that is allowed to ellipsize instead. */
-.model-picker-thinking-value { flex: none; color: var(--muted-text); font-size: var(--text-caption); }
-.model-picker-thinking-link svg { color: var(--muted-text); transform: rotate(-90deg); }
-.model-picker-subpage-header { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 44px; padding: 0 4px; }
-.model-picker-subpage-header button { display: grid; width: 32px; height: 32px; flex-shrink: 0; place-items: center; border-radius: 8px; color: var(--muted-text); }
-.model-picker-subpage-header button:hover { background: color-mix(in srgb, var(--foreground) 5%, transparent); color: var(--foreground); }
-.model-picker-subpage-header strong { font-family: var(--font-medium); font-size: var(--text-small); font-weight: 400; }
-.thinking-effort-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; }
-.thinking-effort-option { display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 7px 8px; border: 0; border-radius: 8px; text-align: left; }
-.thinking-effort-option:hover, .thinking-effort-option[aria-pressed='true'] { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
 .model-picker-empty { display: flex; min-height: 64px; align-items: center; justify-content: center; color: var(--muted-text); font-size: var(--text-caption); }
 .send-button { width: 36px; height: 36px; border-radius: 50%; background: var(--primary); color: var(--primary-foreground); display: grid; place-items: center; flex-shrink: 0; }
 .send-button:disabled { background: color-mix(in srgb, var(--foreground) 8%, var(--card)); color: color-mix(in srgb, var(--foreground) 34%, var(--card)); opacity: 1; }
@@ -486,6 +483,8 @@ input[type='password']::-ms-clear { display: none; }
 @keyframes login-spin { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { .login-spinner { animation: reasoning-breathe 2.2s ease-in-out infinite; } }
 .conversation-menu { position: fixed; z-index: 30; width: 146px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 5px 22px #00000014; }
+/* Some preset popovers are neutral even when the page has a warm or cool tint. */
+.model-picker-popover, .conversation-menu { --popover: color-mix(in srgb, var(--background) 94%, var(--foreground)); --popover-foreground: var(--foreground); }
 .conversation-menu button { display: flex; width: 100%; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 8px; font-size: var(--text-small); text-align: left; }
 .conversation-menu button:hover, .conversation-menu button:focus-visible { background: color-mix(in srgb, var(--popover-foreground) 7%, var(--popover)); outline: none; }
 .danger-text { color: var(--destructive); }
@@ -1359,7 +1358,7 @@ input[type='password']::-ms-clear { display: none; }
 @media (pointer: coarse) {
   .web-activity-toggle, .thinking-toggle { min-height: 44px; }
   .settings-back, .settings-nav-item { min-height: 44px; }
-  .model-picker, .sidebar-section-label button, .new-conversation, .conversation-select, .reasoning-toggle, .reasoning-collapse, .provider-heading-actions .icon-button, .model-config-actions .icon-button { min-height: 44px; }
+  .model-picker, .model-effort-trigger, .sidebar-section-label button, .new-conversation, .conversation-select, .reasoning-toggle, .reasoning-collapse, .provider-heading-actions .icon-button, .model-config-actions .icon-button { min-height: 44px; }
   /* The card action buttons are square; the coarse-pointer minimum has to grow the pair together. */
   .provider-heading-actions .icon-button, .model-config-actions .icon-button { width: 44px; }
 }
@@ -1517,7 +1516,13 @@ input[type='password']::-ms-clear { display: none; }
 .usage-cell.level-2 { background: color-mix(in srgb, var(--primary) 48%, var(--background)); }
 .usage-cell.level-3 { background: color-mix(in srgb, var(--primary) 72%, var(--background)); }
 .usage-cell.level-4 { background: var(--primary); }
-.usage-cell[title]:hover { outline: 1px solid var(--foreground); outline-offset: 1px; }
+.usage-cell:is(:hover, :focus-visible, [aria-pressed='true']) { outline: 1px solid var(--foreground); outline-offset: 1px; }
+.usage-bar-track:is(:focus-visible, [aria-pressed='true']) { outline: 2px solid var(--primary); outline-offset: 2px; }
+.usage-detail-card { position: fixed; z-index: 60; width: max-content; min-width: 180px; max-width: calc(100vw - 16px); padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 6px 24px #0002; }
+.usage-detail-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--text-caption); color: var(--muted-text); }
+.usage-detail-card .icon-button { width: 28px; height: 28px; }
+.usage-detail-card strong { display: block; margin-top: 4px; font-size: var(--text-body); font-variant-numeric: tabular-nums; }
+.usage-detail-card strong span, .usage-detail-card p { color: var(--muted-text); font-size: var(--text-caption); font-weight: 400; }
 .usage-bars { display: flex; gap: 8px; height: 180px; margin-top: 24px; }
 .usage-bar { display: flex; flex: 1; flex-direction: column; gap: 8px; min-width: 0; }
 .usage-bar-track { display: flex; flex: 1; align-items: flex-end; min-height: 0; overflow: hidden; border-radius: 4px; border-bottom: 1px solid var(--border); }
@@ -1636,6 +1641,13 @@ input[type='password']::-ms-clear { display: none; }
 
 /* Mobile shares routes and data with desktop; only the presentation changes. */
 .settings-stack-back { display: none; }
+@keyframes mobile-sidebar-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes mobile-sidebar-out { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+@keyframes mobile-sidebar-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mobile-sidebar-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .dialog.mobile-sidebar, .dialog.mobile-sidebar::backdrop { animation: none !important; }
+}
 @media (max-width: 767px) {
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .matrius-app {
@@ -1652,33 +1664,69 @@ input[type='password']::-ms-clear { display: none; }
   .matrius-app :is(h1, h2, h3, strong) { font-weight: 600; }
   .chat-topbar .conversation-title { font-weight: 500; }
   .message-actions { gap: 2px; }
+  .composer-toolbar .model-picker { gap: 4px; padding-inline: 4px; }
   .message-action { width: 28px; flex: none; }
+  .assistant-message .message-actions { min-height: 44px; }
+  .assistant-message .message-action { position: relative; width: 28px; height: 28px; border-radius: 9px; }
+  .assistant-message .message-action::after { content: ''; position: absolute; inset: -8px 0; }
+  .user-message { margin-bottom: 20px; }
+  .user-message:has(+ :is(.assistant-message, .reasoning)) { margin-bottom: 0; }
+  .user-message > .message-actions { margin-top: 0; }
   .workspace-content { width: 100%; min-width: 0; }
+  .library-skeleton-check { display: none; }
+  .reasoning-body { padding-top: 2px; }
+  .reasoning-steps, .web-activities { gap: 4px; }
+  .reasoning-steps :is(.thinking-toggle, .web-activity-toggle) { min-height: 44px; }
+  /* Connect the 15px icons centred in 44px rows, across the compact 4px gap.
+     Starting below the icon also carries the line alongside expanded details. */
+  .reasoning-steps > .reasoning-process-step:not(:last-child)::after { top: 30px; bottom: -18px; }
+  .web-activities > .web-activity:not(:last-child)::after { top: 30px; bottom: -18px; }
+  .reasoning-collapse { margin-top: 6px; }
   .chat-main.has-messages { overflow: hidden; scrollbar-gutter: auto; }
   .chat-screen .chat-topbar, .sidebar-collapsed .chat-topbar { flex: none; padding: 6px 12px; gap: 10px; }
   .chat-main.has-messages > .chat-topbar { position: static; }
-  .chat-main .messages-scroll { flex: 1 1 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-anchor: none; }
+  .chat-main .messages-scroll { flex: 1 1 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: none; scrollbar-gutter: auto; }
+  .matrius-app .messages-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
   .messages-content { padding: 16px 16px 24px; }
-  .bottom-composer { position: relative; padding: 8px 12px max(8px, env(safe-area-inset-bottom)); background: var(--background); }
+  .bottom-composer { position: relative; padding: 8px 12px max(8px, env(safe-area-inset-bottom)); background: linear-gradient(to bottom, transparent calc(100% - max(8px, env(safe-area-inset-bottom)) - var(--radius-xl)), var(--background) calc(100% - max(8px, env(safe-area-inset-bottom)) - var(--radius-xl))); }
   .composer textarea, .settings-main input, .settings-main textarea, .settings-main select { font-size: 16px; }
   .composer textarea { max-height: min(180px, 30dvh); }
   .welcome-scroll { padding: 20px 12px max(8px, env(safe-area-inset-bottom)); }
   .welcome-content { display: flex; flex-direction: column; flex: 1; margin: 0 auto; padding: 0; }
   .welcome-heading { flex: 1; margin: 0; }
   .welcome-content > .composer { flex: none; }
-  .dialog.mobile-sidebar { width: min(320px, 86vw); max-width: 86vw; height: var(--app-height, 100dvh); max-height: 100dvh; margin: 0; border-radius: 0 16px 16px 0; overflow: hidden; }
+  .dialog.mobile-sidebar { width: min(280px, 76vw); max-width: 76vw; height: var(--app-height, 100dvh); max-height: 100dvh; margin: 0; border-radius: 0 16px 16px 0; overflow: hidden; animation: mobile-sidebar-in 200ms ease-out backwards; }
+  .mobile-sidebar::backdrop { animation: mobile-sidebar-backdrop-in 200ms ease-out both; }
+  .dialog.mobile-sidebar.is-closing { animation: mobile-sidebar-out 200ms ease-in both; }
+  .mobile-sidebar.is-closing::backdrop { animation: mobile-sidebar-backdrop-out 200ms ease-in both; }
   .mobile-sidebar > .dialog-panel { height: 100%; max-height: none; padding: 0; border: 0; }
   .mobile-sidebar > .dialog-panel > div { height: 100%; }
   .mobile-sidebar .sidebar { width: 100%; min-width: 0; margin: 0; padding: env(safe-area-inset-top) 12px max(12px, env(safe-area-inset-bottom)); }
   .mobile-sidebar .brand { font-size: 18px; }
+  .mobile-sidebar .conversation-list { margin-right: 0; padding-right: 0; scrollbar-width: none; }
+  .matrius-app .mobile-sidebar .conversation-list::-webkit-scrollbar { display: none; width: 0; }
+  .mobile-sidebar .conversation-select { padding-right: 48px; }
+  .mobile-sidebar .conversation-item:not(.is-active) .conversation-select { padding-right: 32px; }
+  .mobile-sidebar .conversation-select { -webkit-touch-callout: none; user-select: none; }
+  .mobile-sidebar .conversation-item:not(.is-active) :is(.conversation-status-indicator, .conversation-error-indicator) { opacity: 1; }
+  .mobile-sidebar .conversation-group { margin-bottom: 0; }
   .mobile-sidebar .sidebar-header-actions .icon-button { width: 44px; height: 44px; }
   .mobile-sidebar .user-entry-text > span { display: block; }
   .settings-main { padding-bottom: env(safe-area-inset-bottom); }
   .settings-detail > .settings-sidebar, .settings-index > .settings-panel { display: none; }
-  .settings-index > .settings-sidebar { width: 100%; min-width: 0; border: 0; padding: 12px 16px; }
-  .settings-stack-back { display: flex; align-items: center; gap: 8px; flex: none; min-height: 52px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  .settings-index > .settings-sidebar { width: 100%; min-width: 0; border: 0; padding: 0 16px 12px; }
+  .settings-index .settings-back, .settings-stack-back { display: flex; align-items: center; gap: 9px; flex: none; min-height: 52px; padding: 8px 16px; border: 0; border-radius: 0; font-size: var(--text-ui); font-family: var(--font-medium); }
+  .settings-index .settings-back { margin-inline: -16px; }
+  .settings-index .settings-back, .settings-stack-back { color: var(--muted-text); }
+  .settings-index .settings-back:hover, .settings-stack-back:hover { color: var(--foreground); background: var(--soft); }
   .settings-content { padding: 24px 18px 40px; }
+  .provider-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px; padding: 12px 8px; }
+  .provider-heading > .provider-name, .provider-heading > .provider-meta { grid-column: 1 / -1; }
+  .provider-count { justify-self: start; min-width: 0; max-width: 100%; overflow: hidden; padding-inline: 3px; text-overflow: ellipsis; }
+  .provider-heading-actions { flex-wrap: nowrap; gap: 3px; margin-left: 0; }
+  .provider-heading-actions .secondary-button { min-height: 44px; padding-inline: 4px; font-size: 13px; white-space: nowrap; }
+  .provider-heading-actions .secondary-button > svg { display: none; }
+  .provider-heading-actions .icon-button { width: 28px; height: 44px; }
   .settings-nav-item { min-height: 52px; }
-  .settings-nav-item::after { content: '›'; margin-left: auto; }
   .settings-search input { font-size: 16px; }
 }

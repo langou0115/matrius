@@ -44,17 +44,18 @@ function WebToolsSection() {
   return <section className="settings-section" aria-labelledby="other-settings-heading">
     <h2 id="other-settings-heading">其他设置</h2>
     <div className="account-list">
-      <label className="account-row account-toggle-row">
+      <div className="account-row">
         <span className="account-row-icon"><Globe2 size={19} strokeWidth={1.75} aria-hidden="true" /></span>
         <span className="account-row-copy">
           <strong>网页搜索</strong>
-          <span className="account-row-description">允许助手搜索网页并读取正文，回答时附上来源。关闭后只使用模型已有知识。</span>
         </span>
         {busy && <LoaderCircle className="login-spinner account-row-spinner" size={16} strokeWidth={2} aria-hidden="true" />}
-        <input className="model-checkbox-input" type="checkbox" checked={enabled} disabled={busy}
-          onChange={(event) => void setEnabled(event.target.checked)} />
-        <span className="toggle-switch" aria-hidden="true" />
-      </label>
+        <label className="model-switch-label">
+          <input className="model-checkbox-input" type="checkbox" checked={enabled} disabled={busy} aria-label="网页搜索"
+            onChange={(event) => void setEnabled(event.target.checked)} />
+          <span className="toggle-switch" aria-hidden="true" />
+        </label>
+      </div>
     </div>
     {error && <p className="account-message is-error" role="alert">
       <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -75,7 +76,6 @@ function MemorySection() {
         <span className="account-row-icon"><Sparkles size={19} strokeWidth={1.75} aria-hidden="true" /></span>
         <span className="account-row-copy">
           <strong>记忆助手模型</strong>
-          <span className="account-row-description">在后台整理偏好、生成记忆摘要时使用的模型。默认跟随当前对话模型。</span>
         </span>
         <div className="memory-model-select">
           <SelectField
@@ -101,7 +101,6 @@ function MemorySection() {
         <span className="account-row-icon"><Brain size={19} strokeWidth={1.75} aria-hidden="true" /></span>
         <span className="account-row-copy">
           <strong>启用记忆</strong>
-          <span className="account-row-description">让记忆助手根据你的对话整理长期偏好，并在之后的回答中参考。关闭后不再更新或使用记忆。</span>
         </span>
         <label className="model-switch-label">
           <input className="model-checkbox-input" type="checkbox" checked={enabled} aria-label="启用记忆"
@@ -112,10 +111,9 @@ function MemorySection() {
       <div className="account-row">
         <span className="account-row-icon"><FileText size={19} strokeWidth={1.75} aria-hidden="true" /></span>
         <span className="account-row-copy">
-          <strong>记忆摘要</strong>
-          <span className="account-row-description">记忆助手根据对话整理的长期偏好摘要。</span>
+          <strong>管理记忆</strong>
         </span>
-        <button type="button" className="secondary-button account-row-action" onClick={() => setManageOpen(true)}>管理</button>
+        <button type="button" className="secondary-button account-row-action" disabled={!enabled} onClick={() => setManageOpen(true)}>管理</button>
       </div>
     </div>
     {modelError && <p className="settings-footnote" role="alert">{modelError}</p>}
@@ -129,10 +127,11 @@ export default function PersonalizationSettingsScreen() {
   const [modelError, setModelError] = useState<string | null>(null);
   return <SettingsPage title="个性化" description="管理记忆、自定义指令与你希望模型了解的个人信息。">
     <section className="settings-section" aria-labelledby="title-model-heading">
-      <h2 id="title-model-heading">对话标题</h2>
+      <h2 id="title-model-heading">标题生成模型</h2>
       <div className="personalization-fields">
         <SelectField
           label="标题生成模型"
+          hideLabel
           value={models.titleModelId ?? ''}
           disabled={!models.ready}
           options={[

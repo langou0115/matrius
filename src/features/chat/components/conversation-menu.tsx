@@ -17,12 +17,23 @@ export function ConversationMenu({ conversation, anchor, onClose, onPin, onRenam
   useLayoutEffect(() => {
     const element = menu.current;
     if (!element) return;
-    const trigger = anchor.getBoundingClientRect();
+    const drawer = anchor.closest('dialog')?.getBoundingClientRect();
+    const row = drawer ? anchor.closest('.conversation-item')?.getBoundingClientRect() : undefined;
+    // Both gestures use the 32px action slot, 5px from the row's right edge.
+    const trigger = row ? {
+      left: row.right - 37,
+      top: row.top + row.height / 2 - 16,
+      bottom: row.top + row.height / 2 + 16,
+    } : anchor.getBoundingClientRect();
     const { width, height } = element.getBoundingClientRect();
-    const left = Math.max(8, Math.min(trigger.left, window.innerWidth - width - 8));
-    const top = trigger.bottom + height + 12 <= window.innerHeight
+    const leftEdge = (drawer?.left ?? 0) + 8;
+    const rightEdge = (drawer?.right ?? window.innerWidth) - 8;
+    const topEdge = (drawer?.top ?? 0) + 8;
+    const bottomEdge = (drawer?.bottom ?? window.innerHeight) - 8;
+    const left = Math.max(leftEdge, Math.min(trigger.left, rightEdge - width));
+    const top = trigger.bottom + height + 6 <= bottomEdge
       ? trigger.bottom + 6
-      : Math.max(8, trigger.top - height - 6);
+      : Math.max(topEdge, trigger.top - height - 6);
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
     element.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();

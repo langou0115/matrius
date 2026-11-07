@@ -7,7 +7,7 @@ import { parseHTML } from 'linkedom';
 import { TokenUsageSection } from '../src/features/usage/token-usage-section.tsx';
 import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import {
-  addDays, buildCumulative, buildHeatmap, buildWeekly, formatCompactTokens, formatMonthYear,
+  addDays, buildCumulative, buildHeatmap, buildTrendHeatmap, buildWeekly, formatCompactTokens, formatMonthYear,
   localDateKey, summarizeUsage,
 } from '../src/features/usage/usage-stats.ts';
 
@@ -81,6 +81,25 @@ test('token formatting stays readable in Chinese units', () => {
   assert.equal(formatCompactTokens(1_000_000), '100万');
   assert.equal(formatCompactTokens(123_456_789), '1.2亿');
   assert.equal(formatMonthYear('2026-11-06'), '2026年11月');
+});
+
+test('trends keep six calendar months ending today and six weeks including this week', () => {
+  const recent = [day(new Date(2026, 9, 30), 10), day(END, 20)];
+  const cells = buildTrendHeatmap(recent, END).columns.flatMap((column) => column.cells).filter(Boolean);
+  assert.equal(cells[0].date, '2026-05-06');
+  assert.equal(cells.at(-1).date, '2026-11-06');
+  assert.equal(cells[0].value, 0);
+  assert.equal(buildWeekly(recent, END).length, 6);
+  const older = [day(new Date(2025, 0, 1), 500), day(new Date(2026, 5, 1), 10), day(END, 20)];
+  const capped = buildTrendHeatmap(older, END).columns.flatMap((column) => column.cells).filter(Boolean);
+  assert.equal(capped[0].date, '2026-05-06');
+  const weeks = buildWeekly(older, END);
+  assert.equal(weeks.length, 6);
+  assert.equal(weeks.at(-1).end, '2026-11-06');
+  assert.equal(weeks.reduce((sum, week) => sum + week.total, 0), 20);
+  const monthEnd = buildTrendHeatmap([], new Date(2026, 7, 31)).columns.flatMap((column) => column.cells).filter(Boolean);
+  assert.equal(monthEnd[0].date, '2026-02-28');
+  assert.equal(monthEnd.at(-1).date, '2026-08-31');
 });
 
 test('the shared runtime forwards one summed usage report per finished run', async () => {
@@ -170,20 +189,29 @@ test('usage panel renders stats, heatmap and switches chart granularity', async 
     assert.match(document.querySelector('.usage-chart-head').textContent, /3 个活跃日/);
 
     const cells = document.querySelectorAll('.usage-grid .usage-cell');
-    // The trailing window spans 53 or 54 Monday-first columns depending on today's weekday.
-    assert.ok(cells.length === 53 * 7 || cells.length === 54 * 7);
+    assert.ok(cells.length >= 26 * 7 && cells.length <= 28 * 7);
     assert.ok(document.querySelector('.usage-grid .usage-cell.level-4'));
+    const today = document.querySelector(`button[data-date="${localDateKey(new Date())}"]`);
+    await act(async () => { today.click(); });
+    assert.match(document.querySelector('.usage-detail-card').textContent, /150 tokens/);
+    await act(async () => { today.click(); });
+    assert.equal(document.querySelector('.usage-detail-card'), null);
 
     const tabs = document.querySelectorAll('.usage-tabs button');
     assert.equal(tabs.length, 2);
     assert.equal(tabs[0].getAttribute('aria-pressed'), 'true');
 
     await act(async () => { tabs[1].click(); });
-    assert.equal(document.querySelectorAll('.usage-bars .usage-bar').length, 12);
+    assert.equal(document.querySelectorAll('.usage-bars .usage-bar').length, 6);
+    const week = document.querySelector('.usage-bar:last-child .usage-bar-track');
+    await act(async () => { week.click(); });
+    assert.match(document.querySelector('.usage-detail-card').textContent, /tokens/);
+    assert.match(document.querySelector('.usage-detail-card').textContent, /至/);
 
     await act(async () => { tabs[0].click(); });
     assert.ok(document.querySelector('.usage-grid'));
     assert.equal(document.querySelectorAll('.usage-bars').length, 0);
+    assert.equal(document.querySelector('.usage-detail-card'), null);
   } finally {
     await cleanup();
   }

@@ -221,7 +221,7 @@ function useRuntime() {
       ...(contextSummary ? { contextSummary } : {}),
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
       // Thinking depth belongs to the model, so the bound model carries its own depth.
-      thinkingEffort: config?.thinkingEffort ?? 'default',
+      thinkingEffort: config?.thinkingEffort ?? 'low',
       systemPrompt: prompts.join('\n\n'),
       ...(tools.length ? { tools } : {}),
     });

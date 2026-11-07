@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent
 import type { MessageFile } from '@/core/agent/types';
 import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { Icon } from '@/components/web/icon';
-import { Paperclip } from 'lucide-react';
+import { ChevronRight, Paperclip } from 'lucide-react';
 import { useModels } from '@/features/models/model-state';
 import { useAuth, useFeature } from '@/features/auth/auth-state';
 import {
@@ -15,6 +15,7 @@ import { useChat, type MessageImage } from '../chat-state';
 import { ModelIcon } from './model-icon';
 import { AttachmentList, type StagedAttachment } from './attachment-list';
 import { QuoteCard } from './quote-card';
+import { EffortPicker } from './effort-picker';
 
 type Props = {
   value: string;
@@ -44,18 +45,7 @@ function readImageDataUrl(file: File) {
   });
 }
 
-// Labels are written out rather than derived from the value: the stored identifiers stay
-// English, but everything the picker prints is Chinese.
-const effortOptions: { value: ThinkingEffort; label: string; description: string }[] = [
-  { value: 'default', label: '默认', description: '使用模型默认设置' },
-  { value: 'low', label: '低', description: '更快响应，较少推理' },
-  { value: 'medium', label: '中', description: '平衡响应速度与推理深度' },
-  { value: 'high', label: '高', description: '适合复杂任务的深入推理' },
-];
-
-// Both picker pages swap inside the same anchored card. The thinking page's natural height
-// (header + four effort rows) is the reference: the model list is capped to it so switching
-// pages does not resize the card. The fallback below still wins on short viewports.
+// Keep the model list compact, with a viewport-height fallback on short screens.
 const PICKER_CARD_MAX_HEIGHT = 294;
 // Narrower than the trigger's own cap: each row is an icon plus a model name, so extra width
 // only adds empty space beside short names.
@@ -125,19 +115,17 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   }, []);
   const composing = useRef(false);
   const [showModels, setShowModels] = useState(false);
-  const [pickerPage, setPickerPage] = useState<'models' | 'thinking'>('models');
+  const [showEffort, setShowEffort] = useState(false);
   const [pickerPosition, setPickerPosition] = useState<{ left: number; bottom: number; width: number; maxHeight: number } | null>(null);
   const pickerTrigger = useRef<HTMLButtonElement>(null);
   const pickerPopover = useRef<HTMLDivElement>(null);
   const selectedModelOption = useRef<HTMLButtonElement>(null);
-  const selectedEffortOption = useRef<HTMLButtonElement>(null);
   const models = useModels();
   const runtime = useChatRuntime();
   const { activeId } = useChat();
   // Only this conversation is blocked: another chat may keep generating in the background.
   const running = runtime.isRunning(activeId);
   const blocked = running;
-  const effortLabel = effortOptions.find((option) => option.value === thinkingEffort)?.label ?? '';
 
   // The current model is what people come back for, so its provider group and its own row
   // move to the front; the remaining order is untouched.
@@ -175,18 +163,12 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       if (!(event.target instanceof Node)) return;
       if (pickerTrigger.current?.contains(event.target) || pickerPopover.current?.contains(event.target)) return;
       setShowModels(false);
-      setPickerPage('models');
     }
 
     function dismissOnEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       event.preventDefault();
-      if (pickerPage === 'thinking') {
-        setPickerPage('models');
-        return;
-      }
       setShowModels(false);
-      setPickerPage('models');
       pickerTrigger.current?.focus();
     }
 
@@ -205,13 +187,12 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       window.visualViewport?.removeEventListener('resize', updatePosition);
       window.visualViewport?.removeEventListener('scroll', updatePosition);
     };
-  }, [pickerPage, showModels]);
+  }, [showModels]);
 
   useEffect(() => {
-    if (!showModels || !pickerPosition) return;
-    if (pickerPage === 'thinking') selectedEffortOption.current?.focus({ preventScroll: true });
-    else selectedModelOption.current?.focus({ preventScroll: true });
-  }, [pickerPage, pickerPosition, showModels, thinkingEffort]);
+    if (!showModels || !pickerPosition || showEffort) return;
+    selectedModelOption.current?.focus({ preventScroll: true });
+  }, [pickerPosition, showModels, showEffort]);
 
   useEffect(() => {
     const element = input.current;
@@ -338,7 +319,6 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       onModelChange?.(id);
       onNotice(null);
       setShowModels(false);
-      setPickerPage('models');
       pickerTrigger.current?.focus();
     } catch {
       onNotice('切换模型失败，请刷新后重试。');
@@ -363,7 +343,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       ref={pickerPopover}
       className="model-picker-popover"
       role="dialog"
-      aria-label={pickerPage === 'models' ? '选择模型' : '思考强度'}
+      aria-label={showEffort ? '思考强度' : '选择模型'}
       style={{
         left: pickerPosition.left,
         bottom: pickerPosition.bottom,
@@ -371,7 +351,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         maxHeight: pickerPosition.maxHeight,
       }}
     >
-      {pickerPage === 'models' ? <>
+      {showEffort ? <EffortPicker value={thinkingEffort} onChange={onThinkingEffortChange} disabled={blocked || sending} onBack={() => setShowEffort(false)} /> : <>
         {models.models.length ? <div className="model-choice-list" role="group" aria-label="可用模型" onKeyDown={handleModelMenuKeyDown}>
           {orderedProviders.filter((provider) => provider.models.length > 0).map((provider) => {
             const selectedIndex = selectedModel ? provider.models.findIndex((model) => model.id === selectedModel.id) : -1;
@@ -401,33 +381,12 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           <span>还没有可用模型</span>
         </div>}
         {models.selected && <>
-        <div className="model-picker-divider" />
-        <button type="button" className="model-picker-thinking-link" disabled={blocked || sending || !models.selectedId} onClick={() => setPickerPage('thinking')}>
-          <span>思考强度</span>
-          <span className="model-picker-thinking-value">{effortOptions.find((option) => option.value === thinkingEffort)?.label}</span>
-          <Icon name="chevron" size={16} />
-        </button>
+          <div className="model-picker-divider" />
+          <button type="button" className="model-choice model-effort-trigger" disabled={blocked || sending}
+            onClick={() => setShowEffort(true)}>
+            <span>思考强度</span><span className="model-effort-value">{thinkingEffort === 'default' ? 'off' : thinkingEffort}</span><ChevronRight size={14} aria-hidden="true" />
+          </button>
         </>}
-      </> : <>
-        <div className="model-picker-subpage-header">
-          <button type="button" aria-label="返回模型列表" onClick={() => setPickerPage('models')}><Icon name="back" size={17} /></button>
-          <strong>思考强度</strong>
-        </div>
-        <div className="thinking-effort-list" role="group" aria-label="思考强度" onKeyDown={handleModelMenuKeyDown}>
-          {effortOptions.map((option) => <button
-            key={option.value}
-            ref={thinkingEffort === option.value ? selectedEffortOption : undefined}
-            type="button"
-            data-picker-option
-            className="thinking-effort-option"
-            disabled={blocked || sending}
-            aria-pressed={thinkingEffort === option.value}
-            onClick={() => { onThinkingEffortChange(option.value); setPickerPage('models'); }}
-          >
-            <span className="model-choice-copy"><strong>{option.label}</strong><small>{option.description}</small></span>
-            {thinkingEffort === option.value && <Icon name="check" size={18} />}
-          </button>)}
-        </div>
       </>}
     </div>
     : null;
@@ -467,23 +426,21 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           ref={pickerTrigger}
           type="button"
           className={`model-picker${showModels ? ' is-open' : ''}`}
-          onClick={() => { setShowModels((open) => !open); setPickerPage('models'); onNotice(models.error); }}
+          onClick={() => { setShowEffort(false); setShowModels((open) => !open); onNotice(models.error); }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' && !showModels) {
               event.preventDefault();
-              setPickerPage('models');
+              setShowEffort(false);
               setShowModels(true);
             }
           }}
           aria-haspopup="dialog"
           aria-expanded={showModels}
-          aria-label={models.selected ? `选择模型，当前为${models.selected.name}，思考强度${effortLabel}` : '选择模型，当前未选择模型'}
+          aria-label={models.selected ? `选择模型，当前为${models.selected.name}，思考强度 ${thinkingEffort === 'default' ? 'off' : thinkingEffort}` : '选择模型，当前未选择模型'}
         >
           <ModelIcon modelId={models.selected?.modelId} name={models.selected?.name} providerName={models.selected?.providerName} />
           <span className="model-picker-label">{models.selected?.name ?? '选择模型'}</span>
-          {/* Sits outside the label so it survives truncation: the effort applies to the next
-              request regardless of how long the model name is. */}
-          {models.selected && <span className="model-picker-thinking-value">{effortLabel}</span>}
+          {models.selected && <span className="model-picker-effort">{thinkingEffort === 'default' ? 'off' : thinkingEffort}</span>}
           <Icon name="chevron" size={18} className="model-picker-chevron" />
         </button>
         {running && !value.trim() && !attachments.length && !quote?.trim()

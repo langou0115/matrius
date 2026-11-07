@@ -3,6 +3,7 @@ import { FolderOpen, LogIn } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
+import { useMobile } from '@/components/web/use-mobile';
 import { Icon } from '@/components/web/icon';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useAuth } from '@/features/auth/auth-state';
@@ -30,6 +31,7 @@ function LibraryPlaceholder({ title, body, action }: {
 }
 
 export default function LibraryScreen() {
+  const mobile = useMobile();
   const auth = useAuth();
   const preview = useIsPreview();
   const { sidebarOpen, dispatch } = useChat();
@@ -189,6 +191,7 @@ export default function LibraryScreen() {
     <div className="library-scroll">
       <div className="library-content">
         <LibraryToolbar
+          selectable={!mobile}
           query={library.query} onQueryChange={library.setQuery}
           kind={library.kind} onKindChange={library.setKind}
           sort={library.sort} onSortChange={library.setSort}
@@ -218,7 +221,7 @@ export default function LibraryScreen() {
         {library.items.length > 0 && <div className={`library-list${library.refreshing ? ' is-refreshing' : ''}`}
           role="list" aria-label="资料库文件" aria-busy={library.refreshing || undefined}>
           {library.items.map((file) => <LibraryItem key={file.id} file={file}
-            selected={library.selected.has(file.id)}
+            selectable={!mobile} selected={!mobile && library.selected.has(file.id)}
             onToggle={() => library.toggleSelected(file)}
             onRename={() => openRename(file)}
             onDelete={() => openDelete([file])}

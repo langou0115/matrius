@@ -5,7 +5,7 @@ import { KIND_OPTIONS, SORT_OPTIONS, type LibraryKind, type LibraryOrder, type L
 
 export function LibraryToolbar({
   query, onQueryChange, kind, onKindChange, sort, onSortChange, order, onToggleOrder,
-  total, selectedCount, selectingAll, onToggleSelectAll, onDownloadSelected, onDeleteSelected,
+  total, selectedCount, selectingAll, onToggleSelectAll, onDownloadSelected, onDeleteSelected, selectable = true,
 }: {
   query: string;
   onQueryChange: (value: string) => void;
@@ -16,6 +16,7 @@ export function LibraryToolbar({
   order: LibraryOrder;
   onToggleOrder: () => void;
   total: number;
+  selectable?: boolean;
   selectedCount: number;
   selectingAll: boolean;
   onToggleSelectAll: () => void;
@@ -41,7 +42,7 @@ export function LibraryToolbar({
 
     <div className="library-toolbar-row library-filter-row">
       {/* An empty library has nothing to select, so the box only exists once rows do. */}
-      {total > 0 && <label className="library-select-all">
+      {selectable && total > 0 && <label className="library-select-all">
         <input className="library-select-all-input" type="checkbox" checked={active} disabled={selectingAll}
           onChange={onToggleSelectAll} aria-label={active ? '取消选择' : '全选全部文件'} />
         <span className={`library-item-check${active ? ' is-checked is-indeterminate' : ''}`} aria-hidden="true" />
@@ -53,7 +54,7 @@ export function LibraryToolbar({
           {option.label}
         </button>)}
       </div>
-      {selectedCount > 0 && <>
+      {selectable && selectedCount > 0 && <>
         <button type="button" className="secondary-button library-download-selected" onClick={onDownloadSelected}>
           <Download size={15} strokeWidth={1.75} aria-hidden="true" />下载所选（{selectedCount}）
         </button>

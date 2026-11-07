@@ -15,6 +15,7 @@ type SelectFieldProps = {
   options: readonly SelectFieldOption[];
   onChange: (id: string) => void;
   disabled?: boolean;
+  hideLabel?: boolean;
 };
 
 const NAVIGATION_KEYS = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
@@ -25,7 +26,7 @@ const NAVIGATION_KEYS = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
  * radius the rest of the form uses; this rebuilds it: a text-field-shaped
  * trigger, and a list of plain option names.
  */
-export function SelectField({ disabled = false, label, onChange, options, value }: SelectFieldProps) {
+export function SelectField({ disabled = false, hideLabel = false, label, onChange, options, value }: SelectFieldProps) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLDivElement>(null);
@@ -83,7 +84,7 @@ export function SelectField({ disabled = false, label, onChange, options, value 
   }
 
   return <div className="select-field">
-    <span id={labelId}>{label}</span>
+    <span id={labelId} className={hideLabel ? 'sr-only' : undefined}>{label}</span>
     <button
       ref={trigger}
       type="button"

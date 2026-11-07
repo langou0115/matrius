@@ -1,6 +1,6 @@
 import type { UsageDay } from './usage-api';
 
-/** The three granularities of the activity panel, in tab order. */
+/** Trend views, in tab order. */
 export type UsageView = 'day' | 'week';
 export type HeatLevel = 0 | 1 | 2 | 3 | 4;
 
@@ -13,7 +13,7 @@ export type Heatmap = {
   activeDays: number;
 };
 export type UsageSummary = { today: number; last7: number; last30: number };
-export type WeeklyTotal = { key: string; label: string; total: number };
+export type WeeklyTotal = { key: string; end: string; label: string; total: number; estimated: boolean };
 export type CumulativePoint = { date: string; total: number };
 
 export function localDateKey(date: Date): string {
@@ -126,23 +126,38 @@ export function summarizeUsage(items: UsageDay[], end: Date): UsageSummary {
   return { today: byDate.get(localDateKey(end))?.total ?? 0, last7: sum(7), last30: sum(30) };
 }
 
-/** Weekly buckets ending with the current (possibly partial) week. */
-export function buildWeekly(items: UsageDay[], end: Date, weeks = 12): WeeklyTotal[] {
+/** Six calendar months ending today, clamping month-end dates before counting local days. */
+export function buildTrendHeatmap(items: UsageDay[], end: Date): Heatmap {
+  const month = new Date(end.getFullYear(), end.getMonth() - 6, 1);
+  const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  month.setDate(Math.min(end.getDate(), monthEnd));
+  const first = localDateKey(month);
+  let days = 1;
+  for (let date = addDays(end, -1); localDateKey(date) >= first; date = addDays(date, -1)) days++;
+  return buildHeatmap(items, end, days);
+}
+
+/** Six Monday-first weeks including the current partial week. */
+export function buildWeekly(items: UsageDay[], end: Date, weeks = 6): WeeklyTotal[] {
   const byDate = usageByDate(items);
   const currentWeek = startOfWeek(end);
   const lastDay = localDateKey(end);
   return Array.from({ length: weeks }, (_, index) => {
     const start = addDays(currentWeek, -(weeks - 1 - index) * 7);
     let total = 0;
+    let estimated = false;
     for (let offset = 0; offset < 7; offset++) {
       const key = localDateKey(addDays(start, offset));
       if (key > lastDay) break;
       total += byDate.get(key)?.total ?? 0;
+      estimated ||= Boolean(byDate.get(key)?.estimated);
     }
     return {
       key: localDateKey(start),
+      end: localDateKey(addDays(start, 6)) < lastDay ? localDateKey(addDays(start, 6)) : lastDay,
       label: index === weeks - 1 ? '本周' : `${start.getMonth() + 1}/${start.getDate()}`,
       total,
+      estimated,
     };
   });
 }

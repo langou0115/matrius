@@ -8,14 +8,21 @@ type Props = {
   /** Background state shown instead of the error mark: still generating, or finished unread. */
   status?: 'running' | 'completed';
   onSelect: () => void;
+  onLongPress?: (anchor: HTMLButtonElement) => void;
 };
 
-export const ConversationSelect = memo(function ConversationSelect({ title, active, hasUnreadError = false, status, onSelect }: Props) {
+export const ConversationSelect = memo(function ConversationSelect({ title, active, hasUnreadError = false, status, onSelect, onLongPress }: Props) {
   const viewport = useRef<HTMLSpanElement>(null);
   const label = useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const engaged = hovered || focused;
+  const press = useRef<{ timer?: ReturnType<typeof setTimeout>; x: number; y: number; opened: boolean }>({ x: 0, y: 0, opened: false });
+  function cancelPress() {
+    clearTimeout(press.current.timer);
+    press.current.timer = undefined;
+  }
+  useEffect(() => cancelPress, []);
 
   useEffect(() => {
     const container = viewport.current;
@@ -66,7 +73,39 @@ export const ConversationSelect = memo(function ConversationSelect({ title, acti
   }, [engaged, title]);
 
   return <button className="conversation-select" type="button" aria-current={active ? 'page' : undefined}
-    onClick={onSelect} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+    onPointerDown={(event) => {
+      cancelPress();
+      press.current.opened = false;
+      if (!onLongPress || event.pointerType === 'mouse' || !event.isPrimary) return;
+      const anchor = event.currentTarget;
+      press.current.x = event.clientX;
+      press.current.y = event.clientY;
+      press.current.timer = setTimeout(() => {
+        press.current.opened = true;
+        onLongPress(anchor);
+      }, 500);
+    }}
+    onPointerMove={(event) => {
+      if (Math.hypot(event.clientX - press.current.x, event.clientY - press.current.y) > 10) cancelPress();
+    }}
+    onPointerUp={cancelPress} onPointerCancel={cancelPress}
+    onContextMenu={(event) => {
+      if (!onLongPress) return;
+      event.preventDefault();
+      cancelPress();
+      if (!press.current.opened) {
+        press.current.opened = true;
+        onLongPress(event.currentTarget);
+      }
+    }}
+    onClick={(event) => {
+      if (press.current.opened) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      onSelect();
+    }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
     onFocus={(event) => setFocused(event.currentTarget.matches(':focus-visible'))} onBlur={() => setFocused(false)}>
     <span className="conversation-title" ref={viewport}><span className="conversation-title-text" ref={label}>{title}</span></span>
     {hasUnreadError
