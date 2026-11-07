@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Quote } from 'lucide-react';
 
 /** Only one assistant answer's body can be quoted; controls and reasoning stay out. */
 export function readSelectionQuote(container: HTMLElement, selection: Selection | null) {
@@ -99,5 +98,5 @@ export function SelectionQuote({ containerRef, onQuote }: { containerRef: RefObj
       onQuote(action.content);
       setAction(null);
       window.getSelection()?.removeAllRanges();
-    }}><Quote size={15} strokeWidth={1.75} aria-hidden="true" />引用</button>;
+    }}>引用</button>;
 }

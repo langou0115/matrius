@@ -195,7 +195,7 @@ function useRuntime() {
       ].slice(0, 3));
     },
   }));
-  const { runs, error } = useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
+  const { runs, error, contexts } = useSyncExternalStore(agent.subscribe, agent.getSnapshot, agent.getSnapshot);
 
   // A conversation keeps the model it was started with. If that model has since been removed,
   // fall back to the most recently used one instead of failing the request.
@@ -312,7 +312,7 @@ function useRuntime() {
   }, []);
 
   return {
-    runs, error, clearError: agent.clearError,
+    runs, error, contexts, clearError: agent.clearError,
     isRunning: (conversationId: string | null | undefined) => !!conversationId && !!runs[conversationId],
     isAnyRunning: Object.keys(runs).length > 0,
     stop: agent.stop,

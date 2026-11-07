@@ -3,15 +3,14 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 import { getTokenUsage, backfillTokenUsage, USAGE_WINDOW_DAYS, type ApiRequest, type TokenUsageReport } from './usage-api';
 import {
-  buildCumulative, buildHeatmap, buildWeekly, formatCompactTokens, formatDateLabel,
-  formatMonthYear, formatTokenCount, summarizeUsage, type CumulativePoint, type Heatmap,
+  buildHeatmap, buildWeekly, formatCompactTokens, formatDateLabel,
+  formatTokenCount, summarizeUsage, type Heatmap,
   type UsageView, type WeeklyTotal,
 } from './usage-stats';
 
 const views: { id: UsageView; label: string }[] = [
-  { id: 'day', label: '每天' },
+  { id: 'day', label: '每日' },
   { id: 'week', label: '每周' },
-  { id: 'total', label: '累计总量' },
 ];
 
 // One column per Monday-first week in the trailing window; the grid stretches to the content
@@ -19,8 +18,6 @@ const views: { id: UsageView; label: string }[] = [
 // readable minimum.
 const HEATMAP_MIN_WIDTH = 640;
 
-const CHART_WIDTH = 720;
-const CHART_HEIGHT = 150;
 
 function columnStyle(columns: number): CSSProperties {
   return {
@@ -41,14 +38,9 @@ function DayHeatmap({ heatmap }: { heatmap: Heatmap }) {
       </div>
       <div className="usage-months" style={columnStyle(heatmap.columns.length)} aria-hidden="true">
         {heatmap.monthLabels.map(({ column, label }) => (
-          <span key={`${column}-${label}`} style={{ gridColumn: column + 1 }}>{label}</span>
+          <span key={`${column}-${label}`} style={{ gridColumn: `${column + 1} / span ${Math.min(4, heatmap.columns.length - column)}` }}>{label}</span>
         ))}
       </div>
-    </div>
-    <div className="usage-legend" aria-hidden="true">
-      <span>少</span>
-      {[0, 1, 2, 3, 4].map((level) => <span key={level} className={`usage-cell level-${level}`} />)}
-      <span>多</span>
     </div>
   </div>;
 }
@@ -63,34 +55,6 @@ function WeeklyChart({ weeks }: { weeks: WeeklyTotal[] }) {
       </div>
       <span className="usage-bar-label">{week.label}</span>
     </div>)}
-  </div>;
-}
-
-function CumulativeChart({ points }: { points: CumulativePoint[] }) {
-  const first = points[0];
-  const last = points[points.length - 1];
-  const max = last?.total ?? 0;
-  const x = (index: number) => (index / Math.max(1, points.length - 1)) * CHART_WIDTH;
-  const y = (value: number) => max > 0 ? CHART_HEIGHT - 4 - (value / max) * (CHART_HEIGHT - 18) : CHART_HEIGHT - 4;
-  const line = points.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)} ${y(point.total).toFixed(1)}`).join(' ');
-  const area = `${line} L${CHART_WIDTH} ${CHART_HEIGHT} L0 ${CHART_HEIGHT} Z`;
-  return <div className="usage-area">
-    <svg className="usage-area-chart" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-      preserveAspectRatio="none" role="img"
-      aria-label={`累计 Token 用量，${formatDateLabel(first?.date ?? '')} 至 ${formatDateLabel(last?.date ?? '')}`}>
-      <defs>
-        <linearGradient id="usage-cumulative-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop className="usage-area-stop-top" offset="0%" />
-          <stop className="usage-area-stop-bottom" offset="100%" />
-        </linearGradient>
-      </defs>
-      <path className="usage-area-fill" d={area} />
-      <path className="usage-area-line" d={line} />
-    </svg>
-    <div className="usage-axis">
-      <span>{formatMonthYear(first?.date ?? '')}</span>
-      <span>{formatMonthYear(last?.date ?? '')}</span>
-    </div>
   </div>;
 }
 
@@ -140,28 +104,13 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
   const summary = useMemo(() => report ? summarizeUsage(report.items, now) : null, [report, now]);
   const heatmap = useMemo(() => report ? buildHeatmap(report.items, now, USAGE_WINDOW_DAYS) : null, [report, now]);
   const weekly = useMemo(() => report ? buildWeekly(report.items, now) : null, [report, now]);
-  const cumulative = useMemo(() => report ? buildCumulative(report.items, now) : null, [report, now]);
   const lifetime = report?.lifetime;
   const hasUsage = Boolean(lifetime && lifetime.total > 0);
-  const estimatedTotal = report?.estimated.total ?? 0;
   // Prompt-side tokens include cached prompt tokens, which pi-ai reports outside `input`.
   const promptTokens = lifetime ? lifetime.input + lifetime.cacheRead + lifetime.cacheWrite : 0;
   const promptRatio = lifetime && lifetime.total > 0 ? Math.round((promptTokens / lifetime.total) * 100) : 0;
 
-  return <section className="settings-section" aria-labelledby="usage-heading">
-    <div className="usage-section-head">
-      <div>
-        <h2 id="usage-heading">Token 活动</h2>
-        <p className="usage-section-caption">{hasUsage && lifetime && heatmap
-          ? `累计 ${formatCompactTokens(lifetime.total)} tokens${estimatedTotal > 0 ? '（含历史估算）' : ''} · ${heatmap.activeDays} 天有使用记录`
-          : '统计每次回复消耗的模型 token，按本机时间每天累计。'}</p>
-      </div>
-      {hasUsage && <div className="usage-tabs" role="group" aria-label="切换用量视图">
-        {views.map(({ id, label }) => <button key={id} type="button"
-          className={view === id ? 'is-active' : ''} aria-pressed={view === id}
-          onClick={() => setView(id)}>{label}</button>)}
-      </div>}
-    </div>
+  return <section className="settings-section" aria-label="用量统计">
 
     {!enabled && <p className="settings-footnote">登录后可查看账号的 Token 用量。</p>}
     {enabled && !report && !failed && <p className="settings-footnote" role="status">
@@ -177,32 +126,36 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
       <strong>还没有 Token 记录</strong>
       <p>发送一条对话后，这里会按天显示模型的输入与输出 token；已有的历史对话会在首次打开时按消息长度估算。</p>
     </div>}
-    {enabled && report && hasUsage && lifetime && summary && heatmap && weekly && cumulative && <>
+    {enabled && report && hasUsage && lifetime && summary && heatmap && weekly && <>
       <dl className="usage-stats">
-        <div className="usage-stat is-total"><dt>累计用量</dt><dd>{formatTokenCount(lifetime.total)}</dd></div>
-        <div className="usage-stat"><dt>今日</dt><dd>{formatTokenCount(summary.today)}</dd></div>
-        <div className="usage-stat"><dt>近 7 天</dt><dd>{formatTokenCount(summary.last7)}</dd></div>
-        <div className="usage-stat"><dt>近 30 天</dt><dd>{formatTokenCount(summary.last30)}</dd></div>
+        <div className="usage-stat"><dt>今日</dt><dd title={formatTokenCount(summary.today)}>{formatCompactTokens(summary.today)}</dd></div>
+        <div className="usage-stat"><dt>近 7 天</dt><dd title={formatTokenCount(summary.last7)}>{formatCompactTokens(summary.last7)}</dd></div>
+        <div className="usage-stat"><dt>近 30 天</dt><dd title={formatTokenCount(summary.last30)}>{formatCompactTokens(summary.last30)}</dd></div>
       </dl>
-      <div className="usage-split" role="img" aria-label={`输入占 ${promptRatio}%，输出占 ${100 - promptRatio}%`}>
-        <span className="usage-split-prompt" style={{ width: `${promptRatio}%` }} />
-        <span className="usage-split-output" style={{ width: `${100 - promptRatio}%` }} />
+      <div className="usage-breakdown">
+        <div className="usage-split" role="img" aria-label={`输入占 ${promptRatio}%，输出占 ${100 - promptRatio}%`}>
+          <span className="usage-split-prompt" style={{ width: `${promptRatio}%` }} />
+          <span className="usage-split-output" style={{ width: `${100 - promptRatio}%` }} />
+        </div>
+        <dl className="usage-split-copy">
+          <div><dt><i className="usage-dot is-prompt" />输入<span>含缓存</span></dt><dd>{formatTokenCount(promptTokens)}<span>{promptRatio}%</span></dd></div>
+          <div><dt><i className="usage-dot is-output" />输出</dt><dd>{formatTokenCount(lifetime.output)}<span>{100 - promptRatio}%</span></dd></div>
+        </dl>
       </div>
-      <p className="usage-split-copy">
-        输入 {formatCompactTokens(promptTokens)} · 输出 {formatCompactTokens(lifetime.output)} · 共 {formatTokenCount(lifetime.requests)} 次回复
-        {estimatedTotal > 0 ? ` · 历史估算 ${formatCompactTokens(estimatedTotal)}` : ''}
-      </p>
 
-      {view === 'day' && <DayHeatmap heatmap={heatmap} />}
-      {view === 'week' && <WeeklyChart weeks={weekly} />}
-      {view === 'total' && <CumulativeChart points={cumulative.points} />}
+      <div className="usage-chart-section">
+        <div className="usage-chart-head">
+          <div><h3>用量趋势</h3><p>{view === 'week' ? '最近 12 周' : '最近 12 个月'} · {heatmap.activeDays} 个活跃日（近一年）</p></div>
+          <div className="usage-tabs" role="group" aria-label="切换用量视图">
+            {views.map(({ id, label }) => <button key={id} type="button"
+              className={view === id ? 'is-active' : ''} aria-pressed={view === id}
+              onClick={() => setView(id)}>{label}</button>)}
+          </div>
+        </div>
+        {view === 'day' && <DayHeatmap heatmap={heatmap} />}
+        {view === 'week' && <WeeklyChart weeks={weekly} />}
 
-      <p className="usage-note">
-        {estimatedTotal > 0 && '历史对话按消息长度估算。'}
-        {view === 'day' ? '最近 12 个月每天的使用量，颜色越深表示当天消耗越多。'
-          : view === 'week' ? '最近 12 周每周的使用量。'
-            : '最近 12 个月的累计使用量。'}
-      </p>
+      </div>
     </>}
   </section>;
 }

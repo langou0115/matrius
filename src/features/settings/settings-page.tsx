@@ -83,7 +83,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
 
   function categoryOf(id: string) { return settingsItems.find((item) => item.id === id); }
 
-  return <main className="settings-main" id="main-content" tabIndex={-1}>
+  return <main className={`settings-main ${pathname === root ? 'settings-index' : 'settings-detail'}`} id="main-content" tabIndex={-1}>
     <aside className="settings-sidebar" aria-label="设置导航">
       <Link href={homeHref} replace asChild>
         <LinkAnchor className="settings-back"><ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" /><span>返回对话</span></LinkAnchor>
@@ -137,6 +137,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
       </nav>
     </aside>
     <div className="settings-panel">
+      <Link href={root} asChild><LinkAnchor className="settings-stack-back"><ArrowLeft size={18} aria-hidden="true" />设置</LinkAnchor></Link>
       <div className="settings-scroll">
         <div className="settings-content">
           <div className="settings-heading"><h1>{title}</h1><p>{description}</p></div>

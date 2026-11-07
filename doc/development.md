@@ -1,5 +1,7 @@
 # 开发、验证与交付
 
+移动端验证需覆盖 360px / 390px 窄屏、横屏、安全区、软键盘、侧栏遮罩与设置逐级返回。PWA 需在 HTTPS 或 localhost 的生产构建上验证安装；开发模式不注册 service worker。构建插件为 `sw.js` 注入哈希静态资源清单和构建缓存版本，安装成功后才更新缓存，更新等待旧页面关闭后激活；只缓存应用静态资源，云端数据和模型请求仍需联网。首次离线打开要求此前在线完成一次安装缓存。
+
 [文档索引](README.md)
 
 ## 环境与客户端命令
@@ -50,7 +52,7 @@ app.use((req, res, next) => {
 
 生产发布只通过 `npm run deploy` 构建 Web 静态产物；`Dockerfile.web` 内部执行 `npm run build`。仓库不包含原生工程或应用商店发布流程。
 
-PWA 元数据直接写在 `index.html`：`<html lang="zh-CN">`、manifest 链接、主题色、`apple-touch-icon` 与 Apple 移动端 meta 标签，不再由构建后脚本注入。`public/manifest.json` 声明可安装应用信息，`public/sw.js` 预缓存应用外壳并在导航时使用网络优先策略，离线时回退到缓存的 SPA 入口；它会跳过 Vite 开发 URL（`/@`、`/src/`、`/node_modules/`、带 `t=` 查询的请求），缓存名为 `matrius-v5`。`/favicon.png` 位于 `public/`，不再提供 `/favicon.ico`。修改 service worker 的缓存策略时需同步递增 `CACHE_NAME`。
+PWA 元数据直接写在 `index.html`：`<html lang="zh-CN">`、manifest 链接、主题色、`apple-touch-icon` 与 Apple 移动端 meta 标签，不再由构建后脚本注入。`public/manifest.json` 声明可安装应用信息，`public/sw.js` 预缓存应用外壳并在导航时使用网络优先策略，离线时回退到缓存的 SPA 入口；它会跳过 Vite 开发 URL（`/@`、`/src/`、`/node_modules/`、带 `t=` 查询的请求），缓存名为 `matrius-v6-<build hash>`。`/favicon.png` 位于 `public/`，不再提供 `/favicon.ico`。修改 service worker 的缓存策略时需同步递增 `CACHE_NAME`。
 
 ## 本机全栈开发：npm run dev
 

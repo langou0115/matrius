@@ -20,6 +20,21 @@ export function AppShell() {
     || pathname.startsWith('/mock/chat/settings/');
 
   useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateHeight = () => {
+      if (viewport && viewport.scale === 1) {
+        document.documentElement.style.setProperty('--app-height', `${viewport.height}px`);
+      }
+    };
+    updateHeight();
+    viewport?.addEventListener('resize', updateHeight);
+    return () => {
+      viewport?.removeEventListener('resize', updateHeight);
+      document.documentElement.style.removeProperty('--app-height');
+    };
+  }, []);
+
+  useEffect(() => {
     // A worker registered while a production build was served on this same localhost port
     // would keep answering the dev server's requests from its cache, hiding every code
     // change. Development never needs one, so drop it (and its caches) before anything else.

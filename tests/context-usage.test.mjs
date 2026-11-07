@@ -31,3 +31,23 @@ test('context usage caps the percentage and flags a conversation over the input 
   assert.ok(usage.total > usage.limit);
   assert.ok(usage.total > usage.window);
 });
+
+test('tool definitions count toward context and covered history is replaced by its summary', () => {
+  const config = { contextWindow: 128000, maxOutput: 4096 };
+  const messages = [{ id: 'old', role: 'user', content: 'x'.repeat(4000) }, { id: 'new', role: 'user', content: 'hello' }];
+  const plain = measureContextUsage(messages, '', config);
+  const withTools = measureContextUsage(messages, '', config, {
+    tools: [{ name: 'file', description: 'instructions'.repeat(1000), parameters: { type: 'object' } }],
+  });
+  assert.ok(withTools.input > plain.input + 2000);
+  const summarized = measureContextUsage(messages, '', config, { summary: { coveredUntilMessageId: 'old', summary: 'short' } });
+  assert.ok(summarized.total < plain.total);
+});
+
+test('the current call uses provider input including cache, not cumulative billing', () => {
+  const usage = measureContextUsage([], '', { contextWindow: 128000, maxOutput: 4096 }, {
+    latestCall: { input: 80000, output: 4000, modelId: 'model', contextWindow: 128000 },
+  });
+  assert.equal(usage.total, 84000);
+  assert.equal(usage.percent, 66);
+});

@@ -1,11 +1,12 @@
+import { useMobile } from '@/components/web/use-mobile';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
 import type { MessageFile } from '@/core/agent/types';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
-import { fileToolsSystemPrompt } from '@/core/agent/file-tools';
-import { webToolsSystemPrompt } from '@/core/agent/web-tools';
+import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
+import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { Composer } from './components/composer';
 import { ContextMeter } from './components/context-meter';
@@ -25,7 +26,7 @@ import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { useMemory } from '@/features/memory/memory-state';
 import { useNetworkTools } from '@/features/auth/network-tools-state';
-import { useFeature } from '@/features/auth/auth-state';
+import { useAuth, useFeature } from '@/features/auth/auth-state';
 import { router } from '@/router';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from './conversation-href';
@@ -54,6 +55,7 @@ function UserMessage({ message, pending = false }: { message: Message; pending?:
 }
 
 export default function ChatScreen() {
+  const mobile = useMobile();
   const { conversations, activeId, sidebarOpen, dispatch } = useChat();
   const { drafts, setDraft, quotes, setQuote } = useDrafts();
   const runtime = useChatRuntime();
@@ -62,6 +64,7 @@ export default function ChatScreen() {
   const memory = useMemory();
   const networkTools = useNetworkTools();
   const filesEnabled = useFeature('files');
+  const auth = useAuth();
   const preview = useIsPreview();
   const [notices, setNotices] = useState<ChatNoticeItem[]>([]);
   const conversation = conversations.find((item) => item.id === activeId);
@@ -90,9 +93,17 @@ export default function ChatScreen() {
     networkTools.ready && networkTools.enabled ? webToolsSystemPrompt() : '',
     filesEnabled ? fileToolsSystemPrompt() : '',
   ].filter(Boolean).join('\n\n'), [preferences, memory, networkTools.ready, networkTools.enabled, filesEnabled]);
-  const contextUsage = useMemo(() => models.selected
-    ? measureContextUsage(messages, systemPrompt, models.selected)
-    : null, [messages, models.selected, systemPrompt]);
+  const contextUsage = useMemo(() => {
+    if (!models.selected) return null;
+    const tools = networkTools.ready && networkTools.enabled ? createWebTools(auth.request) : [];
+    if (filesEnabled) tools.push(createFileTool({ request: auth.request, conversationId: activeId ?? undefined,
+      availableFiles: messages.flatMap((message) => message.files ?? []).slice(-30) }).tool);
+    const latest = activeId ? runtime.contexts?.[activeId] : undefined;
+    return measureContextUsage(messages, systemPrompt, models.selected, {
+      tools, summary: conversation?.contextSummary,
+      latestCall: latest?.modelId === models.selected.id && latest.contextWindow === models.selected.contextWindow ? latest : undefined,
+    });
+  }, [messages, models.selected, systemPrompt, networkTools.ready, networkTools.enabled, auth.request, filesEnabled, activeId, runtime.contexts, conversation?.contextSummary]);
   // Messages sent after the answer text started: shown here until this run ends, then saved.
   const pending = runtime.pendingMessages(activeId);
   const draftKey = activeId ?? 'new';
@@ -105,7 +116,7 @@ export default function ChatScreen() {
   const latestActivities = conversation?.messages.at(-1)?.activities?.length ?? 0;
   const { scrollToBottom, scrollToMessage, followLatest, visible: scrollToBottomVisible } = useChatAutoScroll({
     containerRef: messageScroller,
-    containerKey: activeId ?? 'new',
+    containerKey: `${draftKey}-${mobile}-${hasMessages}`,
     followKey: `${messages.length}:${latestContent?.length ?? 0}:${latestReasoning?.length ?? 0}:${latestActivities}`,
     scrollKey: activeId,
   });
@@ -169,14 +180,14 @@ export default function ChatScreen() {
     void models.setThinkingEffort(models.selected.id, value).catch(() => showNotice('保存思考强度失败，请重试。'));
   }
 
-  return <div className="chat-screen"><main ref={messageScroller} data-conversation-key={draftKey} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
+  return <div className="chat-screen"><main ref={mobile && hasMessages ? undefined : messageScroller} data-conversation-key={`${draftKey}-${mobile}-${hasMessages}`} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
     <header className="chat-topbar">
       {!sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
         onRename={(title) => dispatch({ type: 'rename', id: conversation.id, title })} />}
     </header>
     {hasMessages ? <>
-      <div className="messages-scroll">
+      <div className="messages-scroll" data-conversation-key={`${draftKey}-${mobile}-${hasMessages}`} ref={mobile ? (element) => { messageScroller.current = element; } : undefined}>
         <div className="messages-content">
           {messages.map((message) => {
             const live = message.id === liveReply?.id;
@@ -215,22 +226,21 @@ export default function ChatScreen() {
       <div className="bottom-composer">
         <div className="bottom-composer-body">
           <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
-          {contextUsage && <div className="composer-meta"><ContextMeter usage={contextUsage} /></div>}
+          {!mobile && contextUsage && <div className="composer-meta"><ContextMeter usage={contextUsage} /></div>}
           <ScrollToBottomButton generating={generating} visible={scrollToBottomVisible} onScrollToBottom={scrollToBottom} />
         </div>
       </div>
     </> : <div className="welcome-scroll"><div className="welcome-content">
       <div className="welcome-heading"><BrandMark size={42} className="welcome-mark" /><h1>Matrius</h1></div>
       <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
-      {contextUsage && <div className="composer-meta"><ContextMeter usage={contextUsage} /></div>}
     </div></div>}
   </main>
     <ChatNotice items={noticeItems} onClose={dismissNotice} />
     {hasMessages && <SelectionQuote key={`selection-${draftKey}`} containerRef={messageScroller} onQuote={(content) => {
       setQuote(draftKey, content);
       scrollToBottom();
-      messageScroller.current?.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus({ preventScroll: true });
+      messageScroller.current?.closest('.chat-screen')?.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus({ preventScroll: true });
     }} />}
-    {hasMessages && <ConversationNavigator key={`navigator-${draftKey}`} messages={messages} containerRef={messageScroller} onNavigate={scrollToMessage} />}
+    {hasMessages && !mobile && <ConversationNavigator key={`navigator-${draftKey}`} messages={messages} containerRef={messageScroller} onNavigate={scrollToMessage} />}
   </div>;
 }

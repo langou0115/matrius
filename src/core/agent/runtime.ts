@@ -145,7 +145,11 @@ export function createAgentRuntime({
           config: requestConfig, apiKey, messages: prepared.messages, thinkingEffort,
           systemPrompt: prepared.systemPrompt, tools, onUpdate(value) {
             if (disposed || cancelled) return;
-            latest = { ...latest, ...value, thinkingMs: Math.max(0, Date.now() - startedAt) };
+            const { contextTokens, ...reply } = value;
+            if (contextTokens && snapshot.contexts?.[conversationId] !== contextTokens) {
+              update({ contexts: { ...snapshot.contexts, [conversationId]: contextTokens } });
+            }
+            latest = { ...latest, ...reply, thinkingMs: Math.max(0, Date.now() - startedAt) };
             if (!timer) timer = setTimeout(flush, 50);
           },
         });

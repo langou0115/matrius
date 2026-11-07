@@ -434,7 +434,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
 
   return <>
     <form className="composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-      {quote && <QuoteCard content={quote} onRemove={sending ? undefined : onRemoveQuote} />}
+      {quote && <QuoteCard content={quote} hideIcon onRemove={sending ? undefined : onRemoveQuote} />}
       <input ref={fileInput} className="composer-file-input" type="file" multiple tabIndex={-1}
         accept={filesEnabled ? undefined : 'image/png,image/jpeg,image/webp,image/gif'}
         onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addFiles(files); }} />

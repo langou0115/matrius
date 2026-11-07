@@ -243,14 +243,14 @@ function deferred() {
 
 // Minimal pi-ai stream: content blocks are only in the final result. The callbacks run after
 // the loop consumed the preceding event, so they observe the same timing as a live stream.
-function assistantStream({ thinking = '', text = '', toolStart = false, afterThinking, afterText, afterToolStart }) {
+function assistantStream({ thinking = '', text = '', toolStart = false, afterThinking, afterText, afterToolStart, usage }) {
   const content = [
     ...(thinking ? [{ type: 'thinking', thinking }] : []),
     ...(text ? [{ type: 'text', text }] : []),
   ];
   const final = {
     role: 'assistant', content, api: 'completion', provider: 'test', model: 'test-model',
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    usage: usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     stopReason: 'stop', timestamp: Date.now(),
   };
   const partial = { ...final, content: [] };
@@ -497,6 +497,7 @@ test('steering text is wrapped in context and injected between turns of the same
       return assistantStream({
         thinking: call === 0 ? '先想一想' : '',
         text: call === 0 ? '先回答第一段' : '再补充第二段',
+        usage: { input: 100, output: 20, cacheRead: call === 0 ? 500 : 800, cacheWrite: 0 },
         afterThinking: call === 0
           ? () => outcomes.push(run.steer({ id: 's1', role: 'user', content: '请改成英文', steering: true }))
           : undefined,
@@ -511,6 +512,9 @@ test('steering text is wrapped in context and injected between turns of the same
   assert.match(second, /<user_steering_message>/);
   assert.match(second, /请改成英文/);
   assert.equal(updates.at(-1).content, '先回答第一段\n\n再补充第二段', 'both turns stay in one visible reply');
+  assert.equal(updates.at(-1).contextTokens.input, 900, 'context includes the latest cache read once');
+  assert.equal(updates.at(-1).contextTokens.output, 20);
+  assert.deepEqual(result.usage, { input: 200, output: 40, cacheRead: 1300, cacheWrite: 0 }, 'billing still sums both calls');
 });
 
 test('a supplement is deferred once the answer text starts streaming', async () => {

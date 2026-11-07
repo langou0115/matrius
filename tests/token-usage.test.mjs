@@ -92,7 +92,9 @@ test('the shared runtime forwards one summed usage report per finished run', asy
   const runtime = createAgentRuntime({
     onReply(_conversationId, message) { if (message.status !== 'streaming') finishedResolve(); },
     onUsage(value) { usage.push(value); },
-    loadRunner: async () => ({ createReplyRun() {
+    loadRunner: async () => ({ createReplyRun({ onUpdate }) {
+      onUpdate({ content: '', reasoning: '', reasoningActive: false,
+        contextTokens: { input: 90, output: 10, modelId: 'test', contextWindow: 128000 } });
       return { abort() {}, steer: () => false, start: () => completed };
     } }),
     loadCompactor: async () => ({
@@ -111,6 +113,8 @@ test('the shared runtime forwards one summed usage report per finished run', asy
     finishRun({ status: 'complete', usage: { input: 7, output: 3, cacheRead: 2, cacheWrite: 0 } });
     await settled;
     assert.deepEqual(usage, [{ input: 7, output: 3, cacheRead: 2, cacheWrite: 0 }]);
+    assert.equal(runtime.getSnapshot().contexts.c1.input, 90);
+    assert.equal(runtime.getSnapshot().contexts.c1.output, 10);
   } finally {
     runtime.dispose();
   }
@@ -162,12 +166,8 @@ async function renderSection() {
 test('usage panel renders stats, heatmap and switches chart granularity', async () => {
   const { document, cleanup } = await renderSection();
   try {
-    const total = document.querySelector('.usage-stat.is-total dd');
-    assert.ok(total, 'the lifetime stat card is rendered');
-    assert.match(total.textContent, /270/);
-    const caption = document.querySelector('.usage-section-caption').textContent;
-    assert.match(caption, /tokens/);
-    assert.match(caption, /3 天有使用记录/);
+    assert.equal(document.querySelectorAll('.usage-stat').length, 3);
+    assert.match(document.querySelector('.usage-chart-head').textContent, /3 个活跃日/);
 
     const cells = document.querySelectorAll('.usage-grid .usage-cell');
     // The trailing window spans 53 or 54 Monday-first columns depending on today's weekday.
@@ -175,14 +175,14 @@ test('usage panel renders stats, heatmap and switches chart granularity', async 
     assert.ok(document.querySelector('.usage-grid .usage-cell.level-4'));
 
     const tabs = document.querySelectorAll('.usage-tabs button');
-    assert.equal(tabs.length, 3);
+    assert.equal(tabs.length, 2);
     assert.equal(tabs[0].getAttribute('aria-pressed'), 'true');
 
     await act(async () => { tabs[1].click(); });
     assert.equal(document.querySelectorAll('.usage-bars .usage-bar').length, 12);
 
-    await act(async () => { tabs[2].click(); });
-    assert.ok(document.querySelector('.usage-area-chart'));
+    await act(async () => { tabs[0].click(); });
+    assert.ok(document.querySelector('.usage-grid'));
     assert.equal(document.querySelectorAll('.usage-bars').length, 0);
   } finally {
     await cleanup();
@@ -223,7 +223,7 @@ test('an account without activity gets an empty state and no chart tabs', async 
   }
 });
 
-test('an account that was never estimated backfills once and labels the history as approximate', async () => {
+test('an account that was never estimated backfills once and renders activity', async () => {
   const previous = {
     window: globalThis.window,
     document: globalThis.document,
@@ -251,9 +251,8 @@ test('an account that was never estimated backfills once and labels the history 
       root.render(createElement(TokenUsageSection, { request, enabled: true }));
     });
     assert.deepEqual(calls, ['/api/usage?days=366', '/api/usage/backfill', '/api/usage?days=366']);
-    assert.match(document.querySelector('.usage-section-caption').textContent, /含历史估算/);
-    assert.match(document.querySelector('.usage-note').textContent, /按消息长度估算/);
-    assert.equal(document.querySelectorAll('.usage-tabs button').length, 3);
+    assert.ok(document.querySelector('.usage-grid'));
+    assert.equal(document.querySelectorAll('.usage-tabs button').length, 2);
   } finally {
     await act(async () => root.unmount());
     globalThis.window = previous.window;

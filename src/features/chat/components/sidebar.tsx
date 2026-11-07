@@ -1,3 +1,4 @@
+import { useMobile } from '@/components/web/use-mobile';
 import { Link, router, usePathname, type Href } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useState } from 'react';
@@ -20,6 +21,7 @@ type Props = { onSearch: () => void; collapsed: boolean };
 
 export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarCollapsed }: Props) {
   const { conversations, activeId, dispatch } = useChat();
+  const mobile = useMobile();
   const runtime = useChatRuntime();
   const preview = useIsPreview();
   const auth = useAuth();
@@ -96,7 +98,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
           <span className="user-avatar"><Icon name="user" size={18} /></span>
           <span className="user-entry-text"><strong>本地模式</strong><span>数据保存在此浏览器</span></span>
         </LinkAnchor></Link>
-        : <Link href="/settings/account" asChild><LinkAnchor className="user-entry"
+        : <Link href={mobile ? "/settings" : "/settings/account"} asChild><LinkAnchor className="user-entry"
           aria-label={auth.user ? '打开账号设置' : '打开账号设置并登录'}>
           {auth.user
             ? <span className="user-avatar is-authenticated">{auth.user.username.slice(0, 1).toUpperCase()}</span>

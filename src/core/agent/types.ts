@@ -94,6 +94,8 @@ export type Message = {
 
 export type AgentProfile = { customInstructions: string; aboutName: string; occupation: string; aboutMore: string };
 export type ReplyUpdate = {
+  /** Current model call only; never the sum of a run's billable usage. */
+  contextTokens?: { input: number; output: number; modelId: string; contextWindow: number };
   content: string;
   reasoning: string;
   reasoningActive: boolean;
@@ -110,4 +112,5 @@ export type RuntimeRun = { conversationId: string; replyId: string; startedAt: n
 /** `steered` joins the current run; `deferred` waits for the next turn; `false` has no run. */
 export type SteerOutcome = 'steered' | 'deferred' | false;
 /** Requests are tracked per conversation so independent chats can generate at the same time. */
-export type RuntimeSnapshot = { runs: Record<string, RuntimeRun>; error: string | null };
+export type RuntimeSnapshot = { runs: Record<string, RuntimeRun>; error: string | null;
+  contexts?: Record<string, NonNullable<ReplyUpdate['contextTokens']>> };

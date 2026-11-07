@@ -2,14 +2,17 @@ import { CONTEXT_SAFETY_TOKENS, estimateMessageTokens, estimateTextTokens } from
 import { withoutFailedReplies } from '@/core/agent/history';
 import type { ModelConfig } from '@/core/llm/model-config';
 import type { Message } from '@/core/agent/types';
+import type { ReplyUpdate } from '@/core/agent/types';
+import type { AgentTool } from '@mariozechner/pi-agent-core';
+import { appendConversationSummary, type ConversationSummary } from '@/core/agent/compaction';
 
-/** Estimated tokens for the next request, split by what the model reads and writes. */
+/** Latest call occupancy, or an estimate of the next request when no call is available. */
 export type ContextUsage = {
-  /** System prompt plus the user-side history. */
+  /** Latest call input including cache, or estimated system/tools/user history. */
   input: number;
-  /** Assistant replies already in the history. */
+  /** Latest call output, or assistant text in the estimated next request. */
   output: number;
-  /** Input plus output, i.e. the context carried into the next request. */
+  /** Occupancy of one call, never the sum of multiple billed calls. */
   total: number;
   /** The selected model's full context window. */
   window: number;
@@ -20,21 +23,31 @@ export type ContextUsage = {
 };
 
 /**
- * The composer's meter is an estimate: provider tokenizers differ, and the next request may
- * still be compacted. It deliberately mirrors the estimator the runtime uses for its context
- * guard, so the percentage and the "conversation is too long" warning agree with each other.
+ * Live readings come from the latest individual model call. Before a call (including after
+ * reload), estimate retained text, summary and tool definitions; never substitute daily usage.
  */
 export function measureContextUsage(
   messages: Message[],
   systemPrompt: string,
   config: Pick<ModelConfig, 'contextWindow' | 'maxOutput'>,
+  options: { tools?: AgentTool[]; summary?: ConversationSummary; latestCall?: ReplyUpdate['contextTokens'] } = {},
 ): ContextUsage {
+  const covered = options.summary ? messages.findIndex((message) => message.id === options.summary!.coveredUntilMessageId) : -1;
+  if (covered >= 0) {
+    messages = messages.slice(covered + 1);
+    systemPrompt = appendConversationSummary(systemPrompt, options.summary!.summary);
+  }
   let input = estimateTextTokens(systemPrompt);
+  if (options.tools?.length) input += estimateTextTokens(JSON.stringify(options.tools.map(({ name, description, parameters }) => ({ name, description, parameters }))));
   let output = 0;
   for (const message of withoutFailedReplies(messages)) {
     const tokens = estimateMessageTokens(message);
     if (message.role === 'user') input += tokens;
     else output += tokens;
+  }
+  if (options.latestCall) {
+    input = options.latestCall.input;
+    output = options.latestCall.output;
   }
   const total = input + output;
   const window = Math.max(1, config.contextWindow);

@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
-import { List, X } from 'lucide-react';
+import { List } from 'lucide-react';
 
 import type { Message } from '../chat-state';
 
@@ -83,7 +83,7 @@ export const ConversationNavigator = memo(function ConversationNavigator({ messa
       <span className="navigator-bars" aria-hidden="true">{Array.from({ length: barCount }, (_, index) => <span key={index} className={activeBar === index ? 'is-current' : ''} />)}</span>
     </button>
     {open && <div id={cardId} className="conversation-navigator-card">
-      <header><strong>对话导航</strong><span>{questions.length}</span><button type="button" aria-label="关闭对话导航" onClick={() => { setOpen(false); trigger.current?.focus(); }}><X size={16} strokeWidth={1.75} aria-hidden="true" /></button></header>
+      <header><strong>对话导航</strong><span>{questions.length}</span></header>
       <div ref={list} className="conversation-navigator-list" onKeyDown={(event) => {
         if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();

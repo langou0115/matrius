@@ -1,7 +1,7 @@
 import type { UsageDay } from './usage-api';
 
 /** The three granularities of the activity panel, in tab order. */
-export type UsageView = 'day' | 'week' | 'total';
+export type UsageView = 'day' | 'week';
 export type HeatLevel = 0 | 1 | 2 | 3 | 4;
 
 export type HeatCell = { date: string; value: number; level: HeatLevel; estimated: boolean };

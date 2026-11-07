@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import react from '@vitejs/plugin-react';
@@ -67,8 +69,26 @@ function dropStaleServiceWorker(): Plugin {
   };
 }
 
+function offlineShell(): Plugin {
+  return {
+    name: 'matrius-offline-shell',
+    apply: 'build',
+    writeBundle(options, bundle) {
+      const assets = Object.keys(bundle).filter((name) => name.startsWith('assets/')).sort();
+      const revision = createHash('sha256').update(JSON.stringify(assets))
+        .update(readFileSync(fromRoot('./public/sw.js')))
+        .update(String(bundle['index.html']?.type === 'asset' ? bundle['index.html'].source : ''))
+        .digest('hex').slice(0, 16);
+      const worker = readFileSync(fromRoot('./public/sw.js'), 'utf8')
+        .replace('matrius-v6', 'matrius-v6-' + revision)
+        .replace('/* BUILD_ASSETS */', assets.map((name) => JSON.stringify('/' + name) + ',').join('\n'));
+      writeFileSync(resolve(options.dir ?? 'dist', 'sw.js'), worker);
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
+  plugins: [offlineShell(), react(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
   resolve: {
     alias: [
       // pi 0.73.1's umbrella entry imports Node credential discovery and every provider.

@@ -7,6 +7,7 @@ node_modules/
 dist/
 
 # debug
+*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*

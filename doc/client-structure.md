@@ -1,5 +1,7 @@
 # 客户端结构与修改入口
 
+移动端以 767px 为断点：聊天使用顶栏、独立滚动消息区、底部输入框；不显示消息导航和上下文窗口入口。侧栏使用原生模态 dialog 覆盖页面，支持遮罩关闭、Esc 与焦点恢复。设置根路由在移动端显示分类列表，详情路由全屏显示并提供返回设置入口；桌面保留双栏。`components/web/use-mobile.ts` 统一订阅断点。应用外壳处理安全区和 Visual Viewport 高度，适配软键盘。
+
 [文档索引](README.md) · [UI 风格规范](ui-style.md) · [迁移记录](migration.md)
 
 当前只实现 Web 端：React 19 + TypeScript，Vite 8 构建，React Router 7 路由。入口是根目录 `index.html` 与 `src/main.tsx`；页面、组件与导航都不再区分平台后缀。共享状态与配色不依赖 DOM。
@@ -41,7 +43,7 @@ src/
 │   │   ├── draft-state.tsx             独立草稿状态，跨设置导航保留
 │   │   ├── message-text.ts            用户消息与引用的完整复制文本
 │   │   ├── chat-runtime.tsx            聊天状态/模型设置与共享 Agent 核心之间的 React 适配，含标题请求调度
-│   │   ├── context-usage.ts            按消息长度估算输入/输出 token 与上下文窗口占用
+│   │   ├── context-usage.ts            上下文窗口优先使用运行中最近单次请求用量；无记录时估算正文、摘要和完整工具定义
 │   │   ├── chat-screen.tsx             欢迎页、消息区、按会话保存的输入草稿
 │   │   ├── chat-route.tsx              URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
@@ -65,7 +67,7 @@ src/
 │   │       ├── code-block.tsx          代码高亮、复制与折叠
 │   │       ├── model-icon.tsx          theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.tsx            输入法、Enter/Shift+Enter、模型提示
-│   │       ├── context-meter.tsx       输入框下方的上下文环形进度与输入/输出 token 胶囊
+│   │       ├── context-meter.tsx       已有对话输入框下方的上下文入口与容量分段弹层
 │   │       ├── chat-notice.tsx         聊天区顶部的非模态错误提示卡片
 │   │       ├── background-notifications.tsx 后台完成回复的临时卡片与跳转
 │   │       ├── selection-quote.tsx     助手正文选区与浮动引用操作
@@ -255,3 +257,5 @@ src/
 - `features/workspace/workspace-mode.ts`：按认证状态决定本地、账号云端或等待验证的工作区身份。
 - `features/workspace/cloud-workspace-repository.ts`：账号作用域的内存 REST 仓储，加载服务端数据并按 revision 保存变化；不访问 IndexedDB，不包含模型配置或凭据。
 - `components/web/local-workspace.tsx`：按工作区身份重建聊天、草稿与 Runtime；本地保存队列写 IndexedDB，云端保存队列写 REST，ModelProvider 始终位于切换边界之外。旧 AccountSyncProvider 不再挂载。
+
+上下文占用与计费用量分开：运行期间按会话和模型保存最近一次调用的输入（含缓存读取/写入）与输出，不累加各轮调用。新调用开始时从实际请求内容估算，服务商返回用量后更新。运行时数据仅在内存中；刷新后按当前工具定义、保留正文与滚动摘要估算，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。

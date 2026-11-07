@@ -2,10 +2,14 @@ import { useCallback, useEffect, useState, type PropsWithChildren } from 'react'
 
 import { useChat } from '@/features/chat/chat-state';
 import { SearchDialog } from '@/features/chat/components/search-dialog';
+import { Dialog } from './dialog';
+import { useMobile } from './use-mobile';
 import { Sidebar } from '@/features/chat/components/sidebar';
 
 export function Workspace({ children }: PropsWithChildren) {
-  const { sidebarOpen } = useChat();
+  const { sidebarOpen, dispatch } = useChat();
+  const mobile = useMobile();
+  const closeSidebar = () => dispatch({ type: 'sidebar' });
   const [searchOpen, setSearchOpen] = useState(false);
   const openSearch = useCallback(() => setSearchOpen(true), []);
   useEffect(() => {
@@ -24,7 +28,11 @@ export function Workspace({ children }: PropsWithChildren) {
     <a className="skip-link" href="#main-content">跳到主要内容</a>
     {/* Keep the sidebar mounted so collapse and expand can animate; `inert` removes the
         hidden copy from focus order and pointer interaction. */}
-    <Sidebar onSearch={openSearch} collapsed={!sidebarOpen} />
+    {mobile ? sidebarOpen && <Dialog title="工作区导航" hideHeader className="mobile-sidebar" onClose={closeSidebar}>
+      <div onClick={(event) => {
+        if ((event.target as HTMLElement).closest('a, .new-conversation, .conversation-select')) closeSidebar();
+      }}><Sidebar onSearch={() => { closeSidebar(); openSearch(); }} collapsed={false} /></div>
+    </Dialog> : <Sidebar onSearch={openSearch} collapsed={!sidebarOpen} />}
     <div className="workspace-content">{children}</div>
     {searchOpen && <SearchDialog onClose={() => setSearchOpen(false)} />}
   </div>;

@@ -253,9 +253,9 @@ export function chatReducer(state: ChatState, action: Action): ChatState {
 }
 
 function initializeChatState(initialState?: PersistedChatState): ChatState {
-  if (!initialState) return { conversations: [], activeId: null, sidebarOpen: true, chatVisible: true };
+  if (!initialState) return { conversations: [], activeId: null, sidebarOpen: !(typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches), chatVisible: true };
   const activeId = initialState.conversations.some((conversation) => conversation.id === initialState.activeId) ? initialState.activeId : null;
-  return { ...initialState, activeId, chatVisible: true };
+  return { ...initialState, activeId, sidebarOpen: typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches ? false : initialState.sidebarOpen, chatVisible: true };
 }
 
 function useChatState(initialState?: PersistedChatState) {

@@ -1,29 +1,29 @@
 /* Matrius PWA service worker: precache the app shell, then serve it offline.
    Bump CACHE_NAME whenever the shell or the caching strategy changes. */
-const CACHE_NAME = 'matrius-v5';
+const CACHE_NAME = 'matrius-v6';
 const APP_SHELL = [
+  /* BUILD_ASSETS */
   '/',
   '/manifest.json',
   '/favicon.png',
   '/brand/matrius-color.svg',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
   '/icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .catch(() => undefined)
-      .then(() => self.skipWaiting()),
+      .then((cache) => cache.addAll(APP_SHELL)),
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith('matrius-') && key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });
@@ -40,7 +40,13 @@ function isCacheable(request) {
   // plus `serve` would otherwise answer with stale development modules.
   if (url.searchParams.has('dev') || url.searchParams.has('t') || url.pathname.startsWith('/node_modules/')
     || url.pathname.startsWith('/src/') || url.pathname.startsWith('/@')) return false;
-  return true;
+  return request.mode === 'navigate' || url.pathname.startsWith('/assets/')
+    || url.pathname.startsWith('/icons/') || url.pathname.startsWith('/brand/')
+    || url.pathname.startsWith('/vendor/katex/') || ['/manifest.json', '/favicon.png'].includes(url.pathname);
+}
+
+function offlinePage() {
+  return caches.open(CACHE_NAME).then((cache) => cache.match('/')).then((cached) => cached || Response.error());
 }
 
 self.addEventListener('fetch', (event) => {
@@ -51,7 +57,7 @@ self.addEventListener('fetch', (event) => {
   // an offline load still gets the cached shell (SPA fallback).
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/').then((cached) => cached || Response.error())),
+      fetch(request).then((response) => response.ok ? response : offlinePage()).catch(offlinePage),
     );
     return;
   }

@@ -8,6 +8,7 @@ import { thinkingBudgetsFor } from './thinking-budget';
 import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from './types';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import { buildContext, buildSteeringMessage } from './context';
+import { estimateTextTokens } from './context';
 import { collectGeneratedFiles, getFileActivityEnd, getFileActivityStart } from './file-tools';
 import { getWebActivityEnd, getWebActivityStart } from './web-tools';
 import { createReplyDiagnostics } from './diagnostics';
@@ -84,7 +85,18 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   if (thinkingEffort !== 'default') model.reasoning = true;
   const agent = new Agent({
     initialState: { model, messages: buildContext(messages, config), systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
-    getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream(streamFn),
+    getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream((model, context, options) => {
+      contextTokens = {
+        input: estimateTextTokens(context.systemPrompt ?? '')
+          + estimateTextTokens(JSON.stringify(context.tools ?? []))
+          + context.messages.reduce((sum, message) => sum + 8 + (typeof message.content === 'string'
+            ? estimateTextTokens(message.content)
+            : message.content.reduce((tokens, block) => tokens + (block.type === 'image' ? 4096 : estimateTextTokens(JSON.stringify(block))), 0)), 0),
+        output: 0, modelId: config.id, contextWindow: config.contextWindow,
+      };
+      emit();
+      return streamFn(model, context, options);
+    }),
     transport: 'sse', maxRetryDelayMs: 5000,
     // Keep reasoning from eating the whole reply window; document writes need the tokens.
     thinkingBudgets: thinkingBudgetsFor(config.maxOutput),
@@ -98,11 +110,14 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   let outputRetries = 0;
   // A tool-using run makes several model calls, and retries still cost tokens; report the sum.
   const tokenUsage: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  let contextTokens: import('./types').ReplyUpdate['contextTokens'];
   function countUsage(usage: AssistantMessage['usage']) {
     tokenUsage.input += tokenCount(usage.input);
     tokenUsage.output += tokenCount(usage.output);
     tokenUsage.cacheRead += tokenCount(usage.cacheRead);
     tokenUsage.cacheWrite += tokenCount(usage.cacheWrite);
+    const input = tokenCount(usage.input) + tokenCount(usage.cacheRead) + tokenCount(usage.cacheWrite);
+    if (input > 0) contextTokens = { input, output: tokenCount(usage.output), modelId: config.id, contextWindow: config.contextWindow };
   }
   const hasUsage = () => tokenUsage.input + tokenUsage.output + tokenUsage.cacheRead + tokenUsage.cacheWrite > 0;
   /** Usage travels with the result so the caller can report it to the account. */
@@ -199,6 +214,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   }
   function emit() {
     onUpdate({
+      ...(contextTokens ? { contextTokens } : {}),
       reasoningActive,
       content: visibleContent(),
       reasoning: reasoningTurns.filter(Boolean).join('\n\n'),
@@ -299,10 +315,10 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         const lastContent = contentTurns.at(-1);
         if (lastContent) lastContent.answer = !message.content.some((block) => block.type === 'toolCall');
       }
+      if (event.type === 'message_end') countUsage(message.usage);
       emit();
       if (event.type === 'message_end') {
         finalMessage = message;
-        countUsage(message.usage);
         diagnostics.messageEnd(message);
         // With tools registered, tool calls are the expected loop. Without them, the local
         // mode cannot execute anything, so surface the request as an error instead of hanging.
