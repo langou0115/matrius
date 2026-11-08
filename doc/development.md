@@ -52,7 +52,7 @@ app.use((req, res, next) => {
 
 生产发布只通过 `npm run deploy` 构建 Web 静态产物；`Dockerfile.web` 内部执行 `npm run build`。仓库不包含原生工程或应用商店发布流程。
 
-PWA 元数据直接写在 `index.html`：`<html lang="zh-CN">`、manifest 链接、主题色、`apple-touch-icon` 与 Apple 移动端 meta 标签，不再由构建后脚本注入。`public/manifest.json` 声明可安装应用信息，`public/sw.js` 预缓存应用外壳并在导航时使用网络优先策略，离线时回退到缓存的 SPA 入口；它会跳过 Vite 开发 URL（`/@`、`/src/`、`/node_modules/`、带 `t=` 查询的请求），缓存名为 `matrius-v6-<build hash>`。`/favicon.png` 位于 `public/`，不再提供 `/favicon.ico`。修改 service worker 的缓存策略时需同步递增 `CACHE_NAME`。
+PWA 元数据直接写在 `index.html`：`<html lang="zh-CN">`、manifest 链接、主题色、`apple-touch-icon` 与 Apple 移动端 meta 标签，不再由构建后脚本注入。`public/manifest.json` 声明可安装应用信息，`public/sw.js` 预缓存应用外壳并在导航时使用网络优先策略，离线时回退到缓存的 SPA 入口；它会跳过 Vite 开发 URL（`/@`、`/src/`、`/node_modules/`、带 `t=` 查询的请求），缓存名为 `matrius-v10-<build hash>`。`/favicon.png` 位于 `public/`，不再提供 `/favicon.ico`。修改 service worker 的缓存策略时需同步递增 `CACHE_NAME`。
 
 ## 本机全栈开发：npm run dev
 

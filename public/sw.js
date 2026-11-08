@@ -1,12 +1,12 @@
 /* Matrius PWA service worker: precache the app shell, then serve it offline.
    Bump CACHE_NAME whenever the shell or the caching strategy changes. */
-const CACHE_NAME = 'matrius-v6';
+const CACHE_NAME = 'matrius-v10';
 const APP_SHELL = [
   /* BUILD_ASSETS */
   '/',
   '/manifest.json',
   '/favicon.png',
-  '/brand/matrius-color.svg',
+  '/brand/matrius-sailboat.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/icon-maskable-512.png',
