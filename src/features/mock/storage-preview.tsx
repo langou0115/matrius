@@ -5,9 +5,9 @@ import { StorageErrorToast } from '@/components/web/storage-error-toast';
 /** Mirrors the strings produced by the workspace persistence error path. */
 const variants = [
   ['network', '网络中断', '最新修改未能保存到云端：暂时无法连接服务器。请检查网络后重试。'],
-  ['conflict', '其他设备修改', '最新修改未能保存到云端：消息已在其他设备更新，请刷新后重试。（409 conflict）。内容已保留，可重试保存。'],
-  ['rate', '写入频繁', '最新修改未能保存到云端：写入过于频繁（429），请稍等片刻再点“重试保存”。'],
-  ['server', '服务器错误', '最新修改未能保存到云端：请求未能完成，请重试。（500 internal_error）。内容已保留，可重试保存。'],
+  ['conflict', '其他设备修改', '最新修改未能保存到云端：消息已在其他设备更新（409 conflict）。请先保留未保存内容，再刷新页面。'],
+  ['rate', '写入频繁', '最新修改未能保存到云端：写入过于频繁（429）。请先保留未保存内容，稍后刷新页面。'],
+  ['server', '服务器错误', '最新修改未能保存到云端：请求未能完成（500 internal_error）。请先保留未保存内容，再刷新页面。'],
   ['local', '浏览器存储失败', '最新修改未能保存到浏览器，关闭页面可能丢失这些修改。'],
   ['fallback', '通用兜底', '最新修改未能保存到云端。请检查网络后重试；若其他设备已修改，请保留内容后刷新。'],
 ] as const;
@@ -16,7 +16,7 @@ type Variant = typeof variants[number][0];
 export default function StoragePreview() {
   const [variant, setVariant] = useState<Variant>('network');
   const [visible, setVisible] = useState(true);
-  const [retries, setRetries] = useState(0);
+  const [refreshes, setRefreshes] = useState(0);
   const [, , message] = variants.find(([value]) => value === variant) ?? variants[0];
 
   return <div className="chat-screen"><main className="chat-main has-messages" id="main-content">
@@ -32,9 +32,9 @@ export default function StoragePreview() {
           {visible ? '隐藏提示' : '显示提示'}
         </button>
       </div>
-      <p className="process-preview-intro">提示在页面顶部显示 5 秒后自动关闭。可拖动选择文字后按 Ctrl+C（macOS 为 ⌘C）复制；点击「重试保存」会记录次数。</p>
-      <p className="process-preview-intro" role="status">已点击重试 {retries} 次（mock 不会真的保存）。</p>
+      <p className="process-preview-intro">提示在页面顶部显示 5 秒后自动关闭。可拖动选择文字后按 Ctrl+C（macOS 为 ⌘C）复制；右侧图标用于刷新页面，刷新前请保留未保存内容。</p>
+      <p className="process-preview-intro" role="status">已点击刷新 {refreshes} 次（mock 不会真的刷新）。</p>
     </div></div>
-    {visible && <StorageErrorToast message={message} onRetry={() => setRetries((current) => current + 1)} />}
+    {visible && <StorageErrorToast message={message} onRefresh={() => setRefreshes((current) => current + 1)} />}
   </main></div>;
 }

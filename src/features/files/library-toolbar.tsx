@@ -5,7 +5,7 @@ import { KIND_OPTIONS, SORT_OPTIONS, type LibraryKind, type LibraryOrder, type L
 
 export function LibraryToolbar({
   query, onQueryChange, kind, onKindChange, sort, onSortChange, order, onToggleOrder,
-  total, selectedCount, selectingAll, onToggleSelectAll, onDownloadSelected, onDeleteSelected, selectable = true,
+  total, selectedCount, selectingAll, onToggleSelectAll, onDownloadSelected, onDeleteSelected, selectable = true, mobileSelectionActive = false,
 }: {
   query: string;
   onQueryChange: (value: string) => void;
@@ -17,6 +17,7 @@ export function LibraryToolbar({
   onToggleOrder: () => void;
   total: number;
   selectable?: boolean;
+  mobileSelectionActive?: boolean;
   selectedCount: number;
   selectingAll: boolean;
   onToggleSelectAll: () => void;
@@ -54,14 +55,15 @@ export function LibraryToolbar({
           {option.label}
         </button>)}
       </div>
-      {selectable && selectedCount > 0 && <>
-        <button type="button" className="secondary-button library-download-selected" onClick={onDownloadSelected}>
-          <Download size={15} strokeWidth={1.75} aria-hidden="true" />下载所选（{selectedCount}）
+      {(selectedCount > 0 || mobileSelectionActive) && <div className={`library-selection-actions${!selectable ? ' is-mobile' : ''}`} role="group" aria-label={`已选择 ${selectedCount} 个文件`}>
+        <span className="library-selection-count">已选 <b>{selectedCount}</b> 项</span>
+        <button type="button" className="library-batch-button library-download-selected" disabled={!selectedCount} aria-label={`下载所选 ${selectedCount} 个文件`} onClick={onDownloadSelected}>
+          <Download size={16} strokeWidth={1.75} aria-hidden="true" />下载
         </button>
-        <button type="button" className="danger-button library-delete-selected" onClick={onDeleteSelected}>
-          <Trash2 size={15} strokeWidth={1.75} aria-hidden="true" />删除所选（{selectedCount}）
+        <button type="button" className="library-batch-button library-delete-selected" disabled={!selectedCount} aria-label={`删除所选 ${selectedCount} 个文件`} onClick={onDeleteSelected}>
+          <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />删除
         </button>
-      </>}
+      </div>}
       <div className="library-sort">
         <SelectField label="排序" value={sort} options={SORT_OPTIONS}
           onChange={(value) => onSortChange(value as LibrarySort)} />

@@ -1,4 +1,4 @@
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { getTokenUsage, backfillTokenUsage, USAGE_WINDOW_DAYS, type ApiRequest, type TokenUsageReport } from './usage-api';
@@ -50,7 +50,7 @@ function UsageDetailCard({ detail, onClose }: { detail: UsageDetail; onClose: ()
     };
   }, [detail, onClose]);
   return <div ref={ref} className="usage-detail-card" role="dialog" aria-label="Token 用量详情">
-    <header><span>{detail.label}</span><button type="button" className="icon-button" aria-label="关闭用量详情" onClick={onClose}><X size={14} aria-hidden="true" /></button></header>
+    <header><span>{detail.label}</span></header>
     <strong>{formatTokenCount(detail.total)} <span>tokens</span></strong>
     {detail.estimated && <p>含历史估算</p>}
   </div>;

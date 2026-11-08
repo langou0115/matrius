@@ -50,8 +50,8 @@ function saveErrorMessage(reason: unknown, cloud: unknown): string {
   if (reason instanceof ApiError) {
     if (reason.status === 0) return '最新修改未能保存到云端：暂时无法连接服务器。请检查网络后重试。';
     if (reason.status === 401) return '最新修改未能保存到云端：登录已失效，请重新登录后重试。';
-    if (reason.status === 429) return '最新修改未能保存到云端：写入过于频繁（429），请稍等片刻再点“重试保存”。';
-    return `最新修改未能保存到云端：${reason.message}（${reason.status}${reason.code ? ` ${reason.code}` : ''}）。内容已保留，可重试保存。`;
+    if (reason.status === 429) return '最新修改未能保存到云端：写入过于频繁（429）。请先保留未保存内容，稍后刷新页面。';
+    return `最新修改未能保存到云端：${reason.message}（${reason.status}${reason.code ? ` ${reason.code}` : ''}）。请先保留未保存内容，再刷新页面。`;
   }
   const detail = reason instanceof Error && reason.message ? `（${reason.message}）` : '';
   return `最新修改未能保存到云端。请检查网络后重试；若其他设备已修改，请保留内容后刷新。${detail}`;
@@ -67,7 +67,6 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
   const saved = useRef(JSON.stringify(initial.data));
   const queue = useRef(Promise.resolve());
   const [error, setError] = useState<string | null>(null);
-  const [retry, setRetry] = useState(0);
   const pending = useRef<WorkspaceData | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const errorTimers = useRef<ErrorTimers>({ shownAt: 0, timer: undefined });
@@ -96,7 +95,7 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
         showSaveError(errorTimers.current, setError, saveErrorMessage(reason, cloud));
       });
     }, streaming ? (cloud ? 1500 : 300) : 0);
-  }, [data, retry, preview, streaming, cloud]);
+  }, [data, preview, streaming, cloud]);
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (errorTimers.current.timer) clearTimeout(errorTimers.current.timer);
@@ -109,7 +108,7 @@ function WorkspacePersistence({ initial, preview, cloud, children }: PropsWithCh
   }, [cloud, preview]);
 
   return <>
-    {error && <StorageErrorToast message={error} onRetry={() => setRetry((current) => current + 1)} />}
+    {error && <StorageErrorToast message={error} />}
     <div className="persisted-workspace">{children}</div>
   </>;
 }

@@ -1,5 +1,5 @@
 import { Link, useLocalSearchParams } from '@/router';
-import { FolderOpen, LogIn } from 'lucide-react';
+import { FolderOpen, ListChecks, LogIn, MoreHorizontal, X } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
@@ -13,6 +13,7 @@ import { hasFeature } from '@/core/features/capabilities';
 import { fileContentUrl, fileExtension, type LibraryFile } from './files-api';
 import { LibraryItem } from './library-item';
 import { LibraryToolbar } from './library-toolbar';
+import { LibraryMenu } from './library-menu';
 import { previewFileRequest } from './mock-library';
 import { useFileLibrary } from './use-file-library';
 
@@ -41,7 +42,7 @@ export default function LibraryScreen() {
   const enabled = preview || hasFeature(auth.status === 'authenticated' ? auth.user : null, 'files');
   const initialKind = kindParam === 'image' ? 'image' : kindParam === 'file' ? 'file' : 'all';
   const library = useFileLibrary({ request: preview ? previewFileRequest : auth.request, enabled, initialKind });
-  const { nextCursor, loadMore } = library;
+  const { nextCursor, loadMore, clearSelection } = library;
   const sentinel = useRef<HTMLDivElement>(null);
   const [renaming, setRenaming] = useState<LibraryFile | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -50,6 +51,20 @@ export default function LibraryScreen() {
   const [deleting, setDeleting] = useState<LibraryFile[] | null>(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [mobileSelecting, setMobileSelecting] = useState(false);
+  const [pageMenuOpen, setPageMenuOpen] = useState(false);
+  const pageMenuTrigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    setMobileSelecting(false);
+    setPageMenuOpen(false);
+    clearSelection();
+  }, [mobile, library.query, library.kind, library.sort, library.order, clearSelection]);
+
+  function exitSelection() {
+    library.clearSelection();
+    setMobileSelecting(false);
+  }
 
   // Load the next page a little before the sentinel is visible, so the list keeps flowing.
   useEffect(() => {
@@ -116,6 +131,21 @@ export default function LibraryScreen() {
       onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}>
       <Icon name="sidebar" size={22} />
     </button>}
+    {mobile && enabled && <button ref={pageMenuTrigger} type="button" className="icon-button library-page-more"
+      aria-label={mobileSelecting ? '退出选择模式' : '资料库操作'}
+      aria-haspopup={mobileSelecting ? undefined : 'menu'} aria-expanded={mobileSelecting ? undefined : pageMenuOpen}
+      onClick={() => { if (mobileSelecting) exitSelection(); else setPageMenuOpen((open) => !open); }}>
+      {mobileSelecting ? <X size={21} strokeWidth={1.75} aria-hidden="true" /> : <MoreHorizontal size={21} strokeWidth={1.75} aria-hidden="true" />}
+    </button>}
+    {mobile && !mobileSelecting && pageMenuOpen && pageMenuTrigger.current && <LibraryMenu anchor={pageMenuTrigger.current}
+      label="资料库操作" onClose={() => setPageMenuOpen(false)}>
+      <button type="button" role="menuitem" disabled={!library.items.length} onClick={() => {
+        library.clearSelection();
+        setMobileSelecting(true);
+        setPageMenuOpen(false);
+        pageMenuTrigger.current?.focus({ preventScroll: true });
+      }}><ListChecks size={16} strokeWidth={1.75} aria-hidden="true" />选择</button>
+    </LibraryMenu>}
   </header>;
 
   const heading = <header className="library-heading">
@@ -185,24 +215,28 @@ export default function LibraryScreen() {
     }
   }
 
+  const toolbar = <LibraryToolbar
+    selectable={!mobile}
+    mobileSelectionActive={mobile && mobileSelecting}
+    query={library.query} onQueryChange={library.setQuery}
+    kind={library.kind} onKindChange={library.setKind}
+    sort={library.sort} onSortChange={library.setSort}
+    order={library.order} onToggleOrder={library.toggleOrder}
+    total={library.items.length}
+    selectedCount={library.selected.size}
+    selectingAll={library.selectingAll}
+    onToggleSelectAll={toggleSelectAll}
+    onDownloadSelected={downloadSelected}
+    onDeleteSelected={() => openDelete(selectedFiles)}
+  />;
+
   return <main className="library-main" id="main-content" tabIndex={-1}>
     {topbar}
     {heading}
+    {mobile && <div className="library-mobile-toolbar">{toolbar}</div>}
     <div className="library-scroll">
       <div className="library-content">
-        <LibraryToolbar
-          selectable={!mobile}
-          query={library.query} onQueryChange={library.setQuery}
-          kind={library.kind} onKindChange={library.setKind}
-          sort={library.sort} onSortChange={library.setSort}
-          order={library.order} onToggleOrder={library.toggleOrder}
-          total={library.items.length}
-          selectedCount={library.selected.size}
-          selectingAll={library.selectingAll}
-          onToggleSelectAll={toggleSelectAll}
-          onDownloadSelected={downloadSelected}
-          onDeleteSelected={() => openDelete(selectedFiles)}
-        />
+        {!mobile && toolbar}
 
         {library.error && <p className="account-message is-error" role="alert">{library.error}</p>}
 
@@ -218,10 +252,10 @@ export default function LibraryScreen() {
           ? <LibraryPlaceholder title="还没有文件" />
           : null}
 
-        {library.items.length > 0 && <div className={`library-list${library.refreshing ? ' is-refreshing' : ''}`}
+        {library.items.length > 0 && <div className={`library-list${library.refreshing ? ' is-refreshing' : ''}${mobile && mobileSelecting ? ' is-selecting' : ''}`}
           role="list" aria-label="资料库文件" aria-busy={library.refreshing || undefined}>
           {library.items.map((file) => <LibraryItem key={file.id} file={file}
-            selectable={!mobile} selected={!mobile && library.selected.has(file.id)}
+            selectable={!mobile || mobileSelecting} selected={library.selected.has(file.id)} mobile={mobile}
             onToggle={() => library.toggleSelected(file)}
             onRename={() => openRename(file)}
             onDelete={() => openDelete([file])}

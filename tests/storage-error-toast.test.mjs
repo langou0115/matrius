@@ -14,12 +14,19 @@ test('save errors expose plain text and disappear after five seconds even withou
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const root = createRoot(document.getElementById('root'));
   const message = '最新修改未能保存到云端（422 validation_error）。';
-  const render = () => root.render(createElement(StorageErrorToast, { message, onRetry() {} }));
+  let refreshes = 0;
+  window.location = { reload: () => refreshes++ };
+  const render = () => root.render(createElement(StorageErrorToast, { message }));
   try {
     await act(async () => render());
     assert.equal(document.querySelector('.storage-error span').textContent, message);
     assert.equal(document.querySelectorAll('.storage-error button').length, 1);
-    assert.equal(document.querySelector('.storage-error button').textContent, '重试保存');
+    const refresh = document.querySelector('.storage-error button');
+    assert.equal(refresh.getAttribute('aria-label'), '刷新页面');
+    assert.ok(refresh.querySelector('svg'));
+    assert.equal(refresh.textContent.trim(), '');
+    await act(async () => refresh.dispatchEvent(new window.Event('click', { bubbles: true })));
+    assert.equal(refreshes, 1);
     await act(async () => t.mock.timers.tick(4999));
     assert.ok(document.querySelector('.storage-error'));
     await act(async () => render()); // Repeated saves of the same error must not restart the timer.
