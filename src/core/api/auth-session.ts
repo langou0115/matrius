@@ -1,7 +1,6 @@
 export type Account = {
   id: string;
   username: string;
-  isAdmin: boolean;
   mustChangePassword: boolean;
   features: string[];
 };
@@ -20,19 +19,15 @@ function parseAccount(value: unknown): Account {
   if (!value || typeof value !== 'object') throw new Error('账号响应无效。');
   const user = value as Record<string, unknown>;
   if (typeof user.id !== 'string' || typeof user.username !== 'string'
-    || typeof user.isAdmin !== 'boolean' || typeof user.mustChangePassword !== 'boolean'
+    || typeof user.mustChangePassword !== 'boolean'
     || !Array.isArray(user.features) || !user.features.every((feature) => typeof feature === 'string')) {
     throw new Error('账号响应无效。');
   }
-  return { id: user.id, username: user.username, isAdmin: user.isAdmin,
+  return { id: user.id, username: user.username,
     mustChangePassword: user.mustChangePassword, features: [...new Set(user.features)] };
 }
 
 export type AuthSessionOptions = {
-  /** Admin sessions log in through the admin-scoped endpoint. */
-  loginPath?: string;
-  mePath?: string;
-  logoutPath?: string;
   /**
    * The server keeps the session in an HttpOnly cookie, so the browser cannot read
    * the token. Restore the account through /me on load instead of checking a stored token.
@@ -42,9 +37,9 @@ export type AuthSessionOptions = {
 
 /** No React, DOM or platform storage. Late requests cannot restore an older account. */
 export function createAuthSession(store: SessionStore, fetcher: typeof fetch = fetch, options: AuthSessionOptions = {}) {
-  const loginPath = options.loginPath ?? '/api/auth/login';
-  const mePath = options.mePath ?? '/api/auth/me';
-  const logoutPath = options.logoutPath ?? '/api/auth/logout';
+  const loginPath = '/api/auth/login';
+  const mePath = '/api/auth/me';
+  const logoutPath = '/api/auth/logout';
   const cookieAuth = options.cookieAuth === true;
   let token = cookieAuth ? null : store.read();
   let generation = 0;
@@ -169,14 +164,4 @@ export function createAuthSession(store: SessionStore, fetcher: typeof fetch = f
     },
     dispose() { generation += 1; listeners.clear(); },
   };
-}
-
-/** Admin sessions use a separate HttpOnly cookie and require admin scope. */
-export function createAdminSession(store: SessionStore, fetcher: typeof fetch = fetch) {
-  return createAuthSession(store, fetcher, {
-    cookieAuth: true,
-    loginPath: '/api/admin/auth/login',
-    mePath: '/api/admin/auth/me',
-    logoutPath: '/api/admin/auth/logout',
-  });
 }

@@ -11,7 +11,6 @@ class LoginRequest(BaseModel):
 class UserOut(BaseModel):
     id: uuid.UUID
     username: str
-    isAdmin: bool
     mustChangePassword: bool
     features: list[str] = Field(default_factory=list)
 

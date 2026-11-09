@@ -97,7 +97,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
       {preview
         ? <Link href="/mock/chat/settings" asChild><LinkAnchor className="user-entry" aria-label="打开设置">
           <span className="user-avatar"><Icon name="user" size={18} /></span>
-          <span className="user-entry-text"><strong>本地模式</strong><span>数据保存在此浏览器</span></span>
+          <span className="user-entry-text"><strong>开发预览</strong><span>示例数据仅保存在内存</span></span>
         </LinkAnchor></Link>
         : <Link href={mobile ? "/settings" : "/settings/account"} asChild><LinkAnchor className="user-entry"
           aria-label={auth.user ? '打开账号设置' : '打开账号设置并登录'}>
@@ -107,7 +107,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
           <span className="user-entry-text">
             <strong>{auth.user ? auth.user.username : '未登录'}</strong>
             <span>{auth.user
-              ? auth.user.mustChangePassword ? '需要修改密码' : '已登录 · 账号设置'
+              ? auth.user.mustChangePassword ? '需要修改密码' : '单用户实例 · 访问设置'
               : auth.status === 'checking' ? '正在验证登录…'
                 : auth.status === 'unavailable' ? '无法验证登录状态'
                   : '在设置中登录账号'}</span>

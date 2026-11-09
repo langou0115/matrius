@@ -14,7 +14,7 @@ const DEFAULT_ADMIN_PASSWORD = 'dev-password';
 // A copied .env.local.example must not start with a placeholder password.
 export function assertAdminPassword(env = {}) {
   if ((env.INITIAL_ADMIN_PASSWORD || '').trim().toLowerCase() === 'change-me') {
-    throw new Error('INITIAL_ADMIN_PASSWORD is still "change-me". Set a real administrator password in .env.local.');
+    throw new Error('INITIAL_ADMIN_PASSWORD is still "change-me". Set a real instance password in .env.local.');
   }
 }
 
@@ -22,7 +22,7 @@ export function devDataDir(directory = root) {
   return join(directory, 'server', '.data');
 }
 
-/** One administrator config for the development database and production init. */
+/** Instance owner credentials; INITIAL_ADMIN_* names remain for compatibility. */
 export function devAdminCredentials(env = {}) {
   return {
     username: env.INITIAL_ADMIN_USERNAME || DEFAULT_ADMIN_USERNAME,
@@ -74,7 +74,7 @@ export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
     ...env,
     APP_ENV: 'development',
     APP_URL: `http://localhost:${webPort}`,
-    DATABASE_URL: sqliteUrl(join(dataDir, 'dev.db')),
+    DATABASE_URL: sqliteUrl(join(dataDir, 'matrius.db')),
     DATA_DIR: dataDir,
     INITIAL_ADMIN_USERNAME: admin.username,
     INITIAL_ADMIN_PASSWORD: admin.password,
@@ -104,10 +104,15 @@ export function devBackendEnv({ env = {}, local = {}, dataDir = devDataDir(), we
 export function resetTargets(dataDir = devDataDir()) {
   const base = resolve(dataDir);
   return [
+    join(base, 'matrius.db'),
+    join(base, 'matrius.db-wal'),
+    join(base, 'matrius.db-shm'),
+    // Explicit reset must also remove the legacy source, otherwise startup imports it again.
     join(base, 'dev.db'),
     join(base, 'dev.db-wal'),
     join(base, 'dev.db-shm'),
     join(base, 'files'),
+    join(base, 'drafts'),
   ];
 }
 
@@ -232,9 +237,9 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
       + 'Data lives in server/.data (SQLite + uploaded files) and is never synced to the server.\n'
       + 'Requires Node.js, npm ci and uv (uv installs Python 3.12 itself).\n'
       + '--check validates local configuration, tools, ports and paths without starting services.\n'
-      + '--reset-db deletes server/.data/dev.db* and server/.data/files before migrating; stop the API first.\n'
+      + '--reset-db deletes server/.data/matrius.db* and server/.data/files before migrating; stop the API first.\n'
       + '--clear rebuilds Vite\'s dependency pre-bundle from scratch; use it after a dependency change.\n'
-      + 'The development administrator comes from INITIAL_ADMIN_* in .env.local\n'
+      + 'The instance owner comes from INITIAL_ADMIN_* in .env.local\n'
       + '(defaults: admin / dev-password). Production env files are never read.');
     return;
   }
@@ -258,8 +263,8 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await availablePort(webPort);
     await availablePort(apiPort);
     console.log(`Configuration and tools valid. Web: ${webPort}; API: ${apiPort}.\n`
-      + `Data: ${join(dataDir, 'dev.db')} (SQLite) and ${join(dataDir, 'files')}.\n`
-      + `Development admin: ${adminUser} (INITIAL_ADMIN_* in .env.local; defaults admin/dev-password).\n`
+      + `Data: ${join(dataDir, 'matrius.db')} (SQLite) and ${join(dataDir, 'files')}.\n`
+      + `Instance owner: ${adminUser} (INITIAL_ADMIN_* in .env.local; defaults admin/dev-password).\n`
       + 'No network connection will be made by npm run dev.');
     return;
   }
@@ -294,11 +299,12 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await mkdir(join(dataDir, 'files'), { recursive: true });
 
     abort.signal.throwIfAborted();
-    console.log('Applying migrations to server/.data/dev.db...');
+    await runBackend(['python', 'scripts/migrate-dev-database.py', dataDir], backendEnv, abort.signal);
+    console.log('Applying migrations to server/.data/matrius.db...');
     await runBackend(['alembic', 'upgrade', 'head'], backendEnv, abort.signal);
     // Fails when models changed without a matching migration.
     await runBackend(['alembic', 'check'], backendEnv, abort.signal);
-    console.log('Ensuring the development administrator exists...');
+    console.log('Ensuring the instance owner exists...');
     await runBackend(['python', '-m', 'app.bootstrap'], {
       ...backendEnv,
       INITIAL_ADMIN_USERNAME: adminUser,

@@ -1,7 +1,9 @@
 """Shared helpers for upload, drafts and Library operations."""
 
+import asyncio
 import uuid
 from typing import Any
+from weakref import WeakValueDictionary
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.errors import AppError
 from app.models import StoredFile
+
+_file_locks: WeakValueDictionary[uuid.UUID, asyncio.Lock] = WeakValueDictionary()
+
+
+def file_lock(file_id: uuid.UUID) -> asyncio.Lock:
+    """Serialize mutations of the same named object within the single API worker."""
+    lock = _file_locks.get(file_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _file_locks[file_id] = lock
+    return lock
 
 
 def file_summary(stored: StoredFile) -> dict[str, Any]:

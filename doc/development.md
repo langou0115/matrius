@@ -13,7 +13,7 @@ npm ci                         # 根据锁文件安装依赖，postinstall 生�
 npm run dev                    # 常驻：迁移数据库 + FastAPI reload + Vite
 npm run dev -- --check         # 只校验工具、端口与路径，不启动服务
 npm run dev -- --clear         # 重建 Vite 依赖预构建后启动
-npm run db:migrate             # 只迁移 server/.data/dev.db，不启动服务
+npm run db:migrate             # 只迁移 server/.data/matrius.db，不启动服务
 npm run build                  # Vite 生产构建到 dist/
 npm run test                   # 全部测试，单文件串行执行
 npx tsc --noEmit               # TypeScript 类型检查
@@ -34,11 +34,11 @@ node scripts/sync-katex.mjs    # 按需重新生成 KaTeX CSS 与字体（npm ci
 
 Web 是 Vite 构建的单页应用，入口为根目录 `index.html`，产物在 `dist/`，支持运行时创建的 `/c/<conversation-id>`。托管服务需把页面路径回退到 `index.html`（如 Nginx `try_files $uri $uri/ /index.html;`）；静态资源仍按原路径提供。不能预生成浏览器本地的对话 ID。发布前验证对话链接直达、刷新、前进后退与无效 ID 提示。
 
-仓库内置零依赖的生产服务 `scripts/server.mjs`，执行 `npm run build && node scripts/server.mjs` 即可同时托管 `dist/` 和同源模型中继 `/api/model-proxy`。静态回退规则与 Nginx 配置一致；哈希后的 `/assets/` 使用 immutable 长缓存，`/sw.js`、`/manifest.json` 与 SPA 入口返回 `no-cache`；SSE 响应直接透传，不做缓冲。可用 `PORT`、`HOST`、`MATRIUS_STATIC_DIR` 调整监听地址与产物目录。
+仓库内置零依赖的生产服务 `scripts/server.mjs`，配置 `MATRIUS_API_URL` 指向运行中的 FastAPI 后，再执行 `npm run build && node scripts/server.mjs` 可同时托管 `dist/` 和同源模型中继 `/api/model-proxy`。静态回退规则与 Nginx 配置一致；哈希后的 `/assets/` 使用 immutable 长缓存，`/sw.js`、`/manifest.json` 与 SPA 入口返回 `no-cache`；SSE 响应直接透传，不做缓冲。可用 `PORT`、`HOST`、`MATRIUS_STATIC_DIR` 调整监听地址与产物目录。
 
 中继只接受带 `x-matrius-target-origin` 的 GET/POST，并拒绝凭据、回环、私网和链路本地目标；DNS 解析结果会固定到实际连接，避免 DNS rebinding。若改用 Nginx 等托管服务，需要额外代理 `/api/model-proxy/`，保留请求头并关闭响应缓冲（`proxy_buffering off`）以支持流式输出。
 
-中继逻辑与服务器框架解耦，导出为 `handleModelProxy(req, res): boolean`。生产部署中它保留在 Web 容器，由 Caddy 将 `/api/model-proxy/*` 路由过去；FastAPI 不处理模型请求。例如 Express：
+中继逻辑与服务器框架解耦，导出为 `handleModelProxy(req, res): boolean`。生产部署中它保留在 Web 容器，由 Caddy 将 `/api/model-proxy/*` 路由过去；FastAPI 不处理模型请求，但中继会先通过固定 API 地址的 `/api/features` 校验实例 Cookie。Compose 为 Web 设置 `MATRIUS_API_URL=http://api:8000`。例如 Express：
 
 ```js
 import modelProxy from './scripts/model-proxy.cjs';
@@ -65,7 +65,7 @@ npm ci
 npm run dev -- --check       # 校验工具、端口与路径，不启动服务
 npm run dev                  # 常驻：迁移数据库 + FastAPI reload + Vite
 npm run dev -- --clear       # 重建 Vite 依赖预构建后启动（依赖变化或解析异常时用）
-npm run db:migrate           # 只迁移 server/.data/dev.db，不启动服务
+npm run db:migrate           # 只迁移 server/.data/matrius.db，不启动服务
 ```
 
 开发数据全部落在仓库内，且已被 `.gitignore` 排除：
@@ -73,27 +73,27 @@ npm run db:migrate           # 只迁移 server/.data/dev.db，不启动服务
 ```text
 server/.venv/            # uv 管理的 Python 环境
 server/.data/
-├── dev.db               # SQLite；WAL 模式会额外生成 dev.db-wal / dev.db-shm
+├── matrius.db               # SQLite；WAL 模式会额外生成 matrius.db-wal / matrius.db-shm
 └── files/               # /api/files 写入的上传文件内容
 ```
 
-浏览器自己的 IndexedDB 仍由浏览器管理，与 `server/.data` 是两套数据。
+浏览器 IndexedDB 仅保存模型配置、密钥和设备状态，聊天数据统一保存到实例后端。旧 dev.db 在新 matrius.db 不存在时通过 SQLite backup API 复制并保留源库。
 
-启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发管理员并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Vite 开发服务器。
+启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发实例所有者并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Vite 开发服务器。
 
-API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启。`npm run dev` 每次启动都会自动迁移；服务已在运行时单独执行 `npm run db:migrate` 即可升级同一个 `server/.data/dev.db`，不必重启开发会话。该命令固定使用开发数据库，不会读取 shell 或 `.env.local` 里的生产 `DATABASE_URL` / `DATA_DIR`。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Vite。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
+API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启。`npm run dev` 每次启动都会自动迁移；服务已在运行时单独执行 `npm run db:migrate` 即可升级同一个 `server/.data/matrius.db`，不必重启开发会话。该命令固定使用开发数据库，不会读取 shell 或 `.env.local` 里的生产 `DATABASE_URL` / `DATA_DIR`。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Vite。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
 
 Windows 开发工作进程显式使用 `ProactorEventLoop`，以支持 OfficeCLI / LibreOffice 的异步子进程。每次重载由新工作进程自行绑定端口，不复用父进程的监听 socket，避免 IOCP 关联失效导致 `WinError 87`。`npm run test` 在 Windows 上会真实创建 DOCX、连续两次重载后分别创建 XLSX / PPTX，并验证进程树清理。修改 `server/scripts/dev-api.py` 后须完整重启 `npm run dev`，仅应用代码热重载不会替换启动器。
 
-开发管理员和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
+开发实例所有者和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
 
-开发环境下，如果库中已有同名管理员但密码与当前配置不一致，启动时会将其密码同步为配置值；正式环境不会修改已有管理员密码。
+开发环境下，如果库中已有同名所有者但密码与当前配置不一致，启动时会将其密码同步为配置值；正式环境也会应用配置中的实例所有者密码。
 
 ```bash
 npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再重新迁移
 ```
 
-`--reset-db` 只删除 `server/.data/dev.db*` 和 `server/.data/files/`，不会碰其他文件。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
+`--reset-db` 只删除 server/.data 内新旧开发数据库（matrius.db*、dev.db*）、files/ 和 drafts/，不会碰其他目录。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
 
 默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`。开发服务器使用严格端口，端口被占用时失败退出，不自动切换。`vite.config.ts` 注册的开发中间件先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置。脚本不自动打开浏览器。
 
@@ -117,16 +117,16 @@ Vite 按需编译页面模块，首次启动或依赖变化时预构建依赖；
 
 发布命令从原 npm run remote 更名为 npm run deploy。开发不再需要上传源码；只有正式发布才执行此命令。本机发布只需 Node.js、Git、OpenSSH、tar，不需要 Python 或 Docker。
 
-部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。代理按用途分键：`WEBTOOL_PROXY_URL` 只用于本机开发，不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 会被映射为服务器的 `WEBTOOL_PROXY_URL`。生产 API 在容器内运行，代理地址必须是 `host.docker.internal` 等容器可达地址，loopback 会被部署拒绝。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改管理员密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
+部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。代理按用途分键：`WEBTOOL_PROXY_URL` 只用于本机开发，不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 会被映射为服务器的 `WEBTOOL_PROXY_URL`。生产 API 在容器内运行，代理地址必须是 `host.docker.internal` 等容器可达地址，loopback 会被部署拒绝。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改实例所有者密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
 
 ```bash
-npm run deploy                       # 同步、构建、迁移、刷新管理员密码、健康检查后退出
+npm run deploy                       # 同步、构建、迁移、刷新实例所有者密码、健康检查后退出
 npm run test                         # 也覆盖本地配置、SQLite URL、重置数据、进程清理、API 代理、源码上传与部署锁回归
 ```
 
 服务器只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite 数据库与上传文件）。Web 用 Dockerfile.web 执行 `npm run build` 构建静态生产产物并运行 Node 模型中继，API 用 server/Dockerfile 内置的入口脚本与单 worker Uvicorn 运行。源码直接复制进镜像，不挂载开发目录、不启动 Vite 开发服务或 reload；保留数据和 Caddy 配置所需卷。每次发布都调用两个镜像的 build，由 Docker 复用未变化的层，应用镜像变化后替换对应容器。
 
-`npm run deploy` 每次执行同一套流程：生成缺失的服务器 production.env（新服务器首次执行时）、备份现有数据库、构建 Web/API、执行迁移、刷新管理员密码、更新容器与 Caddy、健康检查。新服务器不需要单独初始化命令；首次执行会创建数据卷和空库管理员。API 每次重建，入口在启动 Uvicorn 前执行 `alembic upgrade head`、`alembic check` 和 `bootstrap`，因此迁移总是随之应用。运行时 `/api/health` 也会校验版本，不一致返回 503。REMOTE_WORKSPACE 默认仍为服务器 $HOME/.matrius-remote，以复用已有配置和数据；更名命令不会创建新数据卷。APP_PORT、API_PORT、APP_HTTPS_PORT 在每次部署时应用，未填写的端口保留服务器原值。Compose 根据端口、镜像及环境配置变化按需重建 Caddy；Caddyfile 内容变化时强制重建，健康检查通过后才记录已应用的文件摘要。配置未变化时保留原 Caddy 容器。INITIAL_ADMIN_* 以最近一次部署为准：每次部署都会写入服务器并更新该管理员密码，两个值留空时不动现有密码。不在本机对云端库执行迁移。
+`npm run deploy` 每次执行同一套流程：生成缺失的服务器 production.env（新服务器首次执行时）、备份现有数据库、构建 Web/API、执行迁移、刷新实例所有者密码、更新容器与 Caddy、健康检查。新服务器不需要单独初始化命令；首次执行会创建数据卷和空库所有者。API 每次重建，入口在启动 Uvicorn 前执行 `alembic upgrade head`、`alembic check` 和 `bootstrap`，因此迁移总是随之应用。运行时 `/api/health` 也会校验版本，不一致返回 503。REMOTE_WORKSPACE 默认仍为服务器 $HOME/.matrius-remote，以复用已有配置和数据；更名命令不会创建新数据卷。APP_PORT、API_PORT、APP_HTTPS_PORT 在每次部署时应用，未填写的端口保留服务器原值。Compose 根据端口、镜像及环境配置变化按需重建 Caddy；Caddyfile 内容变化时强制重建，健康检查通过后才记录已应用的文件摘要。配置未变化时保留原 Caddy 容器。INITIAL_ADMIN_* 以最近一次部署为准：每次部署都会写入服务器并更新该实例所有者密码，两个值留空时不动现有密码。不在本机对云端库执行迁移。
 
 同步包含未提交的新文件、修改和删除；排除密钥、.env、依赖、虚拟环境、构建产物、Git 元数据及符号链接。服务器会话锁防止两个发布同时覆盖源码。健康检查通过即完成发布，代码中登记的功能随即对所有账号开放。回退为切换到已验证提交后重新 deploy；数据库结构回退须另行评估。
 
@@ -159,7 +159,7 @@ uv run --no-sync pytest
 
 ## 验证与代码规则
 
-- 完成任务前运行 `npx tsc --noEmit` 和 `npm run test`，如实报告结果和环境阻塞；涉及路由、Vite 构建配置或发布路径时再运行 `npm run build` 验证生产产物，涉及代码风格时运行 `npx eslint .`（没有 `lint` npm script）。
+- 完成任务前按改动范围验证，如实报告实际执行的命令和环境阻塞：文案、样式、单个组件局部调整等小改动只做类型检查或运行相关测试，不必跑全量 `npm run test`；共享逻辑、数据/持久化、模型/协议、构建配置或跨模块行为改动才跑全量测试。涉及路由、Vite 构建配置或发布路径时再运行 `npm run build` 验证生产产物，涉及代码风格时运行 `npx eslint .`（没有 `lint` npm script）。
 - 已有测试覆盖相关行为时运行必要的测试；消息渲染、格式解析、公式/货币与代码边界、安全 URL/HTML、高亮、折叠和原文复制，以及消息赞/踩切换和分支上下文隔离都在 `npm run test` 的用例中。文档迁移无需新增业务测试。
 - 不自动启动或控制浏览器、不生成浏览器截图、不访问运行中的 Web 端口；仅在用户明确要求 Web 浏览器验证时执行。未实测的浏览器行为说明限制。
 - TypeScript 保持 strict；不滥用 `any`、关闭 lint 或压制告警来绕过问题。
@@ -169,8 +169,8 @@ uv run --no-sync pytest
 
 ## 完成前检查
 
-- 查看相关实现与文档，保持业务依赖方向和多用户隔离。
-- 涉及功能时检查本地/云端模式边界、密钥处理、重试和数据保留。
+- 查看相关实现与文档，保持业务依赖方向和唯一所有者访问保护。
+- 涉及功能时检查本地/实例边界、密钥处理、重试和数据保留。
 - UI 涉及安全区、键盘、字体缩放、无障碍、长列表和 Web 适配时报告验证范围。
 - 报告 lint、类型检查、相关测试与生产构建的实际结果。
 - 产品边界、持久化、目录职责或命令变化时同步更新对应文档与根 README。

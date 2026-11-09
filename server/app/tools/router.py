@@ -18,11 +18,9 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 
 
 def _tool_budget(caller: ToolCaller) -> tuple[int, int]:
-    """Per-minute call budget and in-flight cap; anonymous IPs get a smaller allowance."""
+    """Per-minute call budget and in-flight cap for the instance owner."""
     settings = get_settings()
-    if caller.user is not None:
-        return 30, settings.tool_user_concurrency
-    return settings.anonymous_tool_calls_per_minute, settings.anonymous_tool_concurrency
+    return 30, settings.tool_user_concurrency
 
 
 @router.post("/search")

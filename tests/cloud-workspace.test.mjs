@@ -40,15 +40,15 @@ function fixture({ fail, memory = { enabled: true, summary: '# 记忆\n- 喜欢�
   return { calls, repo: createCloudWorkspaceRepository(request) };
 }
 
-test('workspace identity isolates local, accounts, validation and preview', () => {
+test('workspace permits only the authenticated instance and development preview', () => {
   const auth = (status, id) => ({ status, user: id ? { id, mustChangePassword: false } : null });
-  assert.equal(workspaceScope(auth('anonymous'), false), 'local');
+  assert.equal(workspaceScope(auth('anonymous'), false), 'locked');
   assert.equal(workspaceScope(auth('checking'), false), 'pending');
-  assert.equal(workspaceScope(auth('authenticated', 'a'), false), 'cloud:a');
-  assert.equal(workspaceScope(auth('checking', 'a'), false), 'cloud:a', 'background validation keeps the workspace mounted');
-  assert.equal(workspaceScope(auth('authenticated', 'b'), false), 'cloud:b');
+  assert.equal(workspaceScope(auth('authenticated', 'a'), false), 'instance');
+  assert.equal(workspaceScope(auth('checking', 'a'), false), 'instance', 'background validation keeps the workspace mounted');
+  assert.equal(workspaceScope(auth('authenticated', 'b'), false), 'instance');
   assert.equal(workspaceScope(auth('unavailable'), false), 'pending', 'network errors must not fall back to local storage');
-  assert.equal(workspaceScope(auth('anonymous'), false), 'local', 'logout restores the original local workspace');
+  assert.equal(workspaceScope(auth('anonymous'), false), 'locked', 'logout locks the workspace');
   assert.equal(workspaceScope(auth('authenticated', 'a'), true), 'preview');
 });
 
@@ -56,14 +56,14 @@ test('an in-flight or failed login keeps the current workspace mounted', async (
   let respond;
   const auth = createAuthSession({ read: () => null, write() {} },
     () => new Promise((resolve) => { respond = resolve; }));
-  assert.equal(workspaceScope(auth.getSnapshot(), false), 'local');
+  assert.equal(workspaceScope(auth.getSnapshot(), false), 'locked');
   const attempt = auth.login('alice', 'wrong-password');
-  assert.equal(workspaceScope(auth.getSnapshot(), false), 'local',
+  assert.equal(workspaceScope(auth.getSnapshot(), false), 'locked',
     'login progress belongs to the dialog, not a full-screen workspace swap');
   respond(new Response(JSON.stringify({ error: { code: 'invalid_credentials', message: '账号或密码不正确。' } }),
     { status: 401, headers: { 'Content-Type': 'application/json' } }));
   await assert.rejects(attempt, /账号或密码不正确/);
-  assert.equal(workspaceScope(auth.getSnapshot(), false), 'local', 'a failed login returns to the same local workspace');
+  assert.equal(workspaceScope(auth.getSnapshot(), false), 'locked', 'a failed login keeps the workspace locked');
 });
 
 test('cloud reads only REST, retains imported identities, and unchanged data causes no writes', async () => {

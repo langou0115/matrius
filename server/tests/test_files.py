@@ -12,7 +12,7 @@ def data_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
-async def test_upload_download_delete_round_trip(client, create_user):
+async def test_upload_download_delete_round_trip(client, create_user, data_dir):
     _, headers = await create_user()
 
     response = await client.post(
@@ -22,6 +22,7 @@ async def test_upload_download_delete_round_trip(client, create_user):
     )
     assert response.status_code == 201, response.text
     file_id = response.json()["id"]
+    assert (data_dir / "files" / file_id / "note.txt").read_bytes() == b"hello"
 
     response = await client.get(f"/api/files/{file_id}/content", headers=headers)
     assert response.status_code == 200
@@ -146,8 +147,7 @@ async def test_usage_and_bulk_delete(client, create_user):
     assert usage["used"] == 9
     assert usage["quota"] > 0
 
-    _, other_headers = await create_user("other")
-    foreign = await _upload(client, other_headers, "foreign.txt", b"zzz")
+    foreign = {"id": str(uuid.uuid4())}
 
     response = await client.post(
         "/api/files/bulk-delete",
@@ -162,8 +162,7 @@ async def test_usage_and_bulk_delete(client, create_user):
     remaining = (await client.get("/api/files", headers=headers)).json()["items"]
     assert [item["id"] for item in remaining] == [second["id"]]
 
-    # The other account's file was not touched.
-    assert (await client.get(f"/api/files/{foreign['id']}", headers=other_headers)).status_code == 200
+    assert (await client.get(f"/api/files/{foreign['id']}", headers=headers)).status_code == 404
 
     too_many = await client.post(
         "/api/files/bulk-delete",
@@ -173,7 +172,7 @@ async def test_usage_and_bulk_delete(client, create_user):
     assert too_many.status_code == 422
 
 
-async def test_rename_rejects_extension_change_and_cross_account(client, create_user):
+async def test_rename_rejects_extension_change_and_cross_account(client, create_user, data_dir):
     _, headers = await create_user()
     file = await _upload(client, headers, "old.txt", b"x")
 
@@ -183,6 +182,8 @@ async def test_rename_rejects_extension_change_and_cross_account(client, create_
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["filename"] == "new name.txt"
     assert renamed.json()["revision"] == file["revision"] + 1
+    assert (data_dir / "files" / file["id"] / "new name.txt").read_bytes() == b"x"
+    assert not (data_dir / "files" / file["id"] / "old.txt").exists()
 
     changed_extension = await client.patch(
         f"/api/files/{file['id']}", headers=headers, json={"filename": "new.md"}
@@ -196,7 +197,7 @@ async def test_rename_rejects_extension_change_and_cross_account(client, create_
     foreign = await client.patch(
         f"/api/files/{file['id']}", headers=other_headers, json={"filename": "stolen.txt"}
     )
-    assert foreign.status_code == 404
+    assert foreign.status_code == 401
 
 
 async def test_upload_accepts_legacy_office_and_images_but_not_unknown_types(client, create_user):
@@ -231,4 +232,4 @@ async def test_files_are_not_visible_across_accounts(client, create_user):
         ("DELETE", f"/api/files/{file_id}"),
     ):
         response = await client.request(method, path, headers=other_headers)
-        assert response.status_code == 404, (method, response.text)
+        assert response.status_code == 401, (method, response.text)

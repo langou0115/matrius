@@ -11,6 +11,8 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   globalThis.window = window;
   globalThis.document = document;
   globalThis.HTMLElement = window.HTMLElement;
+  window.HTMLElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  window.HTMLElement.prototype.close = function () { this.removeAttribute('open'); };
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   globalThis.indexedDB = new IDBFactory();
   globalThis.__DEV__ = true;
@@ -44,6 +46,10 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
       const html = container.innerHTML;
       assert.ok(html.length > 500, `${path} rendered ${html.length} bytes`);
       assert.doesNotMatch(html, /界面渲染失败/u, `${path} must not hit the error boundary`);
+      if (!path.startsWith('/mock')) {
+        assert.match(html, /登录以访问你的单用户实例/u, `${path} must require instance login`);
+        assert.equal(container.querySelector('.composer'), null, 'signed-out visitors cannot mount the chat runtime');
+      }
     } finally {
       await act(async () => { root.unmount(); });
       container.remove();

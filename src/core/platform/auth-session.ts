@@ -7,8 +7,3 @@ const cookieOnly: SessionStore = { read: () => null, write: () => {} };
 export function browserSessionStore(): SessionStore {
   return cookieOnly;
 }
-
-/** Admin login uses its own HttpOnly cookie; the account session stays untouched. */
-export function browserAdminSessionStore(): SessionStore {
-  return cookieOnly;
-}

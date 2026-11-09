@@ -7,15 +7,15 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
 import devApiProxy from './scripts/dev-api-proxy.cjs';
-import modelProxy from './scripts/model-proxy.cjs';
+import modelProxy from './scripts/instance-model-proxy.cjs';
 
 const fromRoot = (path: string) => fileURLToPath(new URL(path, import.meta.url)).replace(/\\/gu, '/');
 
 const katexVersion = (JSON.parse(readFileSync(fromRoot('./node_modules/katex/package.json'), 'utf8')) as { version: string }).version;
 
 /**
- * The development server answers first-party API and model traffic, so `npm run web`
- * alone works for providers that reject browser CORS. Both handlers own the response
+ * The development server answers first-party API and model traffic. The model relay
+ * first checks the instance session with FastAPI. Both handlers own the response
  * when they return true.
  */
 function developmentMiddleware(): Plugin {
@@ -24,7 +24,7 @@ function developmentMiddleware(): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
-        if (modelProxy.handleModelProxy(request, response)) return;
+        if (modelProxy.handleInstanceModelProxy(request, response)) return;
         if (devApiProxy.handleDevApi(request, response)) return;
         next();
       });

@@ -1,65 +1,51 @@
-"""Create the first administrator. Safe to run on every deploy."""
+"""Initialize the sole instance owner and normalize legacy file storage."""
 
 import asyncio
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import select, update
 
 from app.auth.security import hash_password, verify_password
 from app.config import get_settings
 from app.db import SessionLocal, dispose_engine
-from app.models import User
-
-logger = logging.getLogger(__name__)
-
-
-async def _sync_configured_admin(db, username: str, password: str) -> None:
-    """Apply the latest deployment credentials to the configured administrator."""
-    if not username or not password:
-        return
-    user = (
-        await db.execute(select(User).where(func.lower(User.username) == username.lower()))
-    ).scalar_one_or_none()
-    if user is None:
-        logger.warning("Configured administrator %s does not exist; password not changed", username)
-        return
-    if verify_password(user.password_hash, password):
-        return
-    user.password_hash = hash_password(password)
-    user.must_change_password = False
-    await db.commit()
-    logger.info("Updated administrator %s to the configured password", username)
+from app.models import AuthSession, Instance, User
+from app.storage_migration import migrate_files
+from app.utils import utcnow
 
 
 async def bootstrap() -> None:
     settings = get_settings()
+    # Existing environment names remain valid for deployment compatibility.
     username = settings.initial_admin_username.strip()
     password = settings.initial_admin_password
     async with SessionLocal() as db:
-        user_count = (await db.execute(select(func.count(User.id)))).scalar_one()
-        if user_count:
-            # The latest deployment owns the administrator password in every
-            # environment; an empty configuration leaves the account untouched.
-            await _sync_configured_admin(db, username, password)
-            return
-
-        if not username or not password:
-            message = "INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD are required to bootstrap"
-            if settings.app_env == "production":
-                logger.error(message)
-                raise SystemExit(1)
-            logger.warning("%s; no administrator created", message)
-            return
-        db.add(
-            User(
-                username=username,
-                password_hash=hash_password(password),
-                is_admin=True,
-                must_change_password=False,
-            )
-        )
+        instance = await db.get(Instance, 1)
+        if instance is None:
+            users = list((await db.execute(select(User))).scalars())
+            matches = [user for user in users if user.username.lower() == username.lower()]
+            if len(users) > 1 and not matches:
+                raise RuntimeError("Set INITIAL_ADMIN_USERNAME to the existing instance owner.")
+            owner = matches[0] if matches else users[0] if users else None
+            if owner is None:
+                if not username or not password:
+                    raise RuntimeError("INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD are required.")
+                owner = User(username=username, password_hash=hash_password(password))
+                db.add(owner)
+                await db.flush()
+            db.add(Instance(id=1, owner_id=owner.id))
+            await db.commit()
+        else:
+            owner = await db.get(User, instance.owner_id)
+        if owner is None:
+            raise RuntimeError("Instance owner is missing.")
+        if username and username.lower() != owner.username.lower():
+            raise RuntimeError("INITIAL_ADMIN_USERNAME must match the bound instance owner.")
+        if username and password and not verify_password(owner.password_hash, password):
+            owner.password_hash = hash_password(password)
+            owner.must_change_password = False
+            await db.execute(update(AuthSession).values(revoked_at=utcnow()))
         await db.commit()
-        logger.info("Created initial administrator %s", username)
+        await migrate_files(db)
 
 
 async def _run() -> None:

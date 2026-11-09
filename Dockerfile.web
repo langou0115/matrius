@@ -26,7 +26,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 COPY --from=builder --chown=node:node /app/dist ./dist
-COPY --from=builder --chown=node:node /app/scripts/server.mjs /app/scripts/model-proxy.cjs ./scripts/
+COPY --from=builder --chown=node:node /app/scripts/server.mjs /app/scripts/model-proxy.cjs /app/scripts/instance-model-proxy.cjs ./scripts/
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 
 USER node

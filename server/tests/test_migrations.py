@@ -97,3 +97,42 @@ def test_permanent_sessions_upgrade_handles_existing_rows(tmp_path):
         }
     assert rows == [(None,)]
     assert columns["expires_at"] == 0, "expires_at must allow NULL"
+
+
+def test_single_owner_upgrade_preserves_legacy_data_and_revokes_sessions(tmp_path):
+    database = tmp_path / "matrius.db"
+    env = {**os.environ, "DATA_DIR": str(tmp_path),
+           "DATABASE_URL": f"sqlite+aiosqlite:///{database}", "INITIAL_ADMIN_USERNAME": "alice"}
+    run_alembic("upgrade", "0009_token_usage_estimate", env=env)
+    with sqlite3.connect(database) as connection:
+        connection.executemany("INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)", [
+            ("1" * 32, "alice", "hash"), ("2" * 32, "bob", "hash"),
+        ])
+        connection.execute("INSERT INTO auth_sessions (id,user_id,token_hash,scope) VALUES (?,?,?,'user')",
+                           ("3" * 32, "1" * 32, "old-token"))
+    run_alembic("upgrade", "head", env=env)
+    run_alembic("check", env=env)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT owner_id FROM instance").fetchone() == ("1" * 32,)
+        assert connection.execute("SELECT COUNT(*) FROM users").fetchone() == (2,)
+        assert connection.execute("SELECT revoked_at FROM auth_sessions").fetchone()[0] is not None
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+        assert "is_admin" not in columns
+        assert "disabled_at" not in columns
+
+
+def test_ambiguous_legacy_upgrade_does_not_choose_or_delete_users(tmp_path):
+    database = tmp_path / "matrius.db"
+    env = {**os.environ, "DATA_DIR": str(tmp_path),
+           "DATABASE_URL": f"sqlite+aiosqlite:///{database}", "INITIAL_ADMIN_USERNAME": ""}
+    run_alembic("upgrade", "0009_token_usage_estimate", env=env)
+    with sqlite3.connect(database) as connection:
+        connection.executemany("INSERT INTO users (id,username,password_hash) VALUES (?,?,?)", [
+            ("1" * 32, "alice", "hash"), ("2" * 32, "bob", "hash"),
+        ])
+    result = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
+                            cwd=SERVER_DIR, env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "multiple users" in result.stderr
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM users").fetchone() == (2,)

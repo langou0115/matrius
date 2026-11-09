@@ -450,14 +450,14 @@ async def test_missing_and_foreign_files_are_not_found(client, create_user):
     assert invalid_id.status_code == 422
     assert "不要传文件名" in invalid_id.json()["error"]["message"]
 
-    # A second user can call the tool but cannot read the first user's file.
+    # Historical accounts cannot call any tool in the single-user instance.
     _, other_headers = await create_user("other")
 
     foreign = await _call(client, other_headers, operation="read", fileId=file["id"])
-    assert foreign.status_code == 404
+    assert foreign.status_code == 401
 
-    listing = (await _call(client, other_headers, operation="list")).json()
-    assert listing["files"] == []
+    listing = await _call(client, other_headers, operation="list")
+    assert listing.status_code == 401
 
 
 async def test_delete_removes_library_files_and_drafts(client, create_user):
@@ -466,7 +466,7 @@ async def test_delete_removes_library_files_and_drafts(client, create_user):
 
     _, other_headers = await create_user("other")
     foreign = await _call(client, other_headers, operation="delete", fileId=uploaded["id"])
-    assert foreign.status_code == 404
+    assert foreign.status_code == 401
 
     deleted = await _call(client, headers, operation="delete", fileId=uploaded["id"])
     assert deleted.status_code == 200, deleted.text
@@ -498,7 +498,7 @@ async def test_drafts_are_private_and_expire_after_save(client, create_user):
 
     _, other_headers = await create_user("other")
     foreign = await _call(client, other_headers, operation="inspect", fileId=draft_id)
-    assert foreign.status_code == 404
+    assert foreign.status_code == 401
 
     # Back to the original account: saving consumes the draft.
     saved = await _call(client, headers, operation="save", fileId=draft_id)

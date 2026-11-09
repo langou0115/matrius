@@ -58,7 +58,7 @@ async def test_usage_accumulates_by_local_day(client, create_user):
     }
 
 
-async def test_usage_is_scoped_to_the_logged_in_account(client, create_user):
+async def test_usage_belongs_to_the_instance_and_archived_tokens_are_denied(client, create_user):
     _, alice = await create_user()
     _, bob = await create_user(username="bob")
     today = utcnow().date().isoformat()
@@ -67,10 +67,10 @@ async def test_usage_is_scoped_to_the_logged_in_account(client, create_user):
     ).status_code == 200
     assert (
         await client.post("/api/usage", headers=bob, json={"date": today, "outputTokens": 70})
-    ).status_code == 200
+    ).status_code == 401
 
     alice_usage = (await client.get("/api/usage", headers=alice)).json()
-    bob_usage = (await client.get("/api/usage", headers=bob)).json()
+    assert (await client.get("/api/usage", headers=bob)).status_code == 401
     assert alice_usage["lifetime"]["total"] == 50
     assert alice_usage["items"] == [{
         "date": today,
@@ -82,8 +82,6 @@ async def test_usage_is_scoped_to_the_logged_in_account(client, create_user):
         "total": 50,
         "requests": 1,
     }]
-    assert bob_usage["lifetime"]["total"] == 70
-    assert bob_usage["items"][0]["output"] == 70
 
 
 async def test_usage_rejects_skewed_dates_negative_counts_and_anonymous_callers(

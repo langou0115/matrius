@@ -1,8 +1,8 @@
 # Matrius Server
 
-Matrius 云端模式的后端：FastAPI + SQLite + 本地文件存储 + 进程内缓存，搜索与网页抓取用纯 Python 实现。
+Matrius 单用户实例的后端：FastAPI + SQLite + 本地文件存储 + 进程内缓存，搜索与网页抓取用纯 Python 实现。
 
-服务端是云端模式的唯一事实源，保存会话、消息、已读状态、记忆、画像、偏好和文件元数据；Agent Runtime 仍运行在客户端，服务端不运行 Agent Loop，也不保存模型 API key。
+服务端是实例的唯一事实源，保存会话、消息、已读状态、记忆、画像、偏好和文件元数据；Agent Runtime 仍运行在客户端，服务端不运行 Agent Loop，也不保存模型 API key。
 
 完整设计与接口契约见 [后端架构](../doc/backend.md)，服务器准备与更新见[部署指南](../doc/deployment.md)。
 
@@ -17,11 +17,10 @@ server/
 │   ├── cache.py             # 进程内缓存、滑动窗口限流、登录锁定
 │   ├── storage.py           # 本地文件存储（DATA_DIR/files）
 │   ├── auth/                # 登录、会话、依赖、限流
-│   ├── admin/               # 管理员用户管理
 │   ├── conversations/       # 会话、消息、已读状态
 │   ├── account/             # 偏好、画像、记忆、存量导入
 │   ├── files/               # 上传、下载、解析（PDF/Office/纯文本）
-│   ├── usage/               # 每账号每日 Token 用量上报与查询
+│   ├── usage/               # 实例每日 Token 用量上报与查询
 │   ├── tools/               # DuckDuckGo/Bing 搜索、网页读取、文件读/检索
 │   └── models/              # SQLAlchemy 表
 ├── alembic/versions/        # 数据库迁移
@@ -36,7 +35,7 @@ server/
 
 开发在仓库根目录执行 `npm run dev`：本机 uv 按锁文件安装依赖、启动 FastAPI 热重载，SQLite 数据库和上传文件都在 `server/.data`。全程不连接服务器，也不需要 Docker、SSH 或 `server/.env`；启动时自动迁移开发库并运行 `alembic check`。开发模式下后端直接读取仓库根目录的 `.env.local`，文件变化后代理、搜索/抓取预算、限流等运行时设置会在下一次请求生效，无需重启；端口、数据库路径、管理员初始化和日志级别仍需重启。
 
-正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，自动应用迁移并刷新管理员密码，健康检查后退出；不挂载源码、不热重载。部署成功后功能清单中的能力即对所有账号开放。完整说明见[开发与验证](../doc/development.md)。
+正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，自动应用迁移并刷新实例所有者密码，健康检查后退出；不挂载源码、不热重载。部署成功后功能清单中的能力即对所有账号开放。完整说明见[开发与验证](../doc/development.md)。
 
 本机单独安装后端测试依赖：
 
@@ -62,7 +61,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 
 提交前检查生成的迁移：索引、约束、级联删除必须显式存在。涉及迁移时应在临时空 SQLite 上验证全部迁移可执行（`tests/test_migrations.py` 覆盖 `upgrade head` 与 `check`）。生产部署时由 API 容器入口执行 `alembic upgrade head` 和 `alembic check`，不再有独立的 `migrate` 容器。
 
-`app.bootstrap` 在 `users` 表为空时创建初始管理员；已有用户时，如果配置了 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，会把该账号密码更新为当前值，因此每次部署以最新的管理员设置为准。两个值留空时不会改动现有密码。
+`app.bootstrap` 创建或读取唯一所有者绑定，应用 `INITIAL_ADMIN_*` 配置中的所有者密码并迁移文件路径。变量名保留以兼容部署；不再代表管理员角色。旧多账号库必须指定现有所有者，其他历史数据保留但不可访问。详见[实例认证](../doc/auth.md)。
 
 ## 环境变量
 
@@ -100,7 +99,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 所有业务接口位于 `/api`，除登录和健康检查外都需要 Web 会话 Cookie 或 `Authorization: Bearer <token>`。
 
 ```text
-POST   /api/auth/login | /api/admin/auth/login
+POST   /api/auth/login
 GET    /api/auth/me
 POST   /api/auth/logout | /api/auth/change-password
 
@@ -129,13 +128,12 @@ DELETE /api/files/{id}
 
 GET    /api/usage?days=366                # 每日累计 + 全量合计
 POST   /api/usage                         # 每轮回复的 token 用量
-POST   /api/usage/backfill                # 每账号一次，估算历史会话
+POST   /api/usage/backfill                # 实例一次，估算历史会话
 
 POST   /api/tools/search
 POST   /api/tools/fetch
 POST   /api/tools/files/read
 POST   /api/tools/files/grep
-POST   /api/admin/tools/test              # admin scope
 
 GET    /api/health
 GET    /api/health/ready
@@ -174,7 +172,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allo
 
 不要增加 `--workers`：缓存和限流是进程内状态。
 
-部署统一使用 `npm run deploy`：首次执行自动初始化数据卷、数据库与空库管理员，之后每次部署都会备份数据库、应用迁移、刷新管理员密码并更新 Web/API 与 Caddy。生产只运行 Caddy / Web / API 三个容器。
+部署统一使用 `npm run deploy`：首次执行自动初始化数据卷、数据库与空库所有者，之后每次部署都会备份数据库、应用迁移、刷新实例所有者密码并更新 Web/API 与 Caddy。生产只运行 Caddy / Web / API 三个容器。
 
 ## 测试账号与新功能开放
 

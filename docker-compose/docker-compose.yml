@@ -32,6 +32,8 @@ services:
   web:
     container_name: matrius-web
     image: matrius-web:local
+    environment:
+      MATRIUS_API_URL: http://api:8000
     build:
       context: ..
       dockerfile: Dockerfile.web

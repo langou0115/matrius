@@ -36,7 +36,7 @@ export default function UsageScreen() {
             ? user.mustChangePassword
               ? '完成首次改密后即可查看账号的 Token 用量。'
               : '当前账号还没有开通用量统计，请联系管理员。'
-            : '用量属于账号的云端数据。登录后，每次回复消耗的 token 会按天记录在这里；本地模式不记录用量。'}</p>
+            : '每次回复消耗的 token 会按天保存在此实例中，登录后可查看。'}</p>
         {!user && !unavailable && <Link href="/settings/account" className="primary-button storage-login-action">
           <LogIn size={16} strokeWidth={1.75} aria-hidden="true" />前往登录
         </Link>}

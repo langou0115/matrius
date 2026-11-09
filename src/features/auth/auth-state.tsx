@@ -5,14 +5,14 @@ import { hasFeature } from '@/core/features/capabilities';
 import { browserSessionStore } from '@/core/platform/auth-session';
 import { createAuthRetry } from './auth-retry';
 
-const AuthContext = createContext<ReturnType<typeof createAuthSession> | null>(null);
+const AuthContext = createContext<(ReturnType<typeof createAuthSession> & { isPreview: boolean }) | null>(null);
 
 export function AuthProvider({ children, preview }: PropsWithChildren<{ preview: boolean }>) {
-  const [session] = useState(() => createAuthSession(
+  const [session] = useState(() => Object.assign(createAuthSession(
     preview ? { read: () => null, write: () => {} } : browserSessionStore(),
     fetch,
     { cookieAuth: !preview },
-  ));
+  ), { isPreview: preview }));
   useEffect(() => {
     if (preview) return;
     void session.refresh();

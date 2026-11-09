@@ -20,46 +20,7 @@ import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTi
 import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
 import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.ts';
 import { ApiError } from '../src/core/api/auth-session.ts';
-import { syncAccount } from '../src/features/auth/account-sync.ts';
 import { parseWorkspace } from '../src/features/workspace/workspace-repository.ts';
-
-test('account sync sends persistent deletions before uploads and excludes remote tombstones across pages', async () => {
-  const calls = [];
-  const conversation = id => ({ id, title: id, pinned: false, updatedAt: 1, messages: [] });
-  const result = await syncAccount(async (path, init) => {
-    calls.push({ path, body: init?.body ? JSON.parse(init.body) : undefined });
-    if (init?.method === 'POST') return {};
-    if (path.includes('conversation-deletions')) return path.includes('cursor=')
-      ? { items: ['remote-deleted'], nextCursor: null } : { items: ['local-deleted'], nextCursor: 'page2' };
-    if (path.startsWith('/api/conversations?')) return { items: ['local-deleted', 'remote-deleted', 'keep'].map(id => ({ ...conversation(id), clientId: id })) };
-    if (path.startsWith('/api/conversations/keep?')) return { messages: [] };
-    throw new Error(`Deleted conversations must not be fetched: ${path}`);
-  }, { chat: { conversations: [conversation('local-deleted'), conversation('remote-deleted')], deletedConversationIds: ['local-deleted'] },
-    appearance: { themeId: 'twitter', mode: 'system' }, personalization: defaultPersonalization },
-  { conversations: true, reading: true, appearance: false, personalization: false });
-  assert.deepEqual(calls[0].body.chat.deletedConversationIds, ['local-deleted']);
-  assert.deepEqual(calls[1].body.chat.conversations.map(item => item.id), ['remote-deleted']);
-  assert.deepEqual(result.deletedConversationIds, ['local-deleted', 'remote-deleted']);
-  assert.deepEqual(result.pulled.map(item => item.id), ['keep']);
-});
-
-test('failed deletion upload aborts sync instead of importing the old remote copy', async () => {
-  let requests = 0;
-  await assert.rejects(syncAccount(async () => { requests++; throw new Error('offline'); }, {
-    chat: { conversations: [], deletedConversationIds: ['deleted'] },
-    appearance: { themeId: 'twitter', mode: 'system' }, personalization: defaultPersonalization,
-  }, { conversations: true, reading: false, appearance: false, personalization: false }), /offline/);
-  assert.equal(requests, 1);
-});
-
-test('turning conversation sync off keeps local deletions out of remote requests', async () => {
-  const result = await syncAccount(async () => { throw new Error('must not request'); }, {
-    chat: { conversations: [], deletedConversationIds: ['local-only'] },
-    appearance: { themeId: 'twitter', mode: 'system' }, personalization: defaultPersonalization,
-  }, { conversations: false, reading: false, appearance: false, personalization: false });
-  assert.deepEqual(result.pulled, []);
-  assert.deepEqual(result.deletedConversationIds, ['local-only']);
-});
 
 test('a late sync response cannot resurrect a deleted conversation, including after restoring the workspace', async () => {
   const { createElement, act } = await import('react');

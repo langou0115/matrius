@@ -11,7 +11,6 @@ import SettingsRootRedirect from '@/features/settings/settings-root-redirect';
  * carries the shell and the conversation view. Paths mirror the address bar exactly;
  * `/mock/*` renders the same screens with local preview data during development.
  */
-const AdminScreen = lazy(() => import('@/features/admin/admin-screen'));
 const LibraryScreen = lazy(() => import('@/features/files/library-screen'));
 const StorageScreen = lazy(() => import('@/features/files/storage-screen'));
 const AccountScreen = lazy(() => import('@/features/auth/account-screen'));
@@ -39,7 +38,6 @@ export function AppRoutes() {
         <Route index element={<ChatRoute />} />
         <Route path="c/:conversationId" element={<ChatRoute />} />
         <Route path="library" element={<LibraryScreen />} />
-        <Route path="admin" element={<AdminScreen />} />
 
         <Route path="settings" element={<SettingsRootRedirect />} />
         <Route path="settings/appearance" element={<AppearanceScreen />} />

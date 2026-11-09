@@ -1,4 +1,4 @@
-# 后端架构与云端数据契约
+# 后端架构与实例数据契约
 
 [文档索引](README.md)
 
@@ -21,8 +21,8 @@
 
 - 服务端**不运行 Agent Loop**，不保存流式中间态，也不保管模型 API key。
 - API 必须以**单个 uvicorn worker** 运行：缓存和限流是进程内状态，多 worker 会各自计数。单进程不妨碍并发，模型代理、搜索与抓取都是 async I/O。
-- 服务端保存账号数据，供登录后的后台双向同步；客户端 IndexedDB 仍是实时数据源，断网时可继续使用。
-- 云端模式（服务端唯一事实源、客户端不再写本地）尚未实现。
+- 单用户实例的业务数据统一读写后端，未登录时显示登录入口，断网不回退到浏览器聊天数据。
+- 不提供用户管理、管理员页面或本地/云端模式切换；外部实例管理不在本工程范围内。
 - 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；Web 使用 HttpOnly Cookie，服务端同时接受 Bearer token。
 
 ## 目录职责
@@ -34,7 +34,6 @@ app/db.py               async engine / get_db / SQLite PRAGMA
 app/cache.py            进程内缓存、滑动窗口限流、登录锁定
 app/storage.py          本地文件存储（DATA_DIR/files）
 app/auth/               密码哈希、Cookie/Bearer 会话、鉴权依赖、普通登录
-app/admin/              管理员登录与用户管理
 app/conversations/      会话、消息、已读状态、keyset 分页
 app/account/            偏好、画像、画像字段、记忆、账号导入与合并
 app/files/              上传、下载、删除、配额、文本提取
@@ -53,26 +52,22 @@ tests/                  集成测试（内存 SQLite）
 
 ```text
 POST /api/auth/login  { username, password }
-→ { token, user: { id, username, isAdmin, mustChangePassword } }
+→ { token, user: { id, username, mustChangePassword } }
 ```
 
 - token 为 `secrets.token_urlsafe(32)`，数据库只保存 SHA-256。
-- 浏览器同时收到 HttpOnly、SameSite=Lax 的持久 Cookie（`matrius_session` / `matrius_admin_session`，Max-Age 400 天，HTTPS 下加 Secure，`/me` 校验时滑动续期），Web 端不保存 token。
+- 浏览器同时收到 HttpOnly、SameSite=Lax 的持久 Cookie（`matrius_session`，Max-Age 400 天，HTTPS 下加 Secure，`/me` 校验时滑动续期），Web 端不保存 token。
 - 非浏览器客户端可使用 `Authorization: Bearer <token>`；Cookie 与 Bearer 同时存在时 Bearer 优先。
-- `auth_sessions` 保存 `scope`（`user` / `admin`）、最后访问时间、撤销时间；新会话不设自动过期时间，退出或撤销后立即失效。
-- 管理员使用独立入口 `POST /api/admin/auth/login`，只能签发 admin scope；普通接口同时接受 user 与 admin token，管理员接口要求 admin scope。
+- `auth_sessions` 保存 兼容字段 `scope`（仅接受 `user`）、最后访问时间、撤销时间；新会话不设自动过期时间，退出或撤销后立即失效。
 - `must_change_password=true` 时只有 `me`、改密和登出可用，其余接口返回 403。
 - 密码使用 Argon2id，允许 1–256 个字符；新密码不能与当前密码相同。
 - 登录按 IP（10/分钟）和用户名（5/分钟）限流；连续失败 15 次锁定 15 分钟。计数在进程内，API 重启后清零。
 
-### 初始化与管理员
+### 唯一所有者
 
-- `python -m app.bootstrap` 在 `users` 为空时创建初始管理员；已有用户则跳过。生产环境缺少 `INITIAL_ADMIN_*` 且用户表为空时直接失败，避免部署出无法登录的实例。
-- 管理员接口：`GET /api/admin/auth/me`（校验 admin scope）、用户列表、创建、重置密码、启停用。
-- 创建/重置后的默认密码为 `<username>@123`，`must_change_password=true`，密码只在本次响应返回。
-- 不允许停用自己或最后一个启用中的管理员。
+`instance` 表仅允许 id=1，绑定唯一 owner_id。认证同时匹配此绑定；历史其他账号和 admin scope 令牌均不可用。初始化、旧数据保留与配置规则见[认证](auth.md)。
 
-## 云端数据契约
+## 实例数据契约
 
 ### 通用字段
 
@@ -194,7 +189,7 @@ POST /api/account/import
 - 消息按数组顺序分配 `position`；本地 id 写入 `client_id`，服务端生成 UUID。
 - 服务端在单进程内用 `asyncio.Lock` 串行执行导入，避免多个标签页并发同步时同时读到"不存在"并触发唯一约束；锁按事件循环绑定，仅对单 worker 有效。
 - 可传 `chat.deletedConversationIds`（单批最多 2000 个、每个 1–128 字符）。同一事务内先记录删除标识并级联删除会话正文，再导入其余会话；已删除 ID 的旧副本计入 `skipped`，即使时间戳更新也不复活。普通 REST 会话删除同样记录墓碑；重新创建已删除 ID 返回 409。
-- `GET /api/account/conversation-deletions?limit=100&cursor=` 返回 `{ items: string[], nextCursor }`，按用户隔离、按标识 keyset 分页。客户端逐页读取，并在合并前删除本地对应会话；本地墓碑也过滤同步期间晚到的响应。
+- `GET /api/account/conversation-deletions?limit=100&cursor=` 返回 `{ items: string[], nextCursor }`，按实例所有者范围、按标识 keyset 分页。供历史数据导入兼容使用，正式工作区不执行本地/云端同步。
 - 迁移 `0002_conversation_deletions.py` 新增仅含 `(user_id, client_id)` 的持久删除表，不存正文；普通 REST 会话创建/删除与导入共用写锁。
 
 ## 文件
@@ -215,7 +210,7 @@ DELETE /api/files/{id}
 - `conversationId` 同时接受会话主键和客户端的 `clientId`：聊天客户端只知道后者；服务端解析后统一写入主键，列表过滤也支持两种形式。
 - 白名单：文本/代码/Markdown/CSV、图片、PDF、DOCX、XLSX、PPTX，以及旧版 DOC/XLS/PPT。旧格式原样保存，读取时才转换。
 - 列表按 `(sort_value, id)` keyset 分页，返回 `{ items, nextCursor }`；文件名搜索转义 `%`/`_`/`\`；`kind=document` 同时匹配现代与旧版 Office。
-- 对象键 `users/{userId}/{fileId}/{safeName}`；内容写入 `DATA_DIR/files`（生产为 `/data/files`），先写文件再写数据库，数据库失败时补偿删除对象。写入使用临时文件 + `os.replace` 原子替换。
+- 对象键 `{fileId}/{safeName}`；内容写入 `DATA_DIR/files`（生产为 `/data/files`），先写文件再写数据库，数据库失败时补偿删除对象。写入使用临时文件 + `os.replace` 原子替换。
 - 下载先校验归属；设置 `X-Content-Type-Options: nosniff`，非图片使用 `Content-Disposition: attachment`。
 - 单条删除先删对象再删记录；批量删除先提交数据库删除再 best-effort 删除对象（最坏留下孤儿对象，不会出现“对象没了但行还在”）。文件随会话删除只置空 `conversation_id`。
 - 重命名只改数据库文件名，不改对象键，`revision` 递增；空名或改扩展名返回 422。
@@ -231,7 +226,7 @@ POST /api/usage/backfill { utcOffsetMinutes }   # 每账号一次，估算历史
 ```
 
 - 模型请求由 Web 容器的无状态中继转发，API 进程看不到服务商的 usage；每轮回复结束后由浏览器上报输入、输出与缓存 token，服务端只做累加。
-- 每个账号每天一行（`token_usage_daily`，`unique(user_id, day)`），不保存消息级明细。`date` 是客户端按本机时区计算出的日期，允许与服务器 UTC 日期相差 2 天；缺失时按 UTC 当天。
+- 实例所有者每天一行（`token_usage_daily`，`unique(user_id, day)`），不保存消息级明细。`date` 是客户端按本机时区计算出的日期，允许与服务器 UTC 日期相差 2 天；缺失时按 UTC 当天。
 - 单次上报每个计数上限 1 亿；全为 0 的请求直接返回 `{"ok": true}`，不写行。`requests` 每次有效上报 +1，表示回复轮次数。
 - 历史记录没有真实计数，`POST /api/usage/backfill` 用已保存的消息按与客户端相同的估算公式重算，写入独立的 `token_usage_estimate_daily`（`unique(user_id, day)`）。`usage_backfills` 标记已估算，重复调用直接返回 `skipped`。`utcOffsetMinutes` 使用浏览器 `getTimezoneOffset()`，把历史归入当时的本地日期；每次助手回复的输入按其之前的完整上下文估算。
 - `GET` 返回窗口内按日期升序的每日累计（含明天，兼容东八区等本机日期）、全量 `lifetime`、仅估算的 `estimated` 汇总与 `backfilled` 标记；每日项带 `estimated` 表示当天含估算。客户端据本机日期计算今日/近 7 天/近 30 天，并明确标注估算部分。
@@ -269,17 +264,6 @@ POST /api/tools/fetch { url, mode? (fast|full) }
 - `WEBTOOL_PROXY_URL` 同样作用于抓取请求；URL 与每一跳重定向仍在本地校验，代理不会跳过 SSRF 检查。
 - 生产环境仍建议在主机或云防火墙限制 API 容器的出站网段，缩小 SSRF 与 DNS 重绑定的残余风险。
 
-### 管理端测试
-
-```text
-POST /api/admin/tools/test
-  { "kind": "search", "query": "..." }
-  { "kind": "fetch", "url": "https://...", "mode": "fast|full" }
-```
-
-- 仅接受 admin scope 会话，与聊天流量分开限流（每账号 20 次/分钟），并复用真实搜索、抓取、缓存与代理路径。
-- 返回结果包含 `tookMs`、`proxy`（是否配置了 `WEBTOOL_PROXY_URL`）和 `diagnostics`。搜索诊断包含 provider / status / attempts / elapsedMs / fallback / fallbackStatus 等；读取诊断包含 extractor / attempts / contentType / finalUrl / truncated。失败沿用统一 `{"error":{"code","message"}}` 响应。
-
 ### 统一文件工具
 
 ```text
@@ -299,7 +283,7 @@ POST /api/tools/file
 - Office 操作经 vendored OfficeCLI 子进程执行，不使用 shell，环境变量白名单，超时杀进程组，stdout/stderr 累计超限即终止。PDF 使用 pypdf + reportlab，在 `asyncio.to_thread` 中运行。
 - 单次结果约 30,000 字符并标记 `truncated`；文档内容按不可信资料返回。
 - Office 批量命令失败返回命令序号、引擎错误码及修复建议，不回显命令；结构性诊断（找不到路径、幻灯片父路径错误、取值不合法）会一并返回，可能包含文档正文的诊断则替换为固定提示。例如新建 Excel 已有 `Sheet1`，再次添加同名表会提示先检查已有表。`help` 带 `element` 时返回紧凑的路径 + 可写属性表，不再把整个 schema JSON 截断后交给模型。文件工具参数校验失败把字段位置和校验原因返回给客户端 Agent，以便修正下一次调用。
-- 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{userId}/{draftId}/`；`create`/`edit` 的草稿结果带 `draft:<uuid>` 句柄，客户端 Agent 继续编辑同一草稿时必须回传该句柄，否则会从已保存版本重新开始。TTL 默认 30 分钟，每用户最多 10 个、总计 60 MiB，跨用户 404。保存成功后删除草稿。
+- 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{draftId}/`；`create`/`edit` 的草稿结果带 `draft:<uuid>` 句柄，客户端 Agent 继续编辑同一草稿时必须回传该句柄，否则会从已保存版本重新开始。TTL 默认 30 分钟，每实例最多 10 个、总计 60 MiB，旧账号令牌被拒绝。保存成功后删除草稿。
 - 保存编辑结果时检查 `StoredFile.revision == base_revision`，不一致返回 409；先写新对象再更新行，提交后 best-effort 删除旧对象。旧版 Office 编辑后的保存会新建文件，不改原件。
 - 兼容保留 `POST /api/tools/files/read|grep`：按行读取（单次最多 50,000 字符）与正则匹配（最多 200 条）。
 

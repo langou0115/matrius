@@ -1,8 +1,7 @@
-import { Link, type Href } from '@/router';
 import {
-  AlertCircle, Check, ChevronRight, Cloud, KeyRound,
-  LoaderCircle, LogIn, LogOut, ShieldCheck,
-  UserRound, type LucideIcon,
+  AlertCircle, Check, KeyRound,
+  LoaderCircle, LogIn, LogOut,
+  UserRound,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -11,11 +10,6 @@ import { SettingsPage } from '@/features/settings/settings-page';
 import { useAuth } from './auth-state';
 import { ChangePasswordDialog } from './change-password-dialog';
 import { LoginDialog } from './login-dialog';
-/** The one benefit login currently promises. */
-const benefits: { icon: LucideIcon; title: string; description: string }[] = [
-  { icon: Cloud, title: '云端对话', description: '登录后使用账号的云端对话与设置，本地记录独立保留；模型配置仍使用本机配置。' },
-];
-
 export default function AccountScreen() {
   const auth = useAuth();
   const user = auth.user;
@@ -58,7 +52,7 @@ export default function AccountScreen() {
   const unavailable = auth.status === 'unavailable';
   const profileTitle = checking ? '正在验证账号…' : unavailable ? '账号状态未知' : user ? user.username : '未登录';
 
-  return <SettingsPage title="账号" description="登录账号、管理密码与查看账号状态。">
+  return <SettingsPage title="账号" description="管理此单用户实例的访问密码与登录状态。">
     <section className="settings-section" aria-labelledby="account-profile-heading">
       <div className={`account-profile ${user ? 'is-authenticated' : ''}`}>
         <span className="account-avatar" aria-hidden="true">
@@ -68,7 +62,6 @@ export default function AccountScreen() {
           <h2 id="account-profile-heading">{profileTitle}</h2>
           {user && <div className="account-badges">
             <span className="account-badge is-success"><Check size={13} strokeWidth={2} aria-hidden="true" />已登录</span>
-            {user.isAdmin && <span className="account-badge"><ShieldCheck size={13} strokeWidth={1.75} aria-hidden="true" />管理员</span>}
             {user.mustChangePassword && <span className="account-badge is-warning"><KeyRound size={13} strokeWidth={1.75} aria-hidden="true" />需要修改密码</span>}
           </div>}
         </div>
@@ -92,29 +85,6 @@ export default function AccountScreen() {
         <span>{notice}</span>
       </p>}
     </section>
-
-    {!user && <section className="settings-section" aria-labelledby="login-benefits-heading">
-      <h2 id="login-benefits-heading">登录后</h2>
-      <div className="account-benefits">
-        {benefits.map(({ icon: Glyph, title, description }) => <div className="account-benefit" key={title}>
-          <span className="account-benefit-icon"><Glyph size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-          <strong>{title}</strong>
-          <p>{description}</p>
-        </div>)}
-      </div>
-    </section>}
-
-    {user?.isAdmin && <section className="settings-section" aria-labelledby="admin-entry-heading">
-      <h2 id="admin-entry-heading">管理</h2>
-      <Link href={'/admin' as Href} className="account-link-row">
-        <span className="account-link-icon"><ShieldCheck size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-        <span className="account-link-copy">
-          <strong>管理控制台</strong>
-          <span>创建用户、重置密码与停用账号。</span>
-        </span>
-        <span className="account-link-action">打开<ChevronRight size={15} strokeWidth={1.75} aria-hidden="true" /></span>
-      </Link>
-    </section>}
 
     {user && <section className="settings-section" aria-labelledby="security-heading">
       <h2 id="security-heading">账号安全</h2>

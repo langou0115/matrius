@@ -48,7 +48,12 @@ def test_absolute_paths_are_rejected_even_if_inside_the_root(data_dir):
 def test_symlinked_directory_cannot_escape_the_root(data_dir, tmp_path_factory):
     outside = tmp_path_factory.mktemp("outside")
     (data_dir / "files").mkdir()
-    (data_dir / "files/link").symlink_to(outside, target_is_directory=True)
+    try:
+        (data_dir / "files/link").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symbolic links")
+        raise
     # resolve() follows the symlink, so the containment check rejects it.
     with pytest.raises(ValueError):
         storage.put_object("link/note.txt", b"x", "text/plain")

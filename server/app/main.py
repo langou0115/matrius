@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.account.router import router as account_router
-from app.admin.router import router as admin_router
 from app.auth.router import router as auth_router
 from app.cache import close_cache
 from app.config import get_settings
@@ -98,7 +97,7 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
-        if request.url.path.startswith(("/api/auth/", "/api/admin/auth/", "/api/features")):
+        if request.url.path.startswith(("/api/auth/", "/api/features")):
             response.headers["Cache-Control"] = "no-store"
         logger.info(
             "request",
@@ -115,7 +114,6 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
-    app.include_router(admin_router)
     app.include_router(conversations_router)
     app.include_router(account_router)
     app.include_router(files_router)

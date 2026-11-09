@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ApiError, createAdminSession, createAuthSession } from '../src/core/api/auth-session.ts';
+import { ApiError, createAuthSession } from '../src/core/api/auth-session.ts';
 import { hasFeature } from '../src/core/features/capabilities.ts';
 import { AUTH_RETRY_DELAYS_MS, createAuthRetry, retryDelay } from '../src/features/auth/auth-retry.ts';
 import { visibleSettings } from '../src/features/settings/settings-catalog.ts';
@@ -147,25 +147,6 @@ test('usage is its own account category behind the usage feature', () => {
   assert.equal(ids.indexOf('usage'), ids.indexOf('storage') + 1, 'usage sits directly below storage');
   assert.equal(visibleSettings(['usage'], true, true).some((item) => item.id === 'usage'), false,
     'preview mode stays inside the mock settings catalogue');
-});
-
-test('admin sessions use admin-scoped cookie endpoints and never touch the user session', async () => {
-  const store = storage();
-  const calls = [];
-  const auth = createAdminSession(store, async (url, init) => {
-    calls.push(url);
-    assert.equal(init.credentials, 'include');
-    assert.equal(init.headers.get('Authorization'), null);
-    if (url === '/api/admin/auth/login') {
-      return response({ token: 'admin-token', user: { ...account('admin'), isAdmin: true } });
-    }
-    return response({ password: 'bob@123' }, 201);
-  });
-  await auth.login('admin', 'password');
-  assert.equal(store.read(), null, 'the HttpOnly token must not be readable from JS');
-  const created = await auth.request('/api/admin/users', { method: 'POST', body: '{"username":"bob"}' });
-  assert.deepEqual(created, { password: 'bob@123' });
-  assert.deepEqual(calls, ['/api/admin/auth/login', '/api/admin/users']);
 });
 
 test('cookie sessions restore through /me, log out through the server and treat a missing cookie as anonymous', async () => {

@@ -2,133 +2,46 @@
 
 [文档索引](README.md)
 
-## 架构
-
-保持项目简单。
+## 单用户实例
 
 ```text
-React 19 + Vite Web 客户端（SPA，React Router 7）
-├── 本地模式：浏览器 IndexedDB 保存对话、消息、设置
-└── 本地 Agent Runtime：上下文、Agent Loop、流式事件、工具调度、取消
-    ├── 本地模式 → 用户自带 key → 模型服务商（不注册云端工具）
-    └── 云端模式 → REST /api/* → FastAPI（服务端是唯一事实源）
-                        ├── 认证、校验、限流、CRUD
-                        ├── 搜索 / 网页读取 → DuckDuckGo / Bing、trafilatura
-                        └── 文件 → 解析器 / DATA_DIR/files
-    └── 模型中继 → /api/model-proxy/* → 现有 Node 中继 → 模型服务商
-
-SQLite        → 云端持久数据（/data/matrius.db）
-进程内缓存     → 限流、登录锁定、短期缓存（单 worker）
-本地文件       → 上传文件内容（/data/files）
+React 19 + Vite + React Router 7
+├── 实例登录保护：未登录时只有登录入口
+├── Agent Runtime：上下文、循环、流式事件、工具调度与取消
+├── REST /api/* → FastAPI → SQLite / 文件系统
+├── /api/model-proxy/* → Web 中继 → 模型服务商
+└── IndexedDB：模型配置、密钥与设备状态
 ```
 
-核心目标：
+服务端是业务数据的唯一事实源，不提供匿名本地工作区、双向同步或本地/云端模式切换。
+Agent Runtime 始终在浏览器运行；后端只执行单次工具请求，模型中继只转发单次模型调用。
+模型服务配置与密钥只持久化在当前浏览器，中继请求期间向服务商传递凭据，不保存或记录密钥。
 
-- Agent Runtime 始终在客户端本地运行；模型传输、云端工具调用和数据访问通过各自适配层解耦。服务端不运行 Agent Loop。
-- 本地模式与云端模式不共用持久化：云端模式开启后，新会话只写服务端；断网不能读取历史，也不保留本地缓存。
-- 服务端的持久数据按 `userId` 隔离，并在服务端验证资源归属。
-- 模型 API key 始终由客户端安全存储保管，不上传服务端；服务端模型代理只转发单次请求，不保存 key。
-- 文件读取、联网搜索等外部服务访问只发生在服务端。
+## 唯一所有者与访问保护
 
-不要引入不必要的微服务、工作流引擎、RBAC 系统或复杂抽象。
+每个部署只有一个工作区，`instance` 单例表绑定唯一 `owner_id`。
+没有用户创建、角色、用户停用、`/admin` 或 `/api/admin/*`。
+历史 `users` 行和 `user_id` 外键为数据兼容保留，所有认证必须匹配实例所有者；旧账号令牌不可用。
+跨设备与多标签页仍使用 `baseRevision` 防止静默覆盖。
+`/api/account/import` 保留作旧数据导入兼容，不能用来访问或混入其他历史账号的数据。
 
----
+外部多用户、域名分配、容器编排与实例管理属于另一个项目，本工程短期不做。
 
-## 多用户
+## 存储
 
-云端模式必须支持多用户。服务端保存的用户数据都要按 `userId` 隔离：
+- 开发：`server/.data/matrius.db`、`server/.data/files/<fileId>/<文件名>`。
+- Docker：`/data/matrius.db`、`/data/files/<fileId>/<文件名>`。
+- 临时草稿在 `DATA_DIR/drafts/<draftId>/`，元数据仅在 API 内存，重启失效。
+- 搜索结果缓存、限流、登录失败和并发计数在进程内，API 保持单 worker。
+- 数据迁移走 Alembic，旧库选择与旧文件迁移见[存储与数据](data.md)。
 
-```text
-users
-conversations
-messages
-files
-user_preferences
-user_profiles
-user_profile_fields
-memory_entries
-token_usage_daily, token_usage_estimate_daily, usage_backfills
-```
+## 依赖与职责
 
-读取、修改、删除用户资源前，必须在服务端验证归属。不要依赖客户端传入的 `userId`。
+UI → features → repository → API / storage。
+路由事实源为 `src/router/routes.tsx`，页面外壳为 `components/web/app-shell.tsx`。
+`instance-workspace.tsx` 负责登录边界、后端工作区加载、保存队列与错误反馈。
+模型、聊天、记忆、文件、设置分别位于 `src/features/`，无 DOM 的 Agent 与协议适配位于 `src/core/`。
+后端 `auth/` 验证所有者，`conversations/` 管理聊天，`account/` 管理偏好/画像/记忆，`files/` 与 `documents/` 管理文件和文档工具。
+开发预览只在 `/mock/*`，使用内存数据，生产构建关闭。
 
-**导入接口尤其要小心**：客户端会批量提交属于多个对话、多条记忆的记录，必须逐条校验归属，不能只校验外层请求的用户身份。
-
-不要把用户相关数据放进全局进程内存作为持久状态。
-
----
-
-## API
-
-客户端与服务端之间保持直接的接口风格：
-
-```text
-请求
-  ↓
-认证 / 校验
-  ↓
-业务逻辑
-  ↓
-数据库 / 单次模型代理 / 单次工具执行
-  ↓
-响应
-```
-
-- 模型中继使用 SSE 返回单次模型调用的增量事件、结束和错误；客户端 Runtime 负责完整对话轮次与工具循环。
-- 工具 API 接收客户端 Runtime 的调用，服务端校验并执行，结果返回客户端后由 Runtime 回填上下文。
-- 业务数据使用 REST CRUD；修改/删除带 `baseRevision`，冲突返回 409 与当前记录。
-- 账号同步走独立接口：`POST /api/account/import` 做按 `clientId` 幂等的增量上传与合并，拉取复用普通列表/详情接口。不要把合并逻辑混进普通业务接口。
-- 客户端在后台把本地工作区与服务端双向合并；文档中的「云端模式」（服务端唯一事实源）仍未实现。
-- 不要过度设计接口层。简单的处理逻辑可以直接写在路由里，只有逻辑变大、重复或难以维护时才抽成服务。
-- 错误响应要能区分认证失败、权限不足、校验失败、**版本冲突**和服务端错误。
-- 接口契约见[后端架构与云端数据契约](backend.md)。
-
----
-
-## 推荐结构
-
-后端位于 `server/`，职责与接口见[后端架构](backend.md)：
-
-```text
-server/app/
-├── auth/            # 登录、Bearer 会话、依赖、限流
-├── admin/           # 管理员用户管理
-├── conversations/   # 会话、消息、已读状态
-├── account/         # 偏好、画像、记忆、账号导入与合并
-├── files/           # 本地存储、配额、文本提取
-├── usage/           # 每账号每日 Token 用量上报与查询
-├── tools/           # 搜索、网页读取、URL 校验、文件读/grep
-└── models/          # SQLAlchemy 表
-```
-
-客户端建议结构：
-
-```text
-src/
-├── router/         # 唯一路由表与导航 API（React Router 7；routes.tsx + index.tsx）
-├── features/       # chat / memory / files / usage / settings / admin / auth
-├── core/
-│   ├── database/   # 本地模式数据库适配、迁移、schema 版本
-│   ├── api/        # 云端模式 REST 客户端、认证与错误映射
-│   ├── agent/      # 本地 Agent Runtime、上下文、状态、云端工具适配
-│   ├── llm/        # 模型直连 / 代理传输、分帧、解码器、统一事件模型
-│   └── platform/   # 安全存储、文件、剪贴板等平台适配
-├── components/     # 跨功能复用组件
-├── hooks/          # 跨功能复用 hooks
-└── constants/      # 主题、尺寸等公共常量
-```
-
-以上为目标结构，尚未存在的目录随功能创建。当前真实文件见[客户端结构说明](client-structure.md)。路由表集中在 `src/router/routes.tsx`，负责路径到页面组件的映射；功能页面、状态、组件放在 `features/`，不能把非路由代码放进路由表文件。
-
-### 结构规则
-
-- 功能模块放在 `features/<module>/`，包含该功能自己的页面、组件、状态和服务。
-- 不要把所有页面平铺在一个目录里，也不要让单个页面文件膨胀成巨型文件。
-- 平台差异（文件选择、剪贴板、分享、通知、安全存储等）走 `core/platform/` 下的适配层，业务代码不直接调用平台 API。
-- **数据访问不得分叉到页面层**。页面消费统一的仓储接口，由仓储层决定数据来自本地还是云端；不要在页面里写 `if (isLoggedIn)` 去选数据源。
-- **功能可见性则相反，必须集中管理**：由统一的当前能力集驱动入口的显示与隐藏，页面不各自判断模式。见「功能可见性」。
-- 客户端与服务端的共享类型以服务端契约为准，避免出现两套含义不同的同名模型。
-- 保持依赖方向单一：UI → 功能模块 → 仓储 → 数据源（本地 / 远端）。避免循环依赖和跨层直连。
-- Agent 调用走 UI → 聊天适配层 → `core/agent/runtime.ts` → pi-agent runner / 模型传输；核心拥有共享消息与运行契约，不反向导入 `features/`、React 或 Web 文件。界面和平台适配层提供凭据、消息与配置，核心通过回调输出回复，不直接读写浏览器存储。
-
----
+不增加微服务、RBAC、组织、租户或多 Agent 编排。接口细节见[后端架构](backend.md)。

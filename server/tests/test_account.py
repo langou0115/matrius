@@ -314,9 +314,8 @@ async def test_concurrent_imports_stay_idempotent(client, create_user):
 
 async def test_import_keeps_only_file_ids_the_account_owns(client, create_user):
     _, headers = await create_user()
-    _, other_headers = await create_user("other")
     owned = await _upload(client, headers, "owned.txt")
-    foreign = await _upload(client, other_headers, "foreign.txt")
+    foreign = {"id": str(uuid.uuid4())}
     unknown = str(uuid.uuid4())
     mine = str(uuid.uuid4())
     theirs = str(uuid.uuid4())

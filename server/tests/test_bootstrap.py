@@ -36,14 +36,13 @@ async def test_bootstrap_creates_the_initial_admin(session_factory, monkeypatch)
     await bootstrap_module.bootstrap()
 
     user = await _admin(session_factory)
-    assert user.is_admin is True
     assert user.must_change_password is False
     assert verify_password(user.password_hash, "first-secret")
 
 
 async def test_bootstrap_syncs_an_existing_admin_password(session_factory, monkeypatch):
     async with session_factory() as session:
-        session.add(User(username="admin", password_hash=hash_password("old-secret"), is_admin=True))
+        session.add(User(username="admin", password_hash=hash_password("old-secret")))
         await session.commit()
     configure(monkeypatch, username="admin", password="new-secret")
 
@@ -57,7 +56,7 @@ async def test_bootstrap_syncs_an_existing_admin_password(session_factory, monke
 async def test_production_bootstrap_applies_the_latest_password(session_factory, monkeypatch):
     async with session_factory() as session:
         session.add(User(username="admin", password_hash=hash_password("old-secret"),
-                         is_admin=True, must_change_password=True))
+                         must_change_password=True))
         await session.commit()
     configure(monkeypatch, username="admin", password="new-secret", app_env="production")
 
@@ -71,7 +70,7 @@ async def test_production_bootstrap_applies_the_latest_password(session_factory,
 
 async def test_bootstrap_leaves_the_password_when_credentials_are_empty(session_factory, monkeypatch):
     async with session_factory() as session:
-        session.add(User(username="admin", password_hash=hash_password("old-secret"), is_admin=True))
+        session.add(User(username="admin", password_hash=hash_password("old-secret")))
         await session.commit()
     configure(monkeypatch, username="", password="", app_env="production")
 

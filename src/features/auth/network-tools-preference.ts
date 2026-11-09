@@ -1,36 +1,27 @@
-import { LocalDataConflict, readLocalValue, writeLocalValue } from '@/core/database/browser-store';
+import { ApiError } from '@/core/api/auth-session';
 
-/** Web tools are a per-workspace preference: an account id for cloud mode and `local` for
-    anonymous browsing. Keying by scope stops one workspace's choice from silently deciding
-    whether another one can browse. */
-const STORAGE_KEY = 'account-network-tools';
-
-/** Web tools are on by default: they are the reason the assistant can answer with current
-    information, and the server still enforces its own quota. */
+type Request = <T>(path: string, init?: RequestInit) => Promise<T>;
+type Field = { value: string; revision: number };
+const PATH = '/api/profile/fields/network-tools';
 export const DEFAULT_NETWORK_TOOLS_ENABLED = true;
 
-export async function loadNetworkToolsEnabled(scope: string): Promise<boolean> {
-  try {
-    const stored = await readLocalValue(STORAGE_KEY);
-    const scopes = (stored?.value as { users?: Record<string, unknown> } | null)?.users;
-    const entry = scopes?.[scope];
-    const enabled = (entry as { enabled?: unknown } | null)?.enabled;
-    return typeof enabled === 'boolean' ? enabled : DEFAULT_NETWORK_TOOLS_ENABLED;
-  } catch {
-    return DEFAULT_NETWORK_TOOLS_ENABLED;
+async function read(request: Request): Promise<Field | null> {
+  try { return await request<Field>(PATH); }
+  catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
   }
 }
 
-export async function saveNetworkToolsEnabled(scope: string, enabled: boolean): Promise<void> {
-  // Retry once on a stale revision: another tab may have saved a different scope's choice.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const stored = await readLocalValue(STORAGE_KEY);
-    const scopes = (stored?.value as { users?: Record<string, unknown> } | null)?.users;
-    try {
-      await writeLocalValue(STORAGE_KEY, { users: { ...scopes, [scope]: { enabled } } }, stored?.revision ?? 0);
-      return;
-    } catch (reason) {
-      if (!(reason instanceof LocalDataConflict) || attempt === 1) throw reason;
-    }
-  }
+export async function loadNetworkToolsEnabled(request: Request): Promise<boolean> {
+  const field = await read(request);
+  if (!field) return DEFAULT_NETWORK_TOOLS_ENABLED;
+  return field.value !== 'false';
+}
+
+export async function saveNetworkToolsEnabled(request: Request, enabled: boolean): Promise<void> {
+  const field = await read(request);
+  await request(PATH, { method: 'PUT', body: JSON.stringify({
+    baseRevision: field?.revision ?? null, value: String(enabled), source: 'manual',
+  }) });
 }

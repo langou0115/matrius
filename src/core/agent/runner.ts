@@ -356,7 +356,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
           await agent.continue();
         }
         if (timedOut) return finish({ status: 'error', error: timeoutError() }, durationExceeded ? 'duration_timeout' : 'idle_timeout');
-        if (unsupportedTool) return finish({ status: 'error', error: '当前本地模式仅支持文本对话，模型请求了不可用的工具。' }, 'unsupported_tool');
+        if (unsupportedTool) return finish({ status: 'error', error: '模型请求了当前不可用的工具。' }, 'unsupported_tool');
         if (stopped || finalMessage?.stopReason === 'aborted') return finish({ status: 'stopped' }, 'aborted');
         if (finalMessage?.stopReason === 'error') return finish({ status: 'error', error: describeModelError(finalMessage.errorMessage) }, 'provider_error');
         if (!finalMessage) return finish({ status: 'error', error: agent.state.errorMessage ? describeModelError(agent.state.errorMessage) : '服务商未返回有效回复，请检查模型配置。' }, 'missing_message');

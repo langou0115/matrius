@@ -35,9 +35,9 @@ test('the web dev server keeps the configured port and can rebuild its dependenc
 });
 
 test('SQLite URLs work on POSIX and Windows without a shell', () => {
-  assert.equal(sqliteUrl('/repo/server/.data/dev.db'), 'sqlite+aiosqlite:////repo/server/.data/dev.db');
-  assert.equal(sqliteUrl('C:\\repo\\server\\.data\\dev.db'), 'sqlite+aiosqlite:///C:/repo/server/.data/dev.db');
-  assert.equal(sqliteUrl('D:/matrius/server/.data/dev.db'), 'sqlite+aiosqlite:///D:/matrius/server/.data/dev.db');
+  assert.equal(sqliteUrl('/repo/server/.data/matrius.db'), 'sqlite+aiosqlite:////repo/server/.data/matrius.db');
+  assert.equal(sqliteUrl('C:\\repo\\server\\.data\\matrius.db'), 'sqlite+aiosqlite:///C:/repo/server/.data/matrius.db');
+  assert.equal(sqliteUrl('D:/matrius/server/.data/matrius.db'), 'sqlite+aiosqlite:///D:/matrius/server/.data/matrius.db');
 });
 
 test('development environment is local-only and never inherits production data locations', () => {
@@ -52,7 +52,7 @@ test('development environment is local-only and never inherits production data l
   });
   assert.equal(env.APP_ENV, 'development');
   assert.equal(env.APP_URL, 'http://localhost:8081');
-  assert.equal(env.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/dev.db');
+  assert.equal(env.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/matrius.db');
   assert.equal(env.DATA_DIR, dataDir);
   assert.equal(env.INITIAL_ADMIN_USERNAME, 'prod-admin');
   assert.equal(env.INITIAL_ADMIN_PASSWORD, 'production');
@@ -76,7 +76,7 @@ test('development backend reads runtime settings from the env file instead of fr
   assert.equal(env.MATRIUS_DEV_ENV_FILE, envFile);
   assert.equal(env.INITIAL_ADMIN_USERNAME, 'alice');
   assert.equal(env.INITIAL_ADMIN_PASSWORD, 'local-secret');
-  assert.equal(env.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/dev.db');
+  assert.equal(env.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/matrius.db');
   assert.equal(env.DATA_DIR, '/repo/server/.data');
   // Runtime keys stay in .env.local; copying them here would override every later edit.
   assert.equal(env.WEBTOOL_PROXY_URL, undefined);
@@ -90,7 +90,7 @@ test('db:migrate targets the development database even when production paths are
     local: { DEV_WEB_PORT: '8082' },
   });
   assert.equal(dataDir, join('/repo', 'server', '.data'));
-  assert.equal(environment.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/dev.db');
+  assert.equal(environment.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/matrius.db');
   assert.equal(environment.DATA_DIR, dataDir);
   assert.equal(environment.APP_URL, 'http://localhost:8082');
   assert.equal(environment.MATRIUS_DEV_ENV_FILE, resolve('/repo', '.env.local'));
@@ -128,7 +128,7 @@ test('--reset-db only removes the development database and uploaded files', asyn
   const directory = await mkdtemp(join(tmpdir(), 'matrius-dev-data-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await mkdir(join(directory, 'files'), { recursive: true });
-  for (const name of ['dev.db', 'dev.db-wal', 'dev.db-shm', 'other.db', 'notes.txt']) {
+  for (const name of ['matrius.db', 'matrius.db-wal', 'matrius.db-shm', 'other.db', 'notes.txt']) {
     await writeFile(join(directory, name), name);
   }
   await writeFile(join(directory, 'files/upload.png'), 'image');
@@ -138,8 +138,8 @@ test('--reset-db only removes the development database and uploaded files', asyn
   await resetDatabase(directory);
   assert.equal((await readFile(join(directory, 'other.db'), 'utf8')), 'other.db');
   assert.equal((await readFile(join(directory, 'notes.txt'), 'utf8')), 'notes.txt');
-  await assert.rejects(readFile(join(directory, 'dev.db')), { code: 'ENOENT' });
-  await assert.rejects(readFile(join(directory, 'dev.db-wal')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(directory, 'matrius.db')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(directory, 'matrius.db-wal')), { code: 'ENOENT' });
   await assert.rejects(readFile(join(directory, 'files/upload.png')), { code: 'ENOENT' });
   assert((await stat(join(directory, 'files'))).isDirectory());
 });
@@ -224,7 +224,18 @@ test('Windows backend creates Office documents across repeated reloads and its e
           await new Promise((accept) => setTimeout(accept, 50));
         }
       }
-      const result = await fetch(`http://127.0.0.1:${port}/document?fmt=${fmt}`, { signal: AbortSignal.timeout(10000) });
+      let result;
+      while (!result) {
+        try {
+          result = await fetch(`http://127.0.0.1:${port}/document?fmt=${fmt}`, { signal: AbortSignal.timeout(10000) });
+        } catch (error) {
+          // During a reload, /openapi.json can succeed on the outgoing worker just
+          // before its socket closes. Retry connection resets on the new worker.
+          if (!['ECONNRESET', 'ECONNREFUSED', 'UND_ERR_SOCKET'].includes(error.cause?.code)
+            || Date.now() >= deadline) throw error;
+          await new Promise((accept) => setTimeout(accept, 50));
+        }
+      }
       assert.equal(result.status, 200, `${await result.clone().text()}\n${output}`);
       const document = await result.json();
       assert.equal(document.loop, 'ProactorEventLoop');

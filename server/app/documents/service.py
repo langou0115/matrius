@@ -31,9 +31,9 @@ from app.files.router import (
     resolve_conversation_id,
     safe_filename,
 )
-from app.files.service import ensure_quota
+from app.files.service import ensure_quota, file_lock
 from app.models import StoredFile
-from app.storage import delete_object, put_object
+from app.storage import delete_object, get_object, put_object
 from app.tools.files import (
     extract_document_text,
     file_text,
@@ -351,6 +351,15 @@ async def _finish(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest
 async def _persist(
     db: AsyncSession, user_id: uuid.UUID, draft: Draft, requested_name: str | None
 ) -> dict[str, Any]:
+    if draft.base_file_id is not None:
+        async with file_lock(draft.base_file_id):
+            return await _persist_document(db, user_id, draft, requested_name)
+    return await _persist_document(db, user_id, draft, requested_name)
+
+
+async def _persist_document(
+    db: AsyncSession, user_id: uuid.UUID, draft: Draft, requested_name: str | None
+) -> dict[str, Any]:
     fmt = detect_format(draft.filename)
     if fmt not in MODERN_FORMATS:
         raise invalid("草稿格式不合法。")
@@ -358,7 +367,6 @@ async def _persist(
     data = await draft_store.drafts.read(draft)
     content_type = CONTENT_TYPES[fmt]
     digest = hashlib.sha256(data).hexdigest()
-    suffix = _suffix(fmt)
 
     if draft.base_file_id is not None:
         stored = await get_owned_file(db, user_id, draft.base_file_id)
@@ -366,7 +374,9 @@ async def _persist(
             raise conflict("文件已在其他设备更新，请重新打开后再编辑。", current=file_out(stored))
         await ensure_quota(db, user_id, len(data), replacing=stored.size)
         old_key = stored.object_key
-        new_key = f"users/{user_id}/{stored.id}/{uuid.uuid4().hex}{suffix}"
+        new_key = f"{stored.id}/{filename}"
+        previous = await asyncio.to_thread(get_object, old_key) if new_key == old_key else None
+        previous_type = stored.content_type
         try:
             await asyncio.to_thread(put_object, new_key, data, content_type)
         except Exception as exc:  # noqa: BLE001
@@ -382,13 +392,17 @@ async def _persist(
             await db.commit()
         except Exception:
             await db.rollback()
-            await asyncio.to_thread(delete_object, new_key)
+            if previous is not None:
+                await asyncio.to_thread(put_object, old_key, previous, previous_type)
+            else:
+                await asyncio.to_thread(delete_object, new_key)
             raise
-        await asyncio.to_thread(delete_object, old_key)
+        if old_key != new_key:
+            await asyncio.to_thread(delete_object, old_key)
     else:
         await ensure_quota(db, user_id, len(data))
         file_id = uuid.uuid4()
-        object_key = f"users/{user_id}/{file_id}/{uuid.uuid4().hex}{suffix}"
+        object_key = f"{file_id}/{filename}"
         try:
             await asyncio.to_thread(put_object, object_key, data, content_type)
         except Exception as exc:  # noqa: BLE001

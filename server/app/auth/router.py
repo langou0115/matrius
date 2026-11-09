@@ -21,7 +21,7 @@ from app.cache import (
 from app.db import get_db
 from app.errors import AppError, unauthorized
 from app.features.registry import enabled_features
-from app.models import AuthSession, User
+from app.models import AuthSession, Instance, User
 from app.utils import utcnow
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -31,21 +31,22 @@ def user_out(user: User) -> UserOut:
     return UserOut(
         id=user.id,
         username=user.username,
-        isAdmin=user.is_admin,
         mustChangePassword=user.must_change_password,
         features=enabled_features(user),
     )
 
 
 async def _authenticate(
-    username: str, password: str, *, admin_only: bool, db: AsyncSession
+    username: str, password: str, *, db: AsyncSession
 ) -> User:
     normalized = username.strip()
     await assert_login_not_locked(normalized)
     await enforce_rate_limit("login_user", normalized.lower(), 5, fail_closed=True)
 
     user = (
-        await db.execute(select(User).where(func.lower(User.username) == normalized.lower()))
+        await db.execute(select(User).join(Instance, Instance.owner_id == User.id).where(
+            Instance.id == 1, func.lower(User.username) == normalized.lower()
+        ))
     ).scalar_one_or_none()
 
     password_hash = user.password_hash if user is not None else DUMMY_HASH
@@ -53,13 +54,6 @@ async def _authenticate(
     if user is None or not valid:
         await record_login_failure(normalized)
         raise unauthorized("用户名或密码错误。")
-
-    if user.disabled_at is not None:
-        await record_login_failure(normalized)
-        raise AppError(403, "account_disabled", "账号已被停用。")
-    if admin_only and not user.is_admin:
-        await record_login_failure(normalized)
-        raise AppError(403, "forbidden", "需要管理员权限。")
 
     await clear_login_failures(normalized)
     return user
@@ -87,7 +81,7 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
     await enforce_rate_limit("login_ip", client_ip(request), 10, fail_closed=True)
-    user = await _authenticate(payload.username, payload.password, admin_only=False, db=db)
+    user = await _authenticate(payload.username, payload.password, db=db)
     token = await _issue_session(user, scope="user", db=db)
     set_session_cookie(request, response, token, scope="user")
     return LoginResponse(token=token, user=user_out(user))

@@ -238,19 +238,19 @@ async def test_message_pagination(client, create_user):
     assert older["nextCursor"] is None
 
 
-async def test_other_users_cannot_read_or_delete(client, create_user):
+async def test_archived_users_cannot_read_or_delete(client, create_user):
     _, alice = await create_user(username="alice")
     _, bob = await create_user(username="bob")
     conversation = await _create_conversation(client, alice)
 
     assert (
         await client.get(f"/api/conversations/{conversation['id']}", headers=bob)
-    ).status_code == 404
+    ).status_code == 401
     assert (
         await client.delete(
             f"/api/conversations/{conversation['id']}?baseRevision=1", headers=bob
         )
-    ).status_code == 404
+    ).status_code == 401
 
 
 async def test_delete_cascades_messages(client, create_user, session_factory):
@@ -428,8 +428,7 @@ async def test_message_patch_replaces_files_and_checks_ownership(client, create_
     )
     assert wrong_conversation.status_code == 422
 
-    _, other_headers = await create_user("other")
-    foreign = await _upload(client, other_headers, "foreign.txt")
+    foreign = {"id": str(uuid.uuid4())}
     not_owned = await client.patch(
         f"/api/messages/{message['id']}", headers=headers,
         json={"baseRevision": cleared.json()["revision"], "fileIds": [foreign["id"]]},

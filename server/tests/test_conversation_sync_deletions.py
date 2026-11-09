@@ -34,7 +34,7 @@ async def test_sync_deletion_removes_content_and_rejects_stale_reuploads(client,
     assert "deleted-chat" in deleted
 
 
-async def test_offline_delete_before_first_upload_is_durable_and_user_scoped(client, create_user):
+async def test_import_deletion_is_durable_and_archived_accounts_are_denied(client, create_user):
     _, alice = await create_user("alice")
     _, bob = await create_user("bob")
     response = await client.post("/api/account/import", headers=alice, json={
@@ -42,9 +42,8 @@ async def test_offline_delete_before_first_upload_is_durable_and_user_scoped(cli
     })
     assert response.status_code == 200
     assert (await client.post("/api/account/import", headers=alice, json=snapshot())).json()["skipped"] == 1
-    imported = (await client.post("/api/account/import", headers=bob, json=snapshot())).json()
-    assert imported["imported"]["conversations"] == 1
-    assert (await client.get("/api/account/conversation-deletions", headers=bob)).json()["items"] == []
+    assert (await client.post("/api/account/import", headers=bob, json=snapshot())).status_code == 401
+    assert (await client.get("/api/account/conversation-deletions", headers=bob)).status_code == 401
     found = []
     cursor = ""
     while True:

@@ -44,34 +44,6 @@ async def test_browser_login_uses_a_persistent_http_only_cookie(client, create_u
     assert (await client.get("/api/auth/me")).status_code == 401
 
 
-async def test_admin_login_sets_a_separate_cookie(client, create_user):
-    await create_user(username="admin", is_admin=True)
-    client.cookies.clear()
-    login = await client.post(
-        "/api/admin/auth/login", json={"username": "admin", "password": "password123"}
-    )
-    assert login.status_code == 200
-    assert "matrius_admin_session=" in login.headers.get("set-cookie", "")
-    me = await client.get("/api/admin/auth/me")
-    assert me.status_code == 200
-    assert "matrius_admin_session=" in me.headers.get("set-cookie", "")
-
-
-async def test_account_and_admin_cookies_coexist_and_logout_independently(client, create_user):
-    await create_user("alice")
-    await create_user("admin", is_admin=True)
-    # Both cookies are present; each route picks its own scope.
-    assert (await client.get("/api/admin/auth/me")).status_code == 200
-    assert (await client.get("/api/auth/me")).json()["username"] == "alice"
-
-    assert (await client.post("/api/auth/logout")).status_code == 200
-    assert (await client.get("/api/auth/me")).status_code == 401
-    assert (await client.get("/api/admin/auth/me")).status_code == 200
-
-    assert (await client.post("/api/admin/auth/logout")).status_code == 200
-    assert (await client.get("/api/admin/auth/me")).status_code == 401
-
-
 async def test_new_sessions_have_no_expiry(client, create_user, session_factory):
     from sqlalchemy import select
 
@@ -142,53 +114,22 @@ async def test_initial_password_change_requires_a_session(client):
     assert response.status_code == 401
 
 
-async def test_admin_can_create_and_disable_user(client, create_user):
-    _, admin_headers = await create_user(username="admin", is_admin=True)
-
-    created = await client.post(
-        "/api/admin/users", headers=admin_headers, json={"username": "bob"}
-    )
-    assert created.status_code == 201
-    password = created.json()["password"]
-    assert password == "bob@123"
-
-    login = await client.post(
-        "/api/admin/auth/login", json={"username": "bob", "password": password}
-    )
-    assert login.status_code == 403
-
-    normal_login = await client.post(
-        "/api/auth/login", json={"username": "bob", "password": password}
-    )
-    assert normal_login.status_code == 200
-
-    users = (await client.get("/api/admin/users", headers=admin_headers)).json()["items"]
-    bob = next(item for item in users if item["username"] == "bob")
-
-    disabled = await client.patch(
-        f"/api/admin/users/{bob['id']}", headers=admin_headers, json={"disabled": True}
-    )
-    assert disabled.status_code == 200
-
-    rejected = await client.post(
-        "/api/auth/login", json={"username": "bob", "password": password}
-    )
-    assert rejected.status_code == 403
+async def test_management_endpoints_are_removed(client, create_user):
+    _, headers = await create_user()
+    for path in ("/api/admin/users", "/api/admin/auth/me", "/api/admin/auth/login"):
+        response = await client.request("POST" if path.endswith("login") else "GET", path, headers=headers)
+        assert response.status_code == 404
 
 
-async def test_admin_session_requires_admin_scope(client, create_user):
-    _, user_headers = await create_user("alice")
-    assert (await client.get("/api/admin/auth/me", headers=user_headers)).status_code == 403
+async def test_legacy_account_cannot_login_or_use_an_old_token(client, create_user):
+    await create_user("owner")
+    _, archived = await create_user("archived")
+    response = await client.post("/api/auth/login", json={"username": "archived", "password": "password123"})
+    assert response.status_code == 401
+    for path in ("/api/auth/me", "/api/conversations", "/api/files", "/api/features"):
+        assert (await client.get(path, headers=archived)).status_code == 401
 
-    _, admin_headers = await create_user("admin", is_admin=True)
-    me = await client.get("/api/admin/auth/me", headers=admin_headers)
-    assert me.status_code == 200
-    assert me.json()["isAdmin"] is True
 
-
-async def test_admin_cannot_disable_self(client, create_user):
-    user_id, headers = await create_user(username="admin", is_admin=True)
-    response = await client.patch(
-        f"/api/admin/users/{user_id}", headers=headers, json={"disabled": True}
-    )
-    assert response.status_code == 400
+async def test_owner_has_no_administrator_role(client, create_user):
+    _, headers = await create_user()
+    assert "isAdmin" not in (await client.get("/api/auth/me", headers=headers)).json()

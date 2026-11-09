@@ -1,6 +1,6 @@
 const http = require('node:http');
 
-/** Same-origin API forwarding for Metro. Model relay is handled before this middleware. */
+/** Same-origin API forwarding for Vite. Model relay is handled before this middleware. */
 function handleDevApi(req, res, target = process.env.MATRIUS_DEV_API_URL) {
   if (!target || !req.url?.startsWith('/api/')) return false;
   let origin;

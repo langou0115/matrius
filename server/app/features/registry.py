@@ -10,7 +10,7 @@ class Feature:
     description: str
 
 
-# Register gated functionality here. Every password-ready account receives every
+# Register gated functionality here. The password-ready instance owner receives every
 # entry; there is no preview allow-list. Keep the list intentional: a feature is
 # only added here when its API routes need `require_feature` and the client needs
 # `useFeature`.
@@ -21,6 +21,6 @@ FEATURES = {
 
 
 def enabled_features(user: User) -> list[str]:
-    if user.disabled_at is not None or user.must_change_password:
+    if user.must_change_password:
         return []
     return list(FEATURES)

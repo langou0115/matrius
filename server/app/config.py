@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     # Everything persistent lives in DATA_DIR. The default is repo-local so a
     # plain `uv run` works without Docker; production mounts /data.
-    database_url: str = "sqlite+aiosqlite:///./.data/dev.db"
+    database_url: str = "sqlite+aiosqlite:///./.data/matrius.db"
     data_dir: str = "./.data"
     sqlite_busy_timeout_ms: int = 30000
 
@@ -85,8 +85,6 @@ class Settings(BaseSettings):
     tool_user_concurrency: int = 4
     # Anonymous local mode is keyed by client IP. Keep its budget below a signed-in
     # account's while still allowing a batched fetch (up to 4 pages) to run at once.
-    anonymous_tool_calls_per_minute: int = 20
-    anonymous_tool_concurrency: int = 4
 
     # Browser sessions stay signed in until logout/revocation. Browsers cap persistent
     # cookies (Chrome at 400 days), so refresh the cookie with this Max-Age on login.

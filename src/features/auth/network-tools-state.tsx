@@ -17,12 +17,10 @@ type Failure = { scope: string; message: string };
 
 const NetworkToolsContext = createContext<NetworkToolsState | null>(null);
 
-/** Shared by the personalization page and the chat runtime, so flipping the switch applies
-    to the very next reply without a reload. Anonymous local mode uses the `local` scope, so
-    the same switch works without signing in. */
+/** One server-backed preference; development previews only change memory. */
 export function NetworkToolsProvider({ children }: PropsWithChildren) {
-  const { user } = useAuth();
-  const scope = user && !user.mustChangePassword ? user.id : 'local';
+  const { request, isPreview: preview } = useAuth();
+  const scope = preview ? 'preview' : 'instance';
   // Keying the loaded value by scope means a sign-out or account switch is reflected by
   // derivation instead of a synchronous setState in the effect.
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -33,7 +31,7 @@ export function NetworkToolsProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const version = ++generation.current;
-    loadNetworkToolsEnabled(scope).then((enabled) => {
+    (preview ? Promise.resolve(true) : loadNetworkToolsEnabled(request)).then((enabled) => {
       if (generation.current !== version) return;
       setLoaded({ scope, enabled });
       setSavingFor(null);
@@ -43,7 +41,7 @@ export function NetworkToolsProvider({ children }: PropsWithChildren) {
       setFailure({ scope, message: '无法读取网络工具设置，已暂时关闭。' });
       setSavingFor(null);
     });
-  }, [scope]);
+  }, [scope, preview, request]);
 
   const ready = loaded?.scope === scope;
   const enabled = ready && Boolean(loaded?.enabled);
@@ -60,7 +58,7 @@ export function NetworkToolsProvider({ children }: PropsWithChildren) {
     setSavingFor(scope);
     setFailure(null);
     try {
-      await saveNetworkToolsEnabled(scope, next);
+      if (!preview) await saveNetworkToolsEnabled(request, next);
       if (generation.current !== version) return;
       setSavingFor(null);
     } catch {
@@ -69,7 +67,7 @@ export function NetworkToolsProvider({ children }: PropsWithChildren) {
       setSavingFor(null);
       setFailure({ scope, message: '网络工具设置未能保存，请重试。' });
     }
-  }, [loaded, scope]);
+  }, [loaded, scope, preview, request]);
 
   return <NetworkToolsContext value={{ enabled, ready, saving, error, setEnabled }}>{children}</NetworkToolsContext>;
 }

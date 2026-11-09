@@ -4,15 +4,14 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.admin import router as admin_router_module
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
-from app.auth.security import hash_password
+from app.auth.security import generate_token, hash_password, hash_token
 from app.cache import reset_cache
 from app.db import get_db
 from app.files import router as files_router_module
 from app.main import app
-from app.models import Base, User
+from app.models import AuthSession, Base, Instance, User
 from app.tools import files as tools_files_module
 from app.tools import router as tools_router_module
 
@@ -25,7 +24,6 @@ async def _noop(*args, **kwargs):
 def disable_limits(monkeypatch):
     reset_cache()
     for module in (
-        admin_router_module,
         auth_router_module,
         auth_dependencies,
         files_router_module,
@@ -83,21 +81,29 @@ async def create_user(client, session_factory):
         username: str = "alice",
         password: str = "password123",
         *,
-        is_admin: bool = False,
         must_change_password: bool = False,
     ):
         async with session_factory() as session:
             user = User(
                 username=username,
                 password_hash=hash_password(password),
-                is_admin=is_admin,
                 must_change_password=must_change_password,
             )
             session.add(user)
             await session.commit()
             user_id = user.id
 
-        path = "/api/admin/auth/login" if is_admin else "/api/auth/login"
+        async with session_factory() as session:
+            if await session.get(Instance, 1) is None:
+                session.add(Instance(id=1, owner_id=user_id))
+                await session.commit()
+            else:
+                # Legacy accounts remain in backups, but their old tokens must be denied.
+                token = generate_token()
+                session.add(AuthSession(user_id=user_id, token_hash=hash_token(token)))
+                await session.commit()
+                return user_id, {"Authorization": f"Bearer {token}"}
+        path = "/api/auth/login"
         response = await client.post(path, json={"username": username, "password": password})
         assert response.status_code == 200, response.text
         token = response.json()["token"]

@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError, invalid, not_found
 from app.files.parsing import TEXT_EXTENSIONS
+from app.files.service import file_lock
 from app.models import Conversation, StoredFile
 from app.storage import delete_object, get_object, put_object
 from app.utils import decode_cursor, encode_cursor, ensure_aware, to_ms, validate_client_id
@@ -169,7 +170,7 @@ async def upload_file(
         await db.close()
         stored_id = uuid.uuid4()
         content_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        object_key = f"users/{ctx.user.id}/{stored_id}/{filename}"
+        object_key = f"{stored_id}/{filename}"
         digest = hashlib.sha256(data).hexdigest()
 
         try:
@@ -377,14 +378,32 @@ async def rename_file(
     ctx: AuthContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    async with file_lock(file_id):
+        return await _rename_file(file_id, payload, ctx, db)
+
+
+async def _rename_file(
+    file_id: uuid.UUID, payload: FilePatch, ctx: AuthContext, db: AsyncSession,
+) -> dict[str, Any]:
     stored = await get_owned_file(db, ctx.user.id, file_id)
     filename = safe_filename(payload.filename)
     if PurePath(filename).suffix.lower() != PurePath(stored.filename).suffix.lower():
         raise invalid("不能修改文件扩展名。")
     if filename != stored.filename:
+        old_key = stored.object_key
+        new_key = f"{stored.id}/{filename}"
+        data = await asyncio.to_thread(get_object, old_key)
+        await asyncio.to_thread(put_object, new_key, data, stored.content_type)
         stored.filename = filename
+        stored.object_key = new_key
         stored.revision += 1
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            await asyncio.to_thread(delete_object, new_key)
+            raise
+        await asyncio.to_thread(delete_object, old_key)
     return file_out(stored)
 
 

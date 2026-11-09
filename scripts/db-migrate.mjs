@@ -58,7 +58,9 @@ export async function migrate({ env = process.env, directory = root } = {}) {
   await capture('uv', ['sync', '--python', '3.12', '--frozen', '--extra', 'dev'],
     { cwd: serverDir, env: environment });
 
-  console.log(`Applying migrations to ${join(dataDir, 'dev.db')}...`);
+  console.log(`Applying migrations to ${join(dataDir, 'matrius.db')}...`);
+  await capture('uv', ['run', '--no-sync', 'python', 'scripts/migrate-dev-database.py', dataDir],
+    { cwd: serverDir, env: environment });
   await capture('uv', ['run', '--no-sync', 'alembic', 'upgrade', 'head'],
     { cwd: serverDir, env: environment });
   // Fails when models changed without a matching migration.
@@ -67,6 +69,8 @@ export async function migrate({ env = process.env, directory = root } = {}) {
   const revision = await capture('uv', ['run', '--no-sync', 'alembic', 'current'],
     { cwd: serverDir, env: environment });
   const current = revision.trim().split('\n').pop() || 'unknown';
+  await capture('uv', ['run', '--no-sync', 'python', '-m', 'app.bootstrap'],
+    { cwd: serverDir, env: environment });
   console.log(`Database is at head: ${current}`);
   return { dataDir, revision: current };
 }
