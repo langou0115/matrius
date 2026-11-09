@@ -101,7 +101,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     // Keep reasoning from eating the whole reply window; document writes need the tokens.
     thinkingBudgets: thinkingBudgetsFor(config.maxOutput),
     // Match OpenStudio: serialize model tool calls, while each fetch batches four pages.
-    // Parallel four-page calls otherwise overflow the account's four-request cap.
+    // Parallel four-page calls otherwise overflow the instance's four-request cap.
     toolExecution: 'sequential',
   });
   // A truncated reply carries no text and no usable tool call, so retrying it with less
@@ -120,7 +120,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     if (input > 0) contextTokens = { input, output: tokenCount(usage.output), modelId: config.id, contextWindow: config.contextWindow };
   }
   const hasUsage = () => tokenUsage.input + tokenUsage.output + tokenUsage.cacheRead + tokenUsage.cacheWrite > 0;
-  /** Usage travels with the result so the caller can report it to the account. */
+  /** Usage travels with the result so the caller can report it to the instance. */
   const finish = (result: ReplyResult, outcome: string) => diagnostics.finish(
     hasUsage() ? { ...result, usage: { ...tokenUsage } } : result, outcome,
   );

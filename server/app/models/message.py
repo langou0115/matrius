@@ -24,7 +24,7 @@ from app.utils import utcnow
 class Message(RevisionMixin, TimestampMixin, Base):
     __tablename__ = "messages"
     __table_args__ = (
-        UniqueConstraint("user_id", "client_id", name="uq_messages_user_client"),
+        UniqueConstraint("instance_id", "client_id", name="uq_messages_instance_client"),
         UniqueConstraint("conversation_id", "position", name="uq_messages_conversation_position"),
         Index("ix_messages_conversation_position", "conversation_id", "position"),
         CheckConstraint("role IN ('user','assistant')", name="ck_messages_role"),
@@ -33,7 +33,7 @@ class Message(RevisionMixin, TimestampMixin, Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[int] = mapped_column(ForeignKey("instance.id", ondelete="CASCADE"), nullable=False)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )

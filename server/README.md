@@ -1,3 +1,5 @@
+本项目为无需登录的单用户实例；所有访问者共享数据。资源设置中的磁盘容量来自服务器数据目录所在文件系统（容器内为数据卷所在文件系统），不再使用账户配额。详见[实例访问](../doc/instance.md)。
+
 # Matrius Server
 
 Matrius 单用户实例的后端：FastAPI + SQLite + 本地文件存储 + 进程内缓存，搜索与网页抓取用纯 Python 实现。
@@ -14,11 +16,10 @@ server/
 │   ├── main.py              # 应用装配、CORS、请求日志、异常响应
 │   ├── config.py            # pydantic-settings 环境变量
 │   ├── db.py                # async engine / get_db / SQLite PRAGMA
-│   ├── cache.py             # 进程内缓存、滑动窗口限流、登录锁定
 │   ├── storage.py           # 本地文件存储（DATA_DIR/files）
-│   ├── auth/                # 登录、会话、依赖、限流
+│   ├── instance/            # 实例上下文与限流
 │   ├── conversations/       # 会话、消息、已读状态
-│   ├── account/             # 偏好、画像、记忆、存量导入
+│   ├── workspace/             # 偏好、画像、记忆、存量导入
 │   ├── files/               # 上传、下载、解析（PDF/Office/纯文本）
 │   ├── usage/               # 实例每日 Token 用量上报与查询
 │   ├── tools/               # DuckDuckGo/Bing 搜索、网页读取、文件读/检索
@@ -35,7 +36,7 @@ server/
 
 开发在仓库根目录执行 `npm run dev`：本机 uv 按锁文件安装依赖、启动 FastAPI 热重载，SQLite 数据库和上传文件都在 `server/.data`。全程不连接服务器，也不需要 Docker、SSH 或 `server/.env`；启动时自动迁移开发库并运行 `alembic check`。开发模式下后端直接读取仓库根目录的 `.env.local`，文件变化后代理、搜索/抓取预算、限流等运行时设置会在下一次请求生效，无需重启；端口、数据库路径、管理员初始化和日志级别仍需重启。
 
-正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，自动应用迁移并刷新实例所有者密码，健康检查后退出；不挂载源码、不热重载。部署成功后功能清单中的能力即对所有账号开放。完整说明见[开发与验证](../doc/development.md)。
+正式发布用 `npm run deploy`，服务器构建包含源码的 Web/API 生产镜像，自动应用迁移，健康检查后退出；不挂载源码、不热重载。部署成功后功能清单中的能力即对所有实例开放。完整说明见[开发与验证](../doc/development.md)。
 
 本机单独安装后端测试依赖：
 
@@ -61,7 +62,6 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 
 提交前检查生成的迁移：索引、约束、级联删除必须显式存在。涉及迁移时应在临时空 SQLite 上验证全部迁移可执行（`tests/test_migrations.py` 覆盖 `upgrade head` 与 `check`）。生产部署时由 API 容器入口执行 `alembic upgrade head` 和 `alembic check`，不再有独立的 `migrate` 容器。
 
-`app.bootstrap` 创建或读取唯一所有者绑定，应用 `INITIAL_ADMIN_*` 配置中的所有者密码并迁移文件路径。变量名保留以兼容部署；不再代表管理员角色。旧多账号库必须指定现有所有者，其他历史数据保留但不可访问。详见[实例认证](../doc/auth.md)。
 
 ## 环境变量
 
@@ -86,22 +86,15 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `FETCH_TIMEOUT_SECONDS` | `45` | 整次网页读取截止时间（含排队与提取） |
 | `FETCH_MAX_ATTEMPTS` | `2` | 下载最多尝试次数；仅超时/传输错误/5xx/短 429 重试 |
 | `FETCH_MAX_BYTES` | `5242880` | 网页读取响应体上限（5 MiB） |
-| `AUTH_COOKIE_SECONDS` | `34560000` | 浏览器会话 Cookie 有效期（400 天；服务端会话不过期） |
-| `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | 空 | 空库创建管理员；已有用户时按当前值更新密码 |
 | `MAX_UPLOAD_BYTES` | `20971520` | 单文件上限（20 MiB） |
-| `STORAGE_QUOTA_BYTES` | `536870912` | 每用户存储配额（512 MiB） |
 | `FETCH_MAX_CHARS` | `50000` | 单次网页读取最大字符数 |
 
-生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；开发时后端会在文件变化后自动重新读取运行时设置，生产容器仍只使用部署时写入的环境变量。其中浏览器 Cookie 有效期、限额、`LOG_LEVEL` 等通用项会在部署时写入服务器的 `production.env`。代理分两个键：`WEBTOOL_PROXY_URL` 只用于本机开发、不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 在部署时映射为服务器的 `WEBTOOL_PROXY_URL`，必须是容器可达地址（如 `host.docker.internal`，loopback 会被拒绝）。不要把真实密钥提交到仓库。
+生产配置在首次 `npm run deploy` 时自动生成到服务器 `<workspace>/production.env`；也可通过 `REMOTE_ENV_FILE` 使用已有文件。模板见仓库 `docker-compose/.env.production.example`：其中部署段（SSH 目标、公开端口、工作目录）由本机 `docker-compose/.env.production` 读取，运行时段描述服务器上的生成文件。`.env.local` 只放本地开发与通用应用设置；开发时后端会在文件变化后自动重新读取运行时设置，生产容器仍只使用部署时写入的环境变量。其中限额、`LOG_LEVEL` 等通用项会在部署时写入服务器的 `production.env`。代理分两个键：`WEBTOOL_PROXY_URL` 只用于本机开发、不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 在部署时映射为服务器的 `WEBTOOL_PROXY_URL`，必须是容器可达地址（如 `host.docker.internal`，loopback 会被拒绝）。不要把真实密钥提交到仓库。
 
 ## API 概览
 
-所有业务接口位于 `/api`，除登录和健康检查外都需要 Web 会话 Cookie 或 `Authorization: Bearer <token>`。
 
 ```text
-POST   /api/auth/login
-GET    /api/auth/me
-POST   /api/auth/logout | /api/auth/change-password
 
 GET    /api/conversations                 # keyset 分页
 POST   /api/conversations
@@ -118,7 +111,7 @@ GET     /api/profile/fields
 GET/PUT/DELETE /api/profile/fields/{key}
 GET/POST /api/memories
 PATCH/DELETE /api/memories/{id}
-POST   /api/account/import
+POST   /api/workspace/import
 
 POST   /api/files                         # multipart
 GET    /api/files?conversationId=
@@ -153,7 +146,6 @@ GET    /api/health/ready
 - 文件读取与 grep 只对已上传文件生效；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
 - 搜索优先 `ddgs` 的 DuckDuckGo 后端，只有失败、超时、限流或零结果时才在剩余预算内回退 Bing RSS；整次默认 8 秒，连续失败会短暂熔断。DuckDuckGo 的 HTML 接口使用 GET：部分代理地址会对 POST 返回 HTTP 202 验证页；Bing 复用长连接并会重试一次瞬时传输错误。结果去重、按关键词相关性排序并优先保证域名多样性。可达来源零结果返回 `[]` 且不缓存；只有实际尝试的所有来源都失败才返回 502。
 - 网页读取前校验 URL：仅 http/https、禁止凭据、localhost、私网/链路本地/云元数据地址，并解析 DNS 检查全部地址；最多手动跟随 5 次重定向，每一跳重新校验。缺失或 `application/octet-stream` 的响应会嗅探前 4 KiB，二进制内容直接拒绝；HTML 依次用 trafilatura（precision → recall）、`html_markdown.py`、lxml 提取。`WEBTOOL_PROXY_URL` 同时用于搜索与抓取，配置后始终走代理。生产环境仍建议在主机/云防火墙限制 API 容器的出站网段。
-- 限流与登录锁定使用进程内滑动窗口：登录按 IP 与用户名，登录失败 15 次锁定 15 分钟；其余接口按用户。重启后清零，因此 API 必须单 worker 运行。
 
 ## 容器
 
@@ -172,8 +164,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allo
 
 不要增加 `--workers`：缓存和限流是进程内状态。
 
-部署统一使用 `npm run deploy`：首次执行自动初始化数据卷、数据库与空库所有者，之后每次部署都会备份数据库、应用迁移、刷新实例所有者密码并更新 Web/API 与 Caddy。生产只运行 Caddy / Web / API 三个容器。
+部署统一使用 `npm run deploy`：首次执行自动初始化数据卷、数据库与实例记录，之后每次部署都会备份数据库、应用迁移、更新 Web/API 与 Caddy。生产只运行 Caddy / Web / API 三个容器。
 
-## 测试账号与新功能开放
-
-账号由已有管理员正常创建并完成首次改密；不自动创建测试账号或设置默认测试密码。新增功能在 `app/features/registry.py` 登记，接口依赖 `require_feature(id)`；登记项对所有完成首次改密且未停用的账号生效，在本机验证通过后通过手动 CD 发布。`UserOut.features` 和 `/api/features` 返回当前账号能力。参考[认证规则](../doc/auth.md#同一地址的账号功能开关)。
+## 测试实例与新功能开放

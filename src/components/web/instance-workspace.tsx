@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 import { router, type Href } from '@/router';
 
-import { ApiError } from '@/core/api/auth-session';
+import { ApiError } from '@/core/api/instance-client';
 import { StorageErrorToast } from '@/components/web/storage-error-toast';
 import { ChatProvider, useChat } from '@/features/chat/chat-state';
 import { DraftProvider } from '@/features/chat/draft-state';
@@ -13,11 +13,10 @@ import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
 import { MemoryProvider, useMemory } from '@/features/memory/memory-state';
-import { useAuth } from '@/features/auth/auth-state';
+import { useInstance } from '@/features/instance/instance-state';
 import { createCloudWorkspaceRepository } from '@/features/workspace/cloud-workspace-repository';
 import { workspaceScope } from '@/features/workspace/workspace-mode';
-import { InstanceLogin } from '@/features/auth/instance-login';
-import { NetworkToolsProvider } from '@/features/auth/network-tools-state';
+import { NetworkToolsProvider } from '@/features/instance/network-tools-state';
 import { readLastConversation, readLastRouteId, writeLastConversation } from '@/features/chat/last-conversation';
 
 const ERROR_MIN_VISIBLE_MS = 5000;
@@ -47,7 +46,6 @@ function clearSaveErrorSoon(timers: ErrorTimers, setError: (message: string | nu
 function saveErrorMessage(reason: unknown): string {
   if (reason instanceof ApiError) {
     if (reason.status === 0) return '最新修改未能保存到云端：暂时无法连接服务器。请检查网络后重试。';
-    if (reason.status === 401) return '最新修改未能保存到云端：登录已失效，请重新登录后重试。';
     if (reason.status === 429) return '最新修改未能保存到云端：写入过于频繁（429）。请先保留未保存内容，稍后刷新页面。';
     return `最新修改未能保存到云端：${reason.message}（${reason.status}${reason.code ? ` ${reason.code}` : ''}）。请先保留未保存内容，再刷新页面。`;
   }
@@ -117,13 +115,12 @@ function RememberLastConversation({ scope }: { scope: string }) {
 }
 
 export function InstanceWorkspace({ children, preview }: PropsWithChildren<{ preview: boolean }>) {
-  const auth = useAuth();
-  const resolved = workspaceScope(auth, preview);
-  if (resolved === 'locked') return <InstanceLogin />;
+  const instance = useInstance();
+  const resolved = workspaceScope(instance, preview);
   if (resolved === 'pending') return <div className="storage-screen" role="status">
     <strong>Matrius</strong>
-    <p>{auth.status === 'unavailable' ? '无法连接实例，请检查网络后重试。' : '正在验证实例访问权限…'}</p>
-    {auth.status === 'unavailable' && <button onClick={() => void auth.refresh()}>重新连接</button>}
+    <p>{instance.status === 'unavailable' ? '无法连接实例，请检查网络后重试。' : '正在连接实例…'}</p>
+    {instance.status === 'unavailable' && <button onClick={() => void instance.refresh()}>重新连接</button>}
   </div>;
   return <ModelProvider preview={preview}><ScopedWorkspace key={resolved} scope={resolved} preview={preview}>{children}</ScopedWorkspace></ModelProvider>;
 }
@@ -137,15 +134,15 @@ async function waitForPath(path: string) {
 }
 
 function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ preview: boolean; scope: string }>) {
-  const auth = useAuth();
+  const instance = useInstance();
   const [cloud] = useState(() => createCloudWorkspaceRepository(async <T,>(path: string, init?: RequestInit) => {
     const matches = () => {
-      const current = auth.getSnapshot();
-      return Boolean(current.user && !current.user.mustChangePassword);
+      const current = instance.getSnapshot();
+      return Boolean(current.status === 'ready');
     };
-    if (!matches()) throw new Error('实例登录已失效，请重新登录。');
-    const result = await auth.request<T>(path, init);
-    if (!matches()) throw new Error('实例登录已失效，请重新登录。');
+    if (!matches()) throw new Error('实例连接不可用，请重试。');
+    const result = await instance.request<T>(path, init);
+    if (!matches()) throw new Error('实例连接不可用，请重试。');
     return result;
   }));
   const [loaded, setLoaded] = useState<(LoadedWorkspace & { preview: boolean }) | null>(null);

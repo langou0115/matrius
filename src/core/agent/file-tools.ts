@@ -1,12 +1,12 @@
 import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import { Type, type Static } from 'typebox';
-import { ApiError } from '@/core/api/auth-session';
+import { ApiError } from '@/core/api/instance-client';
 
 import type { MessageFile, WebActivity } from './types';
 
 export const FILE_TOOL_NAME = 'file';
 
-/** Appended to the system prompt only when the account has the `files` feature. */
+/** Appended to the system prompt only when the instance has the `files` feature. */
 export function fileToolsSystemPrompt(): string {
   return [
     '你可以使用单一的 `file` 工具处理附件，并在资料库中创建或编辑文档。',
@@ -301,7 +301,7 @@ function fileFromPayload(value: unknown): MessageFile | null {
 
 function fileListText(payload: Record<string, unknown>): string {
   const items = Array.isArray(payload.files) ? payload.files : [];
-  if (!items.length) return 'No files are available in this conversation or account.';
+  if (!items.length) return 'No files are available in this conversation or instance.';
   const lines = items.flatMap((item) => {
     if (!isRecord(item)) return [];
     const id = getString(item.id);

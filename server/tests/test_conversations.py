@@ -43,8 +43,8 @@ async def _post_message(client, headers, conversation_id, role, content, **extra
     )
 
 
-async def test_create_is_idempotent_by_client_id(client, create_user):
-    _, headers = await create_user()
+async def test_create_is_idempotent_by_client_id(client, create_instance):
+    _, headers = await create_instance()
     client_id = str(uuid.uuid4())
     first = await _create_conversation(client, headers, client_id=client_id)
     second = await _create_conversation(client, headers, client_id=client_id)
@@ -54,8 +54,8 @@ async def test_create_is_idempotent_by_client_id(client, create_user):
     assert len(listing["items"]) == 1
 
 
-async def test_message_positions_and_read_state(client, create_user):
-    _, headers = await create_user()
+async def test_message_positions_and_read_state(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
 
     user_message = await _post_message(client, headers, conversation["id"], "user", "hi")
@@ -94,8 +94,8 @@ async def test_message_positions_and_read_state(client, create_user):
     assert stale.json()["error"]["current"]["revision"] == body["revision"]
 
 
-async def test_message_process_round_trips_and_can_be_cleared(client, create_user):
-    _, headers = await create_user()
+async def test_message_process_round_trips_and_can_be_cleared(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     process = [
         {"id": "thinking:1:0", "kind": "thinking", "content": "先想一下", "status": "complete",
@@ -133,8 +133,8 @@ async def test_message_process_round_trips_and_can_be_cleared(client, create_use
     assert cleared.json()["process"] is None
 
 
-async def test_steering_flag_round_trips_and_is_limited_to_user_messages(client, create_user):
-    _, headers = await create_user()
+async def test_steering_flag_round_trips_and_is_limited_to_user_messages(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
 
     await _post_message(client, headers, conversation["id"], "user", "question")
@@ -154,8 +154,8 @@ async def test_steering_flag_round_trips_and_is_limited_to_user_messages(client,
     assert [item["steering"] for item in detail["messages"]] == [False, False, True, False]
 
 
-async def test_context_summary_round_trips_and_can_be_cleared(client, create_user):
-    _, headers = await create_user()
+async def test_context_summary_round_trips_and_can_be_cleared(client, create_instance):
+    _, headers = await create_instance()
     summary = {"coveredUntilMessageId": "message-1", "summary": "Older turns in brief"}
     created = await client.post(
         "/api/conversations",
@@ -194,8 +194,8 @@ async def test_context_summary_round_trips_and_can_be_cleared(client, create_use
     assert empty.status_code == 422, empty.text
 
 
-async def test_list_pagination(client, create_user):
-    _, headers = await create_user()
+async def test_list_pagination(client, create_instance):
+    _, headers = await create_instance()
     for index in range(3):
         await _create_conversation(client, headers, title=f"Conversation {index}")
         await asyncio.sleep(0.01)
@@ -216,8 +216,8 @@ async def test_list_pagination(client, create_user):
     assert len(ids) == 3
 
 
-async def test_message_pagination(client, create_user):
-    _, headers = await create_user()
+async def test_message_pagination(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     for index in range(5):
         await _post_message(client, headers, conversation["id"], "user", f"message {index}")
@@ -238,27 +238,13 @@ async def test_message_pagination(client, create_user):
     assert older["nextCursor"] is None
 
 
-async def test_archived_users_cannot_read_or_delete(client, create_user):
-    _, alice = await create_user(username="alice")
-    _, bob = await create_user(username="bob")
-    conversation = await _create_conversation(client, alice)
 
-    assert (
-        await client.get(f"/api/conversations/{conversation['id']}", headers=bob)
-    ).status_code == 401
-    assert (
-        await client.delete(
-            f"/api/conversations/{conversation['id']}?baseRevision=1", headers=bob
-        )
-    ).status_code == 401
-
-
-async def test_delete_cascades_messages(client, create_user, session_factory):
+async def test_delete_cascades_messages(client, create_instance, session_factory):
     from sqlalchemy import func, select
 
     from app.models import Message
 
-    _, headers = await create_user()
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     await _post_message(client, headers, conversation["id"], "user", "hello")
     deleted = await client.delete(
@@ -274,8 +260,8 @@ async def test_delete_cascades_messages(client, create_user, session_factory):
     assert count == 0
 
 
-async def test_rejects_duplicate_user_message_id(client, create_user):
-    _, headers = await create_user()
+async def test_rejects_duplicate_user_message_id(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     message_id = str(uuid.uuid4())
     first = await client.post(
@@ -294,8 +280,8 @@ async def test_rejects_duplicate_user_message_id(client, create_user):
     assert second.json()["position"] == 1
 
 
-async def test_message_patch_can_clear_optional_fields(client, create_user):
-    _, headers = await create_user()
+async def test_message_patch_can_clear_optional_fields(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     created = await _post_message(
         client, headers, conversation["id"], "assistant", "partial",
@@ -320,8 +306,8 @@ async def test_message_patch_can_clear_optional_fields(client, create_user):
         assert invalid.status_code == 422, invalid.text
 
 
-async def test_web_activity_steps_round_trip_and_clear(client, create_user):
-    _, headers = await create_user()
+async def test_web_activity_steps_round_trip_and_clear(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     activities = [{
         "id": "call-1", "kind": "search", "status": "complete", "query": "资料",
@@ -346,8 +332,8 @@ async def test_web_activity_steps_round_trip_and_clear(client, create_user):
     assert cleared.json()["activities"] is None
 
 
-async def test_web_activity_urls_must_be_http(client, create_user):
-    _, headers = await create_user()
+async def test_web_activity_urls_must_be_http(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     response = await _post_message(
         client, headers, conversation["id"], "assistant", "answer",
@@ -357,8 +343,8 @@ async def test_web_activity_urls_must_be_http(client, create_user):
     assert response.status_code == 422, response.text
 
 
-async def test_message_file_metadata_round_trips(client, create_user):
-    _, headers = await create_user()
+async def test_message_file_metadata_round_trips(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     first = await _upload(client, headers, "report.txt", b"hello world")
     second = await _upload(client, headers, "chart.txt", b"data")
@@ -392,8 +378,8 @@ async def test_message_file_metadata_round_trips(client, create_user):
     assert [item["id"] for item in detail["messages"][0]["files"]] == [second["id"]]
 
 
-async def test_message_patch_replaces_files_and_checks_ownership(client, create_user):
-    _, headers = await create_user()
+async def test_message_patch_replaces_files_and_checks_ownership(client, create_instance):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     other_conversation = await _create_conversation(client, headers, title="Other")
     first = await _upload(client, headers, "one.txt")
@@ -436,8 +422,8 @@ async def test_message_patch_replaces_files_and_checks_ownership(client, create_
     assert not_owned.status_code == 422
 
 
-async def test_get_conversation_loads_files_once_per_page(client, create_user, engine):
-    _, headers = await create_user()
+async def test_get_conversation_loads_files_once_per_page(client, create_instance, engine):
+    _, headers = await create_instance()
     conversation = await _create_conversation(client, headers)
     first = await _upload(client, headers, "one.txt")
     second = await _upload(client, headers, "two.txt")

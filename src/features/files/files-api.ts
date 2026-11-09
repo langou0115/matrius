@@ -26,7 +26,7 @@ export type StorageCategory = { bytes: number; count: number };
 /** `files` is every non-image entry, so `files` and `images` add up to `used`. */
 export type StorageUsage = {
   used: number;
-  quota: number;
+  disk: { total: number; used: number; free: number };
   files?: StorageCategory;
   images?: StorageCategory;
 };

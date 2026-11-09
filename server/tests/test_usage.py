@@ -15,8 +15,8 @@ EMPTY_LIFETIME = {
 }
 
 
-async def test_usage_accumulates_by_local_day(client, create_user):
-    _, headers = await create_user()
+async def test_usage_accumulates_by_local_day(client, create_instance):
+    _, headers = await create_instance()
     today = utcnow().date()
     for payload in (
         {"date": today.isoformat(), "inputTokens": 1000, "outputTokens": 500},
@@ -58,36 +58,11 @@ async def test_usage_accumulates_by_local_day(client, create_user):
     }
 
 
-async def test_usage_belongs_to_the_instance_and_archived_tokens_are_denied(client, create_user):
-    _, alice = await create_user()
-    _, bob = await create_user(username="bob")
-    today = utcnow().date().isoformat()
-    assert (
-        await client.post("/api/usage", headers=alice, json={"date": today, "inputTokens": 50})
-    ).status_code == 200
-    assert (
-        await client.post("/api/usage", headers=bob, json={"date": today, "outputTokens": 70})
-    ).status_code == 401
-
-    alice_usage = (await client.get("/api/usage", headers=alice)).json()
-    assert (await client.get("/api/usage", headers=bob)).status_code == 401
-    assert alice_usage["lifetime"]["total"] == 50
-    assert alice_usage["items"] == [{
-        "date": today,
-        "input": 50,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "estimated": False,
-        "total": 50,
-        "requests": 1,
-    }]
-
 
 async def test_usage_rejects_skewed_dates_negative_counts_and_anonymous_callers(
-    client, create_user
+    client, create_instance
 ):
-    _, headers = await create_user()
+    _, headers = await create_instance()
     future = (utcnow().date() + timedelta(days=5)).isoformat()
     response = await client.post(
         "/api/usage", headers=headers, json={"date": future, "inputTokens": 1}
@@ -100,13 +75,13 @@ async def test_usage_rejects_skewed_dates_negative_counts_and_anonymous_callers(
     # The login above also set a session cookie, so drop it before checking anonymous access.
     client.cookies.clear()
     response = await client.post("/api/usage", json={"inputTokens": 1})
-    assert response.status_code == 401
+    assert response.status_code == 200
     response = await client.get("/api/usage")
-    assert response.status_code == 401
+    assert response.status_code == 200
 
 
-async def test_usage_window_starts_at_the_requested_day(client, create_user):
-    _, headers = await create_user()
+async def test_usage_window_starts_at_the_requested_day(client, create_instance):
+    _, headers = await create_instance()
     today = utcnow().date()
     yesterday = (today - timedelta(days=1)).isoformat()
     response = await client.post(
@@ -124,8 +99,8 @@ async def test_usage_window_starts_at_the_requested_day(client, create_user):
     assert [item["date"] for item in full_window["items"]] == [yesterday]
 
 
-async def test_usage_ignores_empty_reports(client, create_user):
-    _, headers = await create_user()
+async def test_usage_ignores_empty_reports(client, create_instance):
+    _, headers = await create_instance()
     response = await client.post(
         "/api/usage", headers=headers, json={"inputTokens": 0, "outputTokens": 0}
     )
@@ -135,11 +110,11 @@ async def test_usage_ignores_empty_reports(client, create_user):
     assert usage["lifetime"] == EMPTY_LIFETIME
 
 
-async def test_usage_requires_the_account_feature(client, create_user, monkeypatch):
+async def test_usage_requires_the_account_feature(client, create_instance, monkeypatch):
     from app.usage import router as usage_router_module
 
-    _, headers = await create_user()
-    monkeypatch.setattr(usage_router_module, "enabled_features", lambda _user: [])
+    _, headers = await create_instance()
+    monkeypatch.setattr(usage_router_module, "enabled_features", lambda: [])
     assert (await client.get("/api/usage", headers=headers)).status_code == 403
     response = await client.post("/api/usage", headers=headers, json={"inputTokens": 1})
     assert response.status_code == 403
@@ -194,8 +169,8 @@ async def _seed_history(client, headers):
     return conversation
 
 
-async def test_backfill_estimates_history_once_and_merges_with_reports(client, create_user):
-    _, headers = await create_user()
+async def test_backfill_estimates_history_once_and_merges_with_reports(client, create_instance):
+    _, headers = await create_instance()
     await _seed_history(client, headers)
 
     response = await client.post("/api/usage/backfill", headers=headers, json={})
@@ -231,8 +206,8 @@ async def test_backfill_estimates_history_once_and_merges_with_reports(client, c
     assert merged["lifetime"]["requests"] == usage["lifetime"]["requests"] + 1
 
 
-async def test_backfill_marks_empty_history_without_rows(client, create_user):
-    _, headers = await create_user()
+async def test_backfill_marks_empty_history_without_rows(client, create_instance):
+    _, headers = await create_instance()
     response = await client.post("/api/usage/backfill", headers=headers, json={})
     assert response.status_code == 200
     assert response.json() == {"backfilled": True, "skipped": False, "days": 0, "requests": 0, "total": 0}

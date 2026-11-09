@@ -1,6 +1,6 @@
 import { compactActivities } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
-import { ApiError } from '@/core/api/auth-session';
+import { ApiError } from '@/core/api/instance-client';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
 import {
@@ -63,7 +63,7 @@ async function withRevisionRecovery<T>(baseRevision: number, run: (baseRevision:
   }
 }
 
-/** An account-scoped, memory-only REST repository. It never reads or writes IndexedDB.
+/** An settings-scoped, memory-only REST repository. It never reads or writes IndexedDB.
  * Successful operations advance their own baseline so retrying a partial save is safe. */
 export function createCloudWorkspaceRepository(request: ApiRequest) {
   const conversations = new Map<string, { remote: RecordVersion; value: Conversation }>();
@@ -73,7 +73,7 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
   let memory: MemoryPreferences;
   let appearanceRevision = 0;
   let profileRevision = 0;
-  // `null` means the account has no memory field yet, so the first write has no base revision.
+  // `null` means the instance has no memory field yet, so the first write has no base revision.
   let memoryRevision: number | null = null;
   let loaded = false;
 

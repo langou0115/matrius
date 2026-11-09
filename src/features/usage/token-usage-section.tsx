@@ -161,7 +161,7 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
 
   return <section className="settings-section" aria-label="用量统计">
 
-    {!enabled && <p className="settings-footnote">登录后可查看账号的 Token 用量。</p>}
+    {!enabled && <p className="settings-footnote">连接实例后可查看 Token 用量。</p>}
     {enabled && !report && !failed && <p className="settings-footnote" role="status">
       {backfilling ? '正在估算历史用量…' : '正在获取用量…'}
     </p>}

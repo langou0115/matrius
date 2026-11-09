@@ -39,8 +39,6 @@ export function AboutSettingsScreen() {
   return <SettingsPage title="关于 Matrius" description="应用信息与实例存储说明。">
       <section className="settings-section" aria-labelledby="about-heading"><h2 id="about-heading">关于</h2>
         <div className="about-card"><span className="about-logo"><BrandMark size={38} /></span><div><h3>Matrius</h3><p>一个安静、自由的 AI 对话空间。</p></div><span className="version-label">v1.0.0</span></div>
-        <div className="about-row"><span>运行模式</span><span>单用户实例</span></div>
-        <div className="about-row"><span>数据存储</span><span>此实例的数据库与文件目录</span></div>
       </section>
   </SettingsPage>;
 }

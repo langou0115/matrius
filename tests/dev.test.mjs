@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  assertAdminPassword, availablePort, devAdminCredentials, devApiArgs, devBackendEnv, devDataDir, devEnvironment, devWebArgs,
+  availablePort, devApiArgs, devBackendEnv, devDataDir, devEnvironment, devWebArgs,
   devWebEnv, devPorts, resetDatabase, resetTargets, sqliteUrl, supervise,
 } from '../scripts/dev.mjs';
 import { migrationEnvironment } from '../scripts/db-migrate.mjs';
@@ -54,8 +54,6 @@ test('development environment is local-only and never inherits production data l
   assert.equal(env.APP_URL, 'http://localhost:8081');
   assert.equal(env.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/matrius.db');
   assert.equal(env.DATA_DIR, dataDir);
-  assert.equal(env.INITIAL_ADMIN_USERNAME, 'prod-admin');
-  assert.equal(env.INITIAL_ADMIN_PASSWORD, 'production');
   assert.equal(devDataDir('/repo'), join('/repo', 'server', '.data'));
 });
 
@@ -74,8 +72,6 @@ test('development backend reads runtime settings from the env file instead of fr
     envFile,
   });
   assert.equal(env.MATRIUS_DEV_ENV_FILE, envFile);
-  assert.equal(env.INITIAL_ADMIN_USERNAME, 'alice');
-  assert.equal(env.INITIAL_ADMIN_PASSWORD, 'local-secret');
   assert.equal(env.DATABASE_URL, 'sqlite+aiosqlite:////repo/server/.data/matrius.db');
   assert.equal(env.DATA_DIR, '/repo/server/.data');
   // Runtime keys stay in .env.local; copying them here would override every later edit.
@@ -105,23 +101,6 @@ test('development API watches application code and isolates Windows console sign
     assert.equal(args[args.indexOf('--port') + 1], '8000');
     if (platform !== 'win32') assert.equal(args[2], 'uvicorn');
   }
-});
-
-test('development admin credentials use INITIAL_ADMIN_* and local defaults', () => {
-  assert.deepEqual(devAdminCredentials({}), { username: 'admin', password: 'dev-password' });
-  assert.deepEqual(
-    devAdminCredentials({ INITIAL_ADMIN_USERNAME: 'alice', INITIAL_ADMIN_PASSWORD: 'local-secret' }),
-    { username: 'alice', password: 'local-secret' },
-  );
-  assert.deepEqual(
-    devAdminCredentials({ DEV_ADMIN_USERNAME: 'ignored', DEV_ADMIN_PASSWORD: 'ignored' }),
-    { username: 'admin', password: 'dev-password' },
-  );
-});
-
-test('placeholder administrator passwords stop development', () => {
-  assert.throws(() => assertAdminPassword({ INITIAL_ADMIN_PASSWORD: 'CHANGE-ME' }), /change-me/);
-  assert.doesNotThrow(() => assertAdminPassword({ INITIAL_ADMIN_PASSWORD: 'real-password' }));
 });
 
 test('--reset-db only removes the development database and uploaded files', async (t) => {

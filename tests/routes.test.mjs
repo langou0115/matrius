@@ -21,11 +21,17 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   window.matchMedia = () => ({
     matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
   });
-  // Unauthenticated: screens must still render their signed-out state.
-  globalThis.fetch = async () => new Response(
-    JSON.stringify({ error: { code: 'unauthorized', message: 'unauthenticated' } }),
-    { status: 401, headers: { 'Content-Type': 'application/json' } },
-  );
+  globalThis.fetch = async (url) => {
+    const path = String(url);
+    let data = { items: [], nextCursor: null };
+    if (path === '/api/features') data = { features: [{ id: 'files' }, { id: 'usage' }] };
+    if (path === '/api/preferences') data = { themeId: 'twitter', mode: 'system', revision: 1 };
+    if (path === '/api/profile') data = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '', revision: 1 };
+    if (path.startsWith('/api/profile/fields/')) data = { value: '{}', revision: 1 };
+    if (path === '/api/files/usage') data = { used: 0, disk: { total: 1000, used: 600, free: 400 } };
+    if (path.startsWith('/api/usage')) data = { items: [], lifetime: { total: 0 }, estimated: { total: 0 }, backfilled: true };
+    return Response.json(data);
+  };
 
   const { act } = await import('react');
   const { createRoot } = await import('react-dom/client');
@@ -46,10 +52,7 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
       const html = container.innerHTML;
       assert.ok(html.length > 500, `${path} rendered ${html.length} bytes`);
       assert.doesNotMatch(html, /界面渲染失败/u, `${path} must not hit the error boundary`);
-      if (!path.startsWith('/mock')) {
-        assert.match(html, /登录以访问你的单用户实例/u, `${path} must require instance login`);
-        assert.equal(container.querySelector('.composer'), null, 'signed-out visitors cannot mount the chat runtime');
-      }
+      assert.doesNotMatch(html, /登录以访问|前往登录/u);
     } finally {
       await act(async () => { root.unmount(); });
       container.remove();

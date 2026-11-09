@@ -9,7 +9,7 @@ export type StagedAttachment = {
   id: string;
   file: globalThis.File;
   preview: string | null;
-  /** Cloud upload state; absent when the account cannot use the Library. */
+  /** Cloud upload state; absent when the instance cannot use the Library. */
   status?: 'uploading' | 'ready' | 'error';
   fileId?: string;
   serverFile?: LibraryFile;

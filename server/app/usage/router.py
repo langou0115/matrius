@@ -10,10 +10,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthContext, read_rate_limit, write_rate_limit
 from app.db import get_db
 from app.errors import AppError, invalid
 from app.features.registry import enabled_features
+from app.instance.dependencies import InstanceContext, read_rate_limit, write_rate_limit
 from app.models import (
     Conversation,
     Message,
@@ -60,17 +60,17 @@ def _report_day(value: calendar_date | None) -> calendar_date:
     return day
 
 
-def _require_enabled(ctx: AuthContext) -> AuthContext:
-    if "usage" not in enabled_features(ctx.user):
-        raise AppError(403, "feature_unavailable", "当前账号尚未开放此功能。")
+def _require_enabled(ctx: InstanceContext) -> InstanceContext:
+    if "usage" not in enabled_features():
+        raise AppError(403, "feature_unavailable", "当前实例尚未开放此功能。")
     return ctx
 
 
-async def usage_read(ctx: AuthContext = Depends(read_rate_limit)) -> AuthContext:
+async def usage_read(ctx: InstanceContext = Depends(read_rate_limit)) -> InstanceContext:
     return _require_enabled(ctx)
 
 
-async def usage_write(ctx: AuthContext = Depends(write_rate_limit)) -> AuthContext:
+async def usage_write(ctx: InstanceContext = Depends(write_rate_limit)) -> InstanceContext:
     return _require_enabled(ctx)
 
 
@@ -82,7 +82,7 @@ def _totals(**values: int) -> dict[str, int]:
 @router.post("")
 async def record_usage(
     payload: UsageReport,
-    ctx: AuthContext = Depends(usage_write),
+    ctx: InstanceContext = Depends(usage_write),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
     # A stopped or failed reply can still have produced zero tokens; nothing to accumulate.
@@ -93,7 +93,7 @@ async def record_usage(
     now = utcnow()
     statement = sqlite_insert(TokenUsageDaily).values(
         id=uuid.uuid4(),
-        user_id=ctx.user.id,
+        instance_id=ctx.instance_id,
         day=_report_day(payload.date),
         input_tokens=payload.inputTokens,
         output_tokens=payload.outputTokens,
@@ -104,7 +104,7 @@ async def record_usage(
         updated_at=now,
     )
     statement = statement.on_conflict_do_update(
-        index_elements=["user_id", "day"],
+        index_elements=["instance_id", "day"],
         set_={
             "input_tokens": TokenUsageDaily.input_tokens + statement.excluded.input_tokens,
             "output_tokens": TokenUsageDaily.output_tokens + statement.excluded.output_tokens,
@@ -120,18 +120,18 @@ async def record_usage(
 
 
 async def _estimate_history(
-    db: AsyncSession, user_id: uuid.UUID, utc_offset_minutes: int
+    db: AsyncSession, instance_id: int, utc_offset_minutes: int
 ) -> dict[calendar_date, list[int]]:
-    """Walk the account's stored conversations once and bucket the estimates by local day."""
+    """Walk the instance's stored conversations once and bucket the estimates by local day."""
     conversation_ids = (
-        await db.execute(select(Conversation.id).where(Conversation.user_id == user_id))
+        await db.execute(select(Conversation.id).where(Conversation.instance_id == instance_id))
     ).scalars().all()
     image_ids = {
         str(file_id)
         for file_id in (
             await db.execute(
                 select(StoredFile.id).where(
-                    StoredFile.user_id == user_id,
+                    StoredFile.instance_id == instance_id,
                     StoredFile.content_type.like("image/%"),
                 )
             )
@@ -144,7 +144,7 @@ async def _estimate_history(
                 select(Message)
                 .where(
                     Message.conversation_id == conversation_id,
-                    Message.user_id == user_id,
+                    Message.instance_id == instance_id,
                 )
                 .order_by(Message.position)
             )
@@ -162,27 +162,27 @@ async def _estimate_history(
 @router.post("/backfill")
 async def backfill_usage(
     payload: BackfillRequest,
-    ctx: AuthContext = Depends(usage_write),
+    ctx: InstanceContext = Depends(usage_write),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Estimate usage for conversations that predate recording. Runs once per account.
+    """Estimate usage for conversations that predate recording. Runs once per instance.
 
     Exact history does not exist: provider counters never reached the server. The estimate is
     kept separate from reported usage and is labelled as such in the usage panel.
     """
-    if await db.get(UsageBackfill, ctx.user.id) is not None:
+    if await db.get(UsageBackfill, ctx.instance_id) is not None:
         return {"backfilled": True, "skipped": True}
 
-    days = await _estimate_history(db, ctx.user.id, payload.utcOffsetMinutes)
+    days = await _estimate_history(db, ctx.instance_id, payload.utcOffsetMinutes)
     now = utcnow()
     await db.execute(
-        delete(TokenUsageEstimateDaily).where(TokenUsageEstimateDaily.user_id == ctx.user.id)
+        delete(TokenUsageEstimateDaily).where(TokenUsageEstimateDaily.instance_id == ctx.instance_id)
     )
     for day, (input_tokens, output_tokens, requests) in days.items():
         db.add(
             TokenUsageEstimateDaily(
                 id=uuid.uuid4(),
-                user_id=ctx.user.id,
+                instance_id=ctx.instance_id,
                 day=day,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -191,7 +191,7 @@ async def backfill_usage(
                 updated_at=now,
             )
         )
-    db.add(UsageBackfill(user_id=ctx.user.id, created_at=now, updated_at=now))
+    db.add(UsageBackfill(instance_id=ctx.instance_id, created_at=now, updated_at=now))
     try:
         await db.commit()
     except IntegrityError:
@@ -210,7 +210,7 @@ async def backfill_usage(
 @router.get("")
 async def get_usage(
     days: int = Query(default=366, ge=1, le=MAX_WINDOW_DAYS),
-    ctx: AuthContext = Depends(usage_read),
+    ctx: InstanceContext = Depends(usage_read),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     today = utcnow().date()
@@ -219,7 +219,7 @@ async def get_usage(
 
     def _window(model):
         return select(model).where(
-            model.user_id == ctx.user.id,
+            model.instance_id == ctx.instance_id,
             model.day >= start,
             # Include tomorrow's bucket as well: a reader east of UTC may already have
             # recorded a reply under their local date.
@@ -270,7 +270,7 @@ async def get_usage(
                     func.coalesce(func.sum(model.input_tokens), 0),
                     func.coalesce(func.sum(model.output_tokens), 0),
                     func.coalesce(func.sum(model.requests), 0),
-                ).where(model.user_id == ctx.user.id)
+                ).where(model.instance_id == ctx.instance_id)
             )
         ).one()
 
@@ -280,7 +280,7 @@ async def get_usage(
             select(
                 func.coalesce(func.sum(TokenUsageDaily.cache_read_tokens), 0),
                 func.coalesce(func.sum(TokenUsageDaily.cache_write_tokens), 0),
-            ).where(TokenUsageDaily.user_id == ctx.user.id)
+            ).where(TokenUsageDaily.instance_id == ctx.instance_id)
         )
     ).one()
     estimate_input, estimate_output, estimate_requests = await _sums(TokenUsageEstimateDaily)
@@ -303,5 +303,5 @@ async def get_usage(
             output=int(estimate_output),
             requests=int(estimate_requests),
         ),
-        "backfilled": (await db.get(UsageBackfill, ctx.user.id)) is not None,
+        "backfilled": (await db.get(UsageBackfill, ctx.instance_id)) is not None,
     }

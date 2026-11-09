@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 
-import { useAuth } from './auth-state';
+import { useInstance } from './instance-state';
 import { loadNetworkToolsEnabled, saveNetworkToolsEnabled } from './network-tools-preference';
 
 type NetworkToolsState = {
@@ -19,9 +19,9 @@ const NetworkToolsContext = createContext<NetworkToolsState | null>(null);
 
 /** One server-backed preference; development previews only change memory. */
 export function NetworkToolsProvider({ children }: PropsWithChildren) {
-  const { request, isPreview: preview } = useAuth();
+  const { request, isPreview: preview } = useInstance();
   const scope = preview ? 'preview' : 'instance';
-  // Keying the loaded value by scope means a sign-out or account switch is reflected by
+  // Keying the loaded value by scope means a instance connection change is reflected by
   // derivation instead of a synchronous setState in the effect.
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);

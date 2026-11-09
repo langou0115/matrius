@@ -28,7 +28,7 @@ src/
 │   ├── index.tsx                       Link、router.push/replace/back、Redirect、usePathname、useLocalSearchParams、RouterNavigationBridge、Href
 │   └── routes.tsx                      唯一路由表，React.lazy、MockOnly 与未知路径重定向
 ├── components/web/
-│   ├── app-shell.tsx                   主题/认证/工作区/通知 Provider、整页与聊天布局、Service Worker 注册
+│   ├── app-shell.tsx                   主题/实例/工作区/通知 Provider、整页与聊天布局、Service Worker 注册
 │   ├── app-frame.tsx                   配色变量、系统明暗模式与开发预览工具栏
 │   ├── app-error-boundary.tsx          渲染错误兜底与重新加载入口
 │   ├── link-anchor.tsx                 Link asChild 使用的原生锚点
@@ -36,7 +36,6 @@ src/
 │   ├── demo-toolbar.tsx                开发示例的重置、退出入口
 │   ├── dialog.tsx                      原生 HTML dialog、焦点恢复与 Esc
 │   ├── instance-workspace.tsx             实例数据加载、REST 保存队列与错误反馈
-│   ├── password-input.tsx              密码显示切换与无障碍标签
 │   ├── select-field.tsx                跟随主题的单选下拉框
 │   ├── storage-error-toast.tsx         保存失败提示、可选文字与重试
 │   ├── workspace.tsx                   侧栏布局、搜索入口与 Ctrl/Cmd+K
@@ -96,11 +95,11 @@ src/
 │   │   ├── usage-api.ts                用量读取、历史估算触发与每轮回复的 token 上报
 │   │   ├── usage-stats.ts              本地日期、热力图/周/累计序列与格式化
 │   │   ├── token-usage-section.tsx     统计卡、输入输出占比、估算标注与三种趋势图
-│   │   └── usage-screen.tsx            用量设置页、登录与功能门禁
+│   │   └── usage-screen.tsx            用量设置页、实例能力状态
 │   ├── workspace/
 │   │   ├── cloud-workspace-repository.ts 唯一实例的内存 REST 仓储与 revision 保存
 │   │   ├── preview-context.ts          共享的 Mock 预览标记
-│   │   ├── workspace-mode.ts           按认证状态决定实例工作区、登录入口或等待验证
+│   │   ├── workspace-mode.ts           按实例连接状态加载工作区或等待重连
 │   │   └── workspace-repository.ts     工作区存储结构校验
 │   ├── settings/
 │   │   ├── appearance-redirect.tsx     旧主题/显示路径跳转到外观页
@@ -120,12 +119,10 @@ src/
 │   │   ├── model-repository.ts         无密钥元数据读写与旧配置迁移
 │   │   ├── model-settings-screen.tsx   Provider 与模型管理界面
 │   │   └── model-state.tsx             工作区独立模型状态与按 Provider 隔离的凭据
-│   ├── auth/
-│   │   ├── account-screen.tsx          设置账号页、登录、改密与退出
-│   │   ├── auth-retry.ts               账号校验失败后的退避重试
-│   │   ├── auth-state.tsx              Provider、useAuth、useFeature 与 FeatureGate
+│   ├── instance/
+│   │   ├── instance-retry.ts               实例校验失败后的退避重试
+│   │   ├── instance-state.tsx              Provider、useInstance、useFeature 与 FeatureGate
 │   │   ├── change-password-dialog.tsx  首次改密与主动改密
-│   │   ├── login-dialog.tsx            登录对话框
 │   │   ├── network-tools-preference.ts 保存在实例画像字段的网络工具开关
 │   │   ├── network-tools-state.tsx     网络工具开关状态
 │   └── mock/
@@ -150,7 +147,7 @@ src/
 │   │   ├── title.ts                    独立会话标题请求、超时与标题规范化
 │   │   ├── types.ts                    共享消息、用户资料和运行状态契约
 │   │   └── web-tools.ts                web_search / web_fetch 工具定义与活动记录
-│   ├── api/auth-session.ts             会话状态、同源 API 请求与过期处理
+│   ├── api/instance-client.ts             实例能力状态与同源 API 请求
 │   ├── database/browser-store.ts       IndexedDB 事务、版本与冲突检查
 │   ├── features/capabilities.ts        按服务端授权判断功能
 │   ├── llm/
@@ -161,7 +158,7 @@ src/
 │   │   ├── pi-browser-credentials.ts   浏览器环境不下发环境密钥
 │   │   └── provider-catalog.ts         从 Provider 获取模型目录
 │   └── platform/
-│       ├── auth-session.ts             浏览器 Cookie 会话模式下的空 token 适配
+│       ├── auth-session.ts             实例能力初始化
 │       ├── clipboard.ts                Web 原文复制适配
 │       ├── model-credentials.ts        凭据接口与内存实现
 │       └── run-protection.ts           生成期间的 beforeunload 离开确认
@@ -191,9 +188,9 @@ src/
 | 本地 Agent Runtime、上下文与云端工具调度 | `src/core/agent/` |
 | 模型直连 / 代理传输、SSE、解码器 | `src/core/llm/` |
 | 安全存储、文件、剪贴板等平台适配 | `src/core/platform/` |
-| 实例 REST 客户端、认证、409 冲突与错误映射 | `src/core/api/` |
+| 实例 REST 客户端、连接状态、409 冲突与错误映射 | `src/core/api/` |
 | 更多消息格式适配 | 聊天模块内的消息渲染组件 |
-| 记忆、文件、实例认证 | `src/features/<module>/` |
+| 记忆、文件、实例访问 | `src/features/<module>/` |
 | 移动 Web 响应式布局 | 保持共享状态与契约，后续按窄屏、软键盘与安全区适配 |
 
 其中模型直连与本地 Runtime 已有最小实现，其余目录随功能创建。
@@ -213,7 +210,7 @@ src/
 
 ## 设置模块
 
-- `/settings` 是可搜索的设置目录，根路径跳转到 `/settings/appearance`；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 `/settings/theme`、`/settings/display` 路径由 `appearance-redirect.tsx` 跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；账号、存储与用量是云端整页路由，不进入 Mock 分类。所有路径都在 `src/router/routes.tsx` 注册。
+- `/settings` 是可搜索的设置目录，根路径跳转到 `/settings/appearance`；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 `/settings/theme`、`/settings/display` 路径由 `appearance-redirect.tsx` 跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；实例、存储与用量是云端整页路由，不进入 Mock 分类。所有路径都在 `src/router/routes.tsx` 注册。
 - `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-page.tsx` 渲染目录、搜索与分类导航，并管理共用页面框架与返回入口；`settings-detail-screen.tsx` 提供外观与关于等详情控件。
 - 设置子页均不卸载根工作区 Provider，导航期间保留会话、草稿与外观状态。
 - `/settings/personalization` 与 `/mock/chat/settings/personalization` 提供记忆、自定义指令和关于你的表单，入口与搜索集中在 `settings-catalog.ts`。`personalization.ts` 定义字段、默认值与校验，`personalization-state.tsx` 保存共享状态，`personalization-screen.tsx` 实现 Web 表单；根工作区通过已有仓储恢复和自动保存，Runtime 在每次请求开始时组装系统提示。
@@ -224,22 +221,20 @@ src/
 - `features/models/model-settings-screen.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型三类对话框；删除 Provider 或模型直接执行，不弹确认框。`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
 - `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/llm/model-proxy.ts`：同源模型中继地址。
 - `core/agent/runtime.ts`：无 React/DOM 依赖的共享运行入口，按会话持有一组活动请求（`runs`）、批量回复和运行状态；同一会话不可重复启动，不同会话可并发，`stop(id)` 只取消对应会话。`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
-- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到账号。
+- `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到实例。
 
 - 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部实例所有者入口；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
 
-## 账号与功能开关
+## 实例与功能开关
 
-- `core/api/auth-session.ts`：无 DOM / React 的会话状态、同源 API 请求与过期处理；拒绝迟到请求覆盖新账号。
+- `core/api/instance-client.ts`：无 DOM / React 的实例能力状态与同源 API 请求；忽略过期的能力刷新请求。
 - `core/agent/diagnostics.ts`：模型回复诊断摘要，记录每次调用的输出上限、HTTP 元数据、结束原因与用量；通过 `matriusDiagnostics.export()` 导出有界内存记录，不保存正文、工具参数或凭据。
-- `core/platform/auth-session.ts`：浏览器 Cookie 会话模式下的空 token 适配；账号权限不落本地。
 - `core/features/capabilities.ts`：统一判断服务端授予的功能。
-- `features/auth/auth-state.tsx`：Web Provider、useAuth、useFeature 与 FeatureGate。
-- `features/auth/account-screen.tsx`：设置账号页、登录、改密与退出；根工作区按认证状态切换数据源。
-- `features/files/storage-screen.tsx`：设置中的“存储”分类（位于账号下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
-- `features/usage/usage-screen.tsx`：设置中的“用量”分类（位于存储下方），仅实例登录且具备 `usage` 功能时可见；`token-usage-section.tsx` 展示今日/近 7 天/近 30 天、输入输出占比，以及截至今天向前回溯六个月的日热力图和包含本周的最近六周柱状图，支持点击日格或周柱查看精确 token 数；`usage-api.ts` 读取统计并在每轮回复后上报 token。
+- `features/instance/instance-state.tsx`：Web Provider、useInstance、useFeature 与 FeatureGate。
+- `features/files/storage-screen.tsx`：设置中的“存储”分类（位于实例下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
+- `features/usage/usage-screen.tsx`：设置中的“用量”分类（位于存储下方），仅实例具备 `usage` 功能时可见；`token-usage-section.tsx` 展示今日/近 7 天/近 30 天、输入输出占比，以及截至今天向前回溯六个月的日热力图和包含本周的最近六周柱状图，支持点击日格或周柱查看精确 token 数；`usage-api.ts` 读取统计并在每轮回复后上报 token。
 - `settings-catalog.ts` / `settings-page.tsx`：分类与搜索按功能能力统一过滤。
-- `src/router/routes.tsx` 中的 `/settings/account`、`/settings/storage`、`/settings/usage`：账号、存储与用量设置路由组装；存储与用量仅在账号具备对应功能时出现在导航中。
+- `src/router/routes.tsx` 中的 `/settings/storage`、`/settings/usage`：存储与用量设置路由组装；存储与用量仅在实例具备对应功能时出现在导航中。
 
 ## 开发与发布脚本
 
@@ -250,8 +245,8 @@ src/
 - `scripts/deploy.mjs`：单次上传源码和生产镜像发布；服务端协议、初始化及健康检查位于 `scripts/remote/`。
 - `Dockerfile.web`、`server/Dockerfile`：生产 Web/API 镜像，直接包含代码；Compose 不挂载源码。
 
-- `features/workspace/workspace-mode.ts`：按认证状态决定实例工作区、登录入口或等待验证的工作区身份。
+- `features/workspace/workspace-mode.ts`：按实例连接状态加载工作区或等待重连的工作区身份。
 - `features/workspace/cloud-workspace-repository.ts`：唯一实例的内存 REST 仓储，加载服务端数据并按 revision 保存变化；不访问 IndexedDB，不包含模型配置或凭据。
-- `components/web/instance-workspace.tsx`：生产只加载后端工作区并用 REST 保存；未登录时显示 InstanceLogin。开发预览使用内存，不加载正式业务数据。
+- `components/web/instance-workspace.tsx`：生产只加载后端工作区并用 REST 保存；连接不可用时等待重连。开发预览使用内存，不加载正式业务数据。
 
 上下文占用与计费用量分开：运行期间按会话和模型保存最近一次调用的输入（含缓存读取/写入）与输出，不累加各轮调用。新调用开始时从实际请求内容估算，服务商返回用量后更新。运行时数据仅在内存中；刷新后按当前工具定义、保留正文与滚动摘要估算，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。

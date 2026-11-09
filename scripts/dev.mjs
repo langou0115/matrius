@@ -8,26 +8,8 @@ import { parseEnv } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const DEFAULT_ADMIN_USERNAME = 'admin';
-const DEFAULT_ADMIN_PASSWORD = 'dev-password';
-
-// A copied .env.local.example must not start with a placeholder password.
-export function assertAdminPassword(env = {}) {
-  if ((env.INITIAL_ADMIN_PASSWORD || '').trim().toLowerCase() === 'change-me') {
-    throw new Error('INITIAL_ADMIN_PASSWORD is still "change-me". Set a real instance password in .env.local.');
-  }
-}
-
 export function devDataDir(directory = root) {
   return join(directory, 'server', '.data');
-}
-
-/** Instance owner credentials; INITIAL_ADMIN_* names remain for compatibility. */
-export function devAdminCredentials(env = {}) {
-  return {
-    username: env.INITIAL_ADMIN_USERNAME || DEFAULT_ADMIN_USERNAME,
-    password: env.INITIAL_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD,
-  };
 }
 
 /**
@@ -69,15 +51,12 @@ export function devWebEnv({ env = {}, apiPort }) {
 }
 
 export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
-  const admin = devAdminCredentials(env);
   return {
     ...env,
     APP_ENV: 'development',
     APP_URL: `http://localhost:${webPort}`,
     DATABASE_URL: sqliteUrl(join(dataDir, 'matrius.db')),
     DATA_DIR: dataDir,
-    INITIAL_ADMIN_USERNAME: admin.username,
-    INITIAL_ADMIN_PASSWORD: admin.password,
   };
 }
 
@@ -89,9 +68,6 @@ export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
  */
 export function devBackendEnv({ env = {}, local = {}, dataDir = devDataDir(), webPort, envFile }) {
   const environment = devEnvironment({ env, dataDir, webPort });
-  const admin = devAdminCredentials(local);
-  environment.INITIAL_ADMIN_USERNAME = admin.username;
-  environment.INITIAL_ADMIN_PASSWORD = admin.password;
   if (envFile) environment.MATRIUS_DEV_ENV_FILE = resolve(envFile);
   return environment;
 }
@@ -239,8 +215,8 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
       + '--check validates local configuration, tools, ports and paths without starting services.\n'
       + '--reset-db deletes server/.data/matrius.db* and server/.data/files before migrating; stop the API first.\n'
       + '--clear rebuilds Vite\'s dependency pre-bundle from scratch; use it after a dependency change.\n'
-      + 'The instance owner comes from INITIAL_ADMIN_* in .env.local\n'
-      + '(defaults: admin / dev-password). Production env files are never read.');
+      + 'No login is required.\n'
+      + 'Production env files are never read.');
     return;
   }
   if (args.some((arg) => !['--check', '--reset-db', '--clear'].includes(arg))) throw new Error('Unknown option. Use --help.');
@@ -249,10 +225,8 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     catch (error) { if (error.code !== 'ENOENT') throw error; return {}; }
   };
   const local = { ...await readEnv(join(root, '.env.local')), ...env };
-  assertAdminPassword(local);
   const [webPort, apiPort] = devPorts(local);
   const dataDir = devDataDir();
-  const { username: adminUser, password: adminPassword } = devAdminCredentials(local);
 
   await capture('uv', ['--version']).catch(() => {
     throw new Error('Install uv first: https://docs.astral.sh/uv/getting-started/installation/');
@@ -264,13 +238,13 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await availablePort(apiPort);
     console.log(`Configuration and tools valid. Web: ${webPort}; API: ${apiPort}.\n`
       + `Data: ${join(dataDir, 'matrius.db')} (SQLite) and ${join(dataDir, 'files')}.\n`
-      + `Instance owner: ${adminUser} (INITIAL_ADMIN_* in .env.local; defaults admin/dev-password).\n`
+      + `Single-user instance; no login required.\n`
       + 'No network connection will be made by npm run dev.');
     return;
   }
 
   // Runtime settings stay in .env.local and are hot-read by the backend. Only
-  // startup-only values (database location, admin bootstrap, env-file path) are copied
+  // startup-only values (database location, env-file path) are copied
   // into the process environment; fixing DATABASE_URL/DATA_DIR here also keeps a
   // production path in .env.local from leaking into local development.
   const backendEnv = devBackendEnv({
@@ -304,11 +278,9 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await runBackend(['alembic', 'upgrade', 'head'], backendEnv, abort.signal);
     // Fails when models changed without a matching migration.
     await runBackend(['alembic', 'check'], backendEnv, abort.signal);
-    console.log('Ensuring the instance owner exists...');
+    console.log('Ensuring the singleton instance exists...');
     await runBackend(['python', '-m', 'app.bootstrap'], {
       ...backendEnv,
-      INITIAL_ADMIN_USERNAME: adminUser,
-      INITIAL_ADMIN_PASSWORD: adminPassword,
     }, abort.signal);
     abort.signal.throwIfAborted();
 
@@ -330,7 +302,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
       { cwd: root, env: devWebEnv({ env, apiPort }) });
     runner.watch(web, 'Vite');
     console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
-      + `sign in as ${adminUser}. Ctrl+C stops local services only.`);
+      + `no login is required. Ctrl+C stops local services only.`);
 
     const code = await runner.finished;
     if (code) throw new Error('Development service stopped unexpectedly.');

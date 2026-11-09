@@ -1,4 +1,3 @@
-import uuid
 
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -11,7 +10,7 @@ class ConversationDeletion(Base):
 
     __tablename__ = "conversation_deletions"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    instance_id: Mapped[int] = mapped_column(
+        ForeignKey("instance.id", ondelete="CASCADE"), primary_key=True
     )
     client_id: Mapped[str] = mapped_column(String(128), primary_key=True)

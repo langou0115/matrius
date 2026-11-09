@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createAuthSession } from '../src/core/api/auth-session.ts';
+import { createInstanceClient } from '../src/core/api/instance-client.ts';
 import {
   DOCUMENT_EXTENSIONS, MAX_UPLOAD_BYTES, MAX_UPLOADS, bulkDeleteFiles, fileContentUrl,
   fileExtension, getFileUsage, isAllowedAttachment, isDocumentFile, isImageAttachment,
@@ -11,10 +11,6 @@ import {
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status, headers: { 'Content-Type': 'application/json' },
 });
-function sessionStorage(initial = null) {
-  let value = initial;
-  return { read: () => value, write: (next) => { value = next; } };
-}
 
 test('uploads send multipart form data with the client id and optional conversation', async () => {
   let captured;
@@ -40,12 +36,12 @@ test('uploads send multipart form data with the client id and optional conversat
 
 test('a FormData body never receives a JSON Content-Type', async () => {
   let headers;
-  const auth = createAuthSession(sessionStorage('token'), async (_url, init) => {
+  const auth = createInstanceClient(async (_url, init) => {
     headers = init.headers;
     return json({ ok: true });
   });
   await auth.request('/api/files', { method: 'POST', body: new FormData() });
-  assert.equal(headers.get('Authorization'), 'Bearer token');
+  assert.equal(headers.get('Authorization'), null);
   assert.equal(headers.get('Content-Type'), null);
 
   await auth.request('/api/files/bulk-delete', { method: 'POST', body: JSON.stringify({ ids: [] }) });

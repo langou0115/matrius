@@ -17,8 +17,8 @@ import { usePersonalization } from '@/features/settings/personalization-state';
 import { recordTokenUsage } from '@/features/usage/usage-api';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
 import { protectBrowserRun } from '@/core/platform/run-protection';
-import { useAuth } from '@/features/auth/auth-state';
-import { useNetworkTools } from '@/features/auth/network-tools-state';
+import { useInstance } from '@/features/instance/instance-state';
+import { useNetworkTools } from '@/features/instance/network-tools-state';
 import { deriveConversationTitle, useChat, type Conversation, type Message, type MessageImage } from './chat-state';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -59,7 +59,7 @@ function useRuntime() {
   const models = useModels();
   const { preferences } = usePersonalization();
   const memory = useMemory();
-  const auth = useAuth();
+  const instance = useInstance();
   const networkTools = useNetworkTools();
   const [notifications, setNotifications] = useState<BackgroundNotification[]>([]);
   // The reply callback is created once, so it reads the latest view from refs instead of
@@ -68,7 +68,7 @@ function useRuntime() {
   const chatVisibleRef = useRef(chatVisible);
   const conversationsRef = useRef(conversations);
   const modelsRef = useRef(models);
-  const authRef = useRef(auth);
+  const instanceRef = useRef(instance);
   const memoryRef = useRef(memory);
   const memoryAbort = useRef<AbortController | null>(null);
   const memoryChain = useRef(Promise.resolve());
@@ -154,8 +154,8 @@ function useRuntime() {
     onSummary: (conversationId, summary) => dispatch({ type: 'context-summary', conversationId, summary }),
     // Token statistics are recorded by the authenticated instance.
     onUsage: (usage) => {
-      const current = authRef.current;
-      if (current.status !== 'authenticated' || !hasFeature(current.user, 'usage')) return;
+      const current = instanceRef.current;
+      if (current.status !== 'ready' || !hasFeature(current.info, 'usage')) return;
       void recordTokenUsage(current.request, usage).catch(() => {
         // Best effort: a failed report never interrupts or retries the conversation.
       });
@@ -202,15 +202,15 @@ function useRuntime() {
   const start = useCallback((conversationId: string, history: Message[], replyId: string, modelId?: string,
     contextSummary?: Conversation['contextSummary']) => {
     const config = pickModel(models, modelId);
-    // Web tools require the instance session; the preference is only known
+    // Web tools require the instance connection; the preference is only known
     // after it loads, so the first reply waits for `ready` instead of guessing.
     const useWebTools = networkTools.ready && networkTools.enabled;
-    const useFileTools = hasFeature(auth.status === 'authenticated' ? auth.user : null, 'files');
+    const useFileTools = hasFeature(instance.status === 'ready' ? instance.info : null, 'files');
     const tools: AgentTool[] = [];
-    if (useWebTools) tools.push(...createWebTools(auth.request));
+    if (useWebTools) tools.push(...createWebTools(instance.request));
     if (useFileTools) {
       tools.push(createFileTool({
-        request: auth.request, conversationId, availableFiles: collectAvailableFiles(history),
+        request: instance.request, conversationId, availableFiles: collectAvailableFiles(history),
       }).tool);
     }
     const prompts = [buildSystemPrompt(preferences, memoryRef.current)];
@@ -226,7 +226,7 @@ function useRuntime() {
       ...(tools.length ? { tools } : {}),
     });
     return started ? config : undefined;
-  }, [agent, auth, models, networkTools, preferences]);
+  }, [agent, instance, models, networkTools, preferences]);
 
   useEffect(() => {
     const protection = protectBrowserRun();
@@ -241,7 +241,7 @@ function useRuntime() {
     chatVisibleRef.current = chatVisible;
     conversationsRef.current = conversations;
     modelsRef.current = models;
-    authRef.current = auth;
+    instanceRef.current = instance;
     memoryRef.current = memory;
   });
 

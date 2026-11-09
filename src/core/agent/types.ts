@@ -10,7 +10,7 @@ export type MessageImage = {
 };
 export type MessageFeedback = 'good' | 'bad';
 
-/** Metadata for a file stored in the account's Library. */
+/** Metadata for a file stored in the instance's Library. */
 export type MessageFile = {
   id: string;
   filename: string;

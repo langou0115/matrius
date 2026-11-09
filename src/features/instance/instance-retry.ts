@@ -1,16 +1,16 @@
-/** A failed account check is almost always a short backend restart (uvicorn --reload). */
-export type AuthStatus = 'checking' | 'anonymous' | 'authenticated' | 'unavailable';
+/** A failed instance check is almost always a short backend restart (uvicorn --reload). */
+export type InstanceStatus = 'checking' | 'ready' | 'unavailable';
 
 /**
- * Backoff for retrying the account check while the server is unreachable. The last step
+ * Backoff for retrying the instance check while the server is unreachable. The last step
  * keeps repeating, so a running development session reconnects on its own instead of
- * leaving the library and account entry missing until the tab is hidden and shown again.
+ * leaving the library and instance entry missing until the tab is hidden and shown again.
  */
-export const AUTH_RETRY_DELAYS_MS = [2000, 4000, 8000, 15000, 30000] as const;
+export const INSTANCE_RETRY_DELAYS_MS = [2000, 4000, 8000, 15000, 30000] as const;
 
 export function retryDelay(attempt: number): number {
-  const index = Math.min(Math.max(Math.trunc(attempt) || 0, 0), AUTH_RETRY_DELAYS_MS.length - 1);
-  return AUTH_RETRY_DELAYS_MS[index];
+  const index = Math.min(Math.max(Math.trunc(attempt) || 0, 0), INSTANCE_RETRY_DELAYS_MS.length - 1);
+  return INSTANCE_RETRY_DELAYS_MS[index];
 }
 
 type Timers = {
@@ -22,9 +22,9 @@ type Timers = {
  * Watches the session status and schedules a retry whenever it settles on `unavailable`.
  * Timers are injected so the policy can be tested without waiting on real time.
  */
-export function createAuthRetry({ getStatus, refresh, subscribe, isVisible = () => true,
+export function createInstanceRetry({ getStatus, refresh, subscribe, isVisible = () => true,
   setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>) }: {
-  getStatus: () => AuthStatus;
+  getStatus: () => InstanceStatus;
   refresh: () => void | Promise<void>;
   subscribe: (listener: () => void) => () => void;
   isVisible?: () => boolean;
@@ -46,7 +46,7 @@ export function createAuthRetry({ getStatus, refresh, subscribe, isVisible = () 
     cancel();
     if (getStatus() !== 'unavailable') return;
     const delay = retryDelay(attempt);
-    attempt = Math.min(attempt + 1, AUTH_RETRY_DELAYS_MS.length - 1);
+    attempt = Math.min(attempt + 1, INSTANCE_RETRY_DELAYS_MS.length - 1);
     timer = setTimer(() => {
       timer = null;
       // A hidden tab that retries keeps burning requests; wait for the next check instead.
@@ -59,7 +59,7 @@ export function createAuthRetry({ getStatus, refresh, subscribe, isVisible = () 
     const status = getStatus();
     if (status === 'unavailable') { schedule(); return; }
     cancel();
-    if (status === 'authenticated' || status === 'anonymous') attempt = 0;
+    if (status === 'ready') attempt = 0;
   };
 
   const unsubscribe = subscribe(onStatus);

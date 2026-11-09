@@ -21,8 +21,8 @@ async def _upload(client, headers, name):
     return response.json()
 
 
-async def test_preferences_round_trip(client, create_user):
-    _, headers = await create_user()
+async def test_preferences_round_trip(client, create_instance):
+    _, headers = await create_instance()
     initial = (await client.get("/api/preferences", headers=headers)).json()
     assert initial["revision"] == 1
 
@@ -43,8 +43,8 @@ async def test_preferences_round_trip(client, create_user):
     assert stale.status_code == 409
 
 
-async def test_profile_fields(client, create_user):
-    _, headers = await create_user()
+async def test_profile_fields(client, create_instance):
+    _, headers = await create_instance()
     created = await client.put(
         "/api/profile/fields/name",
         headers=headers,
@@ -72,8 +72,8 @@ async def test_profile_fields(client, create_user):
     assert (await client.get("/api/profile/fields/name", headers=headers)).status_code == 404
 
 
-async def test_memories_create_and_archive(client, create_user):
-    _, headers = await create_user()
+async def test_memories_create_and_archive(client, create_instance):
+    _, headers = await create_instance()
     created = await client.post(
         "/api/memories",
         headers=headers,
@@ -93,8 +93,8 @@ async def test_memories_create_and_archive(client, create_user):
     assert active["items"] == []
 
 
-async def test_import_is_idempotent(client, create_user):
-    _, headers = await create_user()
+async def test_import_is_idempotent(client, create_instance):
+    _, headers = await create_instance()
     conversation_id = str(uuid.uuid4())
     payload = {
         "schemaVersion": 1,
@@ -135,11 +135,11 @@ async def test_import_is_idempotent(client, create_user):
         },
     }
 
-    first = await client.post("/api/account/import", headers=headers, json=payload)
+    first = await client.post("/api/workspace/import", headers=headers, json=payload)
     assert first.status_code == 200, first.text
     assert first.json()["imported"] == {"conversations": 1, "messages": 2}
 
-    second = await client.post("/api/account/import", headers=headers, json=payload)
+    second = await client.post("/api/workspace/import", headers=headers, json=payload)
     assert second.status_code == 200
     assert second.json()["imported"] == {"conversations": 0, "messages": 0}
     assert second.json()["skipped"] == 1
@@ -169,8 +169,8 @@ async def test_import_is_idempotent(client, create_user):
     assert profile["customInstructions"] == "Be brief"
 
 
-async def test_import_preserves_user_steering_flags(client, create_user):
-    _, headers = await create_user()
+async def test_import_preserves_user_steering_flags(client, create_instance):
+    _, headers = await create_instance()
     conversation_id = str(uuid.uuid4())
     payload = {
         "schemaVersion": 1,
@@ -189,7 +189,7 @@ async def test_import_preserves_user_steering_flags(client, create_user):
         },
     }
 
-    imported = await client.post("/api/account/import", headers=headers, json=payload)
+    imported = await client.post("/api/workspace/import", headers=headers, json=payload)
     assert imported.status_code == 200, imported.text
 
     listing = (await client.get("/api/conversations", headers=headers)).json()["items"]
@@ -200,8 +200,8 @@ async def test_import_preserves_user_steering_flags(client, create_user):
     assert [item["steering"] for item in detail["messages"]] == [False, True, False, False]
 
 
-async def test_import_merges_new_messages_and_settings(client, create_user):
-    _, headers = await create_user()
+async def test_import_merges_new_messages_and_settings(client, create_instance):
+    _, headers = await create_instance()
     conversation_id = str(uuid.uuid4())
     first_payload = {
         "schemaVersion": 1,
@@ -220,7 +220,7 @@ async def test_import_merges_new_messages_and_settings(client, create_user):
         },
         "appearance": {"themeId": "catppuccin", "mode": "dark"},
     }
-    first = await client.post("/api/account/import", headers=headers, json=first_payload)
+    first = await client.post("/api/workspace/import", headers=headers, json=first_payload)
     assert first.status_code == 200, first.text
 
     conversation = (await client.get("/api/conversations", headers=headers)).json()["items"][0]
@@ -245,7 +245,7 @@ async def test_import_merges_new_messages_and_settings(client, create_user):
         "appearance": {"themeId": "twitter", "mode": "light"},
     }
 
-    second = await client.post("/api/account/import", headers=headers, json=follow_up)
+    second = await client.post("/api/workspace/import", headers=headers, json=follow_up)
     assert second.status_code == 200, second.text
     assert second.json()["imported"] == {"conversations": 0, "messages": 2}
     assert second.json()["updated"] == 1
@@ -264,7 +264,7 @@ async def test_import_merges_new_messages_and_settings(client, create_user):
         "sure",
     ]
 
-    repeat = await client.post("/api/account/import", headers=headers, json=follow_up)
+    repeat = await client.post("/api/workspace/import", headers=headers, json=follow_up)
     assert repeat.status_code == 200, repeat.text
     assert repeat.json()["imported"] == {"conversations": 0, "messages": 0}
     assert repeat.json()["updated"] == 0
@@ -274,8 +274,8 @@ async def test_import_merges_new_messages_and_settings(client, create_user):
     assert (preferences["themeId"], preferences["mode"]) == ("twitter", "light")
 
 
-async def test_concurrent_imports_stay_idempotent(client, create_user):
-    _, headers = await create_user()
+async def test_concurrent_imports_stay_idempotent(client, create_instance):
+    _, headers = await create_instance()
     conversation_id = str(uuid.uuid4())
     payload = {
         "schemaVersion": 1,
@@ -296,7 +296,7 @@ async def test_concurrent_imports_stay_idempotent(client, create_user):
     }
 
     responses = await asyncio.gather(*(
-        client.post("/api/account/import", headers=headers, json=payload) for _ in range(4)
+        client.post("/api/workspace/import", headers=headers, json=payload) for _ in range(4)
     ))
     assert all(response.status_code == 200 for response in responses), [item.text for item in responses]
     results = [response.json() for response in responses]
@@ -312,8 +312,8 @@ async def test_concurrent_imports_stay_idempotent(client, create_user):
     assert [item["content"] for item in detail["messages"]] == ["hi", "hello"]
 
 
-async def test_import_keeps_only_file_ids_the_account_owns(client, create_user):
-    _, headers = await create_user()
+async def test_import_keeps_only_file_ids_the_account_owns(client, create_instance):
+    _, headers = await create_instance()
     owned = await _upload(client, headers, "owned.txt")
     foreign = {"id": str(uuid.uuid4())}
     unknown = str(uuid.uuid4())
@@ -346,7 +346,7 @@ async def test_import_keeps_only_file_ids_the_account_owns(client, create_user):
             ]
         },
     }
-    response = await client.post("/api/account/import", headers=headers, json=payload)
+    response = await client.post("/api/workspace/import", headers=headers, json=payload)
     assert response.status_code == 200, response.text
 
     conversation = (await client.get("/api/conversations", headers=headers)).json()["items"][0]

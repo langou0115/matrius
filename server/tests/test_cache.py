@@ -74,29 +74,6 @@ async def test_rate_limit_allows_exactly_the_limit_then_resets(clock):
     await cache.enforce_rate_limit("chat", "user-a", 3)
 
 
-async def test_login_lockout_after_fifteen_failures(clock):
-    for _ in range(cache.LOGIN_FAILURE_LIMIT - 1):
-        await cache.record_login_failure("Alice")
-        await cache.assert_login_not_locked("alice")
-    await cache.record_login_failure("Alice")
-    with pytest.raises(AppError) as raised:
-        await cache.assert_login_not_locked("alice")
-    assert raised.value.status_code == 429
-    assert raised.value.code == "login_locked"
-
-    clock[0] += cache.LOGIN_FAILURE_WINDOW_SECONDS + 1
-    await cache.assert_login_not_locked("alice")
-
-
-async def test_clear_login_failures_unlocks_the_account(clock):
-    for _ in range(cache.LOGIN_FAILURE_LIMIT):
-        await cache.record_login_failure("alice")
-    with pytest.raises(AppError):
-        await cache.assert_login_not_locked("alice")
-    await cache.clear_login_failures("ALICE")
-    await cache.assert_login_not_locked("alice")
-
-
 async def test_concurrency_limit_rejects_extra_inflight_calls_per_identity():
     async with cache.concurrency_limit("tool_search", "alice", 1):
         with pytest.raises(AppError) as raised:
@@ -124,13 +101,10 @@ async def test_concurrency_limit_releases_the_slot_when_the_body_raises():
 
 async def test_close_cache_clears_all_state():
     await cache.cache_set("key", "value", ttl_seconds=60)
-    await cache.record_login_failure("alice")
     await cache.enforce_rate_limit("chat", "alice", 5)
     await cache.check_cache()
     await cache.close_cache()
     assert await cache.cache_get("key") is None
-    await cache.assert_login_not_locked("alice")
     assert cache._cache == {}
     assert cache._rate_windows == {}
-    assert cache._login_failures == {}
     assert cache._cache_bytes == 0

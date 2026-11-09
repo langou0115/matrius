@@ -1,7 +1,7 @@
 import { fileExtension, type LibraryFile } from './files-api';
 
 /**
- * Development-only Library dataset. The preview routes have no account and no server, so
+ * Development-only Library dataset. The preview routes have no backend and no server, so
  * `createPreviewFileRequest` implements just enough of `/api/files` to exercise the real
  * screen: 500 entries, search, kind filters, sorting, cursor pagination and mutations.
  */
@@ -165,7 +165,7 @@ function usage() {
   const documents = rows.filter((file) => !file.contentType.startsWith('image/'));
   return {
     used: rows.reduce((total, file) => total + file.size, 0),
-    quota: PREVIEW_QUOTA,
+    disk: { total: PREVIEW_QUOTA, used: rows.reduce((total, file) => total + file.size, 0), free: PREVIEW_QUOTA - rows.reduce((total, file) => total + file.size, 0) },
     images: { bytes: images.reduce((total, file) => total + file.size, 0), count: images.length },
     files: { bytes: documents.reduce((total, file) => total + file.size, 0), count: documents.length },
   };

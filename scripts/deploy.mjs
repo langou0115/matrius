@@ -77,7 +77,7 @@ export async function createArchive(directory, files, current, destination) {
 // Application settings that are shared by local development and production.
 // When present in .env.local, deploy writes them into the server's production.env.
 export const APP_ENV_KEYS = [
-  'AUTH_COOKIE_SECONDS', 'MAX_UPLOAD_BYTES', 'STORAGE_QUOTA_BYTES',
+  'MAX_UPLOAD_BYTES',
   'FETCH_MAX_CHARS', 'SQLITE_BUSY_TIMEOUT_MS', 'CACHE_MAX_ENTRIES', 'CACHE_MAX_BYTES',
   'SEARCH_TIMEOUT_SECONDS', 'SEARCH_DDGS_TIMEOUT_SECONDS', 'SEARCH_MAX_ATTEMPTS',
   'SEARCH_FALLBACK', 'SEARCH_BREAKER_FAILURES', 'SEARCH_BREAKER_COOLDOWN_SECONDS',
@@ -152,22 +152,6 @@ export function validateConfig(env) {
   if (workspace && (!workspace.startsWith('/') || workspace === '/' || /[\r\n]/u.test(workspace))) {
     throw new Error('REMOTE_WORKSPACE must be an absolute dedicated server directory.');
   }
-  const adminUser = (env.INITIAL_ADMIN_USERNAME || '').trim();
-  const adminPassword = env.INITIAL_ADMIN_PASSWORD || '';
-  if (adminUser || adminPassword) {
-    if (!adminUser || !adminPassword) {
-      throw new Error('Set both INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD, or neither.');
-    }
-    if (adminUser.length > 64 || /[\r\n]/u.test(adminUser)) {
-      throw new Error('INITIAL_ADMIN_USERNAME must be a single line of at most 64 characters.');
-    }
-    if (/[\r\n]/u.test(adminPassword)) {
-      throw new Error('INITIAL_ADMIN_PASSWORD must be on one line.');
-    }
-    if (adminPassword.trim().toLowerCase() === 'change-me') {
-      throw new Error('INITIAL_ADMIN_PASSWORD is still "change-me". Set a real administrator password in .env.local.');
-    }
-  }
   if (env.REMOTE_SSH_PORT && (!/^\d+$/u.test(env.REMOTE_SSH_PORT)
     || Number(env.REMOTE_SSH_PORT) < 1 || Number(env.REMOTE_SSH_PORT) > 65535)) {
     throw new Error('REMOTE_SSH_PORT must be a valid TCP port.');
@@ -184,7 +168,7 @@ export function validateConfig(env) {
   const httpsPort = readPort('APP_HTTPS_PORT');
   const productionProxy = validateProductionProxy(env[PRODUCTION_PROXY_KEY]);
   return { ...env, envFile, workspace, remoteSsh: `${user}@${host}`,
-    url: `http://${host}:${appPort || '16666'}`, adminUser, adminPassword,
+    url: `http://${host}:${appPort || '16666'}`,
     appPort, apiPort, httpsPort, productionProxy };
 }
 
@@ -193,9 +177,9 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
     console.log('npm run deploy\n'
       + 'Copy docker-compose/.env.production.example to docker-compose/.env.production\n'
       + 'and configure SSH / public ports there. .env.local supplies application\n'
-      + 'settings and the administrator password.\n'
+      + 'settings and instance settings.\n'
       + 'Syncs source, builds production Web/API images, applies migrations, refreshes\n'
-      + 'the administrator password, health-checks, then exits. The first deploy on a\n'
+      + 'instance settings, health-checks, then exits. The first deploy on a\n'
       + 'new server initializes the data volume, database and containers automatically.\n'
       + 'Stable features in the deployed code become available after health checks pass.');
     return;
@@ -279,7 +263,6 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
     const payload = await readFile(archive);
     const synced = waitFor('@@MATRIUS_REMOTE_SYNCED');
     const encode = (value) => (value ? Buffer.from(value, 'utf8').toString('base64') : '-');
-    ssh.stdin.write(`CRED ${encode(config.adminUser)} ${encode(config.adminPassword)}\n`);
     ssh.stdin.write(`ENV ${encode(appEnv)}\n`);
     ssh.stdin.write(`SYNC ${payload.length}\n`);
     ssh.stdin.write(payload);

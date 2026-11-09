@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ApiError } from '../src/core/api/auth-session.ts';
+import { ApiError } from '../src/core/api/instance-client.ts';
 import { defaultPersonalization } from '../src/features/settings/personalization.ts';
 import { createCloudWorkspaceRepository } from '../src/features/workspace/cloud-workspace-repository.ts';
 

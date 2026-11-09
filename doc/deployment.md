@@ -1,3 +1,5 @@
+本项目为无需登录的单用户实例；所有访问者共享数据。资源设置中的磁盘容量来自服务器数据目录所在文件系统（容器内为数据卷所在文件系统），不再使用账户配额。详见[实例访问](instance.md)。
+
 # 服务器部署
 
 [文档索引](README.md)
@@ -7,14 +9,14 @@
 就三件事：
 
 1. **能 SSH 登录**（公钥认证，不需要输密码）。
-2. **登录账号能用 Docker**（直接执行 `docker ps` 不报权限错误）。
+2. **登录实例能用 Docker**（直接执行 `docker ps` 不报权限错误）。
 3. **放行 16666 端口**（网页 + API）。
 
-新服务器直接执行 `npm run deploy`：同步源码、构建包含源码的生产镜像、生成配置与密码、创建 SQLite 数据库并迁移、启动 Caddy / Web / API 三个容器、刷新实例所有者密码后做健康检查。
+新服务器直接执行 `npm run deploy`：同步源码、构建包含源码的生产镜像、生成配置、创建 SQLite 数据库并迁移、启动 Caddy / Web / API 三个容器、做健康检查。
 
 服务器不用 clone 仓库，不用装 Node、Python、数据库，也不用手工写配置。
 
-> 如果你的服务器已经装了 Docker，现有 SSH 账号也能执行 `docker ps`，那服务器侧什么都不用做，直接看「本机配置」。
+> 如果你的服务器已经装了 Docker，现有 SSH 实例也能执行 `docker ps`，那服务器侧什么都不用做，直接看「本机配置」。
 
 ---
 
@@ -33,10 +35,10 @@ sudo systemctl enable --now docker
 docker compose version
 ```
 
-### 2. 让 SSH 账号使用 Docker
+### 2. 让 SSH 实例使用 Docker
 
 ```bash
-sudo usermod -aG docker 你的SSH账号
+sudo usermod -aG docker 你的SSH实例
 ```
 
 重新登录，确认不需要 sudo：
@@ -45,7 +47,7 @@ sudo usermod -aG docker 你的SSH账号
 docker ps
 ```
 
-> Docker 组等同于服务器 root 权限，这个账号只给可信的人用。
+> Docker 组等同于服务器 root 权限，这个实例只给可信的人用。
 
 ### 3. 放行端口
 
@@ -58,9 +60,9 @@ sudo ufw allow 16666/tcp
 
 `16667` 是仅 API 的端口，不需要直连后端就不用放行。
 
-### 可选：单独建发布账号
+### 可选：单独建发布实例
 
-不想用现有账号时，可以创建一个专用账号：
+不想用现有实例时，可以创建一个专用实例：
 
 ```bash
 sudo useradd -m -U -s /bin/bash matrius-deploy
@@ -75,7 +77,7 @@ sudo chown -R matrius-deploy:matrius-deploy /home/matrius-deploy/.ssh
 sudo chmod 600 /home/matrius-deploy/.ssh/authorized_keys
 ```
 
-`npm run dev` 完全在本机运行，不再建立 SSH 隧道；发布账号的密钥只需完成部署，不需要 TCP 转发权限。
+`npm run dev` 完全在本机运行，不再建立 SSH 隧道；发布实例的密钥只需完成部署，不需要 TCP 转发权限。
 
 公钥用 `ssh-keygen -t ed25519` 生成。首次连接先手动 `ssh matrius-deploy@服务器IP` 核对主机指纹。
 
@@ -92,7 +94,7 @@ cp docker-compose/.env.production.example docker-compose/.env.production
 只需要填服务器地址：
 
 ```dotenv
-REMOTE_USER=你的SSH账号
+REMOTE_USER=你的SSH实例
 REMOTE_HOST=服务器IP
 ```
 
@@ -100,9 +102,7 @@ REMOTE_HOST=服务器IP
 - 密钥不是默认文件名：加 `REMOTE_SSH_KEY=~/.ssh/你的密钥`。
 - `APP_PORT` / `API_PORT` / `APP_HTTPS_PORT` 和 `REMOTE_WORKSPACE` 也在同一个文件里调整。
 
-`.env.local`（从 `.env.local.example` 复制）只放本地开发与通用应用设置；浏览器 Cookie 有效期、限额、`LOG_LEVEL` 等通用项设置后会写入服务器的 `production.env`。代理需要分两个键：`WEBTOOL_PROXY_URL` 只给本机 `npm run dev` 使用，**不会**同步到服务器；`WEBTOOL_PROXY_URL_PRODUCTION` 才会在部署时映射为服务器的 `WEBTOOL_PROXY_URL`。API 运行在容器里，生产代理不能用 `127.0.0.1` / `localhost` / `::1`，应使用 `host.docker.internal` 或其它容器可达地址；部署会拒绝 loopback 地址，并清理服务器上由旧版本同步的 loopback 值。实例所有者凭据在 `.env.local` 里用 `INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 指定；密码仍是示例占位值 `change-me` 时部署会直接失败。首次初始化时两个值都留空则不创建固定密码，而是随机生成并打印一次。
 
-实例所有者密码**以最近一次部署为准**：每次 `npm run deploy` 都会把 `.env.local` 中的 `INITIAL_ADMIN_*` 写入服务器 `production.env`，API 启动时的 bootstrap 会把该账号密码更新为这份值。A、B 两台机器分别部署不同密码时，后部署的生效。两个值都留空时不会改动现有密码；首次初始化且留空则随机生成并打印一次。
 
 ---
 
@@ -112,7 +112,7 @@ REMOTE_HOST=服务器IP
 npm run deploy
 ```
 
-`npm run deploy` 每次都执行同一套流程：同步源码 → 构建 Web/API 生产镜像 → 备份现有数据库 → 执行迁移并刷新实例所有者密码 → 更新 Web/API 与 Caddy → 健康检查。新服务器首次执行时会自动生成缺失配置、创建 `matrius_prod_api_data` 数据卷和空库所有者。配置未变化的 Web 容器保持运行；API 每次重建以应用迁移和最新密码。Docker 缓存复用未变化的依赖与构建层。Web 使用静态生产构建（`Dockerfile.web` 内执行 `npm run build`）；API 使用普通 Uvicorn（单 worker）。两者源码直接放进镜像，不挂载源码，也不运行 Vite 开发服务或热重载。
+`npm run deploy` 每次都执行同一套流程：同步源码 → 构建 Web/API 生产镜像 → 备份现有数据库 → 执行迁移 → 更新 Web/API 与 Caddy → 健康检查。新服务器首次执行时会自动生成缺失配置、创建 `matrius_prod_api_data` 数据卷和实例记录。配置未变化的 Web 容器保持运行；API 每次重建以应用迁移。Docker 缓存复用未变化的依赖与构建层。Web 使用静态生产构建（`Dockerfile.web` 内执行 `npm run build`）；API 使用普通 Uvicorn（单 worker）。两者源码直接放进镜像，不挂载源码，也不运行 Vite 开发服务或热重载。
 
 `docker compose up` 带 `--remove-orphans`，会自动停止并删除旧拓扑遗留的 `migrate` / `postgres` / `redis` / `rustfs` / `openserp` 容器；旧数据卷不会被自动删除，可按需手动清理。
 
@@ -182,7 +182,6 @@ APP_HTTPS_PORT=8443  # 预留 HTTPS
 npm run deploy
 ```
 
-部署成功即生效：`registry.py` 中登记的功能在健康检查通过后对所有完成首次改密的账号开放。
 
 部署中断或失败时，直接重新执行 `npm run deploy`。
 
@@ -213,7 +212,7 @@ npm run deploy
 迁移失败或需要回退时，用部署前生成的快照恢复。先停 API，再替换数据库并清除旧的 WAL/SHM：
 
 ```bash
-ssh 你的SSH账号@服务器IP
+ssh 你的SSH实例@服务器IP
 cd ~/.matrius-remote/source/docker-compose
 docker compose --project-name matrius-prod --env-file ~/.matrius-remote/production.env stop api
 docker run --rm -v matrius_prod_api_data:/data \
@@ -272,9 +271,9 @@ docker info | grep -i proxy
 ## 查状态、看日志
 
 ```bash
-ssh 你的SSH账号@服务器IP "docker ps --filter name=matrius-"
-ssh 你的SSH账号@服务器IP "docker logs --tail 100 matrius-api"
-ssh 你的SSH账号@服务器IP "docker logs --tail 100 matrius-web"
+ssh 你的SSH实例@服务器IP "docker ps --filter name=matrius-"
+ssh 你的SSH实例@服务器IP "docker logs --tail 100 matrius-api"
+ssh 你的SSH实例@服务器IP "docker logs --tail 100 matrius-web"
 ```
 
 `/api/health` 检查数据库；`/api/health/ready` 还检查数据库 schema 版本、进程内缓存与文件存储。

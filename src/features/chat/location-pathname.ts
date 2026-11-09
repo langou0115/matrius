@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 /** The address bar is the source of truth for which page is open. The router's own state can
-    be momentarily reset while the workspace is rebuilt (for example when the auth check runs
+    be momentarily reset while the workspace is rebuilt (for example when the instance check runs
     on returning to a tab), and reading `location` only during render misses later history
     updates. Patch history once so every navigation, including the router's, notifies React. */
 

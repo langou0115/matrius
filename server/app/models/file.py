@@ -9,12 +9,12 @@ from app.models.base import Base, RevisionMixin, TimestampMixin
 class StoredFile(RevisionMixin, TimestampMixin, Base):
     __tablename__ = "files"
     __table_args__ = (
-        UniqueConstraint("user_id", "client_id", name="uq_files_user_client"),
-        Index("ix_files_user_created", "user_id", "created_at"),
+        UniqueConstraint("instance_id", "client_id", name="uq_files_instance_client"),
+        Index("ix_files_instance_created", "instance_id", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[int] = mapped_column(ForeignKey("instance.id", ondelete="CASCADE"), nullable=False)
     client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True

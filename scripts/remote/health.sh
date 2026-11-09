@@ -53,12 +53,6 @@ validate_config() {
   [[ $CADDY_SITE_ADDRESS =~ ^(:80|([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(:[0-9]+)?)?$ ]] \
     || fail 'CADDY_SITE_ADDRESS must be empty, :80, or a hostname.'
 
-  local user=${INITIAL_ADMIN_USERNAME:-} password=${INITIAL_ADMIN_PASSWORD:-}
-  [[ -n $user && -n $password ]] || [[ -z $user && -z $password ]] \
-    || fail 'INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD must be set together.'
-  if [[ -n $password && $password == change-me* ]]; then
-    fail 'INITIAL_ADMIN_PASSWORD still contains the example value.'
-  fi
 }
 
 health_urls() {

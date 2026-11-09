@@ -77,15 +77,11 @@ test('SSH configuration rejects command injection and invalid origins / paths', 
     { REMOTE_HOST: 'host/path' }, { REMOTE_USER: 'user:password' }, { REMOTE_HOST: '' },
     { REMOTE_ENV_FILE: 'relative.env' }, { REMOTE_WORKSPACE: '/' }, { REMOTE_SSH_PORT: '65536' },
     { APP_PORT: '0' }, { APP_PORT: '65536' }, { API_PORT: 'abc' }, { APP_HTTPS_PORT: '99999' },
-    { INITIAL_ADMIN_USERNAME: 'admin' }, { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'a\nb' },
-    { INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: 'change-me' },
     { [PRODUCTION_PROXY_KEY]: 'http://127.0.0.1:7890' }]) {
     assert.throws(() => validateConfig({ ...config, ...patch }));
   }
   assert.equal(validateConfig({ ...config, [PRODUCTION_PROXY_KEY]: 'http://host.docker.internal:7890' })
     .productionProxy, 'http://host.docker.internal:7890');
-  assert.equal(validateConfig({ ...config, INITIAL_ADMIN_USERNAME: 'admin',
-    INITIAL_ADMIN_PASSWORD: 'x' }).adminPassword, 'x');
   assert.equal(validateConfig({ ...config, APP_PORT: '3000', API_PORT: '3001' }).appPort, '3000');
   if (process.platform !== 'win32') {
     assert.equal((await execute('sh', ['-c', `printf %s ${shellQuote("a'$(echo wrong) b")}`],
@@ -341,7 +337,7 @@ test('remote deploys production once per invocation and locks concurrent session
     await assert.rejects(main({ args: ['--once'], env: cliEnv }), /takes no options/);
   });
 
-test('one deploy initializes new servers and reconciles services, ports and administrator credentials',
+test('one deploy initializes new servers and reconciles services, ports without account credentials',
   { skip: process.platform === 'win32', timeout: 90000 }, async (t) => {
     const dir = await mkdtemp(join(tmpdir(), 'matrius-fresh-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
@@ -380,8 +376,6 @@ test('one deploy initializes new servers and reconciles services, ports and admi
     const generated = await readFile(join(workspace, 'production.env'), 'utf8');
     assert.doesNotMatch(generated, /POSTGRES_PASSWORD|REDIS_PASSWORD|RUSTFS_/);
     assert.match(generated, /^SQLITE_BUSY_TIMEOUT_MS=30000$/m);
-    assert.match(generated, /^INITIAL_ADMIN_USERNAME=root$/m);
-    assert.match(generated, /^INITIAL_ADMIN_PASSWORD=custom-admin-password$/m);
     assert.match(generated, /^APP_PORT=3000$/m);
     assert.match(generated, /^API_PORT=3001$/m);
     assert.match(generated, /^APP_HTTPS_PORT=3443$/m);
@@ -391,8 +385,6 @@ test('one deploy initializes new servers and reconciles services, ports and admi
     assert.match(generated, /^WEBTOOL_PROXY_URL=http:\/\/host\.docker\.internal:7890$/m);
     assert.doesNotMatch(generated, /127\.0\.0\.1:7890/);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
-    assert.match(await readFile(join(workspace, 'initial-admin.txt'), 'utf8'),
-      /username=root\npassword=custom-admin-password/);
     const commands = await readFile(dockerLog, 'utf8');
     assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --wait --wait-timeout 180 --remove-orphans --force-recreate api\n/);
@@ -401,15 +393,13 @@ test('one deploy initializes new servers and reconciles services, ports and admi
     assert.match(commands, /up -d --no-deps web api\n/);
     assert.match(commands, /up -d --no-deps --force-recreate caddy\n/);
 
-    // The latest deployment owns the administrator password; existing data is
+    // Redeployment preserves existing data and applies ports; existing data is
     // backed up before its migrations run.
     await writeFile(dockerLog, '');
     const other = { ...env, DOCKER_TEST_FRESH: '0',
       INITIAL_ADMIN_USERNAME: 'other', INITIAL_ADMIN_PASSWORD: 'other-password' };
     await main({ args: [], env: other });
     const replaced = await readFile(join(workspace, 'production.env'), 'utf8');
-    assert.match(replaced, /^INITIAL_ADMIN_USERNAME=other$/m);
-    assert.match(replaced, /^INITIAL_ADMIN_PASSWORD=other-password$/m);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
     const replacedCommands = await readFile(dockerLog, 'utf8');
     const backupIndex = replacedCommands.indexOf('--entrypoint python api -c');
@@ -435,7 +425,6 @@ test('one deploy initializes new servers and reconciles services, ports and admi
     const updated = await readFile(join(workspace, 'production.env'), 'utf8');
     assert.match(updated, /^APP_PORT=4000$/m);
     assert.match(updated, /^API_PORT=3001$/m);
-    assert.match(updated, /^INITIAL_ADMIN_PASSWORD=other-password$/m);
     assert.equal((await stat(join(workspace, 'production.env'))).mode & 0o777, 0o600);
     assert.match(await readFile(curlLog, 'utf8'), /:4000\/api\/health/);
     const portUpdate = await readFile(dockerLog, 'utf8');

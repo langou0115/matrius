@@ -5,12 +5,10 @@ from app.models.file import StoredFile
 from app.models.instance import Instance
 from app.models.memory import MemoryEntry
 from app.models.message import Message
-from app.models.profile import UserPreference, UserProfile, UserProfileField
+from app.models.profile import Preference, Profile, ProfileField
 from app.models.usage import TokenUsageDaily, TokenUsageEstimateDaily, UsageBackfill
-from app.models.user import AuthSession, User
 
 __all__ = [
-    "AuthSession",
     "Base",
     "Instance",
     "Conversation",
@@ -21,8 +19,7 @@ __all__ = [
     "TokenUsageDaily",
     "TokenUsageEstimateDaily",
     "UsageBackfill",
-    "User",
-    "UserPreference",
-    "UserProfile",
-    "UserProfileField",
+    "Preference",
+    "Profile",
+    "ProfileField",
 ]

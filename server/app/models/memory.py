@@ -9,8 +9,8 @@ from app.models.base import Base, RevisionMixin, TimestampMixin
 class MemoryEntry(RevisionMixin, TimestampMixin, Base):
     __tablename__ = "memory_entries"
     __table_args__ = (
-        UniqueConstraint("user_id", "client_id", name="uq_memory_entries_user_client"),
-        Index("ix_memory_entries_user_updated", "user_id", "updated_at"),
+        UniqueConstraint("instance_id", "client_id", name="uq_memory_entries_instance_client"),
+        Index("ix_memory_entries_instance_updated", "instance_id", "updated_at"),
         CheckConstraint("scope IN ('global','conversation')", name="ck_memory_entries_scope"),
         CheckConstraint("type IN ('identity','workflow','voice','instruction')", name="ck_memory_entries_type"),
         CheckConstraint("status IN ('active','archived')", name="ck_memory_entries_status"),
@@ -18,7 +18,7 @@ class MemoryEntry(RevisionMixin, TimestampMixin, Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[int] = mapped_column(ForeignKey("instance.id", ondelete="CASCADE"), nullable=False)
     client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     scope: Mapped[str] = mapped_column(String(16), default="global", nullable=False)
     type: Mapped[str] = mapped_column(String(16), nullable=False)

@@ -3,7 +3,7 @@ import http from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import modelProxy from './instance-model-proxy.cjs';
+import modelProxy from './model-proxy.cjs';
 
 /**
  * Production web server: serves the built `dist/` and the same-origin model relay.
@@ -14,7 +14,7 @@ import modelProxy from './instance-model-proxy.cjs';
  *   MATRIUS_STATIC_DIR               static root (default ./dist)
  */
 
-const { handleInstanceModelProxy } = modelProxy;
+const { handleModelProxy } = modelProxy;
 
 const root = resolve(process.env.MATRIUS_STATIC_DIR || fileURLToPath(new URL('../dist', import.meta.url)));
 const port = Number(process.env.PORT || 8081);
@@ -71,7 +71,7 @@ function isAssetPath(pathname) {
 }
 
 const server = http.createServer((req, res) => {
-  if (handleInstanceModelProxy(req, res)) return;
+  if (handleModelProxy(req, res)) return;
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.statusCode = 405;

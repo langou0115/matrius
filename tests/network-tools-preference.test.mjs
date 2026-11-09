@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ApiError } from '../src/core/api/auth-session.ts';
-import { loadNetworkToolsEnabled, saveNetworkToolsEnabled } from '../src/features/auth/network-tools-preference.ts';
+import { ApiError } from '../src/core/api/instance-client.ts';
+import { loadNetworkToolsEnabled, saveNetworkToolsEnabled } from '../src/features/instance/network-tools-preference.ts';
 
 test('network preference uses only the instance profile field and revision protection', async () => {
   const calls = [];

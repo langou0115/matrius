@@ -12,26 +12,23 @@ type SettingsItem = {
   description: string;
   group: string;
   keywords: string;
-  /** Hidden unless the server granted this feature (and the account is signed in). */
+  /** Hidden unless the server granted this feature (the instance is connected). */
   feature?: string;
-  authOnly?: boolean;
 };
 
 export const settingsItems: readonly SettingsItem[] = [
-  { id: 'account', title: '账号', description: '管理实例访问密码与登录状态。', group: '账号', keywords: '账号 实例 登录 登出 密码 设备 数据 account instance login password' },
-  { id: 'storage', title: '存储', description: '查看已用空间并管理已保存的文件。', group: '账号', feature: 'files', keywords: '存储 存储空间 空间 配额 文件 图片 资料库 清理 删除 storage quota files images library' },
-  { id: 'usage', title: '用量', description: '查看模型的 Token 使用量与每日趋势。', group: '账号', feature: 'usage', keywords: '用量 token 活动 统计 使用量 消耗 趋势 每日 每周 累计 输入 输出 usage token activity' },
+  { id: 'storage', title: '存储', description: '查看部署服务器的磁盘容量与可用空间。', group: '资源', feature: 'files', keywords: '存储 存储空间 空间 服务器 磁盘 硬盘 容量 可用 文件 图片 资料库 清理 删除 storage disk server capacity files images library' },
+  { id: 'usage', title: '用量', description: '查看模型的 Token 使用量与每日趋势。', group: '资源', feature: 'usage', keywords: '用量 token 活动 统计 使用量 消耗 趋势 每日 每周 累计 输入 输出 usage token activity' },
   { id: 'appearance', title: '外观', description: '调整显示模式与配色主题。', group: '偏好', keywords: `显示 浅色 深色 暗色 夜间 跟随系统 亮度 颜色 皮肤 light dark system theme ${themePresets.map((item) => `${item.id} ${item.name}`).join(' ')}` },
   { id: 'personalization', title: '个性化', description: '记忆助手、自定义指令、称呼、个人信息、对话标题与网页搜索。', group: '偏好', keywords: '个性化 自定义 指令 提示词 回复 风格 偏好 记忆 记忆助手 摘要 记住 忘记 称呼 职业 关于你 标题 命名 生成 网页 网络 搜索 联网 personalization instructions prompt profile memory title web search' },
   { id: 'models', title: '模型服务', description: '添加服务商、API key 与模型，开始对话。', group: '偏好', keywords: '模型 服务商 接入 密钥 地址 协议 base url api key openai anthropic responses' },
   { id: 'about', title: '关于 Matrius', description: '查看应用版本、单用户实例与存储说明。', group: '应用', keywords: '版本 本地 存储 数据 浏览器 隐私 about version' },
 ];
 
-export function visibleSettings(features: readonly string[], preview = false, authenticated = false) {
+export function visibleSettings(features: readonly string[], preview = false, connected = false) {
   return settingsItems.filter((item) => {
-    if (preview && (item.id === 'account' || item.id === 'storage' || item.id === 'usage' || item.authOnly)) return false;
-    if (item.authOnly && !authenticated) return false;
-    return !item.feature || (authenticated && features.includes(item.feature));
+    if (preview && (item.id === 'storage' || item.id === 'usage')) return false;
+    return !item.feature || (connected && features.includes(item.feature));
   });
 }
 
@@ -55,7 +52,7 @@ export const settingsTargets = [
   { id: 'personalization-web-tools', title: '网页搜索', description: '允许助手联网搜索并读取网页正文', category: 'personalization', sectionId: 'other-settings-heading', keywords: '个性化 其他设置 网页 网络 搜索 联网 读取 网络工具 web search network tools' },
   { id: 'appearance-display', title: '显示模式', description: '选择浅色、深色或跟随系统', category: 'appearance', sectionId: 'display-heading', keywords: '显示 模式 外观 浅色 深色 暗色 夜间 跟随系统 系统 亮度 颜色 light dark system mode' },
   { id: 'appearance-theme', title: '配色主题', description: '选择界面的配色主题', category: 'appearance', sectionId: 'theme-heading', keywords: `配色 主题 皮肤 颜色 外观 theme color ${themePresets.map((item) => `${item.id} ${item.name}`).join(' ')}` },
-  { id: 'storage-overview', title: '存储空间', description: '查看已用空间、文件和图片占用', category: 'storage', sectionId: 'storage-heading', keywords: '存储 空间 配额 文件 图片 清理 删除 storage quota files images' },
+  { id: 'storage-overview', title: '服务器磁盘', description: '查看部署服务器磁盘总量、已用和可用空间', category: 'storage', sectionId: 'storage-heading', keywords: '资源 存储 空间 服务器 磁盘 硬盘 总量 已用 容量 可用 文件 图片 清理 删除 storage disk server capacity files images' },
   { id: 'usage-activity', title: 'Token 活动', description: '查看每天、每周与累计的 Token 使用量', category: 'usage', sectionId: 'usage-heading', keywords: '用量 token 活动 统计 使用量 趋势 消耗 输入 输出 usage token activity' },
   { id: 'models-provider', title: '服务商', description: '添加服务商、接口协议与 API key', category: 'models', sectionId: 'providers-heading', keywords: '服务商 添加 编辑 删除 连接 接口 协议 密钥 api key base url 地址 获取模型列表 手动添加' },
   { id: 'models-detail', title: '模型配置', description: '模型 ID、上下文窗口与最大输出', category: 'models', sectionId: 'providers-heading', keywords: '模型 模型id model id 上下文 窗口 context window 最大输出 max output token 显示名称 添加 删除' },

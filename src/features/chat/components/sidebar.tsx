@@ -7,7 +7,7 @@ import { FolderOpen, SquarePen } from 'lucide-react';
 import { BrandMark } from '@/components/web/brand-mark';
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
-import { useAuth, useFeature } from '@/features/auth/auth-state';
+import { useInstance, useFeature } from '@/features/instance/instance-state';
 import { useChat, type Conversation } from '../chat-state';
 import { ConversationMenu } from './conversation-menu';
 import { ConversationSelect } from './conversation-select';
@@ -24,11 +24,11 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const mobile = useMobile();
   const runtime = useChatRuntime();
   const preview = useIsPreview();
-  const auth = useAuth();
+  const instance = useInstance();
   const filesEnabled = useFeature('files');
-  // Removing the entry while the account check is unreachable makes the library look deleted
+  // Removing the entry while the instance check is unreachable makes the library look deleted
   // after a backend reload. Keep it; the library page owns the retry and the explanation.
-  const showLibrary = preview || filesEnabled || auth.status === 'unavailable';
+  const showLibrary = preview || filesEnabled || instance.status === 'unavailable';
   const pathname = usePathname().replace(/\/$/, '');
   const libraryHref = preview ? '/mock/library' : '/library';
   const onLibrary = pathname === libraryHref;
@@ -94,25 +94,10 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
           </section>
         ))}
       </nav>
-      {preview
-        ? <Link href="/mock/chat/settings" asChild><LinkAnchor className="user-entry" aria-label="打开设置">
-          <span className="user-avatar"><Icon name="user" size={18} /></span>
-          <span className="user-entry-text"><strong>开发预览</strong><span>示例数据仅保存在内存</span></span>
-        </LinkAnchor></Link>
-        : <Link href={mobile ? "/settings" : "/settings/account"} asChild><LinkAnchor className="user-entry"
-          aria-label={auth.user ? '打开账号设置' : '打开账号设置并登录'}>
-          {auth.user
-            ? <span className="user-avatar is-authenticated">{auth.user.username.slice(0, 1).toUpperCase()}</span>
-            : <span className="user-avatar"><Icon name="user" size={18} /></span>}
-          <span className="user-entry-text">
-            <strong>{auth.user ? auth.user.username : '未登录'}</strong>
-            <span>{auth.user
-              ? auth.user.mustChangePassword ? '需要修改密码' : '单用户实例 · 访问设置'
-              : auth.status === 'checking' ? '正在验证登录…'
-                : auth.status === 'unavailable' ? '无法验证登录状态'
-                  : '在设置中登录账号'}</span>
-          </span>
-        </LinkAnchor></Link>}
+      <Link href={preview ? '/mock/chat/settings' : '/settings'} asChild><LinkAnchor className="sidebar-settings-entry" aria-label="打开设置">
+        <span className="sidebar-settings-icon"><Icon name="settings" size={18} /></span>
+        <span className="sidebar-settings-entry-text"><strong>设置</strong><span>模型、偏好与实例数据</span></span>
+      </LinkAnchor></Link>
       {menu && <ConversationMenu conversation={menu.conversation} anchor={menu.anchor} onClose={closeMenu}
         onPin={() => { dispatch({ type: 'pin', id: menu.conversation.id }); closeMenu(); }}
         onRename={() => { menu.anchor.focus(); setEditing(menu.conversation); setTitle(menu.conversation.title); setConfirmDelete(false); closeMenu(); }}

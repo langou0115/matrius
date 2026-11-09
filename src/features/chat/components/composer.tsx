@@ -5,7 +5,7 @@ import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { Icon } from '@/components/web/icon';
 import { ChevronRight, Paperclip } from 'lucide-react';
 import { useModels } from '@/features/models/model-state';
-import { useAuth, useFeature } from '@/features/auth/auth-state';
+import { useInstance, useFeature } from '@/features/instance/instance-state';
 import {
   deleteFile, isAllowedAttachment, isImageAttachment,
   MAX_UPLOAD_BYTES, MAX_UPLOADS, toMessageFile, uploadFile,
@@ -65,14 +65,14 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   const preparing = useRef(false);
   const [sending, setSending] = useState(false);
   const filesEnabled = useFeature('files');
-  const auth = useAuth();
+  const instance = useInstance();
   // Kept in refs so the unmount cleanup does not re-run when the session object changes.
   const filesEnabledRef = useRef(filesEnabled);
-  const requestRef = useRef(auth.request);
+  const requestRef = useRef(instance.request);
   useEffect(() => {
     filesEnabledRef.current = filesEnabled;
-    requestRef.current = auth.request;
-  }, [auth.request, filesEnabled]);
+    requestRef.current = instance.request;
+  }, [instance.request, filesEnabled]);
   useEffect(() => {
     mounted.current = true;
     const urls = previewUrls.current;
@@ -249,7 +249,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     attachment.controller?.abort();
     // The file already belongs to the Library; drop it unless it was sent.
     if (attachment.fileId && !attachment.consumed && filesEnabled) {
-      void deleteFile(auth.request, attachment.fileId).catch(() => {});
+      void deleteFile(instance.request, attachment.fileId).catch(() => {});
     }
     if (attachment.preview) {
       URL.revokeObjectURL(attachment.preview);

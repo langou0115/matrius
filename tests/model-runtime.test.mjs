@@ -12,14 +12,14 @@ import { createModelCredentials } from '../src/core/platform/model-credentials.t
 import { searchSettings } from '../src/features/settings/settings-catalog.ts';
 import { PersonalizationProvider, usePersonalization } from '../src/features/settings/personalization-state.tsx';
 import { MemoryProvider } from '../src/features/memory/memory-state.tsx';
-import { AuthProvider } from '../src/features/auth/auth-state.tsx';
-import { NetworkToolsProvider } from '../src/features/auth/network-tools-state.tsx';
+import { InstanceProvider } from '../src/features/instance/instance-state.tsx';
+import { NetworkToolsProvider } from '../src/features/instance/network-tools-state.tsx';
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
 import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
 import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
 import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.ts';
-import { ApiError } from '../src/core/api/auth-session.ts';
+import { ApiError } from '../src/core/api/instance-client.ts';
 import { parseWorkspace } from '../src/features/workspace/workspace-repository.ts';
 
 test('a late sync response cannot resurrect a deleted conversation, including after restoring the workspace', async () => {
@@ -1344,7 +1344,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
     await act(async () => { assert.equal(runtime.send('keep this draft', null), false); });
     assert.equal(chat.conversations.length, 0);
     await act(async () => { await models.save(config, 'key'); });
@@ -1413,7 +1413,7 @@ test('background replies in separate conversations run together, stay unread and
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     await act(async () => { assert.equal(runtime.send('first', null), true); });
@@ -1500,7 +1500,7 @@ test('a supplement sent after the answer text starts becomes a separate follow-u
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     await act(async () => { assert.equal(runtime.send('first question', null), true); });
@@ -1612,7 +1612,7 @@ test('AI titles run beside the first reply, retry after a failed turn, and never
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     // The first turn and its title both fail: the truncated first message stays.
@@ -1762,8 +1762,8 @@ test('composer reports validation in a compact chat notice without blocking inpu
   // Documents need the `files` capability and finish uploading before they can be sent,
   // so this test signs in and answers the upload endpoint.
   globalThis.fetch = async (path) => {
-    if (path === '/api/auth/me') {
-      return Response.json({ id: 'files-user', username: 'files-user', isAdmin: false, mustChangePassword: false, features: ['files'] });
+    if (path === '/api/features') {
+      return Response.json({ features: [{ id: 'files' }] });
     }
     return Response.json({ id: 'uploaded-file', filename: 'notes.pdf', size: 8, contentType: 'application/pdf', createdAt: 1 });
   };
@@ -1797,7 +1797,7 @@ test('composer reports validation in a compact chat notice without blocking inpu
     await act(async () => { (document.querySelector('[aria-label="关闭提示"]') ?? document.querySelector('[aria-label="关闭弹窗"]')).click(); });
   }
   try {
-    await act(async () => { root.render(createElement(AuthProvider, { preview: false }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: false }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
     // Wait for the signed-in account's `files` capability: the picker drops its
     // image-only filter and document uploads become available.
     for (let attempt = 0; attempt < 100 && document.querySelector('input[type="file"]')?.hasAttribute('accept'); attempt++) {
@@ -1890,7 +1890,7 @@ test('the process header stays running after thinking ends and measures through 
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(AuthProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
     await act(async () => { await models.save({ ...config, protocol: 'message', baseUrl: 'https://test.invalid' }, 'key'); });
     await act(async () => { assert.equal(runtime.send('问题', null), true); });
     await until(() => chat.conversations[0]?.messages[1]?.reasoningActive === false && !!chat.conversations[0]?.messages[1]?.reasoning);

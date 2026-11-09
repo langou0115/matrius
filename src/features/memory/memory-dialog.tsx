@@ -169,7 +169,7 @@ export function MemoryDialog({ onClose }: { onClose: () => void }) {
         />
         <div className="composer-toolbar">
           <button type="submit" className="send-button" aria-label="发送" disabled={!input.trim() || busy || !models.ready}>
-            {busy ? <LoaderCircle className="login-spinner" size={17} strokeWidth={2} aria-hidden="true" /> : <Icon name="arrow" size={21} />}
+            {busy ? <LoaderCircle className="loading-spinner" size={17} strokeWidth={2} aria-hidden="true" /> : <Icon name="arrow" size={21} />}
           </button>
         </div>
       </form>

@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 from docx import Document
 
-from app.auth.cookies import USER_SESSION_COOKIE
 from app.errors import AppError
 from app.files.parsing import extract_text
 from app.tools import files as tools_files
@@ -73,8 +72,8 @@ async def test_fetch_rejects_unsafe_urls(url):
         await validate_fetch_url(url)
 
 
-async def test_four_fetch_endpoints_download_pages_concurrently(client, create_user, monkeypatch):
-    _, headers = await create_user()
+async def test_four_fetch_endpoints_download_pages_concurrently(client, create_instance, monkeypatch):
+    _, headers = await create_instance()
     all_started = asyncio.Event()
     started = []
 
@@ -95,23 +94,6 @@ async def test_four_fetch_endpoints_download_pages_concurrently(client, create_u
     assert set(started) == set(urls)
     assert [response.status_code for response in responses] == [200] * 4
     assert [response.json()["url"] for response in responses] == urls
-
-
-async def test_web_tools_require_an_instance_session(client):
-    for path, payload in (("/api/tools/search", {"query": "test"}),
-                          ("/api/tools/fetch", {"url": "https://example.com"})):
-        assert (await client.post(path, json=payload)).status_code == 401
-        assert (await client.post(path, json=payload,
-                                 cookies={USER_SESSION_COOKIE: "revoked"})).status_code == 401
-
-
-async def test_password_change_gate_still_blocks_tools(client, create_user):
-    _, headers = await create_user(must_change_password=True)
-    response = await client.post(
-        "/api/tools/fetch", json={"url": "https://example.com"}, headers=headers
-    )
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "password_change_required"
 
 
 def test_normalize_search_url_strips_tracking():

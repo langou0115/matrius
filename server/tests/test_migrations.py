@@ -1,5 +1,4 @@
-"""Run Alembic against a throwaway SQLite file, exactly as the API entrypoint does."""
-
+"""Exercise fresh and populated databases through real Alembic commands."""
 import os
 import sqlite3
 import subprocess
@@ -9,130 +8,73 @@ from pathlib import Path
 SERVER_DIR = Path(__file__).resolve().parents[1]
 
 
-def run_alembic(*args: str, env: dict[str, str]) -> str:
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", *args],
-        cwd=SERVER_DIR,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, f"alembic {' '.join(args)} failed:\n{result.stdout}\n{result.stderr}"
-    return result.stdout
+def run_alembic(*args: str, env: dict[str, str]) -> None:
+    result = subprocess.run([sys.executable, "-m", "alembic", *args], cwd=SERVER_DIR,
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_upgrade_and_check_pass_on_a_fresh_sqlite_database(tmp_path):
-    database = tmp_path / "matrius.db"
-    env = {
-        **os.environ,
-        "DATA_DIR": str(tmp_path),
-        "DATABASE_URL": f"sqlite+aiosqlite:///{database}",
-    }
+def environment(tmp_path):
+    return {**os.environ, "DATA_DIR": str(tmp_path),
+            "DATABASE_URL": f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"}
 
+
+def test_upgrade_and_check_on_empty_database(tmp_path):
+    env = environment(tmp_path)
     run_alembic("upgrade", "head", env=env)
     run_alembic("check", env=env)
-
-    assert database.exists()
-    with sqlite3.connect(database) as connection:
-        tables = {
-            row[0]
-            for row in connection.execute("select name from sqlite_master where type = 'table'")
-        }
-        revision = connection.execute("select version_num from alembic_version").fetchone()[0]
-    assert {
-        "users",
-        "auth_sessions",
-        "conversations",
-        "conversation_deletions",
-        "messages",
-        "files",
-        "user_profiles",
-        "user_preferences",
-        "memory_entries",
-        "token_usage_daily",
-        "token_usage_estimate_daily",
-        "usage_backfills",
-        "alembic_version",
-    } <= tables
-
-    head = run_alembic("heads", env=env).split()[0]
-    assert revision == head
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert not tables.intersection({"users", "auth_sessions", "user_profiles", "user_preferences"})
+        assert {"instance", "preferences", "profiles", "profile_fields"} <= tables
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_permanent_sessions_upgrade_handles_existing_rows(tmp_path):
-    """0004 relaxes expires_at for sessions that were created with a value.
-
-    Applying the update before dropping NOT NULL fails on any non-empty database,
-    which a fresh-database check cannot catch.
-    """
-    database = tmp_path / "matrius.db"
-    env = {
-        **os.environ,
-        "DATA_DIR": str(tmp_path),
-        "DATABASE_URL": f"sqlite+aiosqlite:///{database}",
-    }
-
-    run_alembic("upgrade", "0003_message_steering", env=env)
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "insert into users (id, username, password_hash) values (?, ?, ?)",
-            ("0" * 31 + "1", "alice", "hash"),
-        )
-        connection.execute(
-            "insert into auth_sessions (id, user_id, token_hash, scope, expires_at) "
-            "values (?, ?, ?, 'user', datetime('now', '+7 days'))",
-            ("0" * 31 + "2", "0" * 31 + "1", "token-hash"),
-        )
-        connection.commit()
-
+def test_account_removal_preserves_business_data(tmp_path):
+    env = environment(tmp_path)
+    run_alembic("upgrade", "0010_single_user_instance", env=env)
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.execute("INSERT INTO users (id, username, password_hash) VALUES (?, 'legacy', 'hash')", ("1" * 32,))
+        db.execute("INSERT INTO instance (id, owner_id) VALUES (1, ?)", ("1" * 32,))
+        db.execute("INSERT INTO conversations (id, user_id, title) VALUES (?, ?, 'preserved')",
+                   ("2" * 32, "1" * 32))
+        db.commit()
     run_alembic("upgrade", "head", env=env)
     run_alembic("check", env=env)
-
-    with sqlite3.connect(database) as connection:
-        rows = connection.execute("select expires_at from auth_sessions").fetchall()
-        columns = {
-            row[1]: row[3]
-            for row in connection.execute("pragma table_info(auth_sessions)")
-        }
-    assert rows == [(None,)]
-    assert columns["expires_at"] == 0, "expires_at must allow NULL"
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        assert db.execute("SELECT instance_id, title FROM conversations").fetchone() == (1, "preserved")
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_single_owner_upgrade_preserves_legacy_data_and_revokes_sessions(tmp_path):
-    database = tmp_path / "matrius.db"
-    env = {**os.environ, "DATA_DIR": str(tmp_path),
-           "DATABASE_URL": f"sqlite+aiosqlite:///{database}", "INITIAL_ADMIN_USERNAME": "alice"}
-    run_alembic("upgrade", "0009_token_usage_estimate", env=env)
-    with sqlite3.connect(database) as connection:
-        connection.executemany("INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)", [
-            ("1" * 32, "alice", "hash"), ("2" * 32, "bob", "hash"),
-        ])
-        connection.execute("INSERT INTO auth_sessions (id,user_id,token_hash,scope) VALUES (?,?,?,'user')",
-                           ("3" * 32, "1" * 32, "old-token"))
+def test_account_removal_resolves_multiple_legacy_settings_and_keeps_backup(tmp_path):
+    env = environment(tmp_path)
+    run_alembic("upgrade", "0010_single_user_instance", env=env)
+    owner, other = "1" * 32, "2" * 32
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        for identity, name in ((owner, "owner"), (other, "old")):
+            db.execute("INSERT INTO users (id, username, password_hash) VALUES (?, ?, 'hash')", (identity, name))
+        db.execute("INSERT INTO instance (id, owner_id) VALUES (1, ?)", (owner,))
+        for index, identity in enumerate((owner, other)):
+            db.execute("INSERT INTO user_preferences (id, user_id, theme_id) VALUES (?, ?, ?)",
+                       (str(index + 3) * 32, identity, f"theme-{index}"))
+            db.execute("INSERT INTO user_profiles (id, user_id, about_name) VALUES (?, ?, ?)",
+                       (str(index + 5) * 32, identity, f"name-{index}"))
+            db.execute("INSERT INTO usage_backfills (user_id) VALUES (?)", (identity,))
+            db.execute("INSERT INTO token_usage_daily (id, user_id, day, input_tokens) VALUES (?, ?, '2026-11-09', ?)",
+                       (str(index + 7) * 32, identity, 10 + index))
+            db.execute("INSERT INTO conversations (id, user_id, client_id, title) VALUES (?, ?, 'same-key', 'keep')",
+                       (f"{index + 9:032x}", identity))
+        db.commit()
     run_alembic("upgrade", "head", env=env)
     run_alembic("check", env=env)
-    with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT owner_id FROM instance").fetchone() == ("1" * 32,)
-        assert connection.execute("SELECT COUNT(*) FROM users").fetchone() == (2,)
-        assert connection.execute("SELECT revoked_at FROM auth_sessions").fetchone()[0] is not None
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
-        assert "is_admin" not in columns
-        assert "disabled_at" not in columns
-
-
-def test_ambiguous_legacy_upgrade_does_not_choose_or_delete_users(tmp_path):
-    database = tmp_path / "matrius.db"
-    env = {**os.environ, "DATA_DIR": str(tmp_path),
-           "DATABASE_URL": f"sqlite+aiosqlite:///{database}", "INITIAL_ADMIN_USERNAME": ""}
-    run_alembic("upgrade", "0009_token_usage_estimate", env=env)
-    with sqlite3.connect(database) as connection:
-        connection.executemany("INSERT INTO users (id,username,password_hash) VALUES (?,?,?)", [
-            ("1" * 32, "alice", "hash"), ("2" * 32, "bob", "hash"),
-        ])
-    result = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
-                            cwd=SERVER_DIR, env=env, capture_output=True, text=True)
-    assert result.returncode != 0
-    assert "multiple users" in result.stderr
-    with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM users").fetchone() == (2,)
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        assert db.execute("SELECT theme_id FROM preferences").fetchall() == [("theme-0",)]
+        assert db.execute("SELECT about_name FROM profiles").fetchall() == [("name-0",)]
+        assert db.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 2
+        assert db.execute("SELECT input_tokens FROM token_usage_daily").fetchone()[0] == 21
+        assert db.execute("SELECT COUNT(*) FROM usage_backfills").fetchone()[0] == 1
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+    backups = list(tmp_path.glob("test.before-account-removal-*.db"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as db:
+        assert db.execute("SELECT COUNT(*) FROM user_preferences").fetchone()[0] == 2

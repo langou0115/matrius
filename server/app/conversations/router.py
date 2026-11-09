@@ -7,8 +7,6 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.account.import_service import _import_lock, record_conversation_deletion
-from app.auth.dependencies import AuthContext, read_rate_limit, write_rate_limit
 from app.conversations.schemas import (
     ConversationCreate,
     ConversationPatch,
@@ -20,6 +18,7 @@ from app.conversations.schemas import (
 from app.conversations.serializers import conversation_out, message_out
 from app.db import get_db
 from app.errors import conflict, invalid, not_found
+from app.instance.dependencies import InstanceContext, read_rate_limit, write_rate_limit
 from app.models import Conversation, ConversationDeletion, Message, StoredFile
 from app.utils import (
     clamp_page_size,
@@ -30,15 +29,16 @@ from app.utils import (
     utcnow,
     validate_client_id,
 )
+from app.workspace.import_service import _import_lock, record_conversation_deletion
 
 router = APIRouter(prefix="/api", tags=["conversations"])
 
 
 async def _get_conversation(
-    db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID, *, lock: bool = False
+    db: AsyncSession, instance_id: int, conversation_id: uuid.UUID, *, lock: bool = False
 ) -> Conversation:
     stmt = select(Conversation).where(
-        Conversation.id == conversation_id, Conversation.user_id == user_id
+        Conversation.id == conversation_id, Conversation.instance_id == instance_id
     )
     if lock:
         stmt = stmt.with_for_update()
@@ -51,7 +51,7 @@ async def _get_conversation(
 async def _find_by_id_or_client(
     db: AsyncSession,
     model: type[Conversation] | type[Message],
-    user_id: uuid.UUID,
+    instance_id: int,
     item_id: uuid.UUID | None,
     client_id: str | None,
 ) -> Any:
@@ -60,13 +60,13 @@ async def _find_by_id_or_client(
             await db.execute(select(model).where(model.id == item_id))
         ).scalar_one_or_none()
         if existing is not None:
-            if existing.user_id != user_id:
+            if existing.instance_id != instance_id:
                 raise conflict("该标识已被占用。")
             return existing
     if client_id is not None:
         return (
             await db.execute(
-                select(model).where(model.user_id == user_id, model.client_id == client_id)
+                select(model).where(model.instance_id == instance_id, model.client_id == client_id)
             )
         ).scalar_one_or_none()
     return None
@@ -103,11 +103,11 @@ def _parse_message_cursor(cursor: str) -> int:
 async def list_conversations(
     limit: int = Query(default=50, ge=1),
     cursor: str | None = None,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     page_size = clamp_page_size(limit)
-    stmt = select(Conversation).where(Conversation.user_id == ctx.user.id)
+    stmt = select(Conversation).where(Conversation.instance_id == ctx.instance_id)
     if cursor:
         pinned, updated_at, conversation_id = _parse_cursor(cursor)
         stmt = stmt.where(
@@ -130,7 +130,7 @@ async def list_conversations(
 @router.post("/conversations", status_code=201)
 async def create_conversation(
     payload: ConversationCreate,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     async with _import_lock():
@@ -138,19 +138,19 @@ async def create_conversation(
 
 
 async def _create_conversation_record(
-    payload: ConversationCreate, ctx: AuthContext, db: AsyncSession,
+    payload: ConversationCreate, ctx: InstanceContext, db: AsyncSession,
 ) -> dict[str, Any]:
     client_id = validate_client_id(payload.clientId)
     for identity in (client_id, str(payload.id) if payload.id else None):
-        if identity and await db.get(ConversationDeletion, (ctx.user.id, identity)) is not None:
+        if identity and await db.get(ConversationDeletion, (ctx.instance_id, identity)) is not None:
             raise conflict("对话已删除，请创建新的对话。")
-    existing = await _find_by_id_or_client(db, Conversation, ctx.user.id, payload.id, client_id)
+    existing = await _find_by_id_or_client(db, Conversation, ctx.instance_id, payload.id, client_id)
     if existing is not None:
         return conversation_out(existing)
 
     conversation = Conversation(
         id=payload.id or uuid.uuid4(),
-        user_id=ctx.user.id,
+        instance_id=ctx.instance_id,
         client_id=client_id,
         title=payload.title,
         pinned=payload.pinned,
@@ -164,7 +164,7 @@ async def _create_conversation_record(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        existing = await _find_by_id_or_client(db, Conversation, ctx.user.id, payload.id, client_id)
+        existing = await _find_by_id_or_client(db, Conversation, ctx.instance_id, payload.id, client_id)
         if existing is not None:
             return conversation_out(existing)
         raise conflict("对话已存在，请刷新后重试。") from None
@@ -176,10 +176,10 @@ async def get_conversation(
     conversation_id: uuid.UUID,
     messageLimit: int = Query(default=50, ge=1),
     before: str | None = None,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    conversation = await _get_conversation(db, ctx.user.id, conversation_id)
+    conversation = await _get_conversation(db, ctx.instance_id, conversation_id)
     page_size = clamp_page_size(messageLimit)
 
     stmt = select(Message).where(Message.conversation_id == conversation.id)
@@ -193,7 +193,7 @@ async def get_conversation(
     rows.reverse()
     # One query for the whole page: a per-message lookup would multiply SQLite round trips.
     files_by_id = await _load_files(
-        db, ctx.user.id, [file_id for item in rows for file_id in (item.file_ids or [])]
+        db, ctx.instance_id, [file_id for item in rows for file_id in (item.file_ids or [])]
     )
     return {
         "conversation": conversation_out(conversation),
@@ -203,7 +203,7 @@ async def get_conversation(
 
 
 async def _load_files(
-    db: AsyncSession, user_id: uuid.UUID, file_ids: list[str]
+    db: AsyncSession, instance_id: int, file_ids: list[str]
 ) -> dict[str, StoredFile]:
     parsed: list[uuid.UUID] = []
     for raw in dict.fromkeys(file_ids):
@@ -215,7 +215,7 @@ async def _load_files(
         return {}
     files = (
         await db.execute(
-            select(StoredFile).where(StoredFile.id.in_(parsed), StoredFile.user_id == user_id)
+            select(StoredFile).where(StoredFile.id.in_(parsed), StoredFile.instance_id == instance_id)
         )
     ).scalars().all()
     return {str(item.id): item for item in files}
@@ -225,10 +225,10 @@ async def _load_files(
 async def update_conversation(
     conversation_id: uuid.UUID,
     payload: ConversationPatch,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    conversation = await _get_conversation(db, ctx.user.id, conversation_id, lock=True)
+    conversation = await _get_conversation(db, ctx.instance_id, conversation_id, lock=True)
     if conversation.revision != payload.baseRevision:
         raise conflict("对话已在其他设备更新，请刷新后重试。", current=conversation_out(conversation))
 
@@ -279,23 +279,23 @@ async def update_conversation(
 async def delete_conversation(
     conversation_id: uuid.UUID,
     baseRevision: int = Query(ge=1),
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
     async with _import_lock():
-        conversation = await _get_conversation(db, ctx.user.id, conversation_id, lock=True)
+        conversation = await _get_conversation(db, ctx.instance_id, conversation_id, lock=True)
         if conversation.revision != baseRevision:
             raise conflict("对话已在其他设备更新，请刷新后重试。", current=conversation_out(conversation))
-        await record_conversation_deletion(db, ctx.user.id, str(conversation.id))
+        await record_conversation_deletion(db, ctx.instance_id, str(conversation.id))
         if conversation.client_id:
-            await record_conversation_deletion(db, ctx.user.id, conversation.client_id)
+            await record_conversation_deletion(db, ctx.instance_id, conversation.client_id)
         await db.delete(conversation)
         await db.commit()
     return {"ok": True}
 
 
 async def _attach_files(
-    db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID, file_ids: list[uuid.UUID]
+    db: AsyncSession, instance_id: int, conversation_id: uuid.UUID, file_ids: list[uuid.UUID]
 ) -> list[StoredFile]:
     unique_ids = list(dict.fromkeys(file_ids))
     if not unique_ids:
@@ -303,7 +303,7 @@ async def _attach_files(
     files = list(
         (
             await db.execute(
-                select(StoredFile).where(StoredFile.id.in_(unique_ids), StoredFile.user_id == user_id)
+                select(StoredFile).where(StoredFile.id.in_(unique_ids), StoredFile.instance_id == instance_id)
             )
         )
         .scalars()
@@ -326,17 +326,17 @@ async def _attach_files(
 async def create_message(
     conversation_id: uuid.UUID,
     payload: MessageCreate,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     client_id = validate_client_id(payload.clientId)
-    existing = await _find_by_id_or_client(db, Message, ctx.user.id, payload.id, client_id)
+    existing = await _find_by_id_or_client(db, Message, ctx.instance_id, payload.id, client_id)
     if existing is not None:
         if existing.conversation_id != conversation_id:
             raise conflict("消息标识已被其他对话使用。")
-        return message_out(existing, await _load_files(db, ctx.user.id, existing.file_ids or []))
+        return message_out(existing, await _load_files(db, ctx.instance_id, existing.file_ids or []))
 
-    conversation = await _get_conversation(db, ctx.user.id, conversation_id, lock=True)
+    conversation = await _get_conversation(db, ctx.instance_id, conversation_id, lock=True)
 
     next_position = (
         await db.execute(
@@ -346,12 +346,12 @@ async def create_message(
         )
     ).scalar_one() + 1
 
-    stored_files = await _attach_files(db, ctx.user.id, conversation.id, payload.fileIds)
+    stored_files = await _attach_files(db, ctx.instance_id, conversation.id, payload.fileIds)
     stored_file_ids = [str(item.id) for item in stored_files]
     status = "complete" if payload.role == "user" else payload.status
     message = Message(
         id=payload.id or uuid.uuid4(),
-        user_id=ctx.user.id,
+        instance_id=ctx.instance_id,
         conversation_id=conversation.id,
         client_id=client_id,
         position=next_position,
@@ -383,18 +383,18 @@ async def create_message(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        existing = await _find_by_id_or_client(db, Message, ctx.user.id, payload.id, client_id)
+        existing = await _find_by_id_or_client(db, Message, ctx.instance_id, payload.id, client_id)
         if existing is not None:
-            return message_out(existing, await _load_files(db, ctx.user.id, existing.file_ids or []))
+            return message_out(existing, await _load_files(db, ctx.instance_id, existing.file_ids or []))
         raise conflict("消息写入冲突，请重试。") from None
     return message_out(message, {str(item.id): item for item in stored_files})
 
 
-async def _get_message(db: AsyncSession, user_id: uuid.UUID, message_id: uuid.UUID) -> Message:
+async def _get_message(db: AsyncSession, instance_id: int, message_id: uuid.UUID) -> Message:
     message = (
         await db.execute(
             select(Message)
-            .where(Message.id == message_id, Message.user_id == user_id)
+            .where(Message.id == message_id, Message.instance_id == instance_id)
             .with_for_update()
         )
     ).scalar_one_or_none()
@@ -407,10 +407,10 @@ async def _get_message(db: AsyncSession, user_id: uuid.UUID, message_id: uuid.UU
 async def update_message(
     message_id: uuid.UUID,
     payload: MessagePatch,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    message = await _get_message(db, ctx.user.id, message_id)
+    message = await _get_message(db, ctx.instance_id, message_id)
     if message.revision != payload.baseRevision:
         raise conflict("消息已在其他设备更新，请刷新后重试。", current=message_out(message))
 
@@ -431,7 +431,7 @@ async def update_message(
     attached: list[StoredFile] = []
     if "fileIds" in fields:
         attached = await _attach_files(
-            db, ctx.user.id, message.conversation_id, payload.fileIds or []
+            db, ctx.instance_id, message.conversation_id, payload.fileIds or []
         )
         message.file_ids = [str(item.id) for item in attached]
 
@@ -441,7 +441,7 @@ async def update_message(
     files_by_id = (
         {str(item.id): item for item in attached}
         if attached
-        else await _load_files(db, ctx.user.id, message.file_ids or [])
+        else await _load_files(db, ctx.instance_id, message.file_ids or [])
     )
     return message_out(message, files_by_id)
 
@@ -456,10 +456,10 @@ def _snake(name: str) -> str:
 async def delete_message(
     message_id: uuid.UUID,
     baseRevision: int = Query(ge=1),
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
-    message = await _get_message(db, ctx.user.id, message_id)
+    message = await _get_message(db, ctx.instance_id, message_id)
     if message.revision != baseRevision:
         raise conflict("消息已在其他设备更新，请刷新后重试。", current=message_out(message))
     await db.delete(message)

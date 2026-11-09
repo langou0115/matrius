@@ -25,8 +25,8 @@ import { useChatRuntime } from './chat-runtime';
 import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { useMemory } from '@/features/memory/memory-state';
-import { useNetworkTools } from '@/features/auth/network-tools-state';
-import { useAuth, useFeature } from '@/features/auth/auth-state';
+import { useNetworkTools } from '@/features/instance/network-tools-state';
+import { useInstance, useFeature } from '@/features/instance/instance-state';
 import { router } from '@/router';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from './conversation-href';
@@ -64,7 +64,7 @@ export default function ChatScreen() {
   const memory = useMemory();
   const networkTools = useNetworkTools();
   const filesEnabled = useFeature('files');
-  const auth = useAuth();
+  const instance = useInstance();
   const preview = useIsPreview();
   const [notices, setNotices] = useState<ChatNoticeItem[]>([]);
   const conversation = conversations.find((item) => item.id === activeId);
@@ -95,15 +95,15 @@ export default function ChatScreen() {
   ].filter(Boolean).join('\n\n'), [preferences, memory, networkTools.ready, networkTools.enabled, filesEnabled]);
   const contextUsage = useMemo(() => {
     if (!models.selected) return null;
-    const tools = networkTools.ready && networkTools.enabled ? createWebTools(auth.request) : [];
-    if (filesEnabled) tools.push(createFileTool({ request: auth.request, conversationId: activeId ?? undefined,
+    const tools = networkTools.ready && networkTools.enabled ? createWebTools(instance.request) : [];
+    if (filesEnabled) tools.push(createFileTool({ request: instance.request, conversationId: activeId ?? undefined,
       availableFiles: messages.flatMap((message) => message.files ?? []).slice(-30) }).tool);
     const latest = activeId ? runtime.contexts?.[activeId] : undefined;
     return measureContextUsage(messages, systemPrompt, models.selected, {
       tools, summary: conversation?.contextSummary,
       latestCall: latest?.modelId === models.selected.id && latest.contextWindow === models.selected.contextWindow ? latest : undefined,
     });
-  }, [messages, models.selected, systemPrompt, networkTools.ready, networkTools.enabled, auth.request, filesEnabled, activeId, runtime.contexts, conversation?.contextSummary]);
+  }, [messages, models.selected, systemPrompt, networkTools.ready, networkTools.enabled, instance.request, filesEnabled, activeId, runtime.contexts, conversation?.contextSummary]);
   // Messages sent after the answer text started: shown here until this run ends, then saved.
   const pending = runtime.pendingMessages(activeId);
   const draftKey = activeId ?? 'new';

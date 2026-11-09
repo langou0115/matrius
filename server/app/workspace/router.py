@@ -8,19 +8,10 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.account.import_service import MAX_IMPORT_BYTES, run_import
-from app.account.schemas import (
-    ImportRequest,
-    MemoryCreate,
-    MemoryPatch,
-    PreferencesUpdate,
-    ProfileFieldUpdate,
-    ProfileUpdate,
-)
-from app.auth.dependencies import AuthContext, read_rate_limit, write_rate_limit
 from app.db import get_db
 from app.errors import conflict, invalid, not_found
-from app.models import ConversationDeletion, MemoryEntry, UserPreference, UserProfile, UserProfileField
+from app.instance.dependencies import InstanceContext, read_rate_limit, write_rate_limit
+from app.models import ConversationDeletion, MemoryEntry, Preference, Profile, ProfileField
 from app.utils import (
     clamp_page_size,
     decode_cursor,
@@ -30,51 +21,60 @@ from app.utils import (
     utcnow,
     validate_client_id,
 )
+from app.workspace.import_service import MAX_IMPORT_BYTES, run_import
+from app.workspace.schemas import (
+    ImportRequest,
+    MemoryCreate,
+    MemoryPatch,
+    PreferencesUpdate,
+    ProfileFieldUpdate,
+    ProfileUpdate,
+)
 
-router = APIRouter(prefix="/api", tags=["account"])
+router = APIRouter(prefix="/api", tags=["instance"])
 
 FIELD_KEY_RE = re.compile(r"^[^\s\x00-\x1f\x7f]{1,64}$")
 
 
-async def _get_or_create_preferences(db: AsyncSession, user_id: uuid.UUID) -> UserPreference:
+async def _get_or_create_preferences(db: AsyncSession, instance_id: int) -> Preference:
     preferences = (
-        await db.execute(select(UserPreference).where(UserPreference.user_id == user_id))
+        await db.execute(select(Preference).where(Preference.instance_id == instance_id))
     ).scalar_one_or_none()
     if preferences is not None:
         return preferences
 
-    preferences = UserPreference(user_id=user_id)
+    preferences = Preference(instance_id=instance_id)
     db.add(preferences)
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
         preferences = (
-            await db.execute(select(UserPreference).where(UserPreference.user_id == user_id))
+            await db.execute(select(Preference).where(Preference.instance_id == instance_id))
         ).scalar_one()
     return preferences
 
 
-async def _get_or_create_profile(db: AsyncSession, user_id: uuid.UUID) -> UserProfile:
+async def _get_or_create_profile(db: AsyncSession, instance_id: int) -> Profile:
     profile = (
-        await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+        await db.execute(select(Profile).where(Profile.instance_id == instance_id))
     ).scalar_one_or_none()
     if profile is not None:
         return profile
 
-    profile = UserProfile(user_id=user_id)
+    profile = Profile(instance_id=instance_id)
     db.add(profile)
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
         profile = (
-            await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+            await db.execute(select(Profile).where(Profile.instance_id == instance_id))
         ).scalar_one()
     return profile
 
 
-def _preferences_out(preferences: UserPreference) -> dict[str, Any]:
+def _preferences_out(preferences: Preference) -> dict[str, Any]:
     return {
         "themeId": preferences.theme_id,
         "mode": preferences.mode,
@@ -82,7 +82,7 @@ def _preferences_out(preferences: UserPreference) -> dict[str, Any]:
     }
 
 
-def _profile_out(profile: UserProfile) -> dict[str, Any]:
+def _profile_out(profile: Profile) -> dict[str, Any]:
     return {
         "customInstructions": profile.custom_instructions,
         "aboutName": profile.about_name,
@@ -92,7 +92,7 @@ def _profile_out(profile: UserProfile) -> dict[str, Any]:
     }
 
 
-def _field_out(field: UserProfileField) -> dict[str, Any]:
+def _field_out(field: ProfileField) -> dict[str, Any]:
     return {
         "key": field.key,
         "value": field.value,
@@ -123,9 +123,9 @@ def _memory_out(memory: MemoryEntry) -> dict[str, Any]:
     }
 
 
-async def _get_field(db: AsyncSession, user_id: uuid.UUID, key: str, *, lock: bool = False) -> UserProfileField:
-    stmt = select(UserProfileField).where(
-        UserProfileField.user_id == user_id, UserProfileField.key == key
+async def _get_field(db: AsyncSession, instance_id: int, key: str, *, lock: bool = False) -> ProfileField:
+    stmt = select(ProfileField).where(
+        ProfileField.instance_id == instance_id, ProfileField.key == key
     )
     if lock:
         stmt = stmt.with_for_update()
@@ -143,18 +143,18 @@ def _check_key(key: str) -> str:
 
 @router.get("/preferences")
 async def get_preferences(
-    ctx: AuthContext = Depends(read_rate_limit), db: AsyncSession = Depends(get_db)
+    ctx: InstanceContext = Depends(read_rate_limit), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
-    return _preferences_out(await _get_or_create_preferences(db, ctx.user.id))
+    return _preferences_out(await _get_or_create_preferences(db, ctx.instance_id))
 
 
 @router.put("/preferences")
 async def put_preferences(
     payload: PreferencesUpdate,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    preferences = await _get_or_create_preferences(db, ctx.user.id)
+    preferences = await _get_or_create_preferences(db, ctx.instance_id)
     if preferences.revision != payload.baseRevision:
         raise conflict("设置已在其他设备更新，请刷新后重试。", current=_preferences_out(preferences))
     preferences.theme_id = payload.themeId
@@ -167,18 +167,18 @@ async def put_preferences(
 
 @router.get("/profile")
 async def get_profile(
-    ctx: AuthContext = Depends(read_rate_limit), db: AsyncSession = Depends(get_db)
+    ctx: InstanceContext = Depends(read_rate_limit), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
-    return _profile_out(await _get_or_create_profile(db, ctx.user.id))
+    return _profile_out(await _get_or_create_profile(db, ctx.instance_id))
 
 
 @router.put("/profile")
 async def put_profile(
     payload: ProfileUpdate,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    profile = await _get_or_create_profile(db, ctx.user.id)
+    profile = await _get_or_create_profile(db, ctx.instance_id)
     if profile.revision != payload.baseRevision:
         raise conflict("个性化设置已在其他设备更新，请刷新后重试。", current=_profile_out(profile))
     profile.custom_instructions = payload.customInstructions
@@ -193,13 +193,13 @@ async def put_profile(
 
 @router.get("/profile/fields")
 async def list_profile_fields(
-    ctx: AuthContext = Depends(read_rate_limit), db: AsyncSession = Depends(get_db)
+    ctx: InstanceContext = Depends(read_rate_limit), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     fields = (
         await db.execute(
-            select(UserProfileField)
-            .where(UserProfileField.user_id == ctx.user.id)
-            .order_by(UserProfileField.key)
+            select(ProfileField)
+            .where(ProfileField.instance_id == ctx.instance_id)
+            .order_by(ProfileField.key)
         )
     ).scalars().all()
     return {"items": [_field_out(field) for field in fields]}
@@ -208,31 +208,31 @@ async def list_profile_fields(
 @router.get("/profile/fields/{key}")
 async def get_profile_field(
     key: str,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    return _field_out(await _get_field(db, ctx.user.id, key))
+    return _field_out(await _get_field(db, ctx.instance_id, key))
 
 
 @router.put("/profile/fields/{key}")
 async def put_profile_field(
     key: str,
     payload: ProfileFieldUpdate,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     _check_key(key)
     field = (
         await db.execute(
-            select(UserProfileField)
-            .where(UserProfileField.user_id == ctx.user.id, UserProfileField.key == key)
+            select(ProfileField)
+            .where(ProfileField.instance_id == ctx.instance_id, ProfileField.key == key)
             .with_for_update()
         )
     ).scalar_one_or_none()
 
     if field is None:
-        field = UserProfileField(
-            user_id=ctx.user.id,
+        field = ProfileField(
+            instance_id=ctx.instance_id,
             key=key,
             value=payload.value,
             source=payload.source,
@@ -256,10 +256,10 @@ async def put_profile_field(
 async def delete_profile_field(
     key: str,
     baseRevision: int | None = Query(default=None, ge=1),
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
-    field = await _get_field(db, ctx.user.id, key, lock=True)
+    field = await _get_field(db, ctx.instance_id, key, lock=True)
     if baseRevision is not None and field.revision != baseRevision:
         raise conflict("字段已在其他设备更新，请刷新后重试。", current=_field_out(field))
     await db.delete(field)
@@ -281,11 +281,11 @@ async def list_memories(
     cursor: str | None = None,
     status: Literal["active", "archived"] | None = None,
     scope: Literal["global", "conversation"] | None = None,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     page_size = clamp_page_size(limit)
-    stmt = select(MemoryEntry).where(MemoryEntry.user_id == ctx.user.id)
+    stmt = select(MemoryEntry).where(MemoryEntry.instance_id == ctx.instance_id)
     if status is not None:
         stmt = stmt.where(MemoryEntry.status == status)
     if scope is not None:
@@ -310,7 +310,7 @@ async def list_memories(
 @router.post("/memories", status_code=201)
 async def create_memory(
     payload: MemoryCreate,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     client_id = validate_client_id(payload.clientId)
@@ -319,14 +319,14 @@ async def create_memory(
             await db.execute(select(MemoryEntry).where(MemoryEntry.id == payload.id))
         ).scalar_one_or_none()
         if existing is not None:
-            if existing.user_id != ctx.user.id:
+            if existing.instance_id != ctx.instance_id:
                 raise conflict("该标识已被占用。")
             return _memory_out(existing)
     if client_id is not None:
         existing = (
             await db.execute(
                 select(MemoryEntry).where(
-                    MemoryEntry.user_id == ctx.user.id, MemoryEntry.client_id == client_id
+                    MemoryEntry.instance_id == ctx.instance_id, MemoryEntry.client_id == client_id
                 )
             )
         ).scalar_one_or_none()
@@ -335,7 +335,7 @@ async def create_memory(
 
     memory = MemoryEntry(
         id=payload.id or uuid.uuid4(),
-        user_id=ctx.user.id,
+        instance_id=ctx.instance_id,
         client_id=client_id,
         scope=payload.scope,
         type=payload.type,
@@ -358,13 +358,13 @@ async def create_memory(
 async def update_memory(
     memory_id: uuid.UUID,
     payload: MemoryPatch,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     memory = (
         await db.execute(
             select(MemoryEntry)
-            .where(MemoryEntry.id == memory_id, MemoryEntry.user_id == ctx.user.id)
+            .where(MemoryEntry.id == memory_id, MemoryEntry.instance_id == ctx.instance_id)
             .with_for_update()
         )
     ).scalar_one_or_none()
@@ -396,13 +396,13 @@ async def update_memory(
 async def archive_memory(
     memory_id: uuid.UUID,
     baseRevision: int = Query(ge=1),
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     memory = (
         await db.execute(
             select(MemoryEntry)
-            .where(MemoryEntry.id == memory_id, MemoryEntry.user_id == ctx.user.id)
+            .where(MemoryEntry.id == memory_id, MemoryEntry.instance_id == ctx.instance_id)
             .with_for_update()
         )
     ).scalar_one_or_none()
@@ -418,15 +418,15 @@ async def archive_memory(
     return _memory_out(memory)
 
 
-@router.get("/account/conversation-deletions")
+@router.get("/workspace/conversation-deletions")
 async def list_conversation_deletions(
     limit: int = Query(default=100, ge=1),
     cursor: str | None = None,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     page_size = clamp_page_size(limit)
-    stmt = select(ConversationDeletion.client_id).where(ConversationDeletion.user_id == ctx.user.id)
+    stmt = select(ConversationDeletion.client_id).where(ConversationDeletion.instance_id == ctx.instance_id)
     if cursor:
         (client_id,) = decode_cursor(cursor, 1)
         stmt = stmt.where(ConversationDeletion.client_id > client_id)
@@ -435,11 +435,11 @@ async def list_conversation_deletions(
     return {"items": items, "nextCursor": encode_cursor(items[-1]) if len(rows) > page_size else None}
 
 
-@router.post("/account/import")
-async def import_account(
+@router.post("/workspace/import")
+async def import_workspace(
     payload: ImportRequest,
     request: Request,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     content_length = request.headers.get("content-length")
@@ -449,4 +449,4 @@ async def import_account(
                 raise invalid("导入数据超过单批 8 MiB 限制。")
         except ValueError:
             raise invalid("Content-Length 不合法。") from None
-    return await run_import(db, ctx.user.id, payload)
+    return await run_import(db, ctx.instance_id, payload)

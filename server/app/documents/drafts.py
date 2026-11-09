@@ -28,7 +28,7 @@ def drafts_root() -> Path:
 @dataclass
 class Draft:
     id: str
-    user_id: uuid.UUID
+    instance_id: int
     conversation_id: uuid.UUID | None
     filename: str
     content_type: str
@@ -69,7 +69,7 @@ class DraftStore:
     async def put(
         self,
         *,
-        user_id: uuid.UUID,
+        instance_id: int,
         conversation_id: uuid.UUID | None,
         filename: str,
         content_type: str,
@@ -93,17 +93,17 @@ class DraftStore:
                 raise AppError(404, "draft_not_found", "草稿不存在或已过期。")
             else:
                 existing = self._drafts[draft_id]
-                if existing.user_id != user_id:
+                if existing.instance_id != instance_id:
                     raise AppError(404, "draft_not_found", "草稿不存在或已过期。")
 
             others = [
                 item for key, item in self._drafts.items()
-                if key != draft_id and item.user_id == user_id
+                if key != draft_id and item.instance_id == instance_id
             ]
-            if len(others) >= settings.document_draft_max_per_user:
+            if len(others) >= settings.document_draft_max_count:
                 raise AppError(429, "draft_limit_exceeded", "草稿数量已达上限，请先保存或删除草稿。")
             used = sum(item.size for item in others)
-            if used + len(data) > settings.document_draft_user_bytes:
+            if used + len(data) > settings.document_draft_max_bytes:
                 raise AppError(429, "draft_limit_exceeded", "草稿占用空间已达上限，请先保存。")
 
             target = self._path(draft_id) / "document"
@@ -112,7 +112,7 @@ class DraftStore:
             previous = self._drafts.get(draft_id)
             draft = Draft(
                 id=draft_id,
-                user_id=user_id,
+                instance_id=instance_id,
                 conversation_id=conversation_id,
                 filename=filename,
                 content_type=content_type,
@@ -127,11 +127,11 @@ class DraftStore:
             self._drafts[draft_id] = draft
             return draft
 
-    async def get(self, user_id: uuid.UUID, draft_id: str) -> Draft:
+    async def get(self, instance_id: int, draft_id: str) -> Draft:
         async with self._lock:
             await self._sweep_locked()
             draft = self._drafts.get(draft_id)
-            if draft is None or draft.user_id != user_id:
+            if draft is None or draft.instance_id != instance_id:
                 raise AppError(404, "draft_not_found", "草稿不存在或已过期。")
             draft.updated_at = time.monotonic()
             return draft
@@ -140,21 +140,21 @@ class DraftStore:
         try:
             return await asyncio.to_thread(draft.path.read_bytes)
         except FileNotFoundError as exc:
-            await self.delete(draft.user_id, draft.id)
+            await self.delete(draft.instance_id, draft.id)
             raise AppError(404, "draft_not_found", "草稿不存在或已过期。") from exc
 
-    async def delete(self, user_id: uuid.UUID, draft_id: str) -> None:
+    async def delete(self, instance_id: int, draft_id: str) -> None:
         async with self._lock:
             draft = self._drafts.get(draft_id)
-            if draft is None or draft.user_id != user_id:
+            if draft is None or draft.instance_id != instance_id:
                 return
             self._drafts.pop(draft_id, None)
         await asyncio.to_thread(shutil.rmtree, draft.path.parent, True)
 
-    async def list_for_user(self, user_id: uuid.UUID, conversation_id: uuid.UUID | None = None) -> list[Draft]:
+    async def list_for_instance(self, instance_id: int, conversation_id: uuid.UUID | None = None) -> list[Draft]:
         async with self._lock:
             await self._sweep_locked()
-            items = [item for item in self._drafts.values() if item.user_id == user_id]
+            items = [item for item in self._drafts.values() if item.instance_id == instance_id]
         if conversation_id is not None:
             items = [item for item in items if item.conversation_id == conversation_id]
         return sorted(items, key=lambda item: item.updated_at, reverse=True)

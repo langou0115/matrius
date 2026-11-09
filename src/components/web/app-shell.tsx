@@ -5,13 +5,13 @@ import { AppErrorBoundary } from '@/components/web/app-error-boundary';
 import { AppFrame } from '@/components/web/app-frame';
 import { InstanceWorkspace } from '@/components/web/instance-workspace';
 import { Workspace } from '@/components/web/workspace';
-import { AuthProvider } from '@/features/auth/auth-state';
+import { InstanceProvider } from '@/features/instance/instance-state';
 import { BackgroundNotifications } from '@/features/chat/components/background-notifications';
 import { usePathname } from '@/router';
 
 import '@/global.css';
 
-/** The single page shell: theme, auth, workspace and the notification layer around every route. */
+/** The single page shell: theme, instance, workspace and the notification layer around every route. */
 export function AppShell() {
   const pathname = usePathname().replace(/\/$/, '');
   const preview = import.meta.env.DEV && (pathname === '/mock' || pathname.startsWith('/mock/'));
@@ -58,7 +58,7 @@ export function AppShell() {
   return (
     // A render error must show up as a message with a reload action, not as a blank page.
     <AppErrorBoundary resetKey={pathname}>
-      <AuthProvider key={preview ? 'mock' : 'instance'} preview={preview}>
+      <InstanceProvider key={preview ? 'mock' : 'instance'} preview={preview}>
         <InstanceWorkspace preview={preview}>
           <AppFrame>
             <Suspense fallback={null}>
@@ -68,7 +68,7 @@ export function AppShell() {
             <BackgroundNotifications />
           </AppFrame>
         </InstanceWorkspace>
-      </AuthProvider>
+      </InstanceProvider>
     </AppErrorBoundary>
   );
 }

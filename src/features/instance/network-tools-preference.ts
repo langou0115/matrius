@@ -1,4 +1,4 @@
-import { ApiError } from '@/core/api/auth-session';
+import { ApiError } from '@/core/api/instance-client';
 
 type Request = <T>(path: string, init?: RequestInit) => Promise<T>;
 type Field = { value: string; revision: number };

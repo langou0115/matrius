@@ -1,12 +1,11 @@
-"""In-process cache, rate limiting and login lockout.
+"""In-process cache, rate limiting.
 
 The backend runs as a single uvicorn process (SQLite has a single writer), so
 module-level state is enough. All helpers are async to keep the call sites
 identical to the previous Redis implementation, but no operation awaits: the
 event loop serialises them, so no lock is required.
 
-State is intentionally lost on restart. Sessions live in the database, and
-rate-limit counters are expected to reset.
+State and rate-limit counters are intentionally lost on restart.
 """
 
 import logging
@@ -20,8 +19,6 @@ from app.errors import AppError
 
 logger = logging.getLogger(__name__)
 
-LOGIN_FAILURE_LIMIT = 15
-LOGIN_FAILURE_WINDOW_SECONDS = 900
 _SWEEP_EVERY = 256
 # Every caller currently uses a 60s window; an hour is a safe retention bound.
 _RATE_BUCKET_TTL_SECONDS = 3600
@@ -31,8 +28,6 @@ _cache: dict[str, tuple[float, str, int]] = {}
 _cache_bytes = 0
 # key -> monotonic timestamps inside the current window
 _rate_windows: dict[str, deque[float]] = {}
-# username -> (failures, window_expires_at)
-_login_failures: dict[str, tuple[int, float]] = {}
 # name:identity -> number of calls currently holding a slot
 _concurrency: dict[str, int] = {}
 _operations = 0
@@ -54,8 +49,6 @@ def _sweep(now: float) -> None:
             bucket.popleft()
         if not bucket:
             _rate_windows.pop(key, None)
-    for key in [key for key, (_, expires) in _login_failures.items() if expires <= now]:
-        _login_failures.pop(key, None)
 
 
 def _remove_cached(key: str) -> None:
@@ -125,11 +118,11 @@ async def enforce_rate_limit(
 
 @asynccontextmanager
 async def concurrency_limit(name: str, identity: str, limit: int) -> AsyncIterator[None]:
-    """Per-user in-flight cap, checked before queuing on the global upstream semaphore.
+    """Instance in-flight cap, checked before queuing on the global upstream semaphore.
 
-    Without it one account can occupy every provider slot and make everyone else wait. The
+    Without it one tool call can occupy every provider slot and make everyone else wait. The
     limit rejects immediately instead of queueing, so a runaway agent loop is visible to that
-    user rather than silently consuming the shared capacity.
+    caller rather than silently consuming the shared capacity.
     """
     key = f"{name}:{identity}"
     current = _concurrency.get(key, 0)
@@ -151,33 +144,6 @@ async def concurrency_limit(name: str, identity: str, limit: int) -> AsyncIterat
             _concurrency.pop(key, None)
 
 
-async def record_login_failure(username: str) -> None:
-    key = username.lower()
-    now = _now()
-    count, expires = _login_failures.get(key, (0, now + LOGIN_FAILURE_WINDOW_SECONDS))
-    if expires <= now:
-        count, expires = 0, now + LOGIN_FAILURE_WINDOW_SECONDS
-    _login_failures[key] = (count + 1, expires)
-
-
-async def assert_login_not_locked(username: str) -> None:
-    key = username.lower()
-    now = _now()
-    entry = _login_failures.get(key)
-    if entry is None:
-        return
-    count, expires = entry
-    if expires <= now:
-        _login_failures.pop(key, None)
-        return
-    if count >= LOGIN_FAILURE_LIMIT:
-        raise AppError(429, "login_locked", "登录失败次数过多，请 15 分钟后再试。")
-
-
-async def clear_login_failures(username: str) -> None:
-    _login_failures.pop(username.lower(), None)
-
-
 async def check_cache() -> None:
     """The in-process cache cannot be unavailable; kept for readiness checks."""
     return None
@@ -191,7 +157,6 @@ def reset_cache() -> None:
     global _cache_bytes, _operations
     _cache.clear()
     _rate_windows.clear()
-    _login_failures.clear()
     _concurrency.clear()
     _cache_bytes = 0
     _operations = 0

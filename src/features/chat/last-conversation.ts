@@ -1,7 +1,7 @@
 /** Which conversation this device had open. Navigation state, not content: the cloud
     workspace deliberately carries no `activeId`, but reopening the app should still land
     on the conversation the device left off in. Kept per workspace scope so switching
-    accounts never reopens another account's conversation. */
+    instances never reopens another instance's conversation. */
 
 const STORAGE_PREFIX = 'matrius.last-conversation:';
 /** The last `/c/<id>` page this device rendered, independent of the persisted workspace.

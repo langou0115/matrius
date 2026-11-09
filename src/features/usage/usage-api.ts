@@ -2,7 +2,7 @@ import type { TokenUsage } from '@/core/agent/types';
 
 import { localDateKey } from './usage-stats';
 
-/** Same shape the storage screen receives from the auth session. */
+/** Same shape the storage screen receives from the instance connection. */
 export type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
 
 export type UsageDay = {
@@ -34,7 +34,7 @@ export type TokenUsageReport = {
   items: UsageDay[];
   lifetime: UsageTotals;
   estimated: UsageTotals;
-  /** True once the one-time history estimate ran for this account (even with no history). */
+  /** True once the one-time history estimate ran for this instance (even with no history). */
   backfilled: boolean;
 };
 
@@ -48,7 +48,7 @@ export async function getTokenUsage(
 }
 
 /**
- * Estimates usage for conversations that predate recording. Runs once per account; the server
+ * Estimates usage for conversations that predate recording. Runs once per instance; the server
  * keeps the result separate from reported usage and the panel labels it as an estimate.
  */
 export async function backfillTokenUsage(request: ApiRequest, utcOffsetMinutes: number): Promise<void> {

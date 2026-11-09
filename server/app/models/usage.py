@@ -8,7 +8,7 @@ from app.models.base import Base, TimestampMixin
 
 
 class TokenUsageDaily(TimestampMixin, Base):
-    """One row per account and calendar day.
+    """One row per instance and calendar day.
 
     The browser reports the token usage of each finished reply because the model request never
     reaches the API: it is relayed through the stateless Web container. The client also decides
@@ -18,12 +18,12 @@ class TokenUsageDaily(TimestampMixin, Base):
 
     __tablename__ = "token_usage_daily"
     __table_args__ = (
-        UniqueConstraint("user_id", "day", name="uq_token_usage_daily_user_day"),
+        UniqueConstraint("instance_id", "day", name="uq_token_usage_daily_instance_day"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    instance_id: Mapped[int] = mapped_column(
+        ForeignKey("instance.id", ondelete="CASCADE"), nullable=False
     )
     day: Mapped[date] = mapped_column(Date, nullable=False)
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
@@ -44,12 +44,12 @@ class TokenUsageEstimateDaily(TimestampMixin, Base):
 
     __tablename__ = "token_usage_estimate_daily"
     __table_args__ = (
-        UniqueConstraint("user_id", "day", name="uq_token_usage_estimate_daily_user_day"),
+        UniqueConstraint("instance_id", "day", name="uq_token_usage_estimate_daily_instance_day"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    instance_id: Mapped[int] = mapped_column(
+        ForeignKey("instance.id", ondelete="CASCADE"), nullable=False
     )
     day: Mapped[date] = mapped_column(Date, nullable=False)
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
@@ -58,10 +58,10 @@ class TokenUsageEstimateDaily(TimestampMixin, Base):
 
 
 class UsageBackfill(TimestampMixin, Base):
-    """Marks that history was estimated once for an account, including empty histories."""
+    """Marks that history was estimated once for an instance, including empty histories."""
 
     __tablename__ = "usage_backfills"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    instance_id: Mapped[int] = mapped_column(
+        ForeignKey("instance.id", ondelete="CASCADE"), primary_key=True
     )

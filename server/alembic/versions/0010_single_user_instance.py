@@ -3,7 +3,7 @@
 import sqlalchemy as sa
 
 from alembic import op
-from app.config import get_settings
+import os
 
 revision = "0010_single_user_instance"
 down_revision = "0009_token_usage_estimate"
@@ -14,7 +14,7 @@ depends_on = None
 def upgrade() -> None:
     connection = op.get_bind()
     users = connection.execute(sa.text("SELECT id, username FROM users")).all()
-    configured = get_settings().initial_admin_username.strip().lower()
+    configured = os.environ.get("INITIAL_ADMIN_USERNAME", "").strip().lower()
     matches = [row for row in users if row.username.lower() == configured]
     if len(users) > 1 and not matches:
         raise RuntimeError(

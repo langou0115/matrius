@@ -12,8 +12,8 @@ def data_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
-async def test_upload_download_delete_round_trip(client, create_user, data_dir):
-    _, headers = await create_user()
+async def test_upload_download_delete_round_trip(client, create_instance, data_dir):
+    _, headers = await create_instance()
 
     response = await client.post(
         "/api/files",
@@ -46,8 +46,8 @@ async def _upload(client, headers, name, data=b"x", content_type="text/plain", *
     return response.json()
 
 
-async def test_library_lists_filters_search_and_paginates(client, create_user):
-    _, headers = await create_user()
+async def test_library_lists_filters_search_and_paginates(client, create_instance):
+    _, headers = await create_instance()
     for name, content_type in (
         ("a.txt", "text/plain"),
         ("b.png", "image/png"),
@@ -100,8 +100,8 @@ async def test_library_lists_filters_search_and_paginates(client, create_user):
     assert bad_cursor.status_code == 422
 
 
-async def test_library_filters_by_conversation(client, create_user):
-    _, headers = await create_user()
+async def test_library_filters_by_conversation(client, create_instance):
+    _, headers = await create_instance()
     client_id = str(uuid.uuid4())
     conversation = (
         await client.post(
@@ -127,8 +127,8 @@ async def test_library_filters_by_conversation(client, create_user):
     assert unknown.json()["items"] == []
 
 
-async def test_usage_splits_images_from_files(client, create_user):
-    _, headers = await create_user()
+async def test_usage_splits_images_from_files(client, create_instance):
+    _, headers = await create_instance()
     await _upload(client, headers, "notes.txt", b"12345", "text/plain")
     await _upload(client, headers, "photo.png", b"123", "image/png")
 
@@ -138,14 +138,14 @@ async def test_usage_splits_images_from_files(client, create_user):
     assert usage["images"] == {"bytes": 3, "count": 1}
 
 
-async def test_usage_and_bulk_delete(client, create_user):
-    _, headers = await create_user()
+async def test_usage_and_bulk_delete(client, create_instance):
+    _, headers = await create_instance()
     first = await _upload(client, headers, "one.txt", b"12345")
     second = await _upload(client, headers, "two.txt", b"6789")
 
     usage = (await client.get("/api/files/usage", headers=headers)).json()
     assert usage["used"] == 9
-    assert usage["quota"] > 0
+    assert usage["disk"]["total"] > 0
 
     foreign = {"id": str(uuid.uuid4())}
 
@@ -172,8 +172,8 @@ async def test_usage_and_bulk_delete(client, create_user):
     assert too_many.status_code == 422
 
 
-async def test_rename_rejects_extension_change_and_cross_account(client, create_user, data_dir):
-    _, headers = await create_user()
+async def test_rename_rejects_extension_change_and_cross_account(client, create_instance, data_dir):
+    _, headers = await create_instance()
     file = await _upload(client, headers, "old.txt", b"x")
 
     renamed = await client.patch(
@@ -193,15 +193,10 @@ async def test_rename_rejects_extension_change_and_cross_account(client, create_
     blank = await client.patch(f"/api/files/{file['id']}", headers=headers, json={"filename": "   "})
     assert blank.status_code == 422
 
-    _, other_headers = await create_user("other")
-    foreign = await client.patch(
-        f"/api/files/{file['id']}", headers=other_headers, json={"filename": "stolen.txt"}
-    )
-    assert foreign.status_code == 401
 
 
-async def test_upload_accepts_legacy_office_and_images_but_not_unknown_types(client, create_user):
-    _, headers = await create_user()
+async def test_upload_accepts_legacy_office_and_images_but_not_unknown_types(client, create_instance):
+    _, headers = await create_instance()
     for name in ("legacy.doc", "legacy.xls", "legacy.ppt", "photo.png", "note.md"):
         await _upload(client, headers, name, b"PK\x03\x04")
 
@@ -212,24 +207,3 @@ async def test_upload_accepts_legacy_office_and_images_but_not_unknown_types(cli
     )
     assert response.status_code == 415
     assert response.json()["error"]["code"] == "unsupported_file_type"
-
-
-async def test_files_are_not_visible_across_accounts(client, create_user):
-    _, owner_headers = await create_user("owner")
-    _, other_headers = await create_user("other")
-
-    response = await client.post(
-        "/api/files",
-        headers=owner_headers,
-        files={"file": ("note.txt", b"private", "text/plain")},
-    )
-    assert response.status_code == 201, response.text
-    file_id = response.json()["id"]
-
-    for method, path in (
-        ("GET", f"/api/files/{file_id}"),
-        ("GET", f"/api/files/{file_id}/content"),
-        ("DELETE", f"/api/files/{file_id}"),
-    ):
-        response = await client.request(method, path, headers=other_headers)
-        assert response.status_code == 401, (method, response.text)

@@ -1,12 +1,12 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from '@/router';
-import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, SlidersHorizontal, UserRound, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChat } from '@/features/chat/chat-state';
 import { conversationHref } from '@/features/chat/conversation-href';
-import { useAuth } from '@/features/auth/auth-state';
+import { useInstance } from '@/features/instance/instance-state';
 
 import { searchSettings, searchSettingsContent, visibleSettings } from './settings-catalog';
 
@@ -21,7 +21,6 @@ const categoryIcons: Record<string, LucideIcon> = {
   personalization: SlidersHorizontal,
   models: Cpu,
   about: Info,
-  account: UserRound,
   storage: HardDrive,
   usage: ChartColumn,
   sync: Cloud,
@@ -41,17 +40,17 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
   const preview = useIsPreview();
   const { activeId: conversationId } = useChat();
   const root = useSettingsRoot();
-  const { user } = useAuth();
+  const { info } = useInstance();
   const settingsItems = visibleSettings(
-    user?.mustChangePassword ? [] : user?.features ?? [],
+    info?.features ?? [],
     preview,
-    Boolean(user && !user.mustChangePassword),
+    Boolean(info),
   );
   const pathname = usePathname().replace(/\/$/, '');
   const homeHref = conversationHref(conversationId, preview);
   // Account, usage, storage and sync are full app pages rather than preview chat settings,
   // so they always live under /settings even when the rest of the catalogue is scoped to /mock.
-  const directRoutes = new Set(['account', 'storage', 'usage']);
+  const directRoutes = new Set(['storage', 'usage']);
   // Routes are built from the catalogue IDs above; typed routes cannot express that a runtime
   // string is one of the generated static paths, so narrow at this single boundary.
   const itemHref = (id: string): Href => (directRoutes.has(id) ? `/settings/${id}` : `${root}/${id}`) as Href;

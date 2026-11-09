@@ -81,18 +81,9 @@ class Settings(BaseSettings):
     fetch_max_bytes: int = 5 * 1024 * 1024
     # Short-lived fetch cache: research agents often re-read the same source within one reply.
     fetch_cache_ttl_seconds: int = 600
-    # Per-account in-flight cap for each web tool, on top of the global provider semaphore.
-    tool_user_concurrency: int = 4
-    # Anonymous local mode is keyed by client IP. Keep its budget below a signed-in
-    # account's while still allowing a batched fetch (up to 4 pages) to run at once.
-
-    # Browser sessions stay signed in until logout/revocation. Browsers cap persistent
-    # cookies (Chrome at 400 days), so refresh the cookie with this Max-Age on login.
-    auth_cookie_seconds: int = 400 * 24 * 60 * 60
-    initial_admin_username: str = ""
-    initial_admin_password: str = ""
+    # Instance in-flight cap for each web tool, on top of the global provider semaphore.
+    tool_concurrency: int = 4
     max_upload_bytes: int = 20 * 1024 * 1024
-    storage_quota_bytes: int = 512 * 1024 * 1024
     fetch_max_chars: int = 50000
 
     # Document engine. Empty paths mean "auto-detect the vendored binary for this
@@ -104,10 +95,10 @@ class Settings(BaseSettings):
     officecli_max_output_bytes: int = 16 * 1024 * 1024
     legacy_conversion_timeout_seconds: int = 60
     document_tool_timeout_seconds: int = 120
-    document_tool_user_concurrency: int = 2
+    document_tool_concurrency: int = 2
     document_draft_ttl_seconds: int = 30 * 60
-    document_draft_max_per_user: int = 10
-    document_draft_user_bytes: int = 60 * 1024 * 1024
+    document_draft_max_count: int = 10
+    document_draft_max_bytes: int = 60 * 1024 * 1024
     document_read_calls_per_minute: int = 60
     document_write_calls_per_minute: int = 20
 

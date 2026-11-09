@@ -35,7 +35,7 @@ test('preview library filters by kind and reports usage', async () => {
   assert.equal(usage.images.count, 125);
   assert.equal(usage.files.count, 375);
   assert.equal(usage.images.bytes + usage.files.bytes, usage.used);
-  assert.ok(usage.quota > usage.used);
+  assert.ok(usage.disk.total > usage.disk.used);
 });
 
 test('preview library searches, sorts and mutates in memory', async () => {

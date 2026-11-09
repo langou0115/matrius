@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } fro
 
 import { Icon } from '@/components/web/icon';
 import { SelectField } from '@/components/web/select-field';
-import { useNetworkTools } from '@/features/auth/network-tools-state';
+import { useNetworkTools } from '@/features/instance/network-tools-state';
 import { ModelIcon } from '@/features/chat/components/model-icon';
 import { MemoryDialog } from '@/features/memory/memory-dialog';
 import { useMemory } from '@/features/memory/memory-state';
@@ -43,13 +43,13 @@ function WebToolsSection() {
   const busy = !ready || saving;
   return <section className="settings-section" aria-labelledby="other-settings-heading">
     <h2 id="other-settings-heading">其他设置</h2>
-    <div className="account-list">
-      <div className="account-row">
-        <span className="account-row-icon"><Globe2 size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-        <span className="account-row-copy">
+    <div className="settings-list">
+      <div className="settings-row">
+        <span className="settings-row-icon"><Globe2 size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="settings-row-copy">
           <strong>网页搜索</strong>
         </span>
-        {busy && <LoaderCircle className="login-spinner account-row-spinner" size={16} strokeWidth={2} aria-hidden="true" />}
+        {busy && <LoaderCircle className="loading-spinner settings-row-spinner" size={16} strokeWidth={2} aria-hidden="true" />}
         <label className="model-switch-label">
           <input className="model-checkbox-input" type="checkbox" checked={enabled} disabled={busy} aria-label="网页搜索"
             onChange={(event) => void setEnabled(event.target.checked)} />
@@ -57,7 +57,7 @@ function WebToolsSection() {
         </label>
       </div>
     </div>
-    {error && <p className="account-message is-error" role="alert">
+    {error && <p className="settings-message is-error" role="alert">
       <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
       <span>{error}</span>
     </p>}
@@ -71,10 +71,10 @@ function MemorySection() {
   const [manageOpen, setManageOpen] = useState(false);
   return <section className="settings-section" aria-labelledby="memory-heading">
     <h2 id="memory-heading">记忆</h2>
-    <div className="account-list memory-settings-list">
-      <div className="account-row memory-model-row">
-        <span className="account-row-icon"><Sparkles size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-        <span className="account-row-copy">
+    <div className="settings-list memory-settings-list">
+      <div className="settings-row memory-model-row">
+        <span className="settings-row-icon"><Sparkles size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="settings-row-copy">
           <strong>记忆助手模型</strong>
         </span>
         <div className="memory-model-select">
@@ -97,9 +97,9 @@ function MemorySection() {
           />
         </div>
       </div>
-      <div className="account-row memory-toggle-row">
-        <span className="account-row-icon"><Brain size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-        <span className="account-row-copy">
+      <div className="settings-row memory-toggle-row">
+        <span className="settings-row-icon"><Brain size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="settings-row-copy">
           <strong>启用记忆</strong>
         </span>
         <label className="model-switch-label">
@@ -108,12 +108,12 @@ function MemorySection() {
           <span className="toggle-switch" aria-hidden="true" />
         </label>
       </div>
-      <div className="account-row">
-        <span className="account-row-icon"><FileText size={19} strokeWidth={1.75} aria-hidden="true" /></span>
-        <span className="account-row-copy">
+      <div className="settings-row">
+        <span className="settings-row-icon"><FileText size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="settings-row-copy">
           <strong>管理记忆</strong>
         </span>
-        <button type="button" className="secondary-button account-row-action" disabled={!enabled} onClick={() => setManageOpen(true)}>管理</button>
+        <button type="button" className="secondary-button settings-row-action" disabled={!enabled} onClick={() => setManageOpen(true)}>管理</button>
       </div>
     </div>
     {modelError && <p className="settings-footnote" role="alert">{modelError}</p>}

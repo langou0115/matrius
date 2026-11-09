@@ -9,8 +9,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.account.router import router as account_router
-from app.auth.router import router as auth_router
 from app.cache import close_cache
 from app.config import get_settings
 from app.conversations.router import router as conversations_router
@@ -25,6 +23,7 @@ from app.logging import configure_logging
 from app.tools.router import router as tools_router
 from app.tools.search import close_bing_client
 from app.usage.router import router as usage_router
+from app.workspace.router import router as workspace_router
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +76,7 @@ def create_app() -> FastAPI:
         request.state.request_id = request_id
 
         content_length = request.headers.get("content-length")
-        if request.url.path == "/api/account/import" and content_length is not None:
+        if request.url.path == "/api/workspace/import" and content_length is not None:
             try:
                 if int(content_length) > MAX_IMPORT_BODY:
                     return JSONResponse(
@@ -97,13 +96,13 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
-        if request.url.path.startswith(("/api/auth/", "/api/features")):
+        if request.url.path.startswith(("/api/features",)):
             response.headers["Cache-Control"] = "no-store"
         logger.info(
             "request",
             extra={
                 "request_id": request_id,
-                "user_id": getattr(request.state, "user_id", None),
+                "instance_id": getattr(request.state, "instance_id", None),
                 "method": request.method,
                 "path": request.url.path,
                 "status": response.status_code,
@@ -113,9 +112,8 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(health_router)
-    app.include_router(auth_router)
     app.include_router(conversations_router)
-    app.include_router(account_router)
+    app.include_router(workspace_router)
     app.include_router(files_router)
     app.include_router(usage_router)
     app.include_router(tools_router)

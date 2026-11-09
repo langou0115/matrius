@@ -79,13 +79,11 @@ server/.data/
 
 浏览器 IndexedDB 仅保存模型配置、密钥和设备状态，聊天数据统一保存到实例后端。旧 dev.db 在新 matrius.db 不存在时通过 SQLite backup API 复制并保留源库。
 
-启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建开发实例所有者并同步密码 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Vite 开发服务器。
+启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建实例记录 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Vite 开发服务器。
 
-API 只监听 `server/app` 下的 Python 应用代码，修改 `server/tests` 不触发重载。开发模式下后端直接读取 `.env.local`，并在每次读取配置时检查文件变化：代理、搜索/抓取预算、限流等运行时设置在保存后立即生效，不需要重启。端口、`DATABASE_URL` / `DATA_DIR`、`INITIAL_ADMIN_*` 和日志级别属于启动期设置，仍需重启。`npm run dev` 每次启动都会自动迁移；服务已在运行时单独执行 `npm run db:migrate` 即可升级同一个 `server/.data/matrius.db`，不必重启开发会话。该命令固定使用开发数据库，不会读取 shell 或 `.env.local` 里的生产 `DATABASE_URL` / `DATA_DIR`。Windows 使用 `server/scripts/dev-api.py` 复用锁定版本 Uvicorn 的监听器，只定向终止并重建工作进程，避免 Uvicorn 默认的控制台 Ctrl+C 事件连带停止 npm/Vite。热重载会中断当时的开发请求。升级 Uvicorn 后需运行 `npm run test`，其中 Windows 集成测试验证连续两次真实重载与进程树清理。
 
 Windows 开发工作进程显式使用 `ProactorEventLoop`，以支持 OfficeCLI / LibreOffice 的异步子进程。每次重载由新工作进程自行绑定端口，不复用父进程的监听 socket，避免 IOCP 关联失效导致 `WinError 87`。`npm run test` 在 Windows 上会真实创建 DOCX、连续两次重载后分别创建 XLSX / PPTX，并验证进程树清理。修改 `server/scripts/dev-api.py` 后须完整重启 `npm run dev`，仅应用代码热重载不会替换启动器。
 
-开发实例所有者和正式服务器都使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，启动时把已有账号密码同步为当前值；未设置时开发库回退到 `admin` / `dev-password`。`npm run dev` 不读取 `docker-compose/.env.production`。如果 `INITIAL_ADMIN_PASSWORD` 仍是示例占位值 `change-me`，开发命令会直接失败并要求先修改密码。
 
 开发环境下，如果库中已有同名所有者但密码与当前配置不一致，启动时会将其密码同步为配置值；正式环境也会应用配置中的实例所有者密码。
 
@@ -109,36 +107,31 @@ Vite 按需编译页面模块，首次启动或依赖变化时预构建依赖；
 
 ### 多台电脑与数据隔离
 
-每台开发机独立安装 Node.js、npm、uv 并运行 `npm ci`；各自使用自己的 `server/.data`，数据不会在电脑之间同步，也不会与正式服务器共享。需要正式数据时，用 `scripts/backup.sh` 生成的快照在本地恢复，或重新登录后通过应用内导入。
+每台开发机独立安装 Node.js、npm、uv 并运行 `npm ci`；各自使用自己的 `server/.data`，数据不会在电脑之间同步，也不会与正式服务器共享。需要正式数据时，用 `scripts/backup.sh` 生成的快照在本地恢复，或通过应用内导入。
 
-`INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 同时用于开发库和正式服务器；正式服务器以最近一次部署为准。浏览器 IndexedDB 和登录 token 仍按站点与浏览器隔离。
 
 ## 远程构建与部署：npm run deploy
 
 发布命令从原 npm run remote 更名为 npm run deploy。开发不再需要上传源码；只有正式发布才执行此命令。本机发布只需 Node.js、Git、OpenSSH、tar，不需要 Python 或 Docker。
 
-部署连接信息（`REMOTE_USER` / `REMOTE_HOST`、SSH 覆盖项、`APP_PORT` / `API_PORT` / `APP_HTTPS_PORT`、`REMOTE_WORKSPACE`、`REMOTE_ENV_FILE`）放在本机 `docker-compose/.env.production`（从 `.env.production.example` 复制，已被 Git 忽略）。`.env.local` 只放本地开发与通用应用设置；通用项（登录有效期、限额、`LOG_LEVEL` 等）设置后会在部署时写入服务器的 `production.env`，留空则保留服务器原值。代理按用途分键：`WEBTOOL_PROXY_URL` 只用于本机开发，不会上传；`WEBTOOL_PROXY_URL_PRODUCTION` 会被映射为服务器的 `WEBTOOL_PROXY_URL`。生产 API 在容器内运行，代理地址必须是 `host.docker.internal` 等容器可达地址，loopback 会被部署拒绝。`INITIAL_ADMIN_PASSWORD` 仍是 `change-me` 时，部署会直接失败并要求先修改实例所有者密码。为了兼容旧配置，`.env.local` 中同名的部署项仍会覆盖 `.env.production`。
 
 ```bash
-npm run deploy                       # 同步、构建、迁移、刷新实例所有者密码、健康检查后退出
+npm run deploy                       # 同步、构建、迁移、健康检查后退出
 npm run test                         # 也覆盖本地配置、SQLite URL、重置数据、进程清理、API 代理、源码上传与部署锁回归
 ```
 
 服务器只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite 数据库与上传文件）。Web 用 Dockerfile.web 执行 `npm run build` 构建静态生产产物并运行 Node 模型中继，API 用 server/Dockerfile 内置的入口脚本与单 worker Uvicorn 运行。源码直接复制进镜像，不挂载开发目录、不启动 Vite 开发服务或 reload；保留数据和 Caddy 配置所需卷。每次发布都调用两个镜像的 build，由 Docker 复用未变化的层，应用镜像变化后替换对应容器。
 
-`npm run deploy` 每次执行同一套流程：生成缺失的服务器 production.env（新服务器首次执行时）、备份现有数据库、构建 Web/API、执行迁移、刷新实例所有者密码、更新容器与 Caddy、健康检查。新服务器不需要单独初始化命令；首次执行会创建数据卷和空库所有者。API 每次重建，入口在启动 Uvicorn 前执行 `alembic upgrade head`、`alembic check` 和 `bootstrap`，因此迁移总是随之应用。运行时 `/api/health` 也会校验版本，不一致返回 503。REMOTE_WORKSPACE 默认仍为服务器 $HOME/.matrius-remote，以复用已有配置和数据；更名命令不会创建新数据卷。APP_PORT、API_PORT、APP_HTTPS_PORT 在每次部署时应用，未填写的端口保留服务器原值。Compose 根据端口、镜像及环境配置变化按需重建 Caddy；Caddyfile 内容变化时强制重建，健康检查通过后才记录已应用的文件摘要。配置未变化时保留原 Caddy 容器。INITIAL_ADMIN_* 以最近一次部署为准：每次部署都会写入服务器并更新该实例所有者密码，两个值留空时不动现有密码。不在本机对云端库执行迁移。
 
-同步包含未提交的新文件、修改和删除；排除密钥、.env、依赖、虚拟环境、构建产物、Git 元数据及符号链接。服务器会话锁防止两个发布同时覆盖源码。健康检查通过即完成发布，代码中登记的功能随即对所有账号开放。回退为切换到已验证提交后重新 deploy；数据库结构回退须另行评估。
+同步包含未提交的新文件、修改和删除；排除密钥、.env、依赖、虚拟环境、构建产物、Git 元数据及符号链接。服务器会话锁防止两个发布同时覆盖源码。健康检查通过即完成发布，代码中登记的功能随即对所有实例开放。回退为切换到已验证提交后重新 deploy；数据库结构回退须另行评估。
 
 数据库已有数据时，每次部署都先用 SQLite backup API 生成一致性快照（包含 WAL 中已提交的事务）并复制到服务器 `<workspace>/backups/`（保留最近 10 份），备份失败或为空则中止。部署不再单独确认破坏性迁移，删表、删列等操作会随部署执行；发布前应在本地审查验证，备份是回退依据。迁移执行后运行 `alembic check`，模型与表结构不一致会中止发布。
 
 手动 CD 同样使用 npm run deploy，不配置自动 CI。服务器准备、SSH 权限、备份见[服务器部署](deployment.md)。
 
-## 按账号开发新功能
+## 按实例开发新功能
 
-所有新增可见功能先登记到 `server/app/features/registry.py`，UI 使用 `useFeature` / `FeatureGate`、服务端使用 `require_feature`，并过滤设置搜索和直接路由访问。功能在本机开发环境验证通过后再提交并手动 CD 发布；登记项没有预览白名单，部署成功后即对所有完成首次改密的账号开放。详细规则与共用代码/数据库的限制见[认证文档](auth.md#同一地址的账号功能开关)。
 
-账号登录并完成首次改密后使用云端 REST 仓储，不读取或写入浏览器本地工作区；退出恢复本地数据，不自动上传或合并。模型配置与 API key 始终保存在本机并共用。浏览器登录态由 HttpOnly Cookie 维持，关闭标签页或重启浏览器后仍有效；Mock 不使用真实账号。`npm run test` 包含工作区模式隔离与云端 REST 增删改、版本冲突回归。
 
 ## 后端与基础设施
 
@@ -153,7 +146,7 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest
 ```
 
-本机容量测试：在 `server/` 运行 `uv run --no-sync python scripts/benchmark.py`；仓库根目录运行 `node scripts/benchmark-relay.mjs` 测量模型 SSE 中继。前者创建隔离的临时 SQLite 并执行真实迁移，以单 worker Uvicorn 和真实 HTTP 测试认证后读写，保留限流；结束后清理测试库，不读取开发库或连接正式服务器。可用 `--seconds 30 --levels 1 10 25 50` 调整单档时长与并发。多账户场景使用 `--mode pinned --matrix "200:1,5;500:1" --target-rates read=120,mixed=100,write=60`：每个虚拟账户绑定自己的令牌、独立限速并可设置每账户并发，另含公平性、健康探测、跨租户隔离和进程 CPU/RSS/WAL 采样。结果写入 `doc/benchmark-results.json`，中继结果写入 `doc/benchmark-relay-results.json`。中继使用真实生产模块及本地模拟上游，仅在隔离测试环境替换出站网络，不改动生产目标校验。单账户并发与已知瓶颈见[容量报告](performance.md)，多账户稳定点、上限和服务器配置见[多账户容量报告](performance-multiaccount.md)。短时间本机压测不能作为生产 SLA。
+本机容量测试：在 `server/` 运行 `uv run --no-sync python scripts/benchmark.py`；仓库根目录运行 `node scripts/benchmark-relay.mjs` 测量模型 SSE 中继。前者创建隔离的临时 SQLite 并执行真实迁移，以单 worker Uvicorn 和真实 HTTP 测试认证后读写，保留限流；结束后清理测试库，不读取开发库或连接正式服务器。可用 `--seconds 30 --levels 1 10 25 50` 调整单档时长与并发。多实例场景使用 `--mode pinned --matrix "200:1,5;500:1" --target-rates read=120,mixed=100,write=60`：每个虚拟实例绑定自己的令牌、独立限速并可设置每实例并发，另含公平性、健康探测、跨租户隔离和进程 CPU/RSS/WAL 采样。结果写入 `doc/benchmark-results.json`，中继结果写入 `doc/benchmark-relay-results.json`。中继使用真实生产模块及本地模拟上游，仅在隔离测试环境替换出站网络，不改动生产目标校验。单实例并发与已知瓶颈见[容量报告](performance.md)，多实例稳定点、上限和服务器配置见[多实例容量报告](performance-multiaccount.md)。短时间本机压测不能作为生产 SLA。
 
 修改数据库结构使用 Alembic，检查索引、约束与级联；涉及迁移时在临时空 SQLite 上验证全部迁移可执行（`server/tests/test_migrations.py` 覆盖这一点）。SQLite 的 `ALTER TABLE` 能力有限，Alembic 已启用 `render_as_batch`；重命名、删除列和收紧约束应拆成小步。仓库不配置自动 CI；日常部署用 `npm run deploy`，手动 CD 调用同一脚本发布已验证的 main 提交。完整服务器准备与备份见[服务器部署](deployment.md)。
 
@@ -169,7 +162,7 @@ uv run --no-sync pytest
 
 ## 完成前检查
 
-- 查看相关实现与文档，保持业务依赖方向和唯一所有者访问保护。
+- 查看相关实现与文档，保持业务依赖方向和实例连接状态。
 - 涉及功能时检查本地/实例边界、密钥处理、重试和数据保留。
 - UI 涉及安全区、键盘、字体缩放、无障碍、长列表和 Web 适配时报告验证范围。
 - 报告 lint、类型检查、相关测试与生产构建的实际结果。

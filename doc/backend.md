@@ -10,7 +10,7 @@
 客户端 Agent Runtime（上下文、循环、流式事件、工具调度、取消）
     │
     ├── REST /api/* ──────────────→ FastAPI
-    │                                 ├── 认证、校验、限流
+    │                                 ├── 校验、限流
     │                                 ├── SQLite（事实源，/data/matrius.db）
     │                                 ├── 本地文件（/data/files）
     │                                 ├── 进程内缓存与限流
@@ -21,9 +21,9 @@
 
 - 服务端**不运行 Agent Loop**，不保存流式中间态，也不保管模型 API key。
 - API 必须以**单个 uvicorn worker** 运行：缓存和限流是进程内状态，多 worker 会各自计数。单进程不妨碍并发，模型代理、搜索与抓取都是 async I/O。
-- 单用户实例的业务数据统一读写后端，未登录时显示登录入口，断网不回退到浏览器聊天数据。
+- 单用户实例的业务数据统一读写后端，打开地址即可使用，断网不回退到浏览器聊天数据。
 - 不提供用户管理、管理员页面或本地/云端模式切换；外部实例管理不在本工程范围内。
-- 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；Web 使用 HttpOnly Cookie，服务端同时接受 Bearer token。
+- 同一来源部署下 Web 与 API 同源，CORS 默认无需配置；客户端无需认证凭据。
 
 ## 目录职责
 
@@ -31,41 +31,24 @@
 app/main.py             应用装配、请求 ID/日志、CORS、异常映射
 app/config.py           pydantic-settings
 app/db.py               async engine / get_db / SQLite PRAGMA
-app/cache.py            进程内缓存、滑动窗口限流、登录锁定
+app/cache.py            进程内缓存、滑动窗口限流、并发限制
 app/storage.py          本地文件存储（DATA_DIR/files）
-app/auth/               密码哈希、Cookie/Bearer 会话、鉴权依赖、普通登录
+app/instance/           实例上下文与限流依赖
 app/conversations/      会话、消息、已读状态、keyset 分页
-app/account/            偏好、画像、画像字段、记忆、账号导入与合并
+app/workspace/            偏好、画像、画像字段、记忆、实例导入与合并
 app/files/              上传、下载、删除、配额、文本提取
-app/usage/              每账号每日 Token 用量上报与查询
+app/usage/              每实例每日 Token 用量上报与查询
 app/tools/              搜索、URL 校验、网页读取、文件读/grep
 app/models/             SQLAlchemy 表
 alembic/                迁移
 tests/                  集成测试（内存 SQLite）
 ```
 
-路由层可以直接承载业务逻辑；出现重复或复杂事务时再抽服务。`account/import_service.py` 是独立事务逻辑的例子。
+路由层可以直接承载业务逻辑；出现重复或复杂事务时再抽服务。`workspace/import_service.py` 是独立事务逻辑的例子。
 
-## 认证
+## 实例访问
 
-### 普通登录
-
-```text
-POST /api/auth/login  { username, password }
-→ { token, user: { id, username, mustChangePassword } }
-```
-
-- token 为 `secrets.token_urlsafe(32)`，数据库只保存 SHA-256。
-- 浏览器同时收到 HttpOnly、SameSite=Lax 的持久 Cookie（`matrius_session`，Max-Age 400 天，HTTPS 下加 Secure，`/me` 校验时滑动续期），Web 端不保存 token。
-- 非浏览器客户端可使用 `Authorization: Bearer <token>`；Cookie 与 Bearer 同时存在时 Bearer 优先。
-- `auth_sessions` 保存 兼容字段 `scope`（仅接受 `user`）、最后访问时间、撤销时间；新会话不设自动过期时间，退出或撤销后立即失效。
-- `must_change_password=true` 时只有 `me`、改密和登出可用，其余接口返回 403。
-- 密码使用 Argon2id，允许 1–256 个字符；新密码不能与当前密码相同。
-- 登录按 IP（10/分钟）和用户名（5/分钟）限流；连续失败 15 次锁定 15 分钟。计数在进程内，API 重启后清零。
-
-### 唯一所有者
-
-`instance` 表仅允许 id=1，绑定唯一 owner_id。认证同时匹配此绑定；历史其他账号和 admin scope 令牌均不可用。初始化、旧数据保留与配置规则见[认证](auth.md)。
+无需登录，所有可访问部署地址的客户端共享实例数据与资源。访问状态与能力由 `/api/features` 初始化，不使用 Cookie 或 Bearer。
 
 ## 实例数据契约
 
@@ -73,8 +56,8 @@ POST /api/auth/login  { username, password }
 
 ```text
 id             UUID，可由客户端预生成
-user_id        资源归属，所有读写都有 WHERE user_id = :current
-client_id      旧本地 id；unique(user_id, client_id)，仅用于导入与重试
+instance_id        资源归属，所有读写都有 WHERE instance_id = :current
+client_id      旧本地 id；unique(instance_id, client_id)，仅用于导入与重试
 revision       从 1 开始，每次修改 +1
 created_at / updated_at  服务端 timestamptz
 ```
@@ -94,7 +77,7 @@ created_at / updated_at  服务端 timestamptz
 
 客户端应从 `error.current` 读取最新记录。
 
-- 删除是硬删除；会话级联删除消息。跨用户访问统一返回 404。
+- 删除是硬删除；会话级联删除消息。不存在的资源返回 404。
 - `updated_at` 只在追加消息时更新（用于列表排序）；PATCH 已读状态或元数据只增加 revision，不改变排序。
 - 服务端时间在响应中统一返回 epoch 毫秒。
 
@@ -146,7 +129,7 @@ DELETE /api/messages/{id}?baseRevision=
 - 图片和文档先通过文件 API 上传，消息只保存 `fileIds` 引用（最多 20 个，去重并校验归属）。列表与详情响应同时返回 `files: [{ id, filename, contentType, size, revision }]`，顺序与 `fileIds` 一致；已删除或不属于本人的 ID 不输出。`get_conversation` 对本页所有 `file_ids` 只查询一次文件表。
 - `PATCH /api/messages/{id}` 可传 `fileIds` 替换附件：未绑定会话的文件会绑定到当前会话，已属于其他会话的文件返回 422，传空数组表示清空。
 
-### 账号数据
+### 实例数据
 
 ```text
 GET/PUT /api/preferences                  { themeId, mode, baseRevision }
@@ -157,17 +140,17 @@ GET/POST /api/memories
 PATCH/DELETE /api/memories/{id}
 ```
 
-- `preferences`、`profile` 为账号单例，首次读取时创建。
+- `preferences`、`profile` 为实例单例，首次读取时创建。
 - `preferences.mode` 为 `light|dark|system`；主题 id 为客户端主题标识。
-- 画像字段按 key 唯一；删除字段不删除账号。客户端记忆摘要使用 key `memory`，值为 `{"enabled":boolean,"summary":string,"updatedAt":number|null}` 的 JSON 字符串，随工作区保存；该字段不是 `memory_entries` 的替代，服务端仍保留条目级记忆 API 供后续使用。
+- 画像字段按 key 唯一；删除字段不删除实例。客户端记忆摘要使用 key `memory`，值为 `{"enabled":boolean,"summary":string,"updatedAt":number|null}` 的 JSON 字符串，随工作区保存；该字段不是 `memory_entries` 的替代，服务端仍保留条目级记忆 API 供后续使用。
 - 记忆字段：`scope`（`global|conversation`）、`type`（`identity|workflow|voice|instruction`）、`status`（`active|archived`）、`content`、`source`（`manual|tool|extracted`）。
 - 删除记忆为归档（`status=archived`），不是硬删除。
 - 记忆与画像的分页均为 keyset（`updated_at + id`）。
 
-### 账号导入与增量合并
+### 实例导入与增量合并
 
 ```text
-POST /api/account/import
+POST /api/workspace/import
 {
   "schemaVersion": 1,
   "chat": { "conversations": [ {
@@ -189,8 +172,8 @@ POST /api/account/import
 - 消息按数组顺序分配 `position`；本地 id 写入 `client_id`，服务端生成 UUID。
 - 服务端在单进程内用 `asyncio.Lock` 串行执行导入，避免多个标签页并发同步时同时读到"不存在"并触发唯一约束；锁按事件循环绑定，仅对单 worker 有效。
 - 可传 `chat.deletedConversationIds`（单批最多 2000 个、每个 1–128 字符）。同一事务内先记录删除标识并级联删除会话正文，再导入其余会话；已删除 ID 的旧副本计入 `skipped`，即使时间戳更新也不复活。普通 REST 会话删除同样记录墓碑；重新创建已删除 ID 返回 409。
-- `GET /api/account/conversation-deletions?limit=100&cursor=` 返回 `{ items: string[], nextCursor }`，按实例所有者范围、按标识 keyset 分页。供历史数据导入兼容使用，正式工作区不执行本地/云端同步。
-- 迁移 `0002_conversation_deletions.py` 新增仅含 `(user_id, client_id)` 的持久删除表，不存正文；普通 REST 会话创建/删除与导入共用写锁。
+- `GET /api/workspace/conversation-deletions?limit=100&cursor=` 返回 `{ items: string[], nextCursor }`，按实例范围、按标识 keyset 分页。供历史数据导入兼容使用，正式工作区不执行本地/云端同步。
+- 迁移 `0002_conversation_deletions.py` 新增仅含 `(instance_id, client_id)` 的持久删除表，不存正文；普通 REST 会话创建/删除与导入共用写锁。
 
 ## 文件
 
@@ -222,15 +205,15 @@ DELETE /api/files/{id}
 ```text
 POST /api/usage   { date?, inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens? }
 GET  /api/usage?days=1..1095                    → { items: [...], lifetime, estimated, backfilled }
-POST /api/usage/backfill { utcOffsetMinutes }   # 每账号一次，估算历史会话
+POST /api/usage/backfill { utcOffsetMinutes }   # 每实例一次，估算历史会话
 ```
 
 - 模型请求由 Web 容器的无状态中继转发，API 进程看不到服务商的 usage；每轮回复结束后由浏览器上报输入、输出与缓存 token，服务端只做累加。
-- 实例所有者每天一行（`token_usage_daily`，`unique(user_id, day)`），不保存消息级明细。`date` 是客户端按本机时区计算出的日期，允许与服务器 UTC 日期相差 2 天；缺失时按 UTC 当天。
+- 实例所有者每天一行（`token_usage_daily`，`unique(instance_id, day)`），不保存消息级明细。`date` 是客户端按本机时区计算出的日期，允许与服务器 UTC 日期相差 2 天；缺失时按 UTC 当天。
 - 单次上报每个计数上限 1 亿；全为 0 的请求直接返回 `{"ok": true}`，不写行。`requests` 每次有效上报 +1，表示回复轮次数。
-- 历史记录没有真实计数，`POST /api/usage/backfill` 用已保存的消息按与客户端相同的估算公式重算，写入独立的 `token_usage_estimate_daily`（`unique(user_id, day)`）。`usage_backfills` 标记已估算，重复调用直接返回 `skipped`。`utcOffsetMinutes` 使用浏览器 `getTimezoneOffset()`，把历史归入当时的本地日期；每次助手回复的输入按其之前的完整上下文估算。
+- 历史记录没有真实计数，`POST /api/usage/backfill` 用已保存的消息按与客户端相同的估算公式重算，写入独立的 `token_usage_estimate_daily`（`unique(instance_id, day)`）。`usage_backfills` 标记已估算，重复调用直接返回 `skipped`。`utcOffsetMinutes` 使用浏览器 `getTimezoneOffset()`，把历史归入当时的本地日期；每次助手回复的输入按其之前的完整上下文估算。
 - `GET` 返回窗口内按日期升序的每日累计（含明天，兼容东八区等本机日期）、全量 `lifetime`、仅估算的 `estimated` 汇总与 `backfilled` 标记；每日项带 `estimated` 表示当天含估算。客户端据本机日期计算今日/近 7 天/近 30 天，并明确标注估算部分。
-- 接口要求账号具备 `usage` 功能（登记于 `app/features/registry.py`），并复用读写限流。
+- 接口要求实例具备 `usage` 功能（登记于 `app/features/registry.py`），并复用读写限流。
 
 ## 云端工具
 
@@ -245,7 +228,7 @@ POST /api/tools/search { query, limit? (1-20, 默认 10) }
 - 可达来源返回零结果时响应 `200 []`，不缓存；只有实际尝试的所有来源都失败才返回 502 `upstream_error`。这修复了旧逻辑中「DuckDuckGo 失败 + Bing 成功但零结果」被误报为 502 的问题。
 - 服务端规范化 URL、移除跟踪参数、去重，按查询关键词与标题/域名/摘要的相关性排序，再优先保证域名多样性；标题截断 280 字符，摘要 640 字符。相关性只是词面匹配，不等于事实核实。
 - 非空结果缓存在进程内 5 分钟；并发 4，Bing RSS 响应体上限 `SEARCH_MAX_BYTES`（默认 2 MiB）。
-- 相同查询使用 single-flight 合并并发请求；每个账号最多 4 个在途搜索，超出立即返回 429。
+- 相同查询使用 single-flight 合并并发请求；每个实例最多 4 个在途搜索，超出立即返回 429。
 - `WEBTOOL_PROXY_URL` 同时用于搜索和网页读取的上游连接；配置后始终走代理，没有直连兜底。生产值只来自 `.env.local` 的 `WEBTOOL_PROXY_URL_PRODUCTION`，开发机的 `WEBTOOL_PROXY_URL` 不会同步到服务器。
 
 ### 网页读取
@@ -260,7 +243,7 @@ POST /api/tools/fetch { url, mode? (fast|full) }
 - content-type 明确为文本时直接接受；明确为图片、音视频、字体、PDF、压缩包或 Office 文档时直接拒绝。缺失、`application/octet-stream` 或未知类型时读取前 4 KiB 嗅探：NUL、二进制魔数或大量不可打印字符拒绝；HTML / JSON / 纯文本按实际内容处理。非 HTML 的 JSON、XML、代码、纯文本和 Markdown 原样保留结构。
 - HTML 的提取链是 `trafilatura`（`fast` 先 precision、`full` 先 recall，结果为空时换另一种偏向重试）→ `html_markdown.py` → lxml 纯文本。提取前清理 NUL 和 C0 控制字符；`html_markdown` 返回空字符串时继续降级到 lxml。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`；text 字段可包含 Markdown。缓存版本随提取格式更新，避免复用旧版扁平正文。
 - 404/410 返回 422 `fetch_not_found`；401/403 和验证页返回 422 `fetch_blocked`；纯 JavaScript 空壳返回 422 `fetch_requires_browser`。上游 429 返回 503 `fetch_rate_limited` 并传递 Retry-After，下载超时为 504 `fetch_timeout`，代理失败为 502 `fetch_proxy_error`，网络失败为 502 `fetch_network_error`。无浏览器渲染、登录或验证码处理能力；这些页面不会冒充成功读取。
-- 相同 URL + 模式使用 single-flight 合并并发请求，结果缓存 10 分钟（`FETCH_CACHE_TTL_SECONDS`）；全局抓取并发 4，每个账号最多 4 个在途读取。
+- 相同 URL + 模式使用 single-flight 合并并发请求，结果缓存 10 分钟（`FETCH_CACHE_TTL_SECONDS`）；全局抓取并发 4，每个实例最多 4 个在途读取。
 - `WEBTOOL_PROXY_URL` 同样作用于抓取请求；URL 与每一跳重定向仍在本地校验，代理不会跳过 SSRF 检查。
 - 生产环境仍建议在主机或云防火墙限制 API 容器的出站网段，缩小 SSRF 与 DNS 重绑定的残余风险。
 
@@ -276,14 +259,14 @@ POST /api/tools/file
 }
 ```
 
-- 仅对所有者为本人的文件可用，并要求账号具备 `files` 功能；响应为 `{ operation, file?, draft?, fileId?, filename?, text?, truncated?, files? }`，`file` 复用 `file_out`。
-- 读类操作（list/read/grep/help/inspect）每账号 60 次/分钟，写类（create/edit/save/delete）20 次/分钟；每账号最多 2 个在途文档操作。
+- 仅对所有者为本人的文件可用，并要求实例具备 `files` 功能；响应为 `{ operation, file?, draft?, fileId?, filename?, text?, truncated?, files? }`，`file` 复用 `file_out`。
+- 读类操作（list/read/grep/help/inspect）每实例 60 次/分钟，写类（create/edit/save/delete）20 次/分钟；每实例最多 2 个在途文档操作。
 - 操作级校验在请求模型中完成：`create` 不能带 `fileId`，`edit` 必须提供与格式匹配的 `commands` 或 `pdfChanges`，`save` 只接受草稿，`read`/`grep`/`delete` 必须有 `fileId`。PDF 拒绝 `commands`，Office 拒绝 `pdfChanges`。`delete` 接受资料库文件 UUID 或 `draft:<uuid>`：删除已保存文件时先删对象再删行，历史消息保留文件名和引用。
 - Office 属性白名单由 vendored OfficeCLI 的 `help all --json` 生成并随仓库提交（`app/documents/office_properties.json`，升级引擎后用 `scripts/generate_office_properties.py` 重新生成），按属性名大小写不敏感匹配；`src`/`data`/`image` 等会读取本地文件或 URL 的属性、`background=image:...` 之类的值仍被拒绝。文档路径（必须以 `/` 开头，禁止 `..`/NUL/CRLF，≤500 字符）、命令与 PDF 变更均限最多 100 条；不接收 raw XML、任意 CLI 参数、图片导入或外部资源。`add` 允许 `markdown`（DOCX 展开标题/列表/GFM 表格）与 `textbox`（DOCX/PPTX 浮动文本框）元素，`markdown` 属性只接受内联文本，不接受 `src` 文件路径。
 - Office 操作经 vendored OfficeCLI 子进程执行，不使用 shell，环境变量白名单，超时杀进程组，stdout/stderr 累计超限即终止。PDF 使用 pypdf + reportlab，在 `asyncio.to_thread` 中运行。
 - 单次结果约 30,000 字符并标记 `truncated`；文档内容按不可信资料返回。
 - Office 批量命令失败返回命令序号、引擎错误码及修复建议，不回显命令；结构性诊断（找不到路径、幻灯片父路径错误、取值不合法）会一并返回，可能包含文档正文的诊断则替换为固定提示。例如新建 Excel 已有 `Sheet1`，再次添加同名表会提示先检查已有表。`help` 带 `element` 时返回紧凑的路径 + 可写属性表，不再把整个 schema JSON 截断后交给模型。文件工具参数校验失败把字段位置和校验原因返回给客户端 Agent，以便修正下一次调用。
-- 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{draftId}/`；`create`/`edit` 的草稿结果带 `draft:<uuid>` 句柄，客户端 Agent 继续编辑同一草稿时必须回传该句柄，否则会从已保存版本重新开始。TTL 默认 30 分钟，每实例最多 10 个、总计 60 MiB，旧账号令牌被拒绝。保存成功后删除草稿。
+- 草稿：元数据在进程内，二进制在 `DATA_DIR/drafts/{draftId}/`；`create`/`edit` 的草稿结果带 `draft:<uuid>` 句柄，客户端 Agent 继续编辑同一草稿时必须回传该句柄，否则会从已保存版本重新开始。TTL 默认 30 分钟，每实例最多 10 个、总计 60 MiB，旧实例令牌被拒绝。保存成功后删除草稿。
 - 保存编辑结果时检查 `StoredFile.revision == base_revision`，不一致返回 409；先写新对象再更新行，提交后 best-effort 删除旧对象。旧版 Office 编辑后的保存会新建文件，不改原件。
 - 兼容保留 `POST /api/tools/files/read|grep`：按行读取（单次最多 50,000 字符）与正则匹配（最多 200 条）。
 
@@ -292,14 +275,14 @@ POST /api/tools/file
 | 端点 | 限制 |
 | --- | --- |
 | 登录 | IP 10/分钟；用户名 5/分钟；连续失败 15 次锁定 15 分钟 |
-| 会话/消息/账号写操作 | 用户 120/分钟 |
-| 会话/消息/账号读取 | 用户 240/分钟 |
+| 会话/消息/实例写操作 | 用户 120/分钟 |
+| 会话/消息/实例读取 | 用户 240/分钟 |
 | 文件上传 | 用户 20/分钟，并发解析 2 |
 | 搜索/网页读取 | 用户 30/分钟，并发 4 |
 | 文档工具读（list/read/grep/help/inspect） | 用户 60/分钟，并发 2 |
 | 文档工具写（create/edit/save/delete） | 用户 20/分钟，并发 2 |
 
-计数保存在 API 进程内，重启后清零；只影响频率限制，不影响账号与数据隔离。
+计数保存在 API 进程内，重启后清零；只影响频率限制，不影响实例与数据隔离。
 
 ## 健康检查与日志
 
@@ -324,8 +307,8 @@ token_usage_daily, token_usage_estimate_daily, usage_backfills
 关键约束：
 
 - `users` 对 `lower(username)` 唯一。
-- `conversations/messages/memory_entries/files` 的 `(user_id, client_id)` 唯一（`client_id` 为 NULL 时不受限）。
-- `token_usage_daily` / `token_usage_estimate_daily` 的 `(user_id, day)` 唯一，写入使用 SQLite upsert；`usage_backfills` 以 `user_id` 为主键，记录历史估算已执行。
+- `conversations/messages/memory_entries/files` 的 `(instance_id, client_id)` 唯一（`client_id` 为 NULL 时不受限）。
+- `token_usage_daily` / `token_usage_estimate_daily` 的 `(instance_id, day)` 唯一，写入使用 SQLite upsert；`usage_backfills` 以 `instance_id` 为主键，记录历史估算已执行。
 - `messages` 的 `(conversation_id, position)` 唯一。
 - 角色、状态、反馈、标题来源、已读状态均有 CHECK。
 - 用户删除级联业务数据；会话删除级联消息；文件随会话删除仅置空关联。
@@ -334,11 +317,6 @@ token_usage_daily, token_usage_estimate_daily, usage_backfills
 
 结构变更必须走 Alembic，并在空 SQLite 上验证全部迁移可执行；API 启动时运行 `alembic upgrade head` 和 `alembic check`。
 
-## 账号功能开关
+## 实例功能开关
 
-认证返回的 `UserOut` 增加 `features: string[]`，登录响应与 `/api/auth/me` 动态计算。清单位于 `app/features/registry.py`，登记的功能对所有已认证且完成首次改密、未停用的用户开放，部署成功后立即生效；没有预览名单。`require_feature(id)` 必须用于新增受控接口，账号停用或会话撤销后不能继续调用。
-
-- `GET /api/features`：返回当前账号可用的功能元数据；匿名 401。
-- 认证与功能响应禁止缓存；权限不接受客户端 username、header 或 query 覆盖。
-
-功能登记不修改用户数据或表结构；数据库迁移另行审查与执行。
+功能清单位于 `app/features/registry.py`；GET /api/features 无需凭据，返回此实例全部已登记功能。前端使用 useFeature / FeatureGate，后端使用 require_feature。响应禁止缓存，无账户授权或改密门禁。

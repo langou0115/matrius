@@ -15,14 +15,15 @@ from sqlalchemy import case, func, not_, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthContext, read_rate_limit, write_rate_limit
 from app.cache import enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError, invalid, not_found
 from app.files.parsing import TEXT_EXTENSIONS
 from app.files.service import file_lock
+from app.instance.dependencies import InstanceContext, read_rate_limit, write_rate_limit
 from app.models import Conversation, StoredFile
+from app.resources import disk_usage
 from app.storage import delete_object, get_object, put_object
 from app.utils import decode_cursor, encode_cursor, ensure_aware, to_ms, validate_client_id
 
@@ -62,14 +63,14 @@ def _conversation_conditions(value: str):
 
 
 async def resolve_conversation_id(
-    db: AsyncSession, user_id: uuid.UUID, value: str | None,
+    db: AsyncSession, instance_id: int, value: str | None,
 ) -> uuid.UUID | None:
     if value is None:
         return None
     return (
         await db.execute(
             select(Conversation.id)
-            .where(Conversation.user_id == user_id, or_(*_conversation_conditions(value)))
+            .where(Conversation.instance_id == instance_id, or_(*_conversation_conditions(value)))
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -100,9 +101,9 @@ def read_object_bytes(key: str) -> bytes:
     return get_object(key)
 
 
-async def get_owned_file(db: AsyncSession, user_id: uuid.UUID, file_id: uuid.UUID) -> StoredFile:
+async def get_owned_file(db: AsyncSession, instance_id: int, file_id: uuid.UUID) -> StoredFile:
     stored = (
-        await db.execute(select(StoredFile).where(StoredFile.id == file_id, StoredFile.user_id == user_id))
+        await db.execute(select(StoredFile).where(StoredFile.id == file_id, StoredFile.instance_id == instance_id))
     ).scalar_one_or_none()
     if stored is None:
         raise not_found("文件不存在。")
@@ -121,18 +122,18 @@ async def upload_file(
     file: UploadFile = File(...),
     conversationId: str | None = Form(default=None, max_length=128),
     clientId: str | None = Form(default=None),
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     settings = get_settings()
-    await enforce_rate_limit("upload", str(ctx.user.id), 20)
+    await enforce_rate_limit("upload", str(ctx.instance_id), 20)
     client_id = validate_client_id(clientId)
 
     if client_id is not None:
         existing = (
             await db.execute(
                 select(StoredFile).where(
-                    StoredFile.user_id == ctx.user.id, StoredFile.client_id == client_id
+                    StoredFile.instance_id == ctx.instance_id, StoredFile.client_id == client_id
                 )
             )
         ).scalar_one_or_none()
@@ -144,7 +145,7 @@ async def upload_file(
     if suffix not in ALLOWED_EXTENSIONS:
         raise AppError(415, "unsupported_file_type", "不支持的文件类型。")
 
-    resolved_conversation_id = await resolve_conversation_id(db, ctx.user.id, conversationId)
+    resolved_conversation_id = await resolve_conversation_id(db, ctx.instance_id, conversationId)
     if conversationId is not None and resolved_conversation_id is None:
         raise not_found("对话不存在。")
 
@@ -155,15 +156,8 @@ async def upload_file(
         if not data:
             raise invalid("文件为空。")
 
-        used = (
-            await db.execute(
-                select(func.coalesce(func.sum(StoredFile.size), 0)).where(
-                    StoredFile.user_id == ctx.user.id
-                )
-            )
-        ).scalar_one()
-        if used + len(data) > settings.storage_quota_bytes:
-            raise AppError(413, "quota_exceeded", "存储空间已用尽。")
+        if len(data) > (await asyncio.to_thread(disk_usage))["free"]:
+            raise AppError(413, "disk_full", "服务器磁盘空间不足。")
 
         # Everything below is storage I/O and needs no DB state; free the connection
         # so a slow upload does not pin one of the two SQLite pool slots.
@@ -180,7 +174,7 @@ async def upload_file(
 
     stored = StoredFile(
         id=stored_id,
-        user_id=ctx.user.id,
+        instance_id=ctx.instance_id,
         client_id=client_id,
         conversation_id=resolved_conversation_id,
         filename=filename,
@@ -265,7 +259,7 @@ async def list_files(
     conversationId: str | None = Query(default=None, max_length=128),
     cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=200),
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     if kind not in {"all", "image", "file", "document", "text"}:
@@ -273,11 +267,11 @@ async def list_files(
     if sort not in _SORT_KEYS or order not in {"asc", "desc"}:
         raise invalid("排序条件不合法。")
 
-    stmt = select(StoredFile).where(StoredFile.user_id == ctx.user.id)
+    stmt = select(StoredFile).where(StoredFile.instance_id == ctx.instance_id)
     if conversationId is not None:
-        scoped_id = await resolve_conversation_id(db, ctx.user.id, conversationId)
+        scoped_id = await resolve_conversation_id(db, ctx.instance_id, conversationId)
         # An unknown conversation has no files; keeping the filter empty avoids leaking
-        # whether the id exists for another account.
+        # whether the id exists for another instance.
         if scoped_id is None:
             return {"items": [], "nextCursor": None}
         stmt = stmt.where(StoredFile.conversation_id == scoped_id)
@@ -315,10 +309,9 @@ async def list_files(
 
 @router.get("/usage")
 async def file_usage(
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    settings = get_settings()
     images = _suffix_filter(IMAGE_EXTENSIONS)
     used, total, image_bytes, image_count = (
         await db.execute(
@@ -327,13 +320,13 @@ async def file_usage(
                 func.count(StoredFile.id),
                 func.coalesce(func.sum(case((images, StoredFile.size), else_=0)), 0),
                 func.coalesce(func.sum(case((images, 1), else_=0)), 0),
-            ).where(StoredFile.user_id == ctx.user.id)
+            ).where(StoredFile.instance_id == ctx.instance_id)
         )
     ).one()
     # "files" is everything that is not an image, so the two categories never overlap.
     return {
         "used": used,
-        "quota": settings.storage_quota_bytes,
+        "disk": await asyncio.to_thread(disk_usage),
         "files": {"bytes": used - image_bytes, "count": total - image_count},
         "images": {"bytes": image_bytes, "count": image_count},
     }
@@ -342,7 +335,7 @@ async def file_usage(
 @router.post("/bulk-delete")
 async def bulk_delete_files(
     payload: BulkDeleteRequest,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
     ids = list(dict.fromkeys(payload.ids))
@@ -350,7 +343,7 @@ async def bulk_delete_files(
         (
             await db.execute(
                 select(StoredFile).where(
-                    StoredFile.id.in_(ids), StoredFile.user_id == ctx.user.id
+                    StoredFile.id.in_(ids), StoredFile.instance_id == ctx.instance_id
                 )
             )
         )
@@ -375,7 +368,7 @@ async def bulk_delete_files(
 async def rename_file(
     file_id: uuid.UUID,
     payload: FilePatch,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     async with file_lock(file_id):
@@ -383,9 +376,9 @@ async def rename_file(
 
 
 async def _rename_file(
-    file_id: uuid.UUID, payload: FilePatch, ctx: AuthContext, db: AsyncSession,
+    file_id: uuid.UUID, payload: FilePatch, ctx: InstanceContext, db: AsyncSession,
 ) -> dict[str, Any]:
-    stored = await get_owned_file(db, ctx.user.id, file_id)
+    stored = await get_owned_file(db, ctx.instance_id, file_id)
     filename = safe_filename(payload.filename)
     if PurePath(filename).suffix.lower() != PurePath(stored.filename).suffix.lower():
         raise invalid("不能修改文件扩展名。")
@@ -410,19 +403,19 @@ async def _rename_file(
 @router.get("/{file_id}")
 async def get_file(
     file_id: uuid.UUID,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    return file_out(await get_owned_file(db, ctx.user.id, file_id))
+    return file_out(await get_owned_file(db, ctx.instance_id, file_id))
 
 
 @router.get("/{file_id}/content")
 async def download_file(
     file_id: uuid.UUID,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    stored = await get_owned_file(db, ctx.user.id, file_id)
+    stored = await get_owned_file(db, ctx.instance_id, file_id)
     # Read from disk after the row is loaded; the connection is not needed for the bytes.
     await db.close()
     data = await load_file_bytes(stored)
@@ -438,10 +431,10 @@ async def download_file(
 @router.delete("/{file_id}")
 async def delete_file(
     file_id: uuid.UUID,
-    ctx: AuthContext = Depends(write_rate_limit),
+    ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
-    stored = await get_owned_file(db, ctx.user.id, file_id)
+    stored = await get_owned_file(db, ctx.instance_id, file_id)
     await db.close()
     await asyncio.to_thread(delete_object, stored.object_key)
     await db.delete(stored)

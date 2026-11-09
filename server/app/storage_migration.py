@@ -17,7 +17,7 @@ async def migrate_files(db: AsyncSession) -> None:
         if stored.object_key == target:
             continue
         # Copy first, commit the pointer second. Old bytes remain available if migration
-        # stops midway; rerunning is safe. Historical account data is not discarded.
+        # stops midway; rerunning is safe. Historical instance data is not discarded.
         data = await asyncio.to_thread(get_object, stored.object_key)
         await asyncio.to_thread(put_object, target, data, stored.content_type)
         stored.object_key = target

@@ -1,3 +1,5 @@
+本项目为无需登录的单用户实例；所有访问者共享数据。资源设置中的磁盘容量来自服务器数据目录所在文件系统（容器内为数据卷所在文件系统），不再使用账户配额。详见[实例访问](doc/instance.md)。
+
 # Matrius
 
 轻量、单用户实例、可自行部署的 AI 对话应用。提供桌面与移动 Web 响应式界面，支持安装为 PWA。
@@ -41,7 +43,6 @@ npm run dev
 
 打开 `http://localhost:8081`，登录实例后在「设置 → 模型服务」添加服务商和模型后即可对话。
 
-`npm run dev` 完全在本机运行 Vite、FastAPI 与 SQLite：数据保存在 `server/.data/matrius.db` 和 `server/.data/files`（已加入 `.gitignore`），不连接服务器。前后端保存后热更新，Ctrl+C 一并停止本机进程。启动时会自动迁移开发库；开发会话已在运行时，可用 `npm run db:migrate` 单独升级同一个开发库而不重启服务。开发实例所有者使用 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，未设置时回退到 `admin` / `dev-password`；密码仍是 `change-me` 时拒绝启动。`npm run dev` 不读取 `docker-compose/.env.production`。已有开发实例所有者会在启动时同步为当前配置的密码。`npm run dev -- --reset-db` 会清空本地开发数据后重新迁移；`npm run dev -- --check` 只校验工具、端口与路径；`npm run dev -- --clear` 会重建 Vite 的依赖预构建。
 
 开发模式可访问 `/mock`，其中 `/mock/process` 可预览思考过程、工具步骤和中断状态，`/mock/storage` 可预览保存失败提示，均不调用模型；回答末尾的来源区留待后续实现。Vite 的 HMR 会自行重连，模型回复生成期间不再暂停热更新；刷新或离开页面时仍保留 `beforeunload` 确认，避免误丢正在进行的回复。正式 Web 使用静态生产构建。
 
@@ -60,13 +61,12 @@ cp .env.local.example .env.local                                          # 本�
 npm run deploy                                                            # 首次自动初始化，之后更新
 ```
 
-`.env.local` 管本地开发和通用应用设置（`DEV_*`、`INITIAL_ADMIN_*`、登录有效期等），其中通用项会在部署时写入服务器配置。代理分两个键：`WEBTOOL_PROXY_URL` 只用于本机开发、不会同步；`WEBTOOL_PROXY_URL_PRODUCTION` 才会在部署时映射为服务器的 `WEBTOOL_PROXY_URL`，且必须是容器可达地址（如 `host.docker.internal`），loopback 会被拒绝。SSH 目标、公开端口和工作目录等服务器相关内容放在 `docker-compose/.env.production`。每次 `npm run deploy` 都会同步源码、备份数据库、构建并更新 Web/API、应用迁移、刷新实例所有者密码、更新 Caddy 并做健康检查；新服务器首次执行时会自动生成配置、创建 SQLite 数据库和实例所有者，数据卷长期保留。实例所有者凭据来自 `.env.local` 的 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`，以最近一次部署为准；两个值都不填时，首次初始化会随机生成并打印一次，之后不会改动现有密码。
 
-默认端口：`16666` 为网页 + API，`16667` 仅 API（可选）；在 `docker-compose/.env.production` 用 `APP_PORT` / `API_PORT` 覆盖，详见[修改端口](doc/deployment.md#修改端口)。每次命令完成同步、构建、健康检查后退出；功能清单中的能力在部署成功后对实例所有者开放。
+默认端口：`16666` 为网页 + API，`16667` 仅 API（可选）；在 `docker-compose/.env.production` 用 `APP_PORT` / `API_PORT` 覆盖，详见[修改端口](doc/deployment.md#修改端口)。每次命令完成同步、构建、健康检查后退出；功能清单中的能力在部署成功后对实例开放。
 
 Web/API 源码直接打入各自镜像，不挂载源码、不运行开发服务器；`matrius_prod_api_data` 数据卷长期保留。
 
-服务器初始化、账号、HTTPS、备份与 CD 见[服务器部署](doc/deployment.md)。
+服务器初始化、实例、HTTPS、备份与 CD 见[服务器部署](doc/deployment.md)。
 
 ## 文档
 
@@ -75,7 +75,7 @@ Web/API 源码直接打入各自镜像，不挂载源码、不运行开发服务
 | [文档索引](doc/README.md) | 全部文档入口 |
 | [产品](doc/product.md) | 产品边界与本地/实例 |
 | [后端](doc/backend.md) | API、数据模型与实现 |
-| [认证](doc/auth.md) | 实例登录、迁移与功能能力 |
+| [实例访问](doc/instance.md) | 实例登录、迁移与功能能力 |
 | [开发与验证](doc/development.md) | 命令、构建、测试与 Mock |
 | [服务器部署](doc/deployment.md) | 初始化、发布、备份与运维 |
 

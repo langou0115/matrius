@@ -1,12 +1,11 @@
-import { Link, useLocalSearchParams } from '@/router';
-import { FolderOpen, ListChecks, LogIn, MoreHorizontal, X } from 'lucide-react';
+import { useLocalSearchParams } from '@/router';
+import { FolderOpen, ListChecks, MoreHorizontal, X } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
 import { useMobile } from '@/components/web/use-mobile';
 import { Icon } from '@/components/web/icon';
-import { LinkAnchor } from '@/components/web/link-anchor';
-import { useAuth } from '@/features/auth/auth-state';
+import { useInstance } from '@/features/instance/instance-state';
 import { useChat } from '@/features/chat/chat-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { hasFeature } from '@/core/features/capabilities';
@@ -33,15 +32,15 @@ function LibraryPlaceholder({ title, body, action }: {
 
 export default function LibraryScreen() {
   const mobile = useMobile();
-  const auth = useAuth();
+  const instance = useInstance();
   const preview = useIsPreview();
   const { sidebarOpen, dispatch } = useChat();
   const { kind: kindParam } = useLocalSearchParams<{ kind?: string }>();
-  // The dev preview has no account or server; it renders the real screen against 500
+  // The dev preview has no backend or server; it renders the real screen against 500
   // generated files so pagination and filters can be checked without a backend.
-  const enabled = preview || hasFeature(auth.status === 'authenticated' ? auth.user : null, 'files');
+  const enabled = preview || hasFeature(instance.status === 'ready' ? instance.info : null, 'files');
   const initialKind = kindParam === 'image' ? 'image' : kindParam === 'file' ? 'file' : 'all';
-  const library = useFileLibrary({ request: preview ? previewFileRequest : auth.request, enabled, initialKind });
+  const library = useFileLibrary({ request: preview ? previewFileRequest : instance.request, enabled, initialKind });
   const { nextCursor, loadMore, clearSelection } = library;
   const sentinel = useRef<HTMLDivElement>(null);
   const [renaming, setRenaming] = useState<LibraryFile | null>(null);
@@ -155,39 +154,26 @@ export default function LibraryScreen() {
     </div>
   </header>;
 
-  if (auth.status === 'checking') {
+  if (instance.status === 'checking') {
     return <main className="library-main" id="main-content" tabIndex={-1}>
       {topbar}
       {heading}
       <div className="library-scroll"><div className="library-content">
-        <p className="settings-footnote" role="status">正在验证账号…</p>
+        <p className="settings-footnote" role="status">正在连接实例…</p>
       </div></div>
     </main>;
   }
 
   if (!enabled) {
-    const unavailable = auth.status === 'unavailable';
+    const unavailable = instance.status === 'unavailable';
     return <main className="library-main" id="main-content" tabIndex={-1}>
       {topbar}
       {heading}
       <div className="library-scroll"><div className="library-content">
         <LibraryPlaceholder
-          title={unavailable ? '暂时无法验证账号' : auth.user ? '资料库尚未开放' : '登录后使用资料库'}
-          body={unavailable
-            ? '无法连接账号服务，正在自动重试；也可以立即重新验证。'
-            : auth.user
-              ? '当前账号还没有开通文件功能，请联系管理员。'
-              : '登录账号后，对话中上传的图片和文档会保存到云端，可在这里搜索、下载和管理。'}
-          action={unavailable
-            ? <button type="button" className="primary-button library-placeholder-action"
-              onClick={() => void auth.refresh()}>重新验证</button>
-            : !auth.user
-              ? <Link href="/settings/account" asChild>
-                <LinkAnchor className="primary-button library-placeholder-action">
-                  <LogIn size={16} strokeWidth={1.75} aria-hidden="true" />前往登录
-                </LinkAnchor>
-              </Link>
-              : undefined}
+          title={unavailable ? '无法连接实例' : '资料库尚未开放'}
+          body={unavailable ? '请检查网络后重试。' : '此实例未启用文件功能。'}
+          action={unavailable ? <button type="button" className="primary-button library-placeholder-action" onClick={() => void instance.refresh()}>重新连接</button> : undefined}
         />
       </div></div>
     </main>;
@@ -238,7 +224,7 @@ export default function LibraryScreen() {
       <div className="library-content">
         {!mobile && toolbar}
 
-        {library.error && <p className="account-message is-error" role="alert">{library.error}</p>}
+        {library.error && <p className="settings-message is-error" role="alert">{library.error}</p>}
 
         {library.loading && !library.items.length ? <div className="library-list" aria-hidden="true">
           {Array.from({ length: 6 }, (_, index) => <div className="library-item is-skeleton" key={index}>
@@ -272,7 +258,7 @@ export default function LibraryScreen() {
         <label className="field-label" htmlFor="library-rename">文件名</label>
         <input id="library-rename" className="text-field" value={renameValue} maxLength={255}
           onChange={(event) => { setRenameValue(event.target.value); setRenameError(null); }} required />
-        {renameError && <p className="account-message is-error" role="alert">{renameError}</p>}
+        {renameError && <p className="settings-message is-error" role="alert">{renameError}</p>}
         <div className="dialog-footer">
           <button type="button" className="secondary-button" disabled={renamingBusy} onClick={() => setRenaming(null)}>取消</button>
           <button type="submit" className="primary-button" disabled={renamingBusy || !renameValue.trim()}>
@@ -287,7 +273,7 @@ export default function LibraryScreen() {
       <p className="dialog-description">{deleting.length > 1
         ? '这些文件将从资料库中移除，历史对话里的附件会显示为“文件已删除”。'
         : `“${deleting[0].filename}”将从资料库中移除，历史对话里的附件会显示为“文件已删除”。`}</p>
-      {deleteError && <p className="account-message is-error" role="alert">{deleteError}</p>}
+      {deleteError && <p className="settings-message is-error" role="alert">{deleteError}</p>}
       <div className="dialog-footer">
         <button type="button" className="secondary-button" disabled={deletingBusy} onClick={() => setDeleting(null)}>取消</button>
         <button type="button" className="danger-button" disabled={deletingBusy} onClick={() => void submitDelete()}>

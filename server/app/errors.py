@@ -23,10 +23,6 @@ class AppError(Exception):
         self.headers = headers
 
 
-def unauthorized(message: str = "请先登录。") -> AppError:
-    return AppError(401, "unauthorized", message, headers={"WWW-Authenticate": "Bearer"})
-
-
 def not_found(message: str = "资源不存在。") -> AppError:
     return AppError(404, "not_found", message)
 

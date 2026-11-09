@@ -45,7 +45,7 @@ function validateBaseUrl(baseUrl: string) {
   let url: URL;
   try { url = new URL(baseUrl.trim()); } catch { throw new Error('请输入完整的服务商 Base URL。'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
-    throw new Error('Base URL 只支持 HTTP(S)，不能包含账号、密码、查询参数或锚点。');
+    throw new Error('Base URL 只支持 HTTP(S)，不能包含实例、密码、查询参数或锚点。');
   }
   return url.toString().replace(/\/$/, '');
 }

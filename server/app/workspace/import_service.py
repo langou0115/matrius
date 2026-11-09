@@ -9,18 +9,18 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.account.schemas import ImportConversation, ImportMessage, ImportReadState, ImportRequest
 from app.conversations.schemas import activities_payload, process_payload
 from app.errors import invalid
 from app.models import (
     Conversation,
     ConversationDeletion,
     Message,
+    Preference,
+    Profile,
     StoredFile,
-    UserPreference,
-    UserProfile,
 )
 from app.utils import to_ms, utcnow, validate_client_id
+from app.workspace.schemas import ImportConversation, ImportMessage, ImportReadState, ImportRequest
 
 logger = logging.getLogger(__name__)
 
@@ -47,28 +47,28 @@ def _import_lock() -> asyncio.Lock:
     return lock
 
 
-async def record_conversation_deletion(db: AsyncSession, user_id: uuid.UUID, client_id: str) -> None:
-    if await db.get(ConversationDeletion, (user_id, client_id)) is None:
-        db.add(ConversationDeletion(user_id=user_id, client_id=client_id))
+async def record_conversation_deletion(db: AsyncSession, instance_id: int, client_id: str) -> None:
+    if await db.get(ConversationDeletion, (instance_id, client_id)) is None:
+        db.add(ConversationDeletion(instance_id=instance_id, client_id=client_id))
         await db.flush()
 
 
-async def _delete_conversations(db: AsyncSession, user_id: uuid.UUID, ids: list[str]) -> None:
+async def _delete_conversations(db: AsyncSession, instance_id: int, ids: list[str]) -> None:
     for raw_id in set(ids):
         client_id = validate_client_id(raw_id)
-        await record_conversation_deletion(db, user_id, client_id)
+        await record_conversation_deletion(db, instance_id, client_id)
         try:
             server_id = uuid.UUID(client_id)
         except ValueError:
             server_id = None
         rows = (await db.execute(select(Conversation).where(
-            Conversation.user_id == user_id,
+            Conversation.instance_id == instance_id,
             or_(Conversation.client_id == client_id, Conversation.id == server_id),
         ))).scalars().all()
         for conversation in rows:
-            await record_conversation_deletion(db, user_id, str(conversation.id))
+            await record_conversation_deletion(db, instance_id, str(conversation.id))
             if conversation.client_id:
-                await record_conversation_deletion(db, user_id, conversation.client_id)
+                await record_conversation_deletion(db, instance_id, conversation.client_id)
             await db.delete(conversation)
         await db.flush()
 
@@ -164,9 +164,9 @@ def _apply_metadata(conversation: Conversation, item: ImportConversation) -> boo
 
 
 async def _keep_owned_file_ids(
-    db: AsyncSession, user_id: uuid.UUID, conversations: list[ImportConversation]
+    db: AsyncSession, instance_id: int, conversations: list[ImportConversation]
 ) -> None:
-    """Drop file ids the account does not own instead of failing the whole import."""
+    """Drop file ids the instance does not own instead of failing the whole import."""
 
     requested = {
         file_id
@@ -180,7 +180,7 @@ async def _keep_owned_file_ids(
         (
             await db.execute(
                 select(StoredFile.id).where(
-                    StoredFile.id.in_(requested), StoredFile.user_id == user_id
+                    StoredFile.id.in_(requested), StoredFile.instance_id == instance_id
                 )
             )
         ).scalars().all()
@@ -192,15 +192,15 @@ async def _keep_owned_file_ids(
             ]
 
 
-async def _import_settings(db: AsyncSession, user_id: uuid.UUID, payload: ImportRequest) -> None:
+async def _import_settings(db: AsyncSession, instance_id: int, payload: ImportRequest) -> None:
     if payload.appearance is not None:
         existing = (
-            await db.execute(select(UserPreference).where(UserPreference.user_id == user_id))
+            await db.execute(select(Preference).where(Preference.instance_id == instance_id))
         ).scalar_one_or_none()
         if existing is None:
             db.add(
-                UserPreference(
-                    user_id=user_id,
+                Preference(
+                    instance_id=instance_id,
                     theme_id=payload.appearance.themeId,
                     mode=payload.appearance.mode,
                 )
@@ -215,7 +215,7 @@ async def _import_settings(db: AsyncSession, user_id: uuid.UUID, payload: Import
 
     if payload.personalization is not None:
         existing = (
-            await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+            await db.execute(select(Profile).where(Profile.instance_id == instance_id))
         ).scalar_one_or_none()
         values = {
             "custom_instructions": payload.personalization.customInstructions,
@@ -224,7 +224,7 @@ async def _import_settings(db: AsyncSession, user_id: uuid.UUID, payload: Import
             "about_more": payload.personalization.aboutMore,
         }
         if existing is None:
-            db.add(UserProfile(user_id=user_id, **values))
+            db.add(Profile(instance_id=instance_id, **values))
         elif any(getattr(existing, name) != value for name, value in values.items()):
             for name, value in values.items():
                 setattr(existing, name, value)
@@ -232,11 +232,11 @@ async def _import_settings(db: AsyncSession, user_id: uuid.UUID, payload: Import
 
 
 async def _create_conversation(
-    db: AsyncSession, user_id: uuid.UUID, client_id: str, item: ImportConversation,
+    db: AsyncSession, instance_id: int, client_id: str, item: ImportConversation,
     messages: list[tuple[ImportMessage, str | None]],
 ) -> int:
     conversation = Conversation(
-        user_id=user_id,
+        instance_id=instance_id,
         client_id=client_id,
         title=item.title,
         pinned=item.pinned,
@@ -252,7 +252,7 @@ async def _create_conversation(
     for index, (message, message_client_id) in enumerate(messages, start=1):
         db.add(
             Message(
-                user_id=user_id,
+                instance_id=instance_id,
                 conversation_id=conversation.id,
                 client_id=message_client_id,
                 position=index,
@@ -277,7 +277,7 @@ async def _create_conversation(
 
 
 async def _merge_conversation(
-    db: AsyncSession, user_id: uuid.UUID, existing: Conversation, item: ImportConversation,
+    db: AsyncSession, instance_id: int, existing: Conversation, item: ImportConversation,
     messages: list[tuple[ImportMessage, str | None]],
 ) -> tuple[int, bool]:
     stored = list(
@@ -302,7 +302,7 @@ async def _merge_conversation(
         next_position += 1
         db.add(
             Message(
-                user_id=user_id,
+                instance_id=instance_id,
                 conversation_id=existing.id,
                 client_id=message_client_id,
                 position=next_position,
@@ -338,12 +338,12 @@ async def _merge_conversation(
     return added, True
 
 
-async def run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportRequest) -> dict[str, Any]:
+async def run_import(db: AsyncSession, instance_id: int, payload: ImportRequest) -> dict[str, Any]:
     async with _import_lock():
-        return await _run_import(db, user_id, payload)
+        return await _run_import(db, instance_id, payload)
 
 
-async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportRequest) -> dict[str, Any]:
+async def _run_import(db: AsyncSession, instance_id: int, payload: ImportRequest) -> dict[str, Any]:
     if payload.schemaVersion != 1:
         raise invalid("不支持的导入数据版本。")
 
@@ -353,7 +353,7 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
         raise invalid(f"单批最多导入 {MAX_CONVERSATIONS} 个对话。")
     if total_messages > MAX_MESSAGES:
         raise invalid(f"单批最多导入 {MAX_MESSAGES} 条消息。")
-    await _keep_owned_file_ids(db, user_id, conversations)
+    await _keep_owned_file_ids(db, instance_id, conversations)
 
     imported_conversations = 0
     imported_messages = 0
@@ -362,8 +362,8 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
     failed: list[dict[str, str]] = []
 
     # Same lock and transaction as imports: deletion wins in either arrival order.
-    await _delete_conversations(db, user_id, payload.chat.deletedConversationIds)
-    await _import_settings(db, user_id, payload)
+    await _delete_conversations(db, instance_id, payload.chat.deletedConversationIds)
+    await _import_settings(db, instance_id, payload)
 
     seen_ids: set[str] = set()
     for item in conversations:
@@ -374,7 +374,7 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
             failed.append({"clientId": raw_client_id, "reason": "对话标识不合法"})
             continue
 
-        if await db.get(ConversationDeletion, (user_id, client_id)) is not None:
+        if await db.get(ConversationDeletion, (instance_id, client_id)) is not None:
             skipped += 1
             continue
 
@@ -391,7 +391,7 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
         existing = (
             await db.execute(
                 select(Conversation).where(
-                    Conversation.user_id == user_id, Conversation.client_id == client_id
+                    Conversation.instance_id == instance_id, Conversation.client_id == client_id
                 )
             )
         ).scalar_one_or_none()
@@ -400,11 +400,11 @@ async def _run_import(db: AsyncSession, user_id: uuid.UUID, payload: ImportReque
             async with db.begin_nested():
                 if existing is None:
                     imported_messages += await _create_conversation(
-                        db, user_id, client_id, item, messages
+                        db, instance_id, client_id, item, messages
                     )
                     imported_conversations += 1
                 else:
-                    added, changed = await _merge_conversation(db, user_id, existing, item, messages)
+                    added, changed = await _merge_conversation(db, instance_id, existing, item, messages)
                     if changed:
                         updated += 1
                     else:

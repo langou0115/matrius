@@ -22,8 +22,8 @@ from app.utils import utcnow
 class Conversation(RevisionMixin, TimestampMixin, Base):
     __tablename__ = "conversations"
     __table_args__ = (
-        UniqueConstraint("user_id", "client_id", name="uq_conversations_user_client"),
-        Index("ix_conversations_user_order", "user_id", "pinned", "updated_at"),
+        UniqueConstraint("instance_id", "client_id", name="uq_conversations_instance_client"),
+        Index("ix_conversations_instance_order", "instance_id", "pinned", "updated_at"),
         CheckConstraint(
             "title_source IS NULL OR title_source IN ('auto','ai','manual')",
             name="ck_conversations_title_source",
@@ -33,7 +33,7 @@ class Conversation(RevisionMixin, TimestampMixin, Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[int] = mapped_column(ForeignKey("instance.id", ondelete="CASCADE"), nullable=False)
     client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     title: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

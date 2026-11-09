@@ -3,12 +3,12 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthContext, ToolCaller, get_tool_caller, read_rate_limit
 from app.cache import concurrency_limit, enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
 from app.errors import invalid
 from app.files.router import get_owned_file
+from app.instance.dependencies import InstanceContext, ToolCaller, get_tool_caller, read_rate_limit
 from app.tools.files import grep_file_text, read_file_text
 from app.tools.schemas import FetchRequest, FileGrepRequest, FileReadRequest, SearchRequest
 from app.tools.search import web_search
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 def _tool_budget(caller: ToolCaller) -> tuple[int, int]:
     """Per-minute call budget and in-flight cap for the instance owner."""
     settings = get_settings()
-    return 30, settings.tool_user_concurrency
+    return 30, settings.tool_concurrency
 
 
 @router.post("/search")
@@ -52,11 +52,11 @@ async def fetch_web(
 @router.post("/files/read")
 async def read_file(
     payload: FileReadRequest,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    await enforce_rate_limit("tool_file_read", str(ctx.user.id), 60)
-    stored = await get_owned_file(db, ctx.user.id, payload.fileId)
+    await enforce_rate_limit("tool_file_read", str(ctx.instance_id), 60)
+    stored = await get_owned_file(db, ctx.instance_id, payload.fileId)
     # Extraction can take seconds; do not pin a pool connection to it.
     await db.close()
     max_chars = min(payload.maxChars, get_settings().fetch_max_chars)
@@ -66,11 +66,11 @@ async def read_file(
 @router.post("/files/grep")
 async def grep_file(
     payload: FileGrepRequest,
-    ctx: AuthContext = Depends(read_rate_limit),
+    ctx: InstanceContext = Depends(read_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    await enforce_rate_limit("tool_file_grep", str(ctx.user.id), 60)
-    stored = await get_owned_file(db, ctx.user.id, payload.fileId)
+    await enforce_rate_limit("tool_file_grep", str(ctx.instance_id), 60)
+    stored = await get_owned_file(db, ctx.instance_id, payload.fileId)
     # RegExp scanning and extraction run outside the DB; release the connection first.
     await db.close()
     return await grep_file_text(stored, payload.pattern, payload.context, payload.maxMatches)

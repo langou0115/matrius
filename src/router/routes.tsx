@@ -13,7 +13,6 @@ import SettingsRootRedirect from '@/features/settings/settings-root-redirect';
  */
 const LibraryScreen = lazy(() => import('@/features/files/library-screen'));
 const StorageScreen = lazy(() => import('@/features/files/storage-screen'));
-const AccountScreen = lazy(() => import('@/features/auth/account-screen'));
 const ModelSettingsScreen = lazy(() => import('@/features/models/model-settings-screen'));
 const PersonalizationScreen = lazy(() => import('@/features/settings/personalization-screen'));
 const UsageScreen = lazy(() => import('@/features/usage/usage-screen'));
@@ -45,7 +44,6 @@ export function AppRoutes() {
         <Route path="settings/display" element={<AppearanceRedirect />} />
         <Route path="settings/models" element={<ModelSettingsScreen />} />
         <Route path="settings/personalization" element={<PersonalizationScreen />} />
-        <Route path="settings/account" element={<AccountScreen />} />
         <Route path="settings/storage" element={<StorageScreen />} />
         <Route path="settings/usage" element={<UsageScreen />} />
         <Route path="settings/about" element={<AboutScreen />} />

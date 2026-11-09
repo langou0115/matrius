@@ -1,6 +1,6 @@
 """Dispatch for the unified ``file`` tool.
 
-The router owns auth/rate limits/concurrency; this module owns document
+The router owns validation/rate limits/concurrency; this module owns document
 semantics. Engine work happens after the SQLite connection is released.
 """
 
@@ -31,7 +31,7 @@ from app.files.router import (
     resolve_conversation_id,
     safe_filename,
 )
-from app.files.service import ensure_quota, file_lock
+from app.files.service import ensure_disk_space, file_lock
 from app.models import StoredFile
 from app.storage import delete_object, get_object, put_object
 from app.tools.files import (
@@ -96,11 +96,11 @@ def _draft_ref(file_id: str) -> bool:
     return file_id.startswith("draft:")
 
 
-async def _resolve(db: AsyncSession, user_id: uuid.UUID, file_id: str | None) -> Resolved:
+async def _resolve(db: AsyncSession, instance_id: int, file_id: str | None) -> Resolved:
     if not file_id:
         raise invalid("需要 fileId。")
     if _draft_ref(file_id):
-        draft = await draft_store.drafts.get(user_id, file_id)
+        draft = await draft_store.drafts.get(instance_id, file_id)
         data = await draft_store.drafts.read(draft)
         fmt = detect_format(draft.filename)
         if fmt is None:
@@ -117,7 +117,7 @@ async def _resolve(db: AsyncSession, user_id: uuid.UUID, file_id: str | None) ->
         stored_id = uuid.UUID(file_id)
     except ValueError as exc:
         raise invalid(f"fileId 不合法。{_FILE_ID_HINT}") from exc
-    stored = await get_owned_file(db, user_id, stored_id)
+    stored = await get_owned_file(db, instance_id, stored_id)
     data = await load_file_bytes(stored)
     await db.close()
     fmt = detect_format(stored.filename)
@@ -142,42 +142,42 @@ async def _modernize(resolved: Resolved) -> tuple[str, str, bytes, bool]:
     return resolved.filename, resolved.format, resolved.data, False
 
 
-async def run(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
+async def run(db: AsyncSession, instance_id: int, payload: FileToolRequest) -> dict[str, Any]:
     operation = payload.operation
     if operation == "list":
-        return await _list(db, user_id, payload)
+        return await _list(db, instance_id, payload)
     if operation in {"read", "grep"}:
-        return await _read(db, user_id, payload)
+        return await _read(db, instance_id, payload)
     if operation == "save":
-        draft = await draft_store.drafts.get(user_id, payload.fileId or "")
-        return await _persist(db, user_id, draft, payload.filename)
+        draft = await draft_store.drafts.get(instance_id, payload.fileId or "")
+        return await _persist(db, instance_id, draft, payload.filename)
     if operation == "delete":
-        return await _delete(db, user_id, payload)
+        return await _delete(db, instance_id, payload)
     if operation == "help":
-        return await _help(user_id, payload)
+        return await _help(instance_id, payload)
 
-    resolved = await _resolve(db, user_id, payload.fileId) if operation in {"inspect", "edit"} else None
+    resolved = await _resolve(db, instance_id, payload.fileId) if operation in {"inspect", "edit"} else None
     if operation == "create":
-        return await _create(db, user_id, payload)
+        return await _create(db, instance_id, payload)
     if operation == "inspect":
         assert resolved is not None
         return await _inspect(resolved, payload)
     if operation == "edit":
         assert resolved is not None
-        return await _edit(db, user_id, payload, resolved)
+        return await _edit(db, instance_id, payload, resolved)
     raise invalid("不支持的操作。")
 
 
-async def _list(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
+async def _list(db: AsyncSession, instance_id: int, payload: FileToolRequest) -> dict[str, Any]:
     # The chat client only knows its own conversation id; store the server id everywhere.
     conversation_id = None
     if payload.conversationId is not None:
-        conversation_id = await resolve_conversation_id(db, user_id, str(payload.conversationId))
+        conversation_id = await resolve_conversation_id(db, instance_id, str(payload.conversationId))
         if conversation_id is None:
-            # An unknown scope must not fall back to account-wide files.
+            # An unknown scope must not fall back to instance-wide files.
             return {"operation": "list", "files": []}
 
-    stmt = select(StoredFile).where(StoredFile.user_id == user_id)
+    stmt = select(StoredFile).where(StoredFile.instance_id == instance_id)
     if conversation_id is not None:
         stmt = stmt.where(StoredFile.conversation_id == conversation_id)
     stmt = stmt.order_by(StoredFile.created_at.desc()).limit(100)
@@ -193,7 +193,7 @@ async def _list(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) 
         }
         for item in files
     ]
-    stored_drafts = await draft_store.drafts.list_for_user(user_id, conversation_id)
+    stored_drafts = await draft_store.drafts.list_for_instance(instance_id, conversation_id)
     items.extend(
         {
             "id": item.id,
@@ -209,9 +209,9 @@ async def _list(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) 
     return {"operation": "list", "files": items[:100]}
 
 
-async def _read(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
+async def _read(db: AsyncSession, instance_id: int, payload: FileToolRequest) -> dict[str, Any]:
     if _draft_ref(payload.fileId or ""):
-        draft = await draft_store.drafts.get(user_id, payload.fileId or "")
+        draft = await draft_store.drafts.get(instance_id, payload.fileId or "")
         data = await draft_store.drafts.read(draft)
         text = await extract_document_text(draft.filename, data)
         if payload.operation == "read":
@@ -229,7 +229,7 @@ async def _read(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) 
         stored_id = uuid.UUID(payload.fileId or "")
     except ValueError as exc:
         raise invalid(f"fileId 不合法。{_FILE_ID_HINT}") from exc
-    stored = await get_owned_file(db, user_id, stored_id)
+    stored = await get_owned_file(db, instance_id, stored_id)
     await db.close()
     if payload.operation == "read":
         text = await file_text(stored)
@@ -245,10 +245,10 @@ async def _read(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) 
     }
 
 
-async def _help(user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
+async def _help(instance_id: int, payload: FileToolRequest) -> dict[str, Any]:
     fmt = payload.format
     if fmt is None and payload.fileId and _draft_ref(payload.fileId):
-        draft = await draft_store.drafts.get(user_id, payload.fileId)
+        draft = await draft_store.drafts.get(instance_id, payload.fileId)
         fmt = detect_format(draft.filename)
     if fmt is None:
         raise invalid("需要 format 或带格式的文件。")
@@ -272,7 +272,7 @@ async def _inspect(resolved: Resolved, payload: FileToolRequest) -> dict[str, An
             "text": text, "truncated": len(text) >= 30_000}
 
 
-async def _create(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
+async def _create(db: AsyncSession, instance_id: int, payload: FileToolRequest) -> dict[str, Any]:
     fmt = payload.format or detect_format(payload.filename or "")
     if fmt is None:
         raise invalid("需要 format 或带格式的文件名。")
@@ -281,22 +281,22 @@ async def _create(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest
     filename = _filename_for(fmt, payload.filename)
     data = await _apply(fmt, None, payload)
     conversation_id = (
-        await resolve_conversation_id(db, user_id, str(payload.conversationId))
+        await resolve_conversation_id(db, instance_id, str(payload.conversationId))
         if payload.conversationId is not None
         else None
     )
     draft = await draft_store.drafts.put(
-        user_id=user_id,
+        instance_id=instance_id,
         conversation_id=conversation_id,
         filename=filename,
         content_type=CONTENT_TYPES[fmt],
         data=data,
     )
-    return await _finish(db, user_id, payload, draft)
+    return await _finish(db, instance_id, payload, draft)
 
 
 async def _edit(
-    db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest, resolved: Resolved
+    db: AsyncSession, instance_id: int, payload: FileToolRequest, resolved: Resolved
 ) -> dict[str, Any]:
     filename, fmt, data, converted = await _modernize(resolved)
     filename = _filename_for(fmt, payload.filename, filename)
@@ -305,13 +305,13 @@ async def _edit(
     base_revision = None if converted or resolved.stored is None else resolved.stored.revision
     # The chat client sends its own conversation id; the file table only accepts server ids.
     scoped_id = (
-        await resolve_conversation_id(db, user_id, str(payload.conversationId))
+        await resolve_conversation_id(db, instance_id, str(payload.conversationId))
         if payload.conversationId is not None
         else None
     )
     conversation_id = scoped_id or resolved.conversation_id
     draft = await draft_store.drafts.put(
-        user_id=user_id,
+        instance_id=instance_id,
         conversation_id=conversation_id,
         filename=filename,
         content_type=CONTENT_TYPES[fmt],
@@ -321,7 +321,7 @@ async def _edit(
         converted_from_legacy=converted,
         draft_id=resolved.draft.id if resolved.draft and not converted else None,
     )
-    return await _finish(db, user_id, payload, draft)
+    return await _finish(db, instance_id, payload, draft)
 
 
 async def _apply(fmt: str, data: bytes | None, payload: FileToolRequest) -> bytes:
@@ -340,25 +340,25 @@ async def _apply(fmt: str, data: bytes | None, payload: FileToolRequest) -> byte
     return data
 
 
-async def _finish(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest, draft: Draft) -> dict[str, Any]:
+async def _finish(db: AsyncSession, instance_id: int, payload: FileToolRequest, draft: Draft) -> dict[str, Any]:
     if payload.save:
-        published = await _persist(db, user_id, draft, payload.filename)
+        published = await _persist(db, instance_id, draft, payload.filename)
         return {**published, "operation": payload.operation}
     assert draft is not None
     return {"operation": payload.operation, "draft": draft.summary()}
 
 
 async def _persist(
-    db: AsyncSession, user_id: uuid.UUID, draft: Draft, requested_name: str | None
+    db: AsyncSession, instance_id: int, draft: Draft, requested_name: str | None
 ) -> dict[str, Any]:
     if draft.base_file_id is not None:
         async with file_lock(draft.base_file_id):
-            return await _persist_document(db, user_id, draft, requested_name)
-    return await _persist_document(db, user_id, draft, requested_name)
+            return await _persist_document(db, instance_id, draft, requested_name)
+    return await _persist_document(db, instance_id, draft, requested_name)
 
 
 async def _persist_document(
-    db: AsyncSession, user_id: uuid.UUID, draft: Draft, requested_name: str | None
+    db: AsyncSession, instance_id: int, draft: Draft, requested_name: str | None
 ) -> dict[str, Any]:
     fmt = detect_format(draft.filename)
     if fmt not in MODERN_FORMATS:
@@ -369,10 +369,10 @@ async def _persist_document(
     digest = hashlib.sha256(data).hexdigest()
 
     if draft.base_file_id is not None:
-        stored = await get_owned_file(db, user_id, draft.base_file_id)
+        stored = await get_owned_file(db, instance_id, draft.base_file_id)
         if draft.base_revision is not None and stored.revision != draft.base_revision:
             raise conflict("文件已在其他设备更新，请重新打开后再编辑。", current=file_out(stored))
-        await ensure_quota(db, user_id, len(data), replacing=stored.size)
+        await ensure_disk_space(len(data))
         old_key = stored.object_key
         new_key = f"{stored.id}/{filename}"
         previous = await asyncio.to_thread(get_object, old_key) if new_key == old_key else None
@@ -400,7 +400,7 @@ async def _persist_document(
         if old_key != new_key:
             await asyncio.to_thread(delete_object, old_key)
     else:
-        await ensure_quota(db, user_id, len(data))
+        await ensure_disk_space(len(data))
         file_id = uuid.uuid4()
         object_key = f"{file_id}/{filename}"
         try:
@@ -409,7 +409,7 @@ async def _persist_document(
             raise AppError(502, "storage_error", "文件保存失败，请稍后重试。") from exc
         stored = StoredFile(
             id=file_id,
-            user_id=user_id,
+            instance_id=instance_id,
             conversation_id=draft.conversation_id,
             filename=filename,
             object_key=object_key,
@@ -425,22 +425,22 @@ async def _persist_document(
             await asyncio.to_thread(delete_object, object_key)
             raise
 
-    await draft_store.drafts.delete(user_id, draft.id)
+    await draft_store.drafts.delete(instance_id, draft.id)
     return {"operation": "save", "file": file_out(stored)}
 
 
-async def _delete(db: AsyncSession, user_id: uuid.UUID, payload: FileToolRequest) -> dict[str, Any]:
+async def _delete(db: AsyncSession, instance_id: int, payload: FileToolRequest) -> dict[str, Any]:
     file_id = payload.fileId or ""
     if _draft_ref(file_id):
-        draft = await draft_store.drafts.get(user_id, file_id)
-        await draft_store.drafts.delete(user_id, file_id)
+        draft = await draft_store.drafts.get(instance_id, file_id)
+        await draft_store.drafts.delete(instance_id, file_id)
         return {"operation": "delete", "fileId": file_id, "filename": draft.filename, "draft": True}
 
     try:
         stored_id = uuid.UUID(file_id)
     except ValueError as exc:
         raise invalid(f"fileId 不合法。{_FILE_ID_HINT}") from exc
-    stored = await get_owned_file(db, user_id, stored_id)
+    stored = await get_owned_file(db, instance_id, stored_id)
     filename = stored.filename
     # Match the Library endpoint: remove the object first, then the row. An orphaned object is
     # recoverable, but a row pointing at a deleted object is not.

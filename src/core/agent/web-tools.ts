@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import { Type, type Static } from 'typebox';
 
-import { ApiError } from '@/core/api/auth-session';
+import { ApiError } from '@/core/api/instance-client';
 
 import type { WebActivity, WebSearchResult } from './types';
 
@@ -75,7 +75,7 @@ function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Retry a transient, read-only tool request once; never retry auth, unsafe URLs or cancellation. */
+/** Retry a transient, read-only tool request once; never retry instance, unsafe URLs or cancellation. */
 async function requestWebTool<T>(request: WebRequest, path: string, init: RequestInit): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     init.signal?.throwIfAborted();

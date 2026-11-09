@@ -158,8 +158,8 @@ export function createAgentRuntime({
         pendingSteers = [];
         return run.start();
       }).then((result) => {
-        // The workspace may have been torn down by a logout or account switch while the
-        // provider was still answering; never bill that run to the next account.
+        // The workspace may have been torn down by a logout or instance switch while the
+        // provider was still answering; never bill that run to the next instance.
         if (result.usage && !disposed) onUsage?.(result.usage);
         const activities = settleActivities(latest.activities, cancelled || result.status === 'stopped');
         latest = {

@@ -1,9 +1,6 @@
-import type { AuthState } from '@/core/api/auth-session';
+import type { InstanceState } from '@/core/api/instance-client';
 
-/** A production workspace has exactly one backend; there is no anonymous local fallback. */
-export function workspaceScope(auth: AuthState, preview: boolean) {
+export function workspaceScope(instance: InstanceState, preview: boolean) {
   if (preview) return 'preview';
-  if (auth.user && !auth.user.mustChangePassword) return 'instance';
-  if (auth.status === 'checking' || auth.status === 'unavailable') return 'pending';
-  return 'locked';
+  return instance.status === 'ready' ? 'instance' : 'pending';
 }

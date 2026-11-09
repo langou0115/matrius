@@ -10,13 +10,13 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthContext
 from app.cache import concurrency_limit, enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
 from app.documents.schemas import FileToolRequest
 from app.documents.service import run
 from app.features.dependencies import require_feature
+from app.instance.dependencies import InstanceContext
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 
@@ -26,14 +26,14 @@ READ_OPERATIONS = frozenset({"list", "read", "grep", "help", "inspect"})
 @router.post("/file")
 async def file_tool(
     payload: FileToolRequest,
-    ctx: AuthContext = Depends(require_feature("files")),
+    ctx: InstanceContext = Depends(require_feature("files")),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     settings = get_settings()
-    user_id = str(ctx.user.id)
+    instance_id = str(ctx.instance_id)
     if payload.operation in READ_OPERATIONS:
-        await enforce_rate_limit("tool_file_read", user_id, settings.document_read_calls_per_minute)
+        await enforce_rate_limit("tool_file_read", instance_id, settings.document_read_calls_per_minute)
     else:
-        await enforce_rate_limit("tool_file_write", user_id, settings.document_write_calls_per_minute)
-    async with concurrency_limit("tool_file", user_id, settings.document_tool_user_concurrency):
-        return await run(db, ctx.user.id, payload)
+        await enforce_rate_limit("tool_file_write", instance_id, settings.document_write_calls_per_minute)
+    async with concurrency_limit("tool_file", instance_id, settings.document_tool_concurrency):
+        return await run(db, ctx.instance_id, payload)
