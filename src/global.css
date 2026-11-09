@@ -1638,8 +1638,6 @@ input[type='password']::-ms-clear { display: none; }
   .library-page-more { width: 44px; height: 44px; }
   .library-floating-menu > a, .library-floating-menu > button { min-height: 44px; }
   .library-content { --library-gutter: 20px; padding: 0 20px 56px; }
-  .matrius-app .library-scroll { scrollbar-width: none; }
-  .matrius-app .library-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
   .library-toolbar { margin-inline: -20px; padding-inline: 20px; background: var(--background); }
   .library-filter-row { flex-wrap: nowrap; gap: 6px; }
   .library-kinds { gap: 3px; flex: 1; min-width: 0; }
@@ -1720,6 +1718,12 @@ input[type='password']::-ms-clear { display: none; }
     height: var(--app-height, 100dvh); min-height: 0; padding-top: env(safe-area-inset-top); padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
   }
   .matrius-app :is(h1, h2, h3, strong) { font-weight: 600; }
+  /* Keep the thumb as a position cue on a phone, but drop the desktop's arrow buttons: they
+     claim 36px of the track and are too small to aim at with a thumb. */
+  @supports selector(::-webkit-scrollbar) {
+    .matrius-app ::-webkit-scrollbar-button:vertical:decrement:start,
+    .matrius-app ::-webkit-scrollbar-button:vertical:increment:end { display: none; }
+  }
   .chat-topbar .conversation-title { font-weight: 500; }
   .message-actions { gap: 2px; }
   .composer-toolbar .model-picker { gap: 4px; padding-inline: 4px; }
@@ -1743,10 +1747,12 @@ input[type='password']::-ms-clear { display: none; }
   .chat-main.has-messages { overflow: hidden; scrollbar-gutter: auto; }
   .chat-screen .chat-topbar, .sidebar-collapsed .chat-topbar { flex: none; padding: 6px 12px; gap: 10px; }
   .chat-main.has-messages > .chat-topbar { position: static; }
-  .chat-main .messages-scroll { flex: 1 1 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: none; scrollbar-gutter: auto; }
-  .matrius-app .messages-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  .chat-main .messages-scroll { flex: 1 1 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-anchor: none; scrollbar-gutter: auto; }
   .messages-content { padding: 16px 16px 24px; }
-  .bottom-composer { position: relative; padding: 8px 12px max(8px, env(safe-area-inset-bottom)); background: linear-gradient(to bottom, transparent calc(100% - max(8px, env(safe-area-inset-bottom)) - var(--radius-xl)), var(--background) calc(100% - max(8px, env(safe-area-inset-bottom)) - var(--radius-xl))); }
+  /* No transparent strip above the card: the composer starts right at the conversation edge,
+     so the list's last line is not cut off by a blank band. Only the strip below the card gets
+     the bar backdrop; the card keeps its own surface. */
+  .bottom-composer { position: relative; padding: 0 12px max(8px, env(safe-area-inset-bottom)); background: linear-gradient(to bottom, transparent calc(100% - max(8px, env(safe-area-inset-bottom))), var(--background) calc(100% - max(8px, env(safe-area-inset-bottom)))); }
   .composer textarea, .settings-main input, .settings-main textarea, .settings-main select { font-size: 16px; }
   .composer textarea { max-height: min(180px, 30dvh); }
   .welcome-scroll { padding: 20px 12px max(8px, env(safe-area-inset-bottom)); }
@@ -1779,6 +1785,10 @@ input[type='password']::-ms-clear { display: none; }
   .settings-index .settings-back, .settings-stack-back { color: var(--muted-text); }
   .settings-index .settings-back:hover, .settings-stack-back:hover { color: var(--foreground); background: var(--soft); }
   .settings-content { padding: 24px 18px 40px; }
+  /* The model form is a compact card: its 14px track would sit on top of every field edge.
+     The card's clipped bottom already says it continues. */
+  .model-form-dialog .dialog-panel { scrollbar-width: none; }
+  .matrius-app .model-form-dialog .dialog-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
   .provider-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px; padding: 12px 8px; }
   .provider-heading > .provider-name, .provider-heading > .provider-meta { grid-column: 1 / -1; }
   .provider-count { justify-self: start; min-width: 0; max-width: 100%; overflow: hidden; padding-inline: 3px; text-overflow: ellipsis; }
