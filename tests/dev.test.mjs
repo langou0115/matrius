@@ -61,12 +61,6 @@ test('development backend reads runtime settings from the env file instead of fr
   const envFile = resolve('repo', '.env.local');
   const env = devBackendEnv({
     env: { PATH: '/bin' },
-    local: {
-      WEBTOOL_PROXY_URL: 'http://127.0.0.1:7890',
-      LOG_LEVEL: 'DEBUG',
-      INITIAL_ADMIN_USERNAME: 'alice',
-      INITIAL_ADMIN_PASSWORD: 'local-secret',
-    },
     dataDir: '/repo/server/.data',
     webPort: 8081,
     envFile,

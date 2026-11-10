@@ -18,7 +18,6 @@ export function migrationEnvironment({ env = process.env, local = {}, directory 
     dataDir,
     environment: devBackendEnv({
       env,
-      local,
       dataDir,
       webPort: local.DEV_WEB_PORT || '8081',
       envFile: join(directory, '.env.local'),
@@ -59,8 +58,6 @@ export async function migrate({ env = process.env, directory = root } = {}) {
     { cwd: serverDir, env: environment });
 
   console.log(`Applying migrations to ${join(dataDir, 'matrius.db')}...`);
-  await capture('uv', ['run', '--no-sync', 'python', 'scripts/migrate-dev-database.py', dataDir],
-    { cwd: serverDir, env: environment });
   await capture('uv', ['run', '--no-sync', 'alembic', 'upgrade', 'head'],
     { cwd: serverDir, env: environment });
   // Fails when models changed without a matching migration.

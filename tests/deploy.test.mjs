@@ -22,7 +22,7 @@ const config = {
 test('source selection rejects secrets, traversal, generated files and unsafe file names', () => {
   for (const path of ['.env', '.env.local', '.env.remote.local', 'server/.env',
     'docker-compose/.env.production', 'private.key', '.aws/credentials', '.ssh/config',
-    'node_modules/x.js', 'server/.venv/bin/python', 'server/.data/dev.db',
+    'node_modules/x.js', 'server/.venv/bin/python', 'server/.data/matrius.db',
     'server/.data/files/upload.png', 'public/vendor/katex/a.css',
     '../outside', '/absolute', 'a/../outside', 'a\\b', 'a\nb', '.remote-sync-manifest']) {
     assert.equal(canSync(path), false, path);

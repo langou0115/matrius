@@ -1,10 +1,9 @@
-"""Initialize the singleton instance and normalize file storage."""
+"""Initialize the singleton instance row."""
 import asyncio
 import logging
 
 from app.db import SessionLocal, dispose_engine
 from app.models import Instance
-from app.storage_migration import migrate_files
 
 
 async def bootstrap() -> None:
@@ -12,7 +11,6 @@ async def bootstrap() -> None:
         if await db.get(Instance, 1) is None:
             db.add(Instance(id=1))
             await db.commit()
-        await migrate_files(db)
 
 
 async def _run() -> None:

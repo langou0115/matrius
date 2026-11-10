@@ -77,7 +77,7 @@ server/.data/
 └── files/               # /api/files 写入的上传文件内容
 ```
 
-浏览器 IndexedDB 仅保存模型配置、密钥和设备状态，聊天数据统一保存到实例后端。旧 dev.db 在新 matrius.db 不存在时通过 SQLite backup API 复制并保留源库。
+浏览器 IndexedDB 仅保存模型配置、密钥和设备状态，聊天数据统一保存到实例后端。
 
 启动流程：`uv sync --frozen --extra dev` → 执行 `alembic upgrade head` → `alembic check`（模型与迁移不一致时直接失败）→ `app.bootstrap` 创建实例记录 → 启动 uvicorn `--reload` → 等待 `/api/health/ready` → 启动 Vite 开发服务器。
 
@@ -85,13 +85,13 @@ server/.data/
 Windows 开发工作进程显式使用 `ProactorEventLoop`，以支持 OfficeCLI / LibreOffice 的异步子进程。每次重载由新工作进程自行绑定端口，不复用父进程的监听 socket，避免 IOCP 关联失效导致 `WinError 87`。`npm run test` 在 Windows 上会真实创建 DOCX、连续两次重载后分别创建 XLSX / PPTX，并验证进程树清理。修改 `server/scripts/dev-api.py` 后须完整重启 `npm run dev`，仅应用代码热重载不会替换启动器。
 
 
-开发环境下，如果库中已有同名所有者但密码与当前配置不一致，启动时会将其密码同步为配置值；正式环境也会应用配置中的实例所有者密码。
+开发环境下，库中只保留唯一的 `instance` 记录；没有账户、密码或所有者同步步骤。
 
 ```bash
 npm run dev -- --reset-db     # 删除本地开发数据库和上传文件，再重新迁移
 ```
 
-`--reset-db` 只删除 server/.data 内新旧开发数据库（matrius.db*、dev.db*）、files/ 和 drafts/，不会碰其他目录。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
+`--reset-db` 只删除 server/.data 内的 matrius.db*、files/ 和 drafts/，不会碰其他目录。Windows 的文件锁更严格，执行前先按 Ctrl+C 停止 API；脚本会给出明确提示。
 
 默认 Web 8081、API 8000，可在 `.env.local` 设置 `DEV_WEB_PORT` / `DEV_API_PORT`。开发服务器使用严格端口，端口被占用时失败退出，不自动切换。`vite.config.ts` 注册的开发中间件先处理 `/api/model-proxy`，再把其余 `/api/*` 代理给本机 FastAPI，浏览器无需跨域配置。脚本不自动打开浏览器。
 

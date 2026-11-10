@@ -66,7 +66,7 @@ export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
  * values are copied into the child environment; copying runtime keys here would freeze
  * them and keep overriding the file after an edit.
  */
-export function devBackendEnv({ env = {}, local = {}, dataDir = devDataDir(), webPort, envFile }) {
+export function devBackendEnv({ env = {}, dataDir = devDataDir(), webPort, envFile }) {
   const environment = devEnvironment({ env, dataDir, webPort });
   if (envFile) environment.MATRIUS_DEV_ENV_FILE = resolve(envFile);
   return environment;
@@ -83,10 +83,6 @@ export function resetTargets(dataDir = devDataDir()) {
     join(base, 'matrius.db'),
     join(base, 'matrius.db-wal'),
     join(base, 'matrius.db-shm'),
-    // Explicit reset must also remove the legacy source, otherwise startup imports it again.
-    join(base, 'dev.db'),
-    join(base, 'dev.db-wal'),
-    join(base, 'dev.db-shm'),
     join(base, 'files'),
     join(base, 'drafts'),
   ];
@@ -248,7 +244,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   // into the process environment; fixing DATABASE_URL/DATA_DIR here also keeps a
   // production path in .env.local from leaking into local development.
   const backendEnv = devBackendEnv({
-    env, local, dataDir, webPort, envFile: join(root, '.env.local'),
+    env, dataDir, webPort, envFile: join(root, '.env.local'),
   });
 
   const abort = new AbortController();
@@ -273,7 +269,6 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await mkdir(join(dataDir, 'files'), { recursive: true });
 
     abort.signal.throwIfAborted();
-    await runBackend(['python', 'scripts/migrate-dev-database.py', dataDir], backendEnv, abort.signal);
     console.log('Applying migrations to server/.data/matrius.db...');
     await runBackend(['alembic', 'upgrade', 'head'], backendEnv, abort.signal);
     // Fails when models changed without a matching migration.

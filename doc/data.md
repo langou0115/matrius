@@ -32,15 +32,13 @@ UI → features → repository → API → SQLite / 文件系统。
 文件内容以临时文件 + `os.replace` 原子替换，路径解析拒绝越出根目录的对象键。
 SQLite 事务与文件替换不是跨存储的原子事务；备份和恢复应覆盖数据库与整个文件目录。
 
-## 旧数据迁移
+## 数据库与初始化
 
-开发启动和 `npm run db:migrate` 在新库不存在时，通过 SQLite backup API 将旧 `server/.data/dev.db`（包括 WAL 中的数据）复制为 `matrius.db`；旧库保留，不覆盖已有新库。
-`--reset-db` 明确清空新旧开发数据库、上传文件和草稿，避免旧库被再次导入。
+开发启动和 `npm run db:migrate` 直接在 `server/.data/matrius.db` 上执行 `alembic upgrade head` 和 `alembic check`；`--reset-db` 清空开发数据库、上传文件和草稿。
 
-Alembic `0011_remove_accounts` 删除 users、auth_sessions 和所有者绑定，将业务数据统一归属 instance.id=1；画像与偏好表也去除用户命名。迁移先创建完整数据库备份，再优先采用原绑定所有者的重复设置、合计同日用量并去重标记。所有对话、消息、文件和记忆保留；重复旧导入键清空，资源 UUID 与关联不变。被取代的旧设置和原始导入键可从备份恢复，详见[实例访问](instance.md)。
+数据库只有一条基线迁移 `0001_initial`，直接创建单实例 schema（`instance.id=1` 及指向它的业务表）。空库初始化不会生成迁移备份或其他伴随文件；新库的持久内容只有 `matrius.db` 和 `files/`。
 
-bootstrap 把旧对象键 `users/<userId>/<fileId>/...` 复制为 `<fileId>/<safeName>`，然后提交数据库指针。
-复制和提交按文件逐个进行，失败会阻止启动并可重试。旧文件副本保留，避免中断或旧备份失去文件；不自动删除历史实例或其文件。
+上传文件写入 `DATA_DIR/files/<fileId>/<safeName>`，数据库只保存元数据；旧版 `users/<userId>/...` 布局及其迁移逻辑已移除，开发阶段不迁移旧账户数据。
 
 ## 写入与冲突
 

@@ -62,6 +62,8 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 
 提交前检查生成的迁移：索引、约束、级联删除必须显式存在。涉及迁移时应在临时空 SQLite 上验证全部迁移可执行（`tests/test_migrations.py` 覆盖 `upgrade head` 与 `check`）。生产部署时由 API 容器入口执行 `alembic upgrade head` 和 `alembic check`，不再有独立的 `migrate` 容器。
 
+当前迁移链只有一条基线 `0001_initial`，空库初始化不会生成备份文件。开发期由旧增量链创建的数据库需要删除 `DATA_DIR`（推荐）或执行一次 `alembic stamp 0001_initial`；旧生产卷同理，否则入口的 `upgrade head` 会因找不到旧 revision 失败。
+
 
 ## 环境变量
 
@@ -71,7 +73,7 @@ uv run --no-sync alembic revision --autogenerate -m "describe change"
 | `APP_URL` | `http://localhost:8000` | 对外地址，仅用于文档/诊断 |
 | `CORS_ORIGINS` | 空 | 逗号分隔；同源部署无需设置 |
 | `LOG_LEVEL` | `INFO` | JSON 日志级别 |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./.data/dev.db` | 必须使用 `sqlite+aiosqlite://` |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./.data/matrius.db` | 必须使用 `sqlite+aiosqlite://` |
 | `DATA_DIR` | `./.data` | SQLite 与上传文件的根目录；生产为 `/data` |
 | `SQLITE_BUSY_TIMEOUT_MS` | `30000` | SQLite 写锁等待时间 |
 | `CACHE_MAX_ENTRIES` / `CACHE_MAX_BYTES` | `10000` / 64 MiB | 进程内缓存上限，超出后淘汰最旧条目 |
@@ -141,7 +143,7 @@ GET    /api/health/ready
 
 ## 数据与限制
 
-- 文件内容写入 `DATA_DIR/files`，对象键为 `users/{userId}/{fileId}/{safeName}`，数据库只保存元数据；写入使用临时文件 + `os.replace` 原子替换。
+- 文件内容写入 `DATA_DIR/files`，对象键为 `<fileId>/<safeName>`，数据库只保存元数据；写入使用临时文件 + `os.replace` 原子替换。
 - 上传类型白名单：纯文本/代码/Markdown/CSV、图片、PDF、DOCX/XLSX/PPTX。不支持旧版 DOC/XLS/PPT，也不做 OCR。
 - 文件读取与 grep 只对已上传文件生效；解析结果缓存在 API 进程内 1 小时，重启后重新解析。
 - 搜索优先 `ddgs` 的 DuckDuckGo 后端，只有失败、超时、限流或零结果时才在剩余预算内回退 Bing RSS；整次默认 8 秒，连续失败会短暂熔断。DuckDuckGo 的 HTML 接口使用 GET：部分代理地址会对 POST 返回 HTTP 202 验证页；Bing 复用长连接并会重试一次瞬时传输错误。结果去重、按关键词相关性排序并优先保证域名多样性。可达来源零结果返回 `[]` 且不缓存；只有实际尝试的所有来源都失败才返回 502。
