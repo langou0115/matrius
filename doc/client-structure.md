@@ -50,6 +50,7 @@ src/
 │   │   ├── chat-screen.tsx             欢迎页、消息区、按会话保存的输入草稿
 │   │   ├── chat-route.tsx              URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
+│   │   ├── document-title.ts           会话页使用对话名作为标签标题，其余页面回退 Matrius
 │   │   ├── conversation-route-state.ts URL 对话选择与有效性状态
 │   │   ├── conversation-search.ts      搜索匹配、命中片段、高亮分段与相对时间
 │   │   ├── last-conversation.ts        本机记住的最近对话与地址
@@ -109,6 +110,7 @@ src/
 │   │   ├── settings-catalog.ts         目录、搜索词与显示模式选项
 │   │   ├── settings-detail-screen.tsx  外观、关于等设置详情
 │   │   ├── settings-page.tsx           设置目录、搜索、分类导航与共用页面框架
+│   │   ├── settings-return.ts          记住进入设置前的会话/资料库页并生成返回入口
 │   │   └── settings-root-redirect.tsx  `/settings` 跳转到默认分类
 │   ├── memory/
 │   │   ├── memory-state.tsx            记忆开关、摘要与更新状态
@@ -211,7 +213,8 @@ src/
 ## 设置模块
 
 - `/settings` 是可搜索的设置目录，根路径跳转到 `/settings/appearance`；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 `/settings/theme`、`/settings/display` 路径由 `appearance-redirect.tsx` 跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；实例、存储与用量是云端整页路由，不进入 Mock 分类。所有路径都在 `src/router/routes.tsx` 注册。
-- `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-page.tsx` 渲染目录、搜索与分类导航，并管理共用页面框架与返回入口；`settings-detail-screen.tsx` 提供外观与关于等详情控件。
+- `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-page.tsx` 渲染目录、搜索与分类导航，并管理共用页面框架与返回入口；`settings-detail-screen.tsx` 提供外观与关于等详情控件。`settings-return.ts` 记录进入设置前的页面：从会话进入返回该会话，从资料库进入返回资料库；只有直接打开设置且没有来源时才回退到当前会话或新对话。
+- 标签页标题由 `features/chat/document-title.ts` 决定：`/c/<id>`（含 Mock）使用对话名，空标题和其他页面使用 Matrius。
 - 设置子页均不卸载根工作区 Provider，导航期间保留会话、草稿与外观状态。
 - `/settings/personalization` 与 `/mock/chat/settings/personalization` 提供记忆、自定义指令和关于你的表单，入口与搜索集中在 `settings-catalog.ts`。`personalization.ts` 定义字段、默认值与校验，`personalization-state.tsx` 保存共享状态，`personalization-screen.tsx` 实现 Web 表单；根工作区通过已有仓储恢复和自动保存，Runtime 在每次请求开始时组装系统提示。
 - 个性化页的记忆区位于“关于你”和“其他设置”之间，包含记忆助手模型、启用开关与摘要管理。`core/agent/memory.ts` 定义摘要契约、记忆工具、后台整理请求与系统提示注入；`memory-state.tsx` 保存开关和摘要；`memory-dialog.tsx` 用输入指令调用 `memory` 工具直接改摘要，不显示助手回复；标题旁显示更新时间与图标删除按钮，删除需二次确认。摘要非空且启用时进入每次对话的系统提示；回复完成后由记忆助手模型在后台整理，按会话每分钟最多一次，失败静默。记忆助手模型保存在本机 `model-preferences.memoryModelId`，为空时跟随会话模型。

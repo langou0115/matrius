@@ -5,10 +5,10 @@ import { useEffect, useState, type PropsWithChildren } from 'react';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChat } from '@/features/chat/chat-state';
-import { conversationHref } from '@/features/chat/conversation-href';
 import { useInstance } from '@/features/instance/instance-state';
 
 import { searchSettings, searchSettingsContent, visibleSettings } from './settings-catalog';
+import { workspaceReturnHref, workspaceReturnLabel } from './settings-return';
 
 export function useSettingsRoot() {
   return useIsPreview() ? '/mock/chat/settings' : '/settings';
@@ -47,7 +47,8 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
     Boolean(info),
   );
   const pathname = usePathname().replace(/\/$/, '');
-  const homeHref = conversationHref(conversationId, preview);
+  const returnHref = workspaceReturnHref(conversationId, preview);
+  const returnLabel = workspaceReturnLabel();
   // Account, usage, storage and sync are full app pages rather than preview chat settings,
   // so they always live under /settings even when the rest of the catalogue is scoped to /mock.
   const directRoutes = new Set(['storage', 'usage']);
@@ -84,8 +85,8 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
 
   return <main className={`settings-main ${pathname === root ? 'settings-index' : 'settings-detail'}`} id="main-content" tabIndex={-1}>
     <aside className="settings-sidebar" aria-label="设置导航">
-      <Link href={homeHref} replace asChild>
-        <LinkAnchor className="settings-back"><ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" /><span>返回对话</span></LinkAnchor>
+      <Link href={returnHref} replace asChild>
+        <LinkAnchor className="settings-back"><ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" /><span>{returnLabel}</span></LinkAnchor>
       </Link>
       <div className="settings-search" role="search" aria-label="搜索设置">
         <Search size={16} strokeWidth={1.75} aria-hidden="true" />

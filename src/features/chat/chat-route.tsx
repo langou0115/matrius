@@ -4,8 +4,10 @@ import { router } from '@/router';
 import { Dialog } from '@/components/web/dialog';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import ChatScreen from './chat-screen';
+import { useChat } from './chat-state';
 import { conversationHref } from './conversation-href';
 import { useConversationRouteState } from './conversation-route-state';
+import { APP_TITLE, conversationDocumentTitle } from './document-title';
 import { writeLastRoute } from './last-conversation';
 import { useLocationPathname } from './location-pathname';
 
@@ -28,6 +30,17 @@ export default function ChatRoute() {
   const preview = useIsPreview();
   const id = conversationIdIn(pathname, preview);
   const { exists, ready } = useConversationRouteState(id);
+  const { conversations } = useChat();
+  const title = conversationDocumentTitle(
+    id ? conversations.find((conversation) => conversation.id === id)?.title : null,
+  );
+  // The tab follows the open conversation and falls back to the app name on every other page.
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
+  useEffect(() => () => {
+    document.title = APP_TITLE;
+  }, []);
   // Mirror the page synchronously in localStorage. The workspace itself is saved through
   // IndexedDB, which lags behind a fast tab switch and refuses writes from a stale tab,
   // so local mode could otherwise forget the conversation before it ever reached disk.

@@ -7,6 +7,7 @@ import { InstanceWorkspace } from '@/components/web/instance-workspace';
 import { Workspace } from '@/components/web/workspace';
 import { InstanceProvider } from '@/features/instance/instance-state';
 import { BackgroundNotifications } from '@/features/chat/components/background-notifications';
+import { rememberWorkspacePath } from '@/features/settings/settings-return';
 import { usePathname } from '@/router';
 
 import '@/global.css';
@@ -54,6 +55,12 @@ export function AppShell() {
     if (document.readyState === 'complete') register();
     else window.addEventListener('load', register, { once: true });
   }, []);
+
+  useEffect(() => {
+    // Settings is a full-page route; keep the workspace page it replaces so its back link
+    // returns to that conversation or to the library instead of opening a new chat.
+    rememberWorkspacePath(pathname);
+  }, [pathname]);
 
   return (
     // A render error must show up as a message with a reload action, not as a blank page.
