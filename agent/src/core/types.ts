@@ -65,7 +65,10 @@ export type ThinkingActivity = {
 /** Append in runtime event order; separate thinking segments may surround tool calls. */
 export type ProcessActivity = ThinkingActivity | WebActivity;
 
+import type { UiArtifact } from './ui-contract';
+
 export type Message = {
+  uiArtifacts?: UiArtifact[];
   id: string;
   role: 'user' | 'assistant';
   content: string;
@@ -94,6 +97,7 @@ export type Message = {
 
 export type AgentProfile = { customInstructions: string; aboutName: string; occupation: string; aboutMore: string };
 export type ReplyUpdate = {
+  uiArtifacts?: UiArtifact[];
   /** Current model call only; never the sum of a run's billable usage. */
   contextTokens?: { input: number; output: number; modelId: string; contextWindow: number };
   content: string;
@@ -116,7 +120,7 @@ export type RuntimeSnapshot = { runs: Record<string, RuntimeRun>; error: string 
   contexts?: Record<string, NonNullable<ReplyUpdate['contextTokens']>> };
 
 /** Tools a run may use. The browser sends intent, never executable tool code. */
-export type AgentToolset = { web?: boolean; files?: boolean; availableFiles?: MessageFile[] };
+export type AgentToolset = { ui?: boolean; web?: boolean; files?: boolean; availableFiles?: MessageFile[] };
 
 /** One reply request as the runtime submits it; the transport decides where it runs. */
 export type RunnerOptions = {

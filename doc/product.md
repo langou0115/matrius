@@ -23,7 +23,7 @@ Matrius 是可自行部署的单用户 AI 对话应用，提供 React Web 与 PW
 ## 技术边界
 
 React 19、TypeScript、Vite 8、React Router 7；FastAPI、SQLAlchemy、Alembic、SQLite WAL。
-Agent 循环与模型调用在独立的 Node 进程（`agent/`），通过 `tsx` 复用 `src/core/agent`；它不直连数据库，消息仍由浏览器经 REST 写入。
+Agent 循环与模型调用在独立的 Node 进程（`agent/`），通过 `tsx` 复用 `agent/src/core`；它不直连数据库，消息仍由浏览器经 REST 写入。
 单 API worker；限流、缓存和文档草稿元数据保存在进程内。
 不引入多用户角色、组织、租户、多 Agent 编排或外部实例管理功能。
 新功能使用统一能力清单，不按用户名或角色开放。

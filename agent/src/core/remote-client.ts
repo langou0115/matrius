@@ -42,3 +42,8 @@ export async function requestMemorySummary({ config, apiKey, currentSummary, use
     return null;
   }
 }
+
+export async function editMemorySummary(config: ModelConfig, apiKey: string, currentSummary: string, instruction: string, signal: AbortSignal): Promise<string | null> {
+  const data = await post<{ summary: string | null }>('/api/agent/memory/edit', { config, apiKey, currentSummary, instruction }, signal);
+  return data.summary;
+}

@@ -1,6 +1,6 @@
 """Initial single-instance schema (squashed baseline).
 
-This is the only migration a new database runs. It creates the complete
+This baseline is the first migration a new database runs. It creates the initial
 single-instance schema: the singleton ``instance`` row scope, conversations,
 messages, file metadata, memories, preferences, profiles, profile fields and
 token usage.

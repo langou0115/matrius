@@ -1,5 +1,5 @@
-import { compactActivities } from '@/core/agent/activity-payload';
-import type { ConversationSummary } from '@/core/agent/compaction';
+import { compactActivities } from '@agent/core/activity-payload';
+import type { ConversationSummary } from '@agent/core/compaction';
 import { ApiError } from '@/core/api/instance-client';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
@@ -9,7 +9,7 @@ import {
   readMemoryPreferences,
   serializeMemoryField,
   type MemoryPreferences,
-} from '@/core/agent/memory';
+} from '@agent/core/memory';
 import { parseWorkspace, readProcess, type WorkspaceData } from './workspace-repository';
 
 type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -35,6 +35,7 @@ const metadata = (value: Conversation) => ({
 const messageBody = (value: Message) => ({
   role: value.role, content: value.content, quote: value.quote ?? null, reasoning: value.reasoning ?? null,
   process: value.process ?? null,
+  uiArtifacts: value.uiArtifacts ?? [],
   thinkingMs: value.thinkingMs ?? null, feedback: value.feedback ?? null,
   status: value.status === 'streaming' ? 'stopped' : value.status ?? 'complete', error: value.error ?? null,
   ...(value.role === 'user' && value.steering ? { steering: true } : {}),

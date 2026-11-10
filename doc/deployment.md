@@ -336,3 +336,12 @@ GitHub Actions → **Deploy Production** → **Run workflow**，只接受手动�
 - **健康检查失败**：看 `docker logs matrius-api` 和 `docker logs matrius-web`。
 - **构建失败**：多半是服务器访问 npm / PyPI / Docker Hub 有问题，见「国内网络」。
 - **回退**：本机切回上一个已验证的 Git 版本，重新执行 `npm run deploy`。数据库结构回退需单独评估。
+
+
+### Node Agent 边界
+
+Agent 代码集中在 `agent/src/`。`core/` 包含模型循环、工具、上下文处理、共享类型和浏览器可用的远程适配。前端只导入共享类型、纯函数及 `remote-run` / `remote-client`；模型执行留在 Node，包括通过 `/api/agent/memory/edit` 编辑记忆。
+
+生产保持 Caddy / Web / API 三个容器。API 镜像从仓库根构建，在单 worker Uvicorn 旁运行独立 Node Agent。`scripts/run-services.mjs` 在任一进程退出时停止另一个，容器健康检查同时探测 8000 和 8123。Caddy 优先将 `/api/agent/*` 与 `/api/copilotkit`（含子路径）流式转发至 `api:8123`。
+
+Python 仍是唯一数据库写入者，浏览器通过 REST 保存消息。运行状态只保存在内存：断开连接会停止运行，进程重启不会续跑；已收到内容沿用现有保存流程。模型密钥随单次请求传入，不在 Node 持久化。

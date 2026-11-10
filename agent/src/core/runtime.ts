@@ -54,16 +54,16 @@ type RuntimeOptions = {
   delegateToServer?: boolean;
   /** The default lazily loads the agent-service client. */
   loadRunner?: () => Promise<RunnerModule>;
-  /** The default lazily loads silent history compaction; unused when delegating. */
+  /** Optional local compaction adapter for isolated tests; production delegates to Node. */
   loadCompactor?: () => Promise<{ prepareHistory: typeof import('./compaction').prepareHistory }>;
 };
 
 /** Platform-independent runtime: one active request per conversation, no React, storage or DOM. */
 export function createAgentRuntime({
   onReply, onSummary, onUsage, onDeferredMessage,
-  delegateToServer = false,
+  delegateToServer = true,
   loadRunner = () => import('./remote-run'),
-  loadCompactor = () => import('./compaction'),
+  loadCompactor = async () => { throw new Error('Local compaction requires an injected test adapter.'); },
 }: RuntimeOptions) {
   let snapshot: RuntimeSnapshot = { runs: {}, error: null };
   const listeners = new Set<() => void>();

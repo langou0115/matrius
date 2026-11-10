@@ -1,4 +1,4 @@
-import type { Message } from '@/core/agent/types';
+import type { Message } from '@agent/core/types';
 import type { Conversation } from './chat-state';
 
 export type ConversationSearchResult = {

@@ -1,4 +1,4 @@
-import type { WebActivity } from '../../src/core/agent/types';
+import type { WebActivity } from '../../agent/src/core/types';
 
 const url = 'https://docs.python.org/3/library/asyncio-task.html';
 export const processReasoning = '先确认 TaskGroup 的行为，再查阅官方文档核实异常处理和任务取消的边界。\n\n重点是区分正常等待任务完成与某个任务失败后的处理，避免把这两种情况混在一起。';

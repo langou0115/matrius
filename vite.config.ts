@@ -93,9 +93,10 @@ export default defineConfig({
   plugins: [offlineShell(), react(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
   resolve: {
     alias: [
+      { find: '@agent', replacement: fromRoot('./agent/src') },
       // pi 0.73.1's umbrella entry imports Node credential discovery and every provider.
       // Keep the browser bundle on our explicit three-provider adapter, as Metro did.
-      { find: /^@mariozechner\/pi-ai$/u, replacement: fromRoot('./src/core/llm/pi-agent-bridge.ts') },
+      { find: /^@mariozechner\/pi-ai$/u, replacement: fromRoot('./agent/src/core/pi-agent-bridge.ts') },
       { find: /^@\/assets\//u, replacement: fromRoot('./assets/') },
       { find: /^@\//u, replacement: fromRoot('./src/') },
     ],

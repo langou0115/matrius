@@ -1,6 +1,6 @@
 import type { Api, Model } from '@mariozechner/pi-ai';
 
-import { isThinkingEffort, type ThinkingEffort } from '@/core/agent/thinking-effort';
+import { isThinkingEffort, type ThinkingEffort } from '@agent/core/thinking-effort';
 import { resolveModelProxyRoute } from './model-proxy';
 
 export const protocols = [

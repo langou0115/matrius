@@ -31,6 +31,7 @@ npm run agent   # 单进程，默认 127.0.0.1:8123
 | `POST /api/agent/steer` | 补充消息（返回 `steered` / `deferred` / `false`） |
 | `POST /api/agent/stop` | 中断某个会话的运行 |
 | `POST /api/agent/title` | 生成会话标题 |
+| `POST /api/agent/memory/edit` | Edit memory from user instructions |
 | `POST /api/agent/memory` | 后台整理记忆摘要 |
 | `POST /api/copilotkit/*` | CopilotKit v2 runtime，自定义 AG-UI agent |
 
@@ -39,8 +40,8 @@ npm run agent   # 单进程，默认 127.0.0.1:8123
 - **不直连 SQLite。** 消息、活动、文件都通过 Python API 读写，Python 仍是唯一写入者。
 - **没有持久状态。** 运行中的会话只在这个进程的内存里；进程重启即丢失，前端会显示未完成。
 - **密钥不落盘。** 模型 key 由浏览器逐次放进请求（`/api/agent/run` 的 body 或 CopilotKit `properties`），只在本轮内存中使用。
-- 复用 `src/core/agent/*` 与 `src/core/llm/*`，通过 `tsx` 运行时解析 `@/` 别名。
+- 复用 `agent/src/core/*` 与 `src/core/llm/*`，通过 `tsx` 运行时解析 `@/` 别名。
 
-## 容器
+## Production
 
-当前是**本机独立进程**。把它并入 API 容器（`server/Dockerfile` + `entrypoint.sh` + compose healthcheck）属于后续规划，本轮没有改动容器拓扑。
+The API container runs Node Agent and single-worker Uvicorn as independent processes. `scripts/run-services.mjs` terminates the sibling when either process exits. Healthchecks cover both processes, and Caddy streams agent routes to port 8123. Local development uses `npm run dev` to manage all three local services.

@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { ChevronDown, ChevronUp, Download } from 'lucide-react';
 
-import type { MessageFile } from '@/core/agent/types';
+import type { MessageFile } from '@agent/core/types';
 import { fileContentUrl } from '@/features/files/files-api';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { formatFileSize } from './attachment-list';

@@ -16,5 +16,5 @@ server/**/__pycache__
 server/.pytest_cache
 server/.ruff_cache
 server/tests
-server/vendor
+server/vendor/officecli/win-x64
 server/.data

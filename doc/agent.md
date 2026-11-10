@@ -38,10 +38,10 @@ agent 把 content / reasoning / process / files 流回浏览器
 - 不直连 SQLite、不持久化运行状态、模型 key 只在本轮内存使用；进程重启后未完成的回复丢失，浏览器显示为中断。
 - 默认只监听 `127.0.0.1`；容器化与生产路由属于后续规划，当前未改容器拓扑。
 
-共享核心仍在 `src/core/agent/`，不依赖 React、DOM、路由页面、聊天状态或设置模块；浏览器与 agent 进程共用这些模块：
+共享核心仍在 `agent/src/core/`，不依赖 React、DOM、路由页面、聊天状态或设置模块；浏览器与 agent 进程共用这些模块：
 
 ```text
-src/core/agent/
+agent/src/core/
 ├── runtime.ts         # createAgentRuntime：校验、运行状态、批量回复、取消与资源释放
 ├── remote-run.ts      # 浏览器侧传输：POST /api/agent/run，按 SSE 还原 ReplyUpdate
 ├── remote-client.ts   # 标题与记忆的远程调用

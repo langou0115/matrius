@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, FileWarning } from 'lucide-react';
 
-import type { MessageFile, MessageImage } from '@/core/agent/types';
+import type { MessageFile, MessageImage } from '@agent/core/types';
 import { fileContentUrl } from '@/features/files/files-api';
 import { formatFileSize, ImagePreview } from './attachment-list';
 import { FileTypeIcon } from './file-type-icon';

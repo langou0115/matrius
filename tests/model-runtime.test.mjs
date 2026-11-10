@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createReplyRun, describeModelError } from '../src/core/agent/runner.ts';
-import { buildContext, buildRetryHistory, validateAgentRequest } from '../src/core/agent/context.ts';
-import { findRecentStart, getContextBudget, prepareHistory } from '../src/core/agent/compaction.ts';
-import { withoutFailedReplies } from '../src/core/agent/history.ts';
-import { createAgentRuntime } from '../src/core/agent/runtime.ts';
+import { createReplyRun, describeModelError } from '../agent/src/core/runner.ts';
+import { buildContext, buildRetryHistory, validateAgentRequest } from '../agent/src/core/context.ts';
+import { findRecentStart, getContextBudget, prepareHistory } from '../agent/src/core/compaction.ts';
+import { withoutFailedReplies } from '../agent/src/core/history.ts';
+import { createAgentRuntime } from '../agent/src/core/runtime.ts';
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
 import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.ts';
 import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
@@ -15,9 +15,9 @@ import { MemoryProvider } from '../src/features/memory/memory-state.tsx';
 import { InstanceProvider } from '../src/features/instance/instance-state.tsx';
 import { NetworkToolsProvider } from '../src/features/instance/network-tools-state.tsx';
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
-import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
-import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
-import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../agent/src/core/system-prompt.ts';
+import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../agent/src/core/title.ts';
+import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../agent/src/core/web-tools.ts';
 import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.ts';
 import { ApiError } from '../src/core/api/instance-client.ts';
 import { parseWorkspace } from '../src/features/workspace/workspace-repository.ts';
@@ -325,6 +325,8 @@ test('shared runtime validates requests, handles cancellation during lazy loadin
   // starting a request that the provider would reject.
   const overflowReply = deferred();
   const overflow = createAgentRuntime({
+    delegateToServer: false,
+    loadCompactor: async () => ({ prepareHistory }),
     loadRunner: async () => ({ createReplyRun() { assert.fail('an oversized single message cannot be compacted'); } }),
     onReply(_id, message) { if (message.status === 'error') overflowReply.resolve(message); },
   });
@@ -382,6 +384,7 @@ test('runtime silently compacts before the run and persists the summary on the n
       request = options;
       return { abort() {}, start: async () => ({ status: 'complete' }) };
     } }),
+    delegateToServer: false,
     loadCompactor: async () => ({ prepareHistory: async (options) => {
       previous.push(options.previous);
       return {
@@ -421,6 +424,7 @@ test('stopping during silent compaction never starts a runner or publishes a not
   const runtime = createAgentRuntime({
     onReply(_id, message) { if (message.status === 'stopped') finished.resolve(message); },
     loadRunner: async () => ({ createReplyRun() { assert.fail('a stopped compaction must not create a runner'); } }),
+    delegateToServer: false,
     loadCompactor: async () => ({ prepareHistory: () => compaction.promise }),
   });
   assert.equal(runtime.start({ conversationId: 'c', replyId: 'r', config, apiKey: 'key', messages: history }), true);
@@ -651,7 +655,7 @@ test('stored rolling summaries survive parsing and malformed copies are dropped'
 test('agent core has no UI, feature-module or browser dependencies', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
   const ts = (await import('typescript')).default;
-  const directory = new URL('../src/core/agent/', import.meta.url);
+  const directory = new URL('../agent/src/core/', import.meta.url);
   for (const file of readdirSync(directory).filter((name) => name.endsWith('.ts'))) {
     const source = ts.createSourceFile(file, readFileSync(new URL(file, directory), 'utf8'), ts.ScriptTarget.Latest, true);
     function visit(node) {

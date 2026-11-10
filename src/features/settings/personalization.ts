@@ -1,4 +1,4 @@
-import type { AgentProfile } from '@/core/agent/types';
+import type { AgentProfile } from '@agent/core/types';
 
 export type PersonalizationPreferences = AgentProfile;
 

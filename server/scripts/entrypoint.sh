@@ -18,4 +18,5 @@ alembic upgrade head
 alembic check
 python -m app.bootstrap
 
-exec "$@"
+# Supervise both children: either failure stops the container for restart.
+node /opt/matrius/scripts/run-services.mjs "$@"

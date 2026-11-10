@@ -180,7 +180,7 @@ src/
 - `/mock/process` 通过 `features/mock/process-preview.tsx` 复用思考折叠区、正文和中断提示；阶段切换保留展开状态及连续计时，包含等待、思考、搜索、读取、再次思考、回答和结束，可验证按发生顺序追加步骤及整轮完成状态。模拟数据位于 `dev/fixtures/process-preview.ts`，不调用模型或写入聊天记录。
 - `/mock/library` 直接复用 `features/files/library-screen.tsx`，由 `features/files/mock-library.ts` 提供 500 个内存文件（含 SVG 缩略图）与 `/api/files` 的列表、用量、重命名、删除实现；预览模式下 `enabled` 恒为真、不请求真实接口，侧栏“资料库”入口也指向该路由。`/mock/storage` 复用 `components/web/storage-error-toast.tsx` 预览各种保存失败提示。
 - Web 会话与外观通过实例 REST 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过本地 Runtime 生成真实回复。
-- 新建对话首条消息发送后，`chat-runtime.tsx` 在回复之外并行调用 `core/agent/title.ts` 生成标题；`titleModelId` 已配置时使用该模型，否则跟随会话绑定的模型。生成失败保留首条消息截断标题，并在后续回复成功后重试；`titleSource` 防止迟到的结果覆盖手动重命名或分支标题。每个会话最多一个进行中的标题请求，删除会话或卸载工作区时取消。
+- 新建对话首条消息发送后，`chat-runtime.tsx` 在回复之外并行调用 `agent/src/core/title.ts` 生成标题；`titleModelId` 已配置时使用该模型，否则跟随会话绑定的模型。生成失败保留首条消息截断标题，并在后续回复成功后重试；`titleSource` 防止迟到的结果覆盖手动重命名或分支标题。每个会话最多一个进行中的标题请求，删除会话或卸载工作区时取消。
 - 发送、置顶、重命名和删除会写回浏览器数据库；读取或保存失败有提示。当前会话、侧栏和外观状态也会恢复，草稿仅在本次页面会话中保留。
 - `/settings` 在根布局中使用独立全页，不包在聊天 Workspace 内；Provider 保持挂载，返回时会话与草稿不丢失。
 - `/` 为新对话，`/c/<conversation-id>` 为已创建对话；首次发送成功后替换为空白页对应的新地址，侧栏、搜索和分支切换通过 Router 写入历史，浏览器前进后退按 URL 选择对话。设置返回当前对话地址；无效 ID 使用弹窗提示并提供返回新对话操作。Mock 使用 `/mock/chat/c/<conversation-id>`，仍受开发守卫保护。URL 在实例仓储加载后解析，不依赖上次保存的 activeId；未知路径重定向到 `/`。
@@ -190,7 +190,7 @@ src/
 | 功能 | 目标位置 |
 | --- | --- |
 | 本地数据库、实体仓储与后续迁移 | `src/core/database/` |
-| 本地 Agent Runtime、上下文与云端工具调度 | `src/core/agent/` |
+| 本地 Agent Runtime、上下文与云端工具调度 | `agent/src/core/` |
 | 模型直连 / 代理传输、SSE、解码器 | `src/core/llm/` |
 | 安全存储、文件、剪贴板等平台适配 | `src/core/platform/` |
 | 实例 REST 客户端、连接状态、409 冲突与错误映射 | `src/core/api/` |
@@ -220,13 +220,13 @@ src/
 - 标签页标题由 `features/chat/document-title.ts` 决定：`/c/<id>`（含 Mock）使用对话名，空标题和其他页面使用 Matrius。
 - 设置子页均不卸载根工作区 Provider，导航期间保留会话、草稿与外观状态。
 - `/settings/personalization` 与 `/mock/chat/settings/personalization` 提供记忆、自定义指令和关于你的表单，入口与搜索集中在 `settings-catalog.ts`。`personalization.ts` 定义字段、默认值与校验，`personalization-state.tsx` 保存共享状态，`personalization-screen.tsx` 实现 Web 表单；根工作区通过已有仓储恢复和自动保存，Runtime 在每次请求开始时组装系统提示。
-- 个性化页的记忆区位于“关于你”和“其他设置”之间，包含记忆助手模型、启用开关与摘要管理。`core/agent/memory.ts` 定义摘要契约、记忆工具、后台整理请求与系统提示注入；`memory-state.tsx` 保存开关和摘要；`memory-dialog.tsx` 用输入指令调用 `memory` 工具直接改摘要，不显示助手回复；标题旁显示更新时间与图标删除按钮，删除需二次确认。摘要非空且启用时进入每次对话的系统提示；回复完成后由记忆助手模型在后台整理，按会话每分钟最多一次，失败静默。记忆助手模型保存在本机 `model-preferences.memoryModelId`，为空时跟随会话模型。
+- 个性化页的记忆区位于“关于你”和“其他设置”之间，包含记忆助手模型、启用开关与摘要管理。`agent/src/core/memory.ts` 定义摘要契约、记忆工具、后台整理请求与系统提示注入；`memory-state.tsx` 保存开关和摘要；`memory-dialog.tsx` 用输入指令调用 `memory` 工具直接改摘要，不显示助手回复；标题旁显示更新时间与图标删除按钮，删除需二次确认。摘要非空且启用时进入每次对话的系统提示；回复完成后由记忆助手模型在后台整理，按会话每分钟最多一次，失败静默。记忆助手模型保存在本机 `model-preferences.memoryModelId`，为空时跟随会话模型。
 
 ## 模型与 Runtime 入口
 
 - `features/models/model-settings-screen.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型三类对话框；删除 Provider 或模型直接执行，不弹确认框。`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
-- `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/llm/model-proxy.ts`：同源模型中继地址。
-- `core/agent/runtime.ts`：无 React/DOM 依赖的共享运行入口，按会话持有一组活动请求（`runs`）、批量回复和运行状态；同一会话不可重复启动，不同会话可并发，`stop(id)` 只取消对应会话。`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
+- `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`agent/src/core/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/llm/model-proxy.ts`：同源模型中继地址。
+- `agent/src/core/runtime.ts`：无 React/DOM 依赖的共享运行入口，按会话持有一组活动请求（`runs`）、批量回复和运行状态；同一会话不可重复启动，不同会话可并发，`stop(id)` 只取消对应会话。`runner.ts`：实际创建 pi-agent；`context.ts`：上下文与引用；`types.ts`：跨端消息契约。核心不导入功能模块。
 - `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到实例。
 
 - 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部实例所有者入口；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
@@ -234,7 +234,7 @@ src/
 ## 实例与功能开关
 
 - `core/api/instance-client.ts`：无 DOM / React 的实例能力状态与同源 API 请求；忽略过期的能力刷新请求。
-- `core/agent/diagnostics.ts`：模型回复诊断摘要，记录每次调用的输出上限、HTTP 元数据、结束原因与用量；通过 `matriusDiagnostics.export()` 导出有界内存记录，不保存正文、工具参数或凭据。
+- `agent/src/core/diagnostics.ts`：模型回复诊断摘要，记录每次调用的输出上限、HTTP 元数据、结束原因与用量；通过 `matriusDiagnostics.export()` 导出有界内存记录，不保存正文、工具参数或凭据。
 - `core/features/capabilities.ts`：统一判断服务端授予的功能。
 - `features/instance/instance-state.tsx`：Web Provider、useInstance、useFeature 与 FeatureGate。
 - `features/files/storage-screen.tsx`：设置中的“存储”分类（位于实例下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
@@ -256,3 +256,14 @@ src/
 - `components/web/instance-workspace.tsx`：生产只加载后端工作区并用 REST 保存；连接不可用时等待重连。开发预览使用内存，不加载正式业务数据。
 
 上下文占用与计费用量分开：运行期间按会话和模型保存最近一次调用的输入（含缓存读取/写入）与输出，不累加各轮调用。新调用开始时从实际请求内容估算，服务商返回用量后更新。运行时数据仅在内存中；刷新后按当前工具定义、保留正文与滚动摘要估算，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。
+
+
+### Node Agent 边界
+
+生成式 UI 契约在 `agent/src/core/ui-contract.ts`，模型工具在 `agent/src/ui-tools.ts`。主聊天与 `/copilot` 共用 `features/copilot/ui-artifacts.tsx` 渲染器；实验页通过 AG-UI 工具事件渲染，主聊天通过 `ReplyUpdate.uiArtifacts` 渲染。`generative-ui` 功能由实例能力清单统一控制。
+
+Agent 代码集中在 `agent/src/`。`core/` 包含模型循环、工具、上下文处理、共享类型和浏览器可用的远程适配。前端只导入共享类型、纯函数及 `remote-run` / `remote-client`；模型执行留在 Node，包括通过 `/api/agent/memory/edit` 编辑记忆。
+
+生产保持 Caddy / Web / API 三个容器。API 镜像从仓库根构建，在单 worker Uvicorn 旁运行独立 Node Agent。`scripts/run-services.mjs` 在任一进程退出时停止另一个，容器健康检查同时探测 8000 和 8123。Caddy 优先将 `/api/agent/*` 与 `/api/copilotkit`（含子路径）流式转发至 `api:8123`。
+
+Python 仍是唯一数据库写入者，浏览器通过 REST 保存消息。运行状态只保存在内存：断开连接会停止运行，进程重启不会续跑；已收到内容沿用现有保存流程。模型密钥随单次请求传入，不在 Node 持久化。

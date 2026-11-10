@@ -1,12 +1,15 @@
 import http from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 import { CopilotRuntime } from '@copilotkit/runtime/v2';
 import { createCopilotNodeListener } from '@copilotkit/runtime/v2/node';
 
 import type { ModelConfig } from '@/core/llm/model-config';
-import type { Message } from '@/core/agent/types';
-import { generateMemorySummary } from '@/core/agent/memory';
-import { generateConversationTitle } from '@/core/agent/title';
+import type { Message } from '@agent/core/types';
+import { generateMemorySummary } from '@agent/core/memory-run';
+import { createMemoryTool, memoryChatSystemPrompt } from '@agent/core/memory';
+import { createReplyRun } from '@agent/core/runner';
+import { generateConversationTitle } from '@agent/core/title';
 
 import { MatriusCopilotAgent, readRunContext } from './copilot';
 import { config, log } from './env';
@@ -78,6 +81,7 @@ function parseRunRequest(body: unknown): RunRequest {
     systemPrompt: typeof input.systemPrompt === 'string' ? input.systemPrompt : '',
     contextSummary: input.contextSummary as RunRequest['contextSummary'],
     toolset: {
+      ui: toolset.ui === true,
       web: toolset.web === true,
       files: toolset.files === true,
       availableFiles: Array.isArray(toolset.availableFiles) ? toolset.availableFiles as NonNullable<RunRequest['toolset']>['availableFiles'] : [],
@@ -175,6 +179,30 @@ async function handleMemory(req: http.IncomingMessage, res: Reply): Promise<void
   }
 }
 
+async function handleMemoryEdit(req: http.IncomingMessage, res: Reply): Promise<void> {
+  const controller = new AbortController();
+  res.on('close', () => controller.abort());
+  try {
+    const body = asRecord(await readJson(req));
+    let summary: string | null = null;
+    const currentSummary = typeof body.currentSummary === 'string' ? body.currentSummary : '';
+    const run = createReplyRun({
+      config: body.config as ModelConfig,
+      apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',
+      systemPrompt: memoryChatSystemPrompt(currentSummary),
+      messages: [{ id: 'memory-edit', role: 'user', content: requireString(body.instruction, 'instruction') }],
+      tools: [createMemoryTool({ getSummary: () => currentSummary, onUpdate: value => { summary = value; } })],
+      signal: controller.signal,
+      onUpdate: () => {},
+    });
+    const result = await run.start();
+    if (result.status === 'error') throw new Error('记忆更新失败。');
+    sendJson(res, 200, { summary });
+  } catch {
+    if (!res.destroyed) sendError(res, 400, 'memory_failed', '记忆更新失败。');
+  }
+}
+
 export function createAgentServer(): http.Server {
   // CopilotKit resolves an agent per request, which keeps visitor model keys request-scoped.
   const copilotRuntime = new CopilotRuntime({
@@ -210,6 +238,9 @@ export function createAgentServer(): http.Server {
       case 'POST /api/agent/title':
         void handleTitle(req, res);
         return;
+      case 'POST /api/agent/memory/edit':
+        void handleMemoryEdit(req, res);
+        return;
       case 'POST /api/agent/memory':
         void handleMemory(req, res);
         return;
@@ -219,7 +250,9 @@ export function createAgentServer(): http.Server {
   });
 }
 
-const server = createAgentServer();
-server.listen(config.port, config.host, () => {
-  log(`listening on http://${config.host}:${config.port} (api: ${config.apiBaseUrl})`);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const server = createAgentServer();
+  server.listen(config.port, config.host, () => {
+    log(`listening on http://${config.host}:${config.port} (api: ${config.apiBaseUrl})`);
+  });
+}

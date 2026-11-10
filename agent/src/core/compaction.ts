@@ -1,7 +1,7 @@
 import type { StreamFn } from '@mariozechner/pi-agent-core';
 
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
-import { directStream } from '@/core/llm/direct-stream';
+import { directStream } from '@agent/core/direct-stream';
 import {
   CONTEXT_SAFETY_TOKENS, estimateMessageTokens, estimateTextTokens, getFeedbackText, getRequestText,
   isContextMessage,

@@ -6,7 +6,7 @@ import {
   normalizeMemorySummary,
   readMemoryPreferences,
   type MemoryPreferences,
-} from '@/core/agent/memory';
+} from '@agent/core/memory';
 
 type MemoryContextValue = MemoryPreferences & {
   setEnabled: (enabled: boolean) => void;

@@ -1,12 +1,13 @@
 import { readWorkspace } from '@/core/database/browser-store';
-import type { ConversationSummary } from '@/core/agent/compaction';
-import type { MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
+import { readUiArtifacts } from '@agent/core/ui-contract';
+import type { ConversationSummary } from '@agent/core/compaction';
+import type { MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@agent/core/types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
 import { orderSteeringMessages } from '@/features/chat/message-order';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
 import { readPersonalization, type PersonalizationPreferences } from '@/features/settings/personalization';
-import { defaultMemoryPreferences, readMemoryPreferences, type MemoryPreferences } from '@/core/agent/memory';
+import { defaultMemoryPreferences, readMemoryPreferences, type MemoryPreferences } from '@agent/core/memory';
 
 export type WorkspaceData = { schemaVersion: 1; chat: PersistedChatState; appearance: AppearancePreferences; personalization?: PersonalizationPreferences; memory?: MemoryPreferences };
 export type LoadedWorkspace = { data: WorkspaceData; revision: number };
@@ -129,6 +130,7 @@ function readMessage(value: unknown): Message {
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
     ...(activities ? { activities } : {}),
     ...(process ? { process } : {}),
+    ...(value.role === 'assistant' ? { uiArtifacts: readUiArtifacts(value.uiArtifacts) } : {}),
     ...(typeof value.thinkingMs === 'number' && Number.isFinite(value.thinkingMs) ? { thinkingMs: value.thinkingMs } : {}),
     ...(status ? { status } : {}),
     ...(value.status === 'streaming' ? { error: '页面重新加载，回答已中断。已生成内容已保留。' }

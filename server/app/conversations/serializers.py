@@ -53,6 +53,7 @@ def message_out(
         "reasoning": message.reasoning,
         "activities": message.activities,
         "process": message.process,
+        "uiArtifacts": message.ui_artifacts,
         "thinkingMs": message.thinking_ms,
         "status": message.status,
         "error": message.error,

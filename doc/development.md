@@ -215,3 +215,12 @@ uv run --no-sync pytest
 - 密钥与 Provider、模型元数据都保留在本机浏览器，删除服务商或清除站点数据才会移除密钥。无鉴权本地模型取消“接口需要 API key”。Chat Mock 支持相同真实调用，但会话和 Provider 配置只存在本次预览内存中。
 
 - 模型 SVG 图标来自 `@thesvg/react`，按单图标路径导入，选择品牌提供的彩色版本并保留原始填色/渐变；无需图标生成脚本，也不运行时请求外部图片。
+
+
+### Node Agent 边界
+
+Agent 代码集中在 `agent/src/`。`core/` 包含模型循环、工具、上下文处理、共享类型和浏览器可用的远程适配。前端只导入共享类型、纯函数及 `remote-run` / `remote-client`；模型执行留在 Node，包括通过 `/api/agent/memory/edit` 编辑记忆。
+
+生产保持 Caddy / Web / API 三个容器。API 镜像从仓库根构建，在单 worker Uvicorn 旁运行独立 Node Agent。`scripts/run-services.mjs` 在任一进程退出时停止另一个，容器健康检查同时探测 8000 和 8123。Caddy 优先将 `/api/agent/*` 与 `/api/copilotkit`（含子路径）流式转发至 `api:8123`。
+
+Python 仍是唯一数据库写入者，浏览器通过 REST 保存消息。运行状态只保存在内存：断开连接会停止运行，进程重启不会续跑；已收到内容沿用现有保存流程。模型密钥随单次请求传入，不在 Node 持久化。

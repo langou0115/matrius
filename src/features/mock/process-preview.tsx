@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { processActivities, processAnswer, processReasoning } from '../../../dev/fixtures/process-preview';
-import type { Message, ProcessActivity, WebActivity } from '@/core/agent/types';
+import type { Message, ProcessActivity, WebActivity } from '@agent/core/types';
 import { MessageContent } from '@/features/chat/components/message-content';
 import { ReasoningBlock, type ReasoningState } from '@/features/chat/components/reasoning-block';
 import { ReplyStatus } from '@/features/chat/components/reply-status';

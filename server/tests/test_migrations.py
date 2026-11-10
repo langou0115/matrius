@@ -42,7 +42,7 @@ def test_baseline_upgrade_and_check_on_empty_database(tmp_path):
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert tables == EXPECTED_TABLES
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0001_initial",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0002_ui_artifacts",)
     # A fresh install must not leave migration snapshots next to the database.
     assert list(tmp_path.glob("*.before-account-removal-*.db")) == []
 

@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState, useSyncExternalStore, type PropsWithChildren } from 'react';
 
-import { createAgentRuntime } from '@/core/agent/runtime';
-import { buildRetryHistory } from '@/core/agent/context';
-import { requestConversationTitle, requestMemorySummary } from '@/core/agent/remote-client';
-import type { AgentToolset, MessageFile, SteerOutcome } from '@/core/agent/types';
+import { createAgentRuntime } from '@agent/core/runtime';
+import { buildRetryHistory } from '@agent/core/context';
+import { requestConversationTitle, requestMemorySummary } from '@agent/core/remote-client';
+import type { AgentToolset, MessageFile, SteerOutcome } from '@agent/core/types';
 import { hasFeature } from '@/core/features/capabilities';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
@@ -11,7 +11,7 @@ import { useMemory } from '@/features/memory/memory-state';
 import { pickMemoryModel } from '@/features/memory/memory-model';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { recordTokenUsage } from '@/features/usage/usage-api';
-import { buildSystemPrompt } from '@/core/agent/system-prompt';
+import { buildSystemPrompt } from '@agent/core/system-prompt';
 import { protectBrowserRun } from '@/core/platform/run-protection';
 import { useInstance } from '@/features/instance/instance-state';
 import { useNetworkTools } from '@/features/instance/network-tools-state';
@@ -214,6 +214,7 @@ function useRuntime() {
     const useFileTools = hasFeature(instance.status === 'ready' ? instance.info : null, 'files');
     // The agent service owns the tool implementations; the browser only says which it may use.
     const toolset: AgentToolset = {
+      ui: hasFeature(instance.status === 'ready' ? instance.info : null, 'generative-ui'),
       ...(useWebTools ? { web: true } : {}),
       ...(useFileTools ? { files: true, availableFiles: collectAvailableFiles(history) } : {}),
     };
@@ -225,7 +226,7 @@ function useRuntime() {
       thinkingEffort: config?.thinkingEffort ?? 'low',
       // Tool guidance is appended by the service, which knows which tools it registered.
       systemPrompt: buildSystemPrompt(preferences, memoryRef.current),
-      ...(toolset.web || toolset.files ? { toolset } : {}),
+      ...(toolset.ui || toolset.web || toolset.files ? { toolset } : {}),
     });
     return started ? config : undefined;
   }, [agent, instance, models, networkTools, preferences]);

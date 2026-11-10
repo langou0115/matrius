@@ -10,8 +10,8 @@ import {
   parseMemoryField,
   readMemoryPreferences,
   serializeMemoryField,
-} from '../src/core/agent/memory.ts';
-import { buildSystemPrompt } from '../src/core/agent/system-prompt.ts';
+} from '../agent/src/core/memory.ts';
+import { buildSystemPrompt } from '../agent/src/core/system-prompt.ts';
 
 const profile = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' };
 

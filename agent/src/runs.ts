@@ -1,8 +1,8 @@
-import { prepareHistory, type ConversationSummary } from '@/core/agent/compaction';
-import { validateContextSize } from '@/core/agent/context';
-import { createReplyRun } from '@/core/agent/runner';
-import type { Message, ReplyResult, ReplyUpdate, SteerOutcome } from '@/core/agent/types';
-import type { ThinkingEffort } from '@/core/agent/thinking-effort';
+import { prepareHistory, type ConversationSummary } from '@agent/core/compaction';
+import { validateContextSize } from '@agent/core/context';
+import { createReplyRun } from '@agent/core/runner';
+import type { Message, ReplyResult, ReplyUpdate, SteerOutcome } from '@agent/core/types';
+import type { ThinkingEffort } from '@agent/core/thinking-effort';
 import type { ModelConfig } from '@/core/llm/model-config';
 
 import { buildTools, type Toolset } from './tools';

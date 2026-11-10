@@ -2,10 +2,11 @@ import { AbstractAgent } from '@ag-ui/client';
 import { EventType, type BaseEvent, type RunAgentInput } from '@ag-ui/core';
 import { Observable } from 'rxjs';
 
-import { createReplyRun } from '@/core/agent/runner';
-import type { AgentToolset, Message, ReplyUpdate } from '@/core/agent/types';
-import type { ThinkingEffort } from '@/core/agent/thinking-effort';
+import { createReplyRun } from '@agent/core/runner';
+import type { AgentToolset, Message, ReplyUpdate } from '@agent/core/types';
+import type { ThinkingEffort } from '@agent/core/thinking-effort';
 import type { ModelConfig } from '@/core/llm/model-config';
+import { uiSchemas } from './core/ui-contract';
 import { buildTools } from './tools';
 
 /**
@@ -78,7 +79,10 @@ export class MatriusCopilotAgent extends AbstractAgent {
       const conversationId = context.conversationId ?? input.threadId;
       const messageId = `${input.runId}-assistant`;
       const base = { threadId: input.threadId, runId: input.runId };
-      const { tools, prompts } = buildTools(context.toolset, conversationId);
+      const { tools, prompts } = buildTools({ ...context.toolset, ui: true }, conversationId);
+      // Only expose registered, supported UI tools; never execute arbitrary frontend code.
+      const offered = new Set(input.tools.map(tool => tool.name));
+      const selectedTools = tools.filter(tool => !Object.hasOwn(uiSchemas, tool.name) || offered.has(tool.name));
       let textStarted = false;
       let sentLength = 0;
 
@@ -94,7 +98,16 @@ export class MatriusCopilotAgent extends AbstractAgent {
         apiKey: context.apiKey,
         ...(context.thinkingEffort ? { thinkingEffort: context.thinkingEffort } : {}),
         systemPrompt: [context.systemPrompt ?? '你是 Matrius 的助手，用中文简洁地回答。', ...prompts].join('\n\n'),
-        ...(tools.length ? { tools } : {}),
+        ...(selectedTools.length ? { tools: selectedTools } : {}),
+        onToolEvent(event) {
+          if (event.type === 'start') {
+            emit({ type: EventType.TOOL_CALL_START, ...base, toolCallId: event.toolCallId, toolCallName: event.toolName } as BaseEvent);
+            emit({ type: EventType.TOOL_CALL_ARGS, ...base, toolCallId: event.toolCallId, delta: JSON.stringify(event.args) } as BaseEvent);
+            emit({ type: EventType.TOOL_CALL_END, ...base, toolCallId: event.toolCallId } as BaseEvent);
+          } else {
+            emit({ type: EventType.TOOL_CALL_RESULT, ...base, messageId: `${event.toolCallId}-result`, toolCallId: event.toolCallId, role: 'tool', content: JSON.stringify(event.result) } as BaseEvent);
+          }
+        },
         onUpdate(update: ReplyUpdate) {
           if (!textStarted) {
             textStarted = true;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { ArrowLeft } from 'lucide-react';
 
-import type { ThinkingEffort } from '@/core/agent/thinking-effort';
+import type { ThinkingEffort } from '@agent/core/thinking-effort';
 
 const options: { value: ThinkingEffort; label: string }[] = [
   { value: 'default', label: 'off' },
