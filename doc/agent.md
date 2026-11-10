@@ -4,49 +4,59 @@
 
 ## Agent Runtime
 
-**Agent Runtime 统一在客户端本地运行，本地模式与云端模式共用同一套 Runtime。** 云端模式表示接入云端能力，不改变 Runtime 的运行位置。
+**Agent 循环运行在独立的 Node 进程（`agent/`）；浏览器只负责界面、会话状态和提交本轮请求。** 模型请求全部从该进程发出，浏览器不再直连模型服务商，因此也不需要 CORS 中继。
 
-| 职责 | 客户端本地 | 云端服务 |
-| --- | --- | --- |
-| Agent Loop、上下文组装、记忆注入 | 负责 | 不运行对话循环 |
-| 流式事件消费、状态、取消与轮次推进 | 负责 | 响应请求并返回结果 |
-| 工具选择、参数组装、结果回填与继续调用模型 | 负责 | 执行单次工具请求 |
-| 网络搜索、网页读取、文件处理 | 经工具适配层调用云端 API | 校验权限并执行 |
-| 模型请求 | 本地模式直连；云端模式经过模型代理 | 保管云端 key，代理单次模型请求 |
-
-客户端 Runtime 负责：
+| 职责 | 浏览器 | agent 进程 | Python API |
+| --- | --- | --- | --- |
+| 会话、草稿、未读、导航 | 负责 | 不持有 | — |
+| Agent Loop、上下文组装、压缩、记忆注入 | 不运行 | 负责 | 不运行 |
+| 模型请求（三种协议） | 不发起 | 直接请求服务商 | — |
+| 工具选择与参数组装 | 只声明可用工具（web / files） | 负责 | 执行单次工具请求 |
+| 消息与活动落库 | 负责用户消息与最终写入顺序 | 把 `ReplyUpdate` 流回浏览器 | 唯一写入者 |
 
 ```text
-组装上下文与可用工具定义
-    ↓
-调用模型并消费流式事件
-    ↓
-如有工具调用，向云端工具 API 提交请求
-    ↓
-接收工具结果并回填上下文
-    ↓
-继续调用模型，直到完成、取消或达到限制
+浏览器组装消息与系统提示
+    ↓ POST /api/agent/run（SSE）
+agent：静默压缩 → 创建 pi Agent → 调用模型
+    ↓ 需要工具时
+agent → Python 工具 API（web_search / web_fetch / file）
+    ↓ 工具结果回填、继续调用模型
+agent 把 content / reasoning / process / files 流回浏览器
+    ↓ done
+浏览器写入会话记录并渲染
 ```
 
-未登录时不注册云端工具，Runtime 只运行纯对话与记忆注入。登录后通过统一能力集开放工具，沿用同一套循环。
+工具是否可用由浏览器决定（网络工具开关、实例 `files` 能力），但工具实现与调用只存在于 agent 进程；浏览器传的是 `toolset` 意图，不是可执行代码。
 
-共享核心集中在客户端 `src/core/agent/`，不依赖 React、DOM、路由页面、聊天状态或设置模块。界面层通过同一接口提交请求、订阅运行状态和接收回复：
+## Agent 服务（`agent/`）
+
+- `agent/src/server.ts`：`/health`、`/api/agent/run|steer|stop|title|memory`，以及 CopilotKit 的 `/api/copilotkit/*`。
+- `agent/src/runs.ts`：每个会话最多一个运行；压缩、超时、取消、补充消息都在这里，输出与旧的本地 runner 相同的 `ReplyUpdate`。
+- `agent/src/tools.ts`：按 `toolset` 注册 `web_search` / `web_fetch` / `file`，通过 `MATRIUS_API_URL` 调 Python。
+- `agent/src/upstream.ts`：浏览器 `instance-client` 的同一契约，但以 API 地址为根。
+- `agent/src/copilot.ts`：把同一条循环包装成 AG-UI agent，供 CopilotKit 渲染。
+- 不直连 SQLite、不持久化运行状态、模型 key 只在本轮内存使用；进程重启后未完成的回复丢失，浏览器显示为中断。
+- 默认只监听 `127.0.0.1`；容器化与生产路由属于后续规划，当前未改容器拓扑。
+
+共享核心仍在 `src/core/agent/`，不依赖 React、DOM、路由页面、聊天状态或设置模块；浏览器与 agent 进程共用这些模块：
 
 ```text
 src/core/agent/
 ├── runtime.ts         # createAgentRuntime：校验、运行状态、批量回复、取消与资源释放
-├── runner.ts          # pi-agent 创建、流式事件、超时与错误处理
+├── remote-run.ts      # 浏览器侧传输：POST /api/agent/run，按 SSE 还原 ReplyUpdate
+├── remote-client.ts   # 标题与记忆的远程调用
+├── runner.ts          # pi-agent 创建、流式事件、超时与错误处理（只在 agent 进程加载）
 ├── context.ts         # 引用、图片、历史上下文与保守 token 预算检查
-├── compaction.ts      # 静默上下文压缩：预算、最近轮次与滚动摘要
-├── types.ts           # Message、MessageImage、AgentProfile 与运行状态契约
+├── compaction.ts      # 静默上下文压缩：预算、最近轮次与滚动摘要（只在 agent 进程加载）
+├── types.ts           # Message、RunnerOptions、AgentToolset 与运行状态契约
 ├── system-prompt.ts   # 基础系统提示与用户偏好组装
-├── title.ts           # 独立的一次性会话标题请求与规范化
+├── title.ts           # 一次性会话标题请求与规范化（agent 进程）
 └── thinking-effort.ts # 共享思考强度契约
 ```
 
 - 模型传输与协议解码放在 `src/core/llm/`，Runtime 不与某一种模型协议耦合。
 - `createAgentRuntime({ onReply, onSummary })` 返回 `start(request)`、`stop(conversationId?)`、`getSnapshot()`、`subscribe(listener)`、`clearError()` 和 `dispose()`；每个工作区独立创建实例。`onSummary` 在静默压缩产生或清除滚动摘要时回调，由适配层写入会话记录。运行状态按会话记录（`runs: Record<conversationId, RuntimeRun>`）：同一会话只允许一个活动请求，不同会话可以并发；`stop(id)` 只取消指定会话，无参调用取消全部（仅用于工作区卸载）。`start` 接收模型配置、临时凭据、消息、会话/回复 ID、系统提示与思考强度；请求开始时复制输入，后续 UI 修改不改变正在运行的请求。凭据不进入可订阅状态或消息存储。运行失败写入对应助手消息（`status: 'error'`）而不是工作区级 `error`，避免后台失败串到当前打开的会话；`error` 仅承载发送前的配置/凭据/上下文校验错误。
-- Runtime 默认延迟加载 `runner.ts` 与 `compaction.ts`，也可通过 `loadRunner` / `loadCompactor` 注入兼容实现。`core/llm/direct-stream.ts` 负责三种协议的流式传输；平台差异留在传输、凭据和存储适配层，不引入核心依赖。
+- Runtime 默认延迟加载 `remote-run.ts`（HTTP 客户端），`chat-runtime.tsx` 以 `delegateToServer: true` 创建实例；测试与注入场景可传 `loadRunner` / `loadCompactor` 覆盖。压缩与校验在委托模式下由 agent 进程完成，浏览器不再加载 `runner.ts` 与 `compaction.ts`。`core/llm/direct-stream.ts` 负责三种协议的流式传输，只在 agent 进程使用。
 - `features/chat/chat-runtime.tsx` 是 React 聊天适配层，只读取当前模型/凭据与偏好、处理发送/重试、把核心回复写入会话状态；通过 `useSyncExternalStore` 订阅核心状态。删除运行中的对话只取消该会话的请求，卸载工作区取消全部；切换设置或其他会话不改变生成所属会话。后台回复完成且用户不在该会话（或处于设置等全页路由）时，会话写入 `completedReadAt: null` 并在适配层生成最多 3 条临时通知卡片；打开会话后清除未读。复制文本、选区和导航继续属于聊天 UI。
 - 会话标题由 `core/agent/title.ts` 通过默认 `directStream` 单独请求生成，不经过 `createAgentRuntime`：不创建运行记录、不占用会话运行槽、不被正在生成的回复阻塞，也不会写入会话历史或触发后台通知。首条消息发送后与回复并行发起，只读取首条用户消息（含引用，正文 4000、引用 2000 字符上限）；请求默认 20 秒超时并可随会话删除或工作区卸载取消。标题请求单独使用 low 思考强度并预留最多 512 输出 token，不改聊天模型的思考选择。输出经 `normalizeConversationTitle` 取首行、去掉 Markdown/“标题：”前缀与成对引号；中文等 CJK 标题最多 16 个字形，英文最多 6 词、32 字形，尽量不切断单词。备用标题使用相同限制。失败、超时、缺 key 或空输出静默返回 `null`，保留备用标题；后续回复成功后由聊天适配层重试。生成结果只替换带 `titleSource: 'auto'` 且标题仍等于请求时快照的会话，手动重命名与分支永不被覆盖。
 
@@ -60,7 +70,7 @@ src/core/agent/
 - 运行状态由本地管理；需要恢复的最小进度通过本地仓储保存。临时流式事件与记忆调试记录不因此全量落盘。
 - 限制最大轮次、工具调用次数和等待时间；取消时停止后续模型轮次，并尽可能取消正在执行的请求。取消不代表云端工具已经回滚。
 - 客户端挂起或退出后，不承诺云端自动继续 Agent Loop；恢复策略由客户端处理。
-- 服务端模型代理只处理单次模型请求，工具 API 只执行单次工具任务。服务端不组装对话循环、不自行回填工具结果或继续调用模型。
+- 服务端模型代理只处理单次模型请求（浏览器侧拉取模型目录等），工具 API 只执行单次工具任务。agent 进程负责对话循环，但不直连数据库：消息与活动由浏览器通过 REST 写入，Python 仍是唯一写入者。
 
 ---
 
@@ -68,27 +78,13 @@ src/core/agent/
 
 模型与服务商配置有两种来源，按模式区分：
 
-### 云端模式
+### 密钥与请求位置
 
-配置留在服务端，保持一致集中的配置项：
+模型配置（服务商、协议、Base URL、模型 ID）和 API key 都保存在浏览器；agent 进程不持有配置库。
 
-```text
-baseURL
-API key
-protocol
-model ID
-provider configuration
-```
-
-支持协议：
-
-```text
-OpenAI Chat Completions
-OpenAI Responses
-Anthropic Messages
-```
-
-**永远不要把服务端模型的 API key 暴露给客户端。** 客户端获取安全的服务商/模型元数据和输入能力，由本地 Runtime 发起单次模型代理请求。代理转发模型的流式响应，包括工具调用事件；后续工具调度与模型轮次由客户端推进。
+- 每轮请求把 `ModelConfig` 与 key 放进 `/api/agent/run` 的请求体；CopilotKit 页面通过 `properties` 传同样内容。
+- agent 只在本轮内存里使用 key，不写日志、不落盘、不进入任何可订阅状态；请求结束即丢弃。
+- 同一来源内是服务端到服务商，浏览器不再需要 CORS 中继；`/api/model-proxy` 只留给浏览器侧拉取模型目录等场景。
 
 ### 本地模式
 

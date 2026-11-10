@@ -12,6 +12,7 @@ import SettingsRootRedirect from '@/features/settings/settings-root-redirect';
  * `/mock/*` renders the same screens with local preview data during development.
  */
 const LibraryScreen = lazy(() => import('@/features/files/library-screen'));
+const CopilotScreen = lazy(() => import('@/features/copilot/copilot-screen'));
 const StorageScreen = lazy(() => import('@/features/files/storage-screen'));
 const ModelSettingsScreen = lazy(() => import('@/features/models/model-settings-screen'));
 const PersonalizationScreen = lazy(() => import('@/features/settings/personalization-screen'));
@@ -37,6 +38,7 @@ export function AppRoutes() {
         <Route index element={<ChatRoute />} />
         <Route path="c/:conversationId" element={<ChatRoute />} />
         <Route path="library" element={<LibraryScreen />} />
+        <Route path="copilot" element={<CopilotScreen />} />
 
         <Route path="settings" element={<SettingsRootRedirect />} />
         <Route path="settings/appearance" element={<AppearanceScreen />} />

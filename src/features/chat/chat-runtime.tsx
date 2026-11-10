@@ -2,12 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useReducer, useRef, 
 
 import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
-import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
-import { generateMemorySummary } from '@/core/agent/memory';
-import { generateConversationTitle } from '@/core/agent/title';
-import type { MessageFile, SteerOutcome } from '@/core/agent/types';
-import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
-import type { AgentTool } from '@mariozechner/pi-agent-core';
+import { requestConversationTitle, requestMemorySummary } from '@/core/agent/remote-client';
+import type { AgentToolset, MessageFile, SteerOutcome } from '@/core/agent/types';
 import { hasFeature } from '@/core/features/capabilities';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
@@ -86,7 +82,7 @@ function useRuntime() {
     if (!config || titleControllers.current.has(conversationId)) return;
     const controller = new AbortController();
     titleControllers.current.set(conversationId, controller);
-    void generateConversationTitle({
+    void requestConversationTitle({
       config, content, quote, signal: controller.signal,
       apiKey: config.requiresApiKey ? modelsRef.current.getKey(config.providerId) : '',
     }).then((title) => {
@@ -131,7 +127,7 @@ function useRuntime() {
       const baseSummary = current.summary;
       const baseRevision = current.revision;
       try {
-        const updated = await generateMemorySummary({
+        const updated = await requestMemorySummary({
           config, apiKey, currentSummary: baseSummary,
           userMessage: task.userMessage, assistantMessage: task.assistantMessage,
           signal: controller.signal,
@@ -150,6 +146,16 @@ function useRuntime() {
   }
   // eslint-disable-next-line react-hooks/refs -- the callback reads these refs when a reply arrives, not during render
   const [agent] = useState(() => createAgentRuntime({
+    // The model loop and all provider traffic run in the agent service.
+    delegateToServer: true,
+    // The service decides whether a supplement joined the running answer or must wait.
+    onDeferredMessage: (conversationId, message) => {
+      // A supplement the caller deferred locally is already shown; never queue it twice.
+      const existing = conversationsRef.current.find((item) => item.id === conversationId);
+      if (existing?.messages.some((item) => item.id === message.id)) return;
+      pendingSends.current.set(conversationId, [...(pendingSends.current.get(conversationId) ?? NO_MESSAGES), message]);
+      pendingChanged();
+    },
     // Compaction is invisible, so the summary only travels into the conversation record.
     onSummary: (conversationId, summary) => dispatch({ type: 'context-summary', conversationId, summary }),
     // Token statistics are recorded by the authenticated instance.
@@ -206,24 +212,20 @@ function useRuntime() {
     // after it loads, so the first reply waits for `ready` instead of guessing.
     const useWebTools = networkTools.ready && networkTools.enabled;
     const useFileTools = hasFeature(instance.status === 'ready' ? instance.info : null, 'files');
-    const tools: AgentTool[] = [];
-    if (useWebTools) tools.push(...createWebTools(instance.request));
-    if (useFileTools) {
-      tools.push(createFileTool({
-        request: instance.request, conversationId, availableFiles: collectAvailableFiles(history),
-      }).tool);
-    }
-    const prompts = [buildSystemPrompt(preferences, memoryRef.current)];
-    if (useWebTools) prompts.push(webToolsSystemPrompt());
-    if (useFileTools) prompts.push(fileToolsSystemPrompt());
+    // The agent service owns the tool implementations; the browser only says which it may use.
+    const toolset: AgentToolset = {
+      ...(useWebTools ? { web: true } : {}),
+      ...(useFileTools ? { files: true, availableFiles: collectAvailableFiles(history) } : {}),
+    };
     const started = agent.start({
       conversationId, replyId, messages: history, config,
       ...(contextSummary ? { contextSummary } : {}),
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
       // Thinking depth belongs to the model, so the bound model carries its own depth.
       thinkingEffort: config?.thinkingEffort ?? 'low',
-      systemPrompt: prompts.join('\n\n'),
-      ...(tools.length ? { tools } : {}),
+      // Tool guidance is appended by the service, which knows which tools it registered.
+      systemPrompt: buildSystemPrompt(preferences, memoryRef.current),
+      ...(toolset.web || toolset.files ? { toolset } : {}),
     });
     return started ? config : undefined;
   }, [agent, instance, models, networkTools, preferences]);

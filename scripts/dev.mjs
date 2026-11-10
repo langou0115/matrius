@@ -42,11 +42,22 @@ export function devWebArgs(webPort, { clear = false } = {}) {
   return ['--port', String(webPort), '--strictPort', ...(clear ? ['--force'] : [])];
 }
 
-/** The dev server reads the API origin for its same-origin `/api/` proxy. */
-export function devWebEnv({ env = {}, apiPort }) {
+/** The agent service port; it must not collide with the web or API ports. */
+export function devAgentPort(env = {}) {
+  const raw = env.DEV_AGENT_PORT || '8123';
+  if (!/^[1-9]\d*$/u.test(raw) || Number(raw) > 65535) throw new Error('Invalid DEV_AGENT_PORT.');
+  const port = Number(raw);
+  const [webPort, apiPort] = devPorts(env);
+  if (port === webPort || port === apiPort) throw new Error('DEV_AGENT_PORT must differ from DEV_WEB_PORT and DEV_API_PORT.');
+  return port;
+}
+
+/** The dev server reads the API and agent origins for its same-origin proxies. */
+export function devWebEnv({ env = {}, apiPort, agentPort }) {
   return {
     ...env,
     MATRIUS_DEV_API_URL: `http://127.0.0.1:${apiPort}`,
+    ...(agentPort ? { MATRIUS_DEV_AGENT_URL: `http://127.0.0.1:${agentPort}` } : {}),
   };
 }
 
@@ -190,16 +201,16 @@ async function runBackend(args, env, signal) {
   return capture('uv', ['run', '--no-sync', ...args], signal, { cwd: join(root, 'server'), env });
 }
 
-async function ready(url, signal) {
-  for (let attempt = 0; attempt < 90; attempt++) {
+async function ready(url, signal, { attempts = 90, label = 'Local API' } = {}) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     signal.throwIfAborted();
     try {
       const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) });
       if (response.ok) return;
-    } catch { /* The API may still be importing the app. */ }
+    } catch { /* The service may still be importing its app. */ }
     await new Promise((accept) => setTimeout(accept, 500));
   }
-  throw new Error('Local API readiness failed. Check the uvicorn output above.');
+  throw new Error(`${label} readiness failed. Check the service output above.`);
 }
 
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
@@ -222,17 +233,25 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   };
   const local = { ...await readEnv(join(root, '.env.local')), ...env };
   const [webPort, apiPort] = devPorts(local);
+  const agentPort = devAgentPort(local);
   const dataDir = devDataDir();
+  // Workspaces hoist `tsx` to the root; a legacy nested install is still accepted.
+  const agentCli = [
+    join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+    join(root, 'agent', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+  ].find((path) => existsSync(path));
 
   await capture('uv', ['--version']).catch(() => {
     throw new Error('Install uv first: https://docs.astral.sh/uv/getting-started/installation/');
   });
   await readFile(join(root, 'node_modules/vite/bin/vite.js')).catch(() => { throw new Error('Run npm ci first.'); });
+  if (!agentCli) throw new Error('Run npm ci first (the agent service runs outside the browser).');
 
   if (args.includes('--check')) {
     await availablePort(webPort);
     await availablePort(apiPort);
-    console.log(`Configuration and tools valid. Web: ${webPort}; API: ${apiPort}.\n`
+    await availablePort(agentPort);
+    console.log(`Configuration and tools valid. Web: ${webPort}; API: ${apiPort}; Agent: ${agentPort}.\n`
       + `Data: ${join(dataDir, 'matrius.db')} (SQLite) and ${join(dataDir, 'files')}.\n`
       + `Single-user instance; no login required.\n`
       + 'No network connection will be made by npm run dev.');
@@ -284,6 +303,20 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal);
     abort.signal.throwIfAborted();
 
+    // The model loop lives in its own process; the browser only talks to it over HTTP.
+    const agent = runner.start(process.execPath, [agentCli, 'src/server.ts'], {
+      cwd: join(root, 'agent'),
+      env: {
+        ...process.env,
+        AGENT_PORT: String(agentPort),
+        MATRIUS_API_URL: `http://127.0.0.1:${apiPort}`,
+      },
+    });
+    runner.watch(agent, 'Agent');
+    // A cold install compiles the CopilotKit runtime on first import, which can take minutes.
+    await ready(`http://127.0.0.1:${agentPort}/health`, abort.signal, { attempts: 480, label: 'Local agent' });
+    abort.signal.throwIfAborted();
+
     // Vite starts in under a second, serves modules on demand and hot-replaces a
     // changed module without rebuilding the graph, so the development server needs
     // no worker or cache tuning of its own. The first run after `npm ci`, and the
@@ -294,7 +327,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     }
     const web = runner.start(process.execPath,
       [join(root, 'node_modules/vite/bin/vite.js'), ...devWebArgs(webPort, { clear: args.includes('--clear') })],
-      { cwd: root, env: devWebEnv({ env, apiPort }) });
+      { cwd: root, env: devWebEnv({ env, apiPort, agentPort }) });
     runner.watch(web, 'Vite');
     console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
       + `no login is required. Ctrl+C stops local services only.`);

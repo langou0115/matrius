@@ -9,8 +9,8 @@
 当前使用 npm 和 `package-lock.json`，前端为 React 19 + TypeScript，Vite 8 构建，React Router 7 路由。需要 Node.js 24 与 npm。
 
 ```bash
-npm ci                         # 根据锁文件安装依赖，postinstall 生成 KaTeX 本地资源
-npm run dev                    # 常驻：迁移数据库 + FastAPI reload + Vite
+npm ci                         # 根据锁文件安装依赖（含 agent 工作区），postinstall 生成 KaTeX 本地资源
+npm run dev                    # 常驻：迁移数据库 + FastAPI reload + agent 进程 + Vite
 npm run dev -- --check         # 只校验工具、端口与路径，不启动服务
 npm run dev -- --clear         # 重建 Vite 依赖预构建后启动
 npm run db:migrate             # 只迁移 server/.data/matrius.db，不启动服务

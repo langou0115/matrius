@@ -51,7 +51,7 @@ export function describeModelError(reason: unknown) {
   }
   if (/timeout|timed out/i.test(text)) return '等待服务商响应超时，请检查网络或稍后重试。';
   if (/failed to fetch|networkerror|network error|fetch failed|connection|cors|econn|err_network/i.test(text)) {
-    return '无法连接服务商，请检查网络和 Base URL，并确认服务商允许浏览器跨域请求（CORS）。';
+    return '无法连接服务商，请检查网络和 Base URL。';
   }
   if (/\b5\d\d\b|internal server error|service unavailable|bad gateway|server error/i.test(text)) {
     return '服务商暂时不可用，请稍后重试。';

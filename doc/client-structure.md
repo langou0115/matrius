@@ -135,13 +135,16 @@ src/
 ├── core/
 │   ├── agent/
 │   │   ├── activity-payload.ts         精简工具活动同步字段
-│   │   ├── compaction.ts               上下文压缩、预算与滚动摘要
+│   │   ├── compaction.ts               上下文压缩、预算与滚动摘要（agent 进程）
+│   │   ├── conversation-summary.ts     滚动摘要契约与系统提示追加（浏览器只读这段）
 │   │   ├── context.ts                  引用、图片、附件与历史上下文组装、请求校验
 │   │   ├── diagnostics.ts              模型回复诊断摘要与有界历史
 │   │   ├── file-tools.ts               通用 file 工具、草稿、删除与生成文件收集
 │   │   ├── history.ts                  过滤失败占位消息
 │   │   ├── memory.ts                   记忆摘要契约、记忆工具与后台整理
-│   │   ├── runner.ts                   pi-agent 实例、流式事件与超时
+│   │   ├── remote-client.ts            标题与记忆的远程调用（浏览器）
+│   │   ├── remote-run.ts               /api/agent/run 的 SSE 客户端（浏览器）
+│   │   ├── runner.ts                   pi-agent 实例、流式事件与超时（agent 进程）
 │   │   ├── runtime.ts                  跨端运行入口、状态订阅、回复批处理与取消
 │   │   ├── system-prompt.ts            用户资料与自定义指令的系统提示
 │   │   ├── thinking-budget.ts          思考预算与最小正文输出换算

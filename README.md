@@ -41,7 +41,7 @@ npm ci
 npm run dev
 ```
 
-打开 `http://localhost:8081`，登录实例后在「设置 → 模型服务」添加服务商和模型后即可对话。
+打开 `http://localhost:8081`，登录实例后在「设置 → 模型服务」添加服务商和模型后即可对话。`npm ci` 会同时安装 agent 工作区（`agent/`）的依赖；`npm run dev` 会同时跑 FastAPI、Vite 和 agent 进程（`127.0.0.1:8123`）。模型调用全部在 agent 进程里发出，浏览器只负责界面与请求。
 
 
 开发模式可访问 `/mock`，其中 `/mock/process` 可预览思考过程、工具步骤和中断状态，`/mock/storage` 可预览保存失败提示，均不调用模型；回答末尾的来源区留待后续实现。Vite 的 HMR 会自行重连，模型回复生成期间不再暂停热更新；刷新或离开页面时仍保留 `beforeunload` 确认，避免误丢正在进行的回复。正式 Web 使用静态生产构建。

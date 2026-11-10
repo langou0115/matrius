@@ -11,7 +11,7 @@ Matrius 是可自行部署的单用户 AI 对话应用，提供 React Web 与 PW
 - 会话、消息、已读状态、记忆、个性化、外观、网络工具偏好、文件与 Token 用量以服务端为唯一事实源。
 - 不提供匿名本地工作区、本地/云端切换、浏览器聊天缓存、离线队列或增量同步。
 - 模型服务配置与 API key 继续保存在当前浏览器；不持久化到服务端。不同设备需要各自配置。
-- Agent Runtime 仍在浏览器运行，后端提供工具 API；模型中继位于 Web 服务。关闭网页会中断客户端任务。
+- Agent Runtime 运行在独立的 Node agent 进程（`agent/`），浏览器只负责界面、会话状态和提交本轮请求；模型调用全部由该进程发起，服务端 Python 只提供工具 API 与数据。关闭网页会断开连接并中断本轮生成。
 - 本机开发与 Docker 运行同一套业务逻辑，区别只是数据目录与部署方式。
 - PWA 可缓存静态外壳，业务数据和模型请求需要联网。
 
@@ -23,6 +23,7 @@ Matrius 是可自行部署的单用户 AI 对话应用，提供 React Web 与 PW
 ## 技术边界
 
 React 19、TypeScript、Vite 8、React Router 7；FastAPI、SQLAlchemy、Alembic、SQLite WAL。
+Agent 循环与模型调用在独立的 Node 进程（`agent/`），通过 `tsx` 复用 `src/core/agent`；它不直连数据库，消息仍由浏览器经 REST 写入。
 单 API worker；限流、缓存和文档草稿元数据保存在进程内。
 不引入多用户角色、组织、租户、多 Agent 编排或外部实例管理功能。
 新功能使用统一能力清单，不按用户名或角色开放。

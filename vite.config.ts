@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
+import devAgentProxy from './scripts/dev-agent-proxy.cjs';
 import devApiProxy from './scripts/dev-api-proxy.cjs';
 import modelProxy from './scripts/model-proxy.cjs';
 
@@ -24,6 +25,7 @@ function developmentMiddleware(): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
+        if (devAgentProxy.handleDevAgent(request, response)) return;
         if (modelProxy.handleModelProxy(request, response)) return;
         if (devApiProxy.handleDevApi(request, response)) return;
         next();

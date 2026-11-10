@@ -4,7 +4,7 @@ import type { ModelConfig } from '@/core/llm/model-config';
 import type { Message } from '@/core/agent/types';
 import type { ReplyUpdate } from '@/core/agent/types';
 import type { AgentTool } from '@mariozechner/pi-agent-core';
-import { appendConversationSummary, type ConversationSummary } from '@/core/agent/compaction';
+import { appendConversationSummary, type ConversationSummary } from '@/core/agent/conversation-summary';
 
 /** Latest call occupancy, or an estimate of the next request when no call is available. */
 export type ContextUsage = {
