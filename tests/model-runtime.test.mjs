@@ -91,6 +91,38 @@ test('web tools are preferred over memory unless the task needs no outside facts
   assert.match(prompt, /Search before answering/);
   assert.match(prompt, /Answer directly only for simple tasks/);
   assert.match(prompt, /current, changing or externally verifiable facts/);
+  assert.match(prompt, /use English for software, developer tools, products, releases, science and international news/);
+  assert.match(prompt, /use Chinese for Chinese local policies, places, Chinese-language media and China-specific products/);
+  assert.match(prompt, /One search plus one batch read is usually enough/);
+  assert.match(prompt, /Batch every URL you need into one web_fetch call/);
+  assert.match(prompt, /Stop searching and reading as soon as the evidence supports an answer/);
+});
+
+test('search tool description carries the topic-based language rule', () => {
+  const tools = createWebTools(async () => ({ results: [] }));
+  assert.match(tools[0].description, /Write software, product, release, science and international-news queries in English/);
+  assert.match(tools[0].description, /Chinese local policy, place and China-specific queries in Chinese/);
+});
+
+test('one search asks the server for the full 20-result window', async () => {
+  let body;
+  const tools = createWebTools(async (_path, init) => {
+    body = JSON.parse(init.body);
+    return { results: [] };
+  });
+  await tools[0].execute('search', { query: 'OpenClaw latest version' });
+  assert.equal(body.limit, 20);
+});
+
+test('web tool results carry stop guidance instead of a remaining budget that invites more calls', async () => {
+  const tools = createWebTools(async (path, init) => path.endsWith('/search')
+    ? { results: [] }
+    : { url: JSON.parse(init.body).url, title: 'Page', text: 'Page text' });
+  const search = await tools[0].execute('search', { query: 'OpenClaw' });
+  const fetched = await tools[1].execute('fetch', { url: 'https://example.com/a' });
+  const text = [...search.content, ...fetched.content].map((item) => item.text).join('\n');
+  assert.doesNotMatch(text, /Remaining web budget/i);
+  assert.match(text, /answer now|stop searching/i);
 });
 
 test('a one-item urls array fetches a single page instead of failing schema validation', async () => {
