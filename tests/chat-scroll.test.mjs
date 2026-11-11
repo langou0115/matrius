@@ -152,7 +152,7 @@ test('sending from an earlier position animates to the newest message', async ()
 test('quoting accepts one assistant body, rejects controls, reasoning and cross-message ranges', async () => {
   const { readSelectionQuote } = await import('../src/features/chat/components/selection-quote.tsx');
   const { getCopyText } = await import('../src/features/chat/message-text.ts');
-  const { getRequestText } = await import('../agent/src/core/context.ts');
+  const { getRequestText } = await import('../src/core/agent/context.ts');
   const { document } = parseHTML('<main><div data-quote-source><p>first paragraph</p><p>second paragraph</p><div class="message-code-header">copy</div></div><aside>reasoning</aside><div data-quote-source><p>another answer</p></div></main>');
   const container = document.querySelector('main');
   const [first, second, other] = document.querySelectorAll('p');

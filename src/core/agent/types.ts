@@ -65,10 +65,7 @@ export type ThinkingActivity = {
 /** Append in runtime event order; separate thinking segments may surround tool calls. */
 export type ProcessActivity = ThinkingActivity | WebActivity;
 
-import type { UiArtifact } from './ui-contract';
-
 export type Message = {
-  uiArtifacts?: UiArtifact[];
   id: string;
   role: 'user' | 'assistant';
   content: string;
@@ -97,7 +94,6 @@ export type Message = {
 
 export type AgentProfile = { customInstructions: string; aboutName: string; occupation: string; aboutMore: string };
 export type ReplyUpdate = {
-  uiArtifacts?: UiArtifact[];
   /** Current model call only; never the sum of a run's billable usage. */
   contextTokens?: { input: number; output: number; modelId: string; contextWindow: number };
   content: string;
@@ -118,31 +114,3 @@ export type SteerOutcome = 'steered' | 'deferred' | false;
 /** Requests are tracked per conversation so independent chats can generate at the same time. */
 export type RuntimeSnapshot = { runs: Record<string, RuntimeRun>; error: string | null;
   contexts?: Record<string, NonNullable<ReplyUpdate['contextTokens']>> };
-
-/** Tools a run may use. The browser sends intent, never executable tool code. */
-export type AgentToolset = { ui?: boolean; web?: boolean; files?: boolean; availableFiles?: MessageFile[] };
-
-/** One reply request as the runtime submits it; the transport decides where it runs. */
-export type RunnerOptions = {
-  conversationId: string;
-  replyId: string;
-  messages: Message[];
-  config: import('@/core/llm/model-config').ModelConfig;
-  apiKey: string;
-  thinkingEffort?: import('./thinking-effort').ThinkingEffort;
-  systemPrompt?: string;
-  contextSummary?: import('./compaction').ConversationSummary;
-  toolset?: AgentToolset;
-  onUpdate: (value: ReplyUpdate) => void;
-  /** Rolling summary produced by server-side compaction. */
-  onSummary?: (summary: import('./compaction').ConversationSummary | undefined) => void;
-  /** A supplement that arrived after the answer started; it belongs to the next turn. */
-  onDeferred?: (message: Message) => void;
-  signal?: AbortSignal;
-};
-
-export type ReplyRunner = {
-  abort(): void;
-  steer(message: Message): SteerOutcome;
-  start(): Promise<ReplyResult>;
-};

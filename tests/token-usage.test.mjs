@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
 import { TokenUsageSection } from '../src/features/usage/token-usage-section.tsx';
-import { createAgentRuntime } from '../agent/src/core/runtime.ts';
+import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import {
   addDays, buildCumulative, buildHeatmap, buildTrendHeatmap, buildWeekly, formatCompactTokens, formatMonthYear,
   localDateKey, summarizeUsage,

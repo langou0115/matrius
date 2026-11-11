@@ -1,8 +1,9 @@
 import { AlertCircle, LoaderCircle, Trash2, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 
-import { MEMORY_SUMMARY_LIMIT } from '@agent/core/memory';
-import { editMemorySummary } from '@agent/core/remote-client';
+import { MEMORY_SUMMARY_LIMIT, createMemoryTool, memoryChatSystemPrompt } from '@/core/agent/memory';
+import { createReplyRun } from '@/core/agent/runner';
+import type { Message } from '@/core/agent/types';
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
 import { useChat } from '@/features/chat/chat-state';
@@ -43,7 +44,7 @@ export function MemoryDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const runRef = useRef<AbortController | null>(null);
+  const runRef = useRef<ReturnType<typeof createReplyRun> | null>(null);
   const summaryRef = useRef(summary);
   const mountedRef = useRef(true);
 
@@ -75,20 +76,37 @@ export function MemoryDialog({ onClose }: { onClose: () => void }) {
     setInput('');
     setError(null);
     setBusy(true);
-    const run = new AbortController();
+    let updated = false;
+    const tool = createMemoryTool({
+      getSummary: () => summaryRef.current,
+      onUpdate: (value) => {
+        updated = true;
+        replaceSummary(value);
+      },
+    });
+    const run = createReplyRun({
+      config,
+      apiKey: config.requiresApiKey ? models.getKey(config.providerId) : '',
+      systemPrompt: memoryChatSystemPrompt(summaryRef.current),
+      messages: [{ id: 'memory-request', role: 'user', content: text } satisfies Message],
+      tools: [tool],
+      // The assistant's chat text is not shown: the visible result is the updated summary.
+      onUpdate: () => {},
+    });
     runRef.current = run;
     try {
-      const value = await editMemorySummary(config, config.requiresApiKey ? models.getKey(config.providerId) : '', summaryRef.current, text, run.signal);
-      if (!mountedRef.current || run.signal.aborted) return;
-      if (value === null) setError('没有识别到需要更新的内容。');
-      else replaceSummary(value);
-    } catch {
-      if (mountedRef.current && !run.signal.aborted) setError('记忆更新失败，请稍后重试。');
-    } finally {
-      if (runRef.current === run) {
-        if (mountedRef.current) setBusy(false);
-        runRef.current = null;
+      const result = await run.start();
+      if (!mountedRef.current) return;
+      if (!updated) {
+        setError(result.status === 'error'
+          ? result.error ?? '记忆更新失败，请重试。'
+          : '没有识别到需要更新的内容。');
       }
+    } catch {
+      if (mountedRef.current) setError('记忆更新失败，请稍后重试。');
+    } finally {
+      if (mountedRef.current) setBusy(false);
+      if (runRef.current === run) runRef.current = null;
     }
   }
 

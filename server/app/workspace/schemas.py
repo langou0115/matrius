@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from app.conversations.schemas import ContextSummary, ProcessActivity, UiArtifact, WebActivity
+from app.conversations.schemas import ContextSummary, ProcessActivity, WebActivity
 
 MemoryType = Literal["identity", "workflow", "voice", "instruction"]
 MemorySource = Literal["manual", "tool", "extracted"]
@@ -55,7 +55,6 @@ class MemoryPatch(BaseModel):
 
 
 class ImportMessage(BaseModel):
-    uiArtifacts: list[UiArtifact] | None = Field(default=None, max_length=12)
     id: str | None = Field(default=None, max_length=128)
     role: Literal["user", "assistant"]
     content: str = Field(default="", max_length=1_000_000)

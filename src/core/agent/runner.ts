@@ -1,9 +1,8 @@
-import { uiSchemas, readUiArtifacts, type UiArtifact } from './ui-contract';
 import { Agent, type AgentTool, type StreamFn } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage } from '@mariozechner/pi-ai';
 
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
-import { directStream } from '@agent/core/direct-stream';
+import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
 import { thinkingBudgetsFor } from './thinking-budget';
 import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from './types';
@@ -52,7 +51,7 @@ export function describeModelError(reason: unknown) {
   }
   if (/timeout|timed out/i.test(text)) return '等待服务商响应超时，请检查网络或稍后重试。';
   if (/failed to fetch|networkerror|network error|fetch failed|connection|cors|econn|err_network/i.test(text)) {
-    return '无法连接服务商，请检查网络和 Base URL。';
+    return '无法连接服务商，请检查网络和 Base URL，并确认服务商允许浏览器跨域请求（CORS）。';
   }
   if (/\b5\d\d\b|internal server error|service unavailable|bad gateway|server error/i.test(text)) {
     return '服务商暂时不可用，请稍后重试。';
@@ -68,7 +67,7 @@ function tokenCount(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
-export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal, onToolEvent }: {
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
@@ -80,7 +79,6 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   maxDurationMs?: number;
   /** Cancels auxiliary runs (memory, for example) that are not tracked by the chat runtime. */
   signal?: AbortSignal;
-  onToolEvent?: (event: { type: 'start'; toolCallId: string; toolName: string; args: unknown } | { type: 'end'; toolCallId: string; toolName: string; result: unknown; isError: boolean }) => void;
 }) {
   const model = createAgentModel(config);
   const diagnostics = createReplyDiagnostics(config, thinkingEffort);
@@ -214,11 +212,9 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     }
     return [...answers, ...(draft ? [draft] : [])].join('\n\n');
   }
-  let uiArtifacts: UiArtifact[] = [];
   function emit() {
     onUpdate({
       ...(contextTokens ? { contextTokens } : {}),
-      uiArtifacts,
       reasoningActive,
       content: visibleContent(),
       reasoning: reasoningTurns.filter(Boolean).join('\n\n'),
@@ -242,19 +238,6 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
 
   function endTool(event: { toolCallId: string; toolName: string; result: unknown; isError: boolean }) {
     diagnostics.toolEnd(event.isError);
-    if (!event.isError) {
-      const call = agent.state.messages.flatMap(message => message.role === 'assistant' ? message.content : []).find(block => block.type === 'toolCall' && block.id === event.toolCallId);
-      if (call && call.type === 'toolCall') {
-        const artifact = readUiArtifacts([{ id: event.toolCallId, name: event.toolName, props: call.arguments }]);
-        if (artifact) {
-          const previous = uiArtifacts.find(item => item.id === event.toolCallId);
-          const value = { ...artifact[0], ...(previous?.textOffset !== undefined ? { textOffset: previous.textOffset } : {}) };
-          if (previous) uiArtifacts = uiArtifacts.map(item => item.id === value.id ? value : item);
-          else if (uiArtifacts.length < 12) uiArtifacts = [...uiArtifacts, value];
-        }
-      }
-    }
-    if (event.isError) uiArtifacts = uiArtifacts.filter(item => item.id !== event.toolCallId);
     const previous = activities.find((activity) => activity.id === event.toolCallId);
     const ended = getWebActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous)
       ?? getFileActivityEnd(event.toolName, event.toolCallId, event.result, event.isError, previous);
@@ -278,8 +261,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end' || event.type === 'tool_execution_update'
       || (event.type === 'message_update' && event.message.role === 'assistant'
         && ['text_delta', 'thinking_delta', 'toolcall_delta'].includes(event.assistantMessageEvent.type))) resetIdleTimer();
-    if (event.type === 'tool_execution_start') { onToolEvent?.({ ...event, type: 'start' }); startTool(event); return; }
-    if (event.type === 'tool_execution_end') { onToolEvent?.({ ...event, type: 'end' }); endTool(event); return; }
+    if (event.type === 'tool_execution_start') { startTool(event); return; }
+    if (event.type === 'tool_execution_end') { endTool(event); return; }
     if (event.type === 'tool_execution_update') {
       const previous = activities.find((activity) => activity.id === event.toolCallId);
       const updated = getWebActivityEnd(event.toolName, event.toolCallId, event.partialResult, false, previous)
@@ -326,27 +309,11 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         process = previous ? process.map((item) => item.kind === 'thinking' && item.id === id ? next : item) : [...process, next];
       });
       setLastContent(message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''));
-      for (const block of message.content) {
-        if (block.type !== 'toolCall' || !Object.hasOwn(uiSchemas, block.name)) continue;
-        const previous = uiArtifacts.find(item => item.id === block.id);
-        const args = block.arguments as Record<string, unknown>;
-        // Only inert HTML/CSS is previewed. JavaScript starts after tool validation.
-        const props = block.name === 'generateSandboxedUi' ? {
-          initialHeight: 320, placeholderMessages: [], css: '', html: '', jsFunctions: '', jsExpressions: '', ...args,
-        } : args;
-        const parsed = readUiArtifacts([{ id: block.id, name: block.name, props }]);
-        if (parsed && (previous?.streaming || !previous)) {
-          const offset = previous?.textOffset ?? visibleContent().length;
-          const value = { ...parsed[0], ...(offset ? { textOffset: offset } : {}), streaming: true };
-          if (previous) uiArtifacts = uiArtifacts.map(item => item.id === block.id ? value : item);
-          else if (uiArtifacts.length < 12) uiArtifacts = [...uiArtifacts, value];
-        }
-      }
       setLast(reasoningTurns, message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join(''));
       if (event.type === 'message_end') {
         // A message that requested a tool is a transition; only a tool-free message is an answer.
         const lastContent = contentTurns.at(-1);
-        if (lastContent) lastContent.answer = !message.content.some((block) => block.type === 'toolCall') || message.content.some(block => block.type === 'toolCall' && Object.hasOwn(uiSchemas, block.name));
+        if (lastContent) lastContent.answer = !message.content.some((block) => block.type === 'toolCall');
       }
       if (event.type === 'message_end') countUsage(message.usage);
       emit();
@@ -399,7 +366,6 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
           : { status: 'error', error: outputRetries
             ? `已达到最大输出长度，但尚未生成回答正文。已自动降低思考并拆分重试 ${outputRetries} 次仍未成功：请把模型设置里的「最大输出」调到 8192 以上，或把思考强度调到低/关闭后重试。`
             : '已达到最大输出长度，但尚未生成回答正文。请调大模型的最大输出或降低思考深度后重试。' }, 'output_limit');
-        if (!hasText && uiArtifacts.length) return finish({ status: 'complete' }, 'ui_complete');
         if (!hasText) return finish({ status: 'error', error: finalMessage.content.some((block) => block.type === 'thinking')
           ? '模型仅返回了思考内容，没有回答正文。已保留思考和工具记录。'
           : '模型本次回复没有回答正文。已保留之前收到的内容和工具记录。' }, 'no_final_text');

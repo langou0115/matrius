@@ -3,7 +3,7 @@
 Exact usage never reached the API: model requests are relayed by the stateless Web container,
 and pi-ai's counters only ever lived in the browser. History can therefore only be approximated
 from the stored message text. The formulas mirror the client's context estimator
-(`agent/src/core/context.ts`) so historical and live numbers stay on the same scale, and the
+(`src/core/agent/context.ts`) so historical and live numbers stay on the same scale, and the
 result is always labelled as an estimate in the UI.
 """
 

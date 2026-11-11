@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
-import devAgentProxy from './scripts/dev-agent-proxy.cjs';
 import devApiProxy from './scripts/dev-api-proxy.cjs';
 import modelProxy from './scripts/model-proxy.cjs';
 
@@ -25,7 +24,6 @@ function developmentMiddleware(): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
-        if (devAgentProxy.handleDevAgent(request, response)) return;
         if (modelProxy.handleModelProxy(request, response)) return;
         if (devApiProxy.handleDevApi(request, response)) return;
         next();
@@ -93,10 +91,9 @@ export default defineConfig({
   plugins: [offlineShell(), react(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
   resolve: {
     alias: [
-      { find: '@agent', replacement: fromRoot('./agent/src') },
       // pi 0.73.1's umbrella entry imports Node credential discovery and every provider.
       // Keep the browser bundle on our explicit three-provider adapter, as Metro did.
-      { find: /^@mariozechner\/pi-ai$/u, replacement: fromRoot('./agent/src/core/pi-agent-bridge.ts') },
+      { find: /^@mariozechner\/pi-ai$/u, replacement: fromRoot('./src/core/llm/pi-agent-bridge.ts') },
       { find: /^@\/assets\//u, replacement: fromRoot('./assets/') },
       { find: /^@\//u, replacement: fromRoot('./src/') },
     ],

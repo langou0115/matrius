@@ -5,10 +5,8 @@ import { validateAgentRequest, validateContextSize } from './context';
 import type { ConversationSummary } from './compaction';
 import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
 import type { ThinkingEffort } from './thinking-effort';
-import type {
-  AgentToolset, Message, ProcessActivity, ReplyRunner, ReplyUpdate, RunnerOptions,
-  RuntimeSnapshot, SteerOutcome, TokenUsage, WebActivity,
-} from './types';
+import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, TokenUsage, WebActivity } from './types';
+import type { createReplyRun } from './runner';
 
 export type AgentRequest = {
   conversationId: string;
@@ -20,9 +18,7 @@ export type AgentRequest = {
   systemPrompt?: string;
   /** Rolling summary persisted with the conversation; empty means no earlier history is summarized. */
   contextSummary?: ConversationSummary;
-  /** Server tools this run may use. The browser sends intent, not tool code. */
-  toolset?: AgentToolset;
-  /** Legacy in-process tools. Only injected runners (tests) consume these. */
+  /** Cloud tools available to this run; omitted or empty keeps the text-only local mode. */
   tools?: AgentTool[];
 };
 
@@ -40,39 +36,27 @@ function settleProcess(process: ProcessActivity[] | undefined, stopped: boolean)
     ? { ...activity, status: stopped ? 'stopped' : 'error', endedAt: Date.now() } : activity);
 }
 
-type RunnerModule = { createReplyRun: (options: RunnerOptions) => ReplyRunner };
-
 type RuntimeOptions = {
   onReply: (conversationId: string, message: Message) => void;
   /** Persists the rolling summary, or clears it when compaction no longer applies. */
   onSummary?: (conversationId: string, summary: ConversationSummary | undefined) => void;
   /** Tokens billed for one finished run, including stopped and failed replies. */
   onUsage?: (usage: TokenUsage) => void;
-  /** A supplement that arrived after the visible answer started; it belongs to the next turn. */
-  onDeferredMessage?: (conversationId: string, message: Message) => void;
-  /** Runs the loop in the agent service instead of this process. Production uses this. */
-  delegateToServer?: boolean;
-  /** The default lazily loads the agent-service client. */
-  loadRunner?: () => Promise<RunnerModule>;
-  /** Optional local compaction adapter for isolated tests; production delegates to Node. */
+  /** The default lazily loads pi-agent. Other clients/tests can supply a compatible runner. */
+  loadRunner?: () => Promise<{ createReplyRun: typeof createReplyRun }>;
+  /** The default lazily loads silent history compaction. */
   loadCompactor?: () => Promise<{ prepareHistory: typeof import('./compaction').prepareHistory }>;
 };
 
 /** Platform-independent runtime: one active request per conversation, no React, storage or DOM. */
 export function createAgentRuntime({
-  onReply, onSummary, onUsage, onDeferredMessage,
-  delegateToServer = true,
-  loadRunner = () => import('./remote-run'),
-  loadCompactor = async () => { throw new Error('Local compaction requires an injected test adapter.'); },
+  onReply, onSummary, onUsage, loadRunner = () => import('./runner'), loadCompactor = () => import('./compaction'),
 }: RuntimeOptions) {
   let snapshot: RuntimeSnapshot = { runs: {}, error: null };
   const listeners = new Set<() => void>();
   // Keyed by conversation: separate chats run concurrently, while a chat cannot start twice.
   type ActiveRun = { abort: () => void; steer: (message: Message) => SteerOutcome };
   const active = new Map<string, ActiveRun>();
-  // Latest streamed reply per conversation: the service enforces the same rule, but callers
-  // need a synchronous answer about whether a supplement can still join the current run.
-  const latestByConversation = new Map<string, Message>();
   let disposed = false;
 
   function update(patch: Partial<RuntimeSnapshot>) {
@@ -106,7 +90,7 @@ export function createAgentRuntime({
       snapshot = { runs: {}, error: null };
       listeners.clear();
     },
-    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), contextSummary, toolset, tools }: AgentRequest): boolean {
+    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), contextSummary, tools }: AgentRequest): boolean {
       if (disposed || active.has(conversationId)) return false;
       // The size check runs after silent compaction, so an over-window history can still be
       // reduced instead of failing before the request starts.
@@ -117,7 +101,7 @@ export function createAgentRuntime({
       const history = messages.map((message) => ({ ...message, ...(message.images ? { images: message.images.map((image) => ({ ...image })) } : {}) }));
       const startedAt = Date.now();
       let latest: Message = { id: replyId, role: 'assistant', content: '', status: 'streaming' };
-      let run: ReplyRunner | undefined;
+      let run: ReturnType<typeof createReplyRun> | undefined;
       let cancelled = false;
       // A silent compaction request belongs to this run: stopping the reply also stops the
       // auxiliary model call instead of letting it finish in the background.
@@ -135,7 +119,6 @@ export function createAgentRuntime({
         steer(message: Message): SteerOutcome {
           if (cancelled) return false;
           if (!run) { pendingSteers.push(message); return 'steered'; }
-          if (delegateToServer && latestByConversation.get(conversationId)?.content.trim()) return 'deferred';
           return run.steer(message);
         },
       };
@@ -143,53 +126,33 @@ export function createAgentRuntime({
       update({ runs: { ...snapshot.runs, [conversationId]: { conversationId, replyId, startedAt } }, error: null });
 
       // Defer all runner work until the caller has recorded the outgoing user message.
-      void Promise.all([
-        loadRunner(),
-        delegateToServer ? Promise.resolve(null) : loadCompactor(),
-      ]).then(async ([{ createReplyRun }, compactor]) => {
+      void Promise.all([loadRunner(), loadCompactor()]).then(async ([{ createReplyRun }, { prepareHistory }]) => {
         if (cancelled) return { status: 'stopped' as const };
-        let preparedMessages = history;
-        let preparedSystemPrompt = systemPrompt;
-        let preparedSummary = contextSummary;
-        if (compactor) {
-          const prepared = await compactor.prepareHistory({
-            messages: history, config: requestConfig, apiKey, systemPrompt,
-            ...(contextSummary ? { previous: contextSummary } : {}),
-            signal: runAbort.signal,
-          });
-          if (cancelled) return { status: 'stopped' as const };
-          // Persist the coverage marker with the conversation so a reload resumes from the same
-          // point. `undefined` clears a summary that no longer matches the stored history.
-          if (onSummary && JSON.stringify(prepared.summary) !== JSON.stringify(contextSummary)) {
-            onSummary(conversationId, prepared.summary);
-          }
-          const overflow = validateContextSize(requestConfig, prepared.messages, prepared.systemPrompt);
-          if (overflow) return { status: 'error' as const, error: overflow };
-          preparedMessages = prepared.messages;
-          preparedSystemPrompt = prepared.systemPrompt;
-          preparedSummary = prepared.summary;
+        const prepared = await prepareHistory({
+          messages: history, config: requestConfig, apiKey, systemPrompt,
+          ...(contextSummary ? { previous: contextSummary } : {}),
+          signal: runAbort.signal,
+        });
+        if (cancelled) return { status: 'stopped' as const };
+        // Persist the coverage marker with the conversation so a reload resumes from the same
+        // point. `undefined` clears a summary that no longer matches the stored history.
+        if (onSummary && JSON.stringify(prepared.summary) !== JSON.stringify(contextSummary)) {
+          onSummary(conversationId, prepared.summary);
         }
+        const overflow = validateContextSize(requestConfig, prepared.messages, prepared.systemPrompt);
+        if (overflow) return { status: 'error' as const, error: overflow };
         run = createReplyRun({
-          conversationId, replyId, config: requestConfig, apiKey,
-          messages: preparedMessages, thinkingEffort, systemPrompt: preparedSystemPrompt,
-          ...(preparedSummary ? { contextSummary: preparedSummary } : {}),
-          ...(toolset ? { toolset } : {}),
-          ...(delegateToServer ? {
-            onSummary: (summary: ConversationSummary | undefined) => onSummary?.(conversationId, summary),
-            onDeferred: (message: Message) => onDeferredMessage?.(conversationId, message),
-          } : {}),
-          ...(tools?.length ? { tools } : {}),
-          onUpdate(value: ReplyUpdate) {
+          config: requestConfig, apiKey, messages: prepared.messages, thinkingEffort,
+          systemPrompt: prepared.systemPrompt, tools, onUpdate(value) {
             if (disposed || cancelled) return;
             const { contextTokens, ...reply } = value;
             if (contextTokens && snapshot.contexts?.[conversationId] !== contextTokens) {
               update({ contexts: { ...snapshot.contexts, [conversationId]: contextTokens } });
             }
             latest = { ...latest, ...reply, thinkingMs: Math.max(0, Date.now() - startedAt) };
-            latestByConversation.set(conversationId, latest);
             if (!timer) timer = setTimeout(flush, 50);
           },
-        } as RunnerOptions);
+        });
         // Injected before `start()`, so pi-agent sees them before the first model call.
         for (const message of pendingSteers) run.steer(message);
         pendingSteers = [];
@@ -221,7 +184,6 @@ export function createAgentRuntime({
         // A concurrent run in another conversation must not clear this one's marker.
         if (active.get(conversationId) === marker) {
           active.delete(conversationId);
-          latestByConversation.delete(conversationId);
           const runs = { ...snapshot.runs };
           delete runs[conversationId];
           // Failures stay on the reply message: a workspace-wide error would surface in

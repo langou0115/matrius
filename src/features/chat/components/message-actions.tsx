@@ -3,7 +3,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/web/icon';
 import { copyText } from '@/core/platform/clipboard';
 import type { Message } from '../chat-state';
-import type { MessageFeedback } from '@agent/core/types';
+import type { MessageFeedback } from '@/core/agent/types';
 import { getCopyText } from '../message-text';
 
 type Props = { message: Message; onFork?: () => void; onFeedback?: (feedback?: MessageFeedback) => void };

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { compactActivities } from '../agent/src/core/activity-payload.ts';
+import { compactActivities } from '../src/core/agent/activity-payload.ts';
 import {
   parseWorkspace,
   readActivities,

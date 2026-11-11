@@ -61,8 +61,8 @@ services:
     container_name: matrius-api
     image: matrius-api:local
     build:
-      context: ..
-      dockerfile: server/Dockerfile
+      context: ../server
+      dockerfile: Dockerfile
       args:
         PYPI_INDEX_CANDIDATES: ${PYPI_INDEX_CANDIDATES:-https://pypi.org/simple,https://pypi.tuna.tsinghua.edu.cn/simple}
     environment:
@@ -108,7 +108,7 @@ services:
         - python
         - -c
         - >-
-          import sys, urllib.request; sys.exit(0 if all(urllib.request.urlopen(url, timeout=2).status == 200 for url in ['http://127.0.0.1:8000/api/health', 'http://127.0.0.1:8123/health']) else 1)
+          import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)
       interval: 30s
       timeout: 6s
       retries: 3

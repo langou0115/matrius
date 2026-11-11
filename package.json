@@ -2,12 +2,7 @@
   "name": "matrius",
   "version": "1.0.0",
   "type": "module",
-  "workspaces": [
-    "agent"
-  ],
   "dependencies": {
-    "@copilotkit/react-core": "^1.85.0",
-    "@copilotkit/react-ui": "^1.85.0",
     "@mariozechner/pi-agent-core": "0.73.1",
     "@mariozechner/pi-ai": "0.73.1",
     "@thesvg/react": "^3.4.0",
@@ -41,7 +36,6 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "agent": "npm --prefix agent run start",
     "build": "vite build",
     "deploy": "node scripts/deploy.mjs",
     "db:migrate": "node scripts/db-migrate.mjs",

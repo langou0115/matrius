@@ -1,9 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState, useSyncExternalStore, type PropsWithChildren } from 'react';
 
-import { createAgentRuntime } from '@agent/core/runtime';
-import { buildRetryHistory } from '@agent/core/context';
-import { requestConversationTitle, requestMemorySummary } from '@agent/core/remote-client';
-import type { AgentToolset, MessageFile, SteerOutcome } from '@agent/core/types';
+import { createAgentRuntime } from '@/core/agent/runtime';
+import { buildRetryHistory } from '@/core/agent/context';
+import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
+import { generateMemorySummary } from '@/core/agent/memory';
+import { generateConversationTitle } from '@/core/agent/title';
+import type { MessageFile, SteerOutcome } from '@/core/agent/types';
+import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
+import type { AgentTool } from '@mariozechner/pi-agent-core';
 import { hasFeature } from '@/core/features/capabilities';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { useModels } from '@/features/models/model-state';
@@ -11,7 +15,7 @@ import { useMemory } from '@/features/memory/memory-state';
 import { pickMemoryModel } from '@/features/memory/memory-model';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { recordTokenUsage } from '@/features/usage/usage-api';
-import { buildSystemPrompt } from '@agent/core/system-prompt';
+import { buildSystemPrompt } from '@/core/agent/system-prompt';
 import { protectBrowserRun } from '@/core/platform/run-protection';
 import { useInstance } from '@/features/instance/instance-state';
 import { useNetworkTools } from '@/features/instance/network-tools-state';
@@ -82,7 +86,7 @@ function useRuntime() {
     if (!config || titleControllers.current.has(conversationId)) return;
     const controller = new AbortController();
     titleControllers.current.set(conversationId, controller);
-    void requestConversationTitle({
+    void generateConversationTitle({
       config, content, quote, signal: controller.signal,
       apiKey: config.requiresApiKey ? modelsRef.current.getKey(config.providerId) : '',
     }).then((title) => {
@@ -127,7 +131,7 @@ function useRuntime() {
       const baseSummary = current.summary;
       const baseRevision = current.revision;
       try {
-        const updated = await requestMemorySummary({
+        const updated = await generateMemorySummary({
           config, apiKey, currentSummary: baseSummary,
           userMessage: task.userMessage, assistantMessage: task.assistantMessage,
           signal: controller.signal,
@@ -146,16 +150,6 @@ function useRuntime() {
   }
   // eslint-disable-next-line react-hooks/refs -- the callback reads these refs when a reply arrives, not during render
   const [agent] = useState(() => createAgentRuntime({
-    // The model loop and all provider traffic run in the agent service.
-    delegateToServer: true,
-    // The service decides whether a supplement joined the running answer or must wait.
-    onDeferredMessage: (conversationId, message) => {
-      // A supplement the caller deferred locally is already shown; never queue it twice.
-      const existing = conversationsRef.current.find((item) => item.id === conversationId);
-      if (existing?.messages.some((item) => item.id === message.id)) return;
-      pendingSends.current.set(conversationId, [...(pendingSends.current.get(conversationId) ?? NO_MESSAGES), message]);
-      pendingChanged();
-    },
     // Compaction is invisible, so the summary only travels into the conversation record.
     onSummary: (conversationId, summary) => dispatch({ type: 'context-summary', conversationId, summary }),
     // Token statistics are recorded by the authenticated instance.
@@ -212,21 +206,24 @@ function useRuntime() {
     // after it loads, so the first reply waits for `ready` instead of guessing.
     const useWebTools = networkTools.ready && networkTools.enabled;
     const useFileTools = hasFeature(instance.status === 'ready' ? instance.info : null, 'files');
-    // The agent service owns the tool implementations; the browser only says which it may use.
-    const toolset: AgentToolset = {
-      ui: hasFeature(instance.status === 'ready' ? instance.info : null, 'generative-ui'),
-      ...(useWebTools ? { web: true } : {}),
-      ...(useFileTools ? { files: true, availableFiles: collectAvailableFiles(history) } : {}),
-    };
+    const tools: AgentTool[] = [];
+    if (useWebTools) tools.push(...createWebTools(instance.request));
+    if (useFileTools) {
+      tools.push(createFileTool({
+        request: instance.request, conversationId, availableFiles: collectAvailableFiles(history),
+      }).tool);
+    }
+    const prompts = [buildSystemPrompt(preferences, memoryRef.current)];
+    if (useWebTools) prompts.push(webToolsSystemPrompt());
+    if (useFileTools) prompts.push(fileToolsSystemPrompt());
     const started = agent.start({
       conversationId, replyId, messages: history, config,
       ...(contextSummary ? { contextSummary } : {}),
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
       // Thinking depth belongs to the model, so the bound model carries its own depth.
       thinkingEffort: config?.thinkingEffort ?? 'low',
-      // Tool guidance is appended by the service, which knows which tools it registered.
-      systemPrompt: buildSystemPrompt(preferences, memoryRef.current),
-      ...(toolset.ui || toolset.web || toolset.files ? { toolset } : {}),
+      systemPrompt: prompts.join('\n\n'),
+      ...(tools.length ? { tools } : {}),
     });
     return started ? config : undefined;
   }, [agent, instance, models, networkTools, preferences]);

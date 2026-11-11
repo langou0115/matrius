@@ -7,7 +7,6 @@ ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} \
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-COPY agent/package.json ./agent/package.json
 # postinstall regenerates KaTeX assets, so the script must exist before npm ci.
 COPY scripts/sync-katex.mjs ./scripts/sync-katex.mjs
 RUN --mount=type=cache,target=/root/.npm \

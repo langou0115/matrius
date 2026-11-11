@@ -117,11 +117,6 @@ def _apply_message(existing: Message, message: ImportMessage) -> bool:
         if getattr(existing, name) != value:
             setattr(existing, name, value)
             changed = True
-    if message.uiArtifacts is not None:
-        artifacts = [item.model_dump(exclude_none=True) for item in message.uiArtifacts] or None
-        if existing.ui_artifacts != artifacts:
-            existing.ui_artifacts = artifacts
-            changed = True
     # Older clients do not send a process. Keep the stored copy instead of clearing it.
     process = process_payload(message.process)
     if process is not None and existing.process != process:
@@ -269,7 +264,6 @@ async def _create_conversation(
                 reasoning=message.reasoning,
                 activities=activities_payload(message.activities),
                 process=process_payload(message.process),
-                ui_artifacts=[item.model_dump(exclude_none=True) for item in message.uiArtifacts or []] or None,
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,
@@ -320,7 +314,6 @@ async def _merge_conversation(
                 reasoning=message.reasoning,
                 activities=activities_payload(message.activities),
                 process=process_payload(message.process),
-                ui_artifacts=[item.model_dump(exclude_none=True) for item in message.uiArtifacts or []] or None,
                 thinking_ms=message.thinkingMs,
                 status="complete" if message.role == "user" else message.status,
                 error=message.error,

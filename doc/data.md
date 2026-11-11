@@ -36,7 +36,7 @@ SQLite 事务与文件替换不是跨存储的原子事务；备份和恢复应�
 
 开发启动和 `npm run db:migrate` 直接在 `server/.data/matrius.db` 上执行 `alembic upgrade head` 和 `alembic check`；`--reset-db` 清空开发数据库、上传文件和草稿。
 
-数据库以 `0001_initial` 创建单实例 schema（`instance.id=1` 及指向它的业务表），后续结构变化继续追加迁移。`0002_ui_artifacts` 为消息增加 UI 快照 JSON 字段。空库初始化不会生成迁移备份或其他伴随文件；新库的持久内容只有 `matrius.db` 和 `files/`。
+数据库只有一条基线迁移 `0001_initial`，直接创建单实例 schema（`instance.id=1` 及指向它的业务表）。空库初始化不会生成迁移备份或其他伴随文件；新库的持久内容只有 `matrius.db` 和 `files/`。
 
 上传文件写入 `DATA_DIR/files/<fileId>/<safeName>`，数据库只保存元数据；旧版 `users/<userId>/...` 布局及其迁移逻辑已移除，开发阶段不迁移旧账户数据。
 
@@ -52,13 +52,5 @@ SQLite 事务与文件替换不是跨存储的原子事务；备份和恢复应�
 
 搜索结果/文件文本缓存、滑动窗口限流和并发计数存在 API 内存，重启清零。
 文档草稿元数据在内存、字节在 drafts 下，重启失效，因此 API 保持单 worker。
-Agent 循环运行在 Node 进程；浏览器负责草稿、流式显示和 REST 保存。关闭页面会中断生成。
+Agent 循环、取消、草稿输入和未完成请求运行在浏览器，关闭页面会中断。
 模型 API key 只持久化在浏览器，不写日志；模型中继会在单次请求期间转发给服务商，不保存密钥。
-
-## 生成式 UI
-
-助手消息的 `uiArtifacts` 保存表格、键值卡片、步骤和 `generateSandboxedUi` 的独立快照，与正文一起按 revision 写入，支持读取、清空、导入和分支。旧客户端未发送该字段时，PATCH 不清除已有 UI。生成的 HTML/CSS/JavaScript 只是数据，不在 API 或 Node 执行。
-
-UI 参数生成期间通过 SSE 推送预览，回答块按 `textOffset` 将 UI 插入正文对应位置。预览只显示静态 HTML/CSS，脚本权限和 CSP 都禁止执行 JavaScript；工具校验完成后才加载可交互版本。刷新后保留相同的文字与 UI 顺序，未完成的产物保持静态预览。完成后的高度变化由宿主校验并限制范围。
-
-动态 UI 使用无同源权限的 iframe；CSP 禁止网络、外部资源、表单和嵌套页面。控件可通过 `window.matrius.sendPrompt({text})` 提议后续问题，宿主校验消息来源和长度后显示发送按钮。刷新后重建快照，控件的临时选值不自动保存；需要让模型继续处理的选值应写入后续问题。

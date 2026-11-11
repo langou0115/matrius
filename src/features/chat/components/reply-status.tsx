@@ -1,4 +1,4 @@
-import type { Message } from '@agent/core/types';
+import type { Message } from '@/core/agent/types';
 import { RotateCcw } from 'lucide-react';
 
 /** Cancellation is informational; only actual request failures are alerts. */

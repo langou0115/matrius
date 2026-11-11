@@ -6,13 +6,6 @@
 		reverse_proxy web:8081
 	}
 
-	@agent path /api/agent/* /api/copilotkit /api/copilotkit/*
-	handle @agent {
-		reverse_proxy api:8123 {
-			flush_interval -1
-		}
-	}
-
 	handle /api/* {
 		reverse_proxy api:8000
 	}
@@ -30,13 +23,6 @@
 
 # API-only listener. Host API_PORT maps here for direct backend access.
 :8082 {
-	@agent path /api/agent/* /api/copilotkit /api/copilotkit/*
-	handle @agent {
-		reverse_proxy api:8123 {
-			flush_interval -1
-		}
-	}
-
 	handle /api/* {
 		reverse_proxy api:8000
 	}

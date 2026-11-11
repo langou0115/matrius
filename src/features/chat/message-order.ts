@@ -1,4 +1,4 @@
-import type { Message } from '@agent/core/types';
+import type { Message } from '@/core/agent/types';
 
 /** Server positions follow append order, so a steering message saved after the reply it
     interrupted sits behind that reply on reload. Move each one back in front of the nearest

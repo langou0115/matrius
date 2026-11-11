@@ -1,10 +1,10 @@
-import { CONTEXT_SAFETY_TOKENS, estimateMessageTokens, estimateTextTokens } from '@agent/core/context';
-import { withoutFailedReplies } from '@agent/core/history';
+import { CONTEXT_SAFETY_TOKENS, estimateMessageTokens, estimateTextTokens } from '@/core/agent/context';
+import { withoutFailedReplies } from '@/core/agent/history';
 import type { ModelConfig } from '@/core/llm/model-config';
-import type { Message } from '@agent/core/types';
-import type { ReplyUpdate } from '@agent/core/types';
+import type { Message } from '@/core/agent/types';
+import type { ReplyUpdate } from '@/core/agent/types';
 import type { AgentTool } from '@mariozechner/pi-agent-core';
-import { appendConversationSummary, type ConversationSummary } from '@agent/core/conversation-summary';
+import { appendConversationSummary, type ConversationSummary } from '@/core/agent/compaction';
 
 /** Latest call occupancy, or an estimate of the next request when no call is available. */
 export type ContextUsage = {

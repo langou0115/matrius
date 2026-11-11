@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createReplyRun, describeModelError } from '../agent/src/core/runner.ts';
-import { buildContext, buildRetryHistory, validateAgentRequest } from '../agent/src/core/context.ts';
-import { findRecentStart, getContextBudget, prepareHistory } from '../agent/src/core/compaction.ts';
-import { withoutFailedReplies } from '../agent/src/core/history.ts';
-import { createAgentRuntime } from '../agent/src/core/runtime.ts';
+import { createReplyRun, describeModelError } from '../src/core/agent/runner.ts';
+import { buildContext, buildRetryHistory, validateAgentRequest } from '../src/core/agent/context.ts';
+import { findRecentStart, getContextBudget, prepareHistory } from '../src/core/agent/compaction.ts';
+import { withoutFailedReplies } from '../src/core/agent/history.ts';
+import { createAgentRuntime } from '../src/core/agent/runtime.ts';
 import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
 import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.ts';
 import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
@@ -15,9 +15,9 @@ import { MemoryProvider } from '../src/features/memory/memory-state.tsx';
 import { InstanceProvider } from '../src/features/instance/instance-state.tsx';
 import { NetworkToolsProvider } from '../src/features/instance/network-tools-state.tsx';
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
-import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../agent/src/core/system-prompt.ts';
-import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../agent/src/core/title.ts';
-import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../agent/src/core/web-tools.ts';
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
+import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
+import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
 import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.ts';
 import { ApiError } from '../src/core/api/instance-client.ts';
 import { parseWorkspace } from '../src/features/workspace/workspace-repository.ts';
@@ -325,8 +325,6 @@ test('shared runtime validates requests, handles cancellation during lazy loadin
   // starting a request that the provider would reject.
   const overflowReply = deferred();
   const overflow = createAgentRuntime({
-    delegateToServer: false,
-    loadCompactor: async () => ({ prepareHistory }),
     loadRunner: async () => ({ createReplyRun() { assert.fail('an oversized single message cannot be compacted'); } }),
     onReply(_id, message) { if (message.status === 'error') overflowReply.resolve(message); },
   });
@@ -384,7 +382,6 @@ test('runtime silently compacts before the run and persists the summary on the n
       request = options;
       return { abort() {}, start: async () => ({ status: 'complete' }) };
     } }),
-    delegateToServer: false,
     loadCompactor: async () => ({ prepareHistory: async (options) => {
       previous.push(options.previous);
       return {
@@ -424,7 +421,6 @@ test('stopping during silent compaction never starts a runner or publishes a not
   const runtime = createAgentRuntime({
     onReply(_id, message) { if (message.status === 'stopped') finished.resolve(message); },
     loadRunner: async () => ({ createReplyRun() { assert.fail('a stopped compaction must not create a runner'); } }),
-    delegateToServer: false,
     loadCompactor: async () => ({ prepareHistory: () => compaction.promise }),
   });
   assert.equal(runtime.start({ conversationId: 'c', replyId: 'r', config, apiKey: 'key', messages: history }), true);
@@ -655,7 +651,7 @@ test('stored rolling summaries survive parsing and malformed copies are dropped'
 test('agent core has no UI, feature-module or browser dependencies', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
   const ts = (await import('typescript')).default;
-  const directory = new URL('../agent/src/core/', import.meta.url);
+  const directory = new URL('../src/core/agent/', import.meta.url);
   for (const file of readdirSync(directory).filter((name) => name.endsWith('.ts'))) {
     const source = ts.createSourceFile(file, readFileSync(new URL(file, directory), 'utf8'), ts.ScriptTarget.Latest, true);
     function visit(node) {
@@ -755,63 +751,6 @@ function gatedResponse(protocol, gate) {
       controller.close();
     },
   }), { headers: { 'content-type': 'text/event-stream' } });
-}
-
-/**
- * The browser no longer talks to providers: it opens one agent run and receives the same
- * `ReplyUpdate` payload the in-process runner produced, followed by a `done` frame.
- */
-function agentSource(updates, { status = 'complete', error } = {}) {
-  const frames = updates.map((update) => `event: update\ndata: ${JSON.stringify({
-    content: '', reasoning: '', reasoningActive: false, ...update,
-  })}\n\n`).join('');
-  return `event: ready\ndata: {}\n\n${frames}event: done\ndata: ${JSON.stringify({ status, ...(error ? { error } : {}) })}\n\n`;
-}
-
-function agentResponse(updates, { status = 'complete', error } = {}) {
-  return new Response(new ReadableStream({
-    start(controller) {
-      const bytes = new TextEncoder().encode(agentSource(updates, { status, error }));
-      for (let offset = 0; offset < bytes.length; offset += 7) controller.enqueue(bytes.slice(offset, offset + 7));
-      controller.close();
-    },
-  }), { headers: { 'content-type': 'text/event-stream' } });
-}
-
-/** Emit the frames before `done`, then hang: a stop ends it with the partial reply kept. */
-function hangingAgentResponse(updates, signal) {
-  const source = agentSource(updates);
-  const head = new TextEncoder().encode(source.slice(0, source.indexOf('event: done')));
-  return new Response(new ReadableStream({
-    start(controller) {
-      controller.enqueue(head);
-      signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')), { once: true });
-    },
-  }), { headers: { 'content-type': 'text/event-stream' } });
-}
-
-/** Send every frame, then hold the `done` frame until the gate resolves. */
-function gatedAgentResponse(updates, gate) {
-  const source = agentSource(updates);
-  const head = new TextEncoder().encode(source.slice(0, source.indexOf('event: done')));
-  const tail = new TextEncoder().encode(source.slice(source.indexOf('event: done')));
-  return new Response(new ReadableStream({
-    async start(controller) {
-      controller.enqueue(head);
-      await gate.promise;
-      controller.enqueue(tail);
-      controller.close();
-    },
-  }), { headers: { 'content-type': 'text/event-stream' } });
-}
-
-/** Auxiliary endpoint answers for the agent transport. */
-function agentAuxiliary(url, init, { title = null, steer = 'steered' } = {}) {
-  const target = String(url);
-  if (target === '/api/agent/title') return Response.json({ title });
-  if (target === '/api/agent/steer') return Response.json({ outcome: steer });
-  if (target === '/api/agent/stop') return Response.json({ stopped: true });
-  return null;
 }
 
 test('three real pi providers stream text and preserve multi-turn context without tools', async (t) => {
@@ -1392,12 +1331,12 @@ test('workspace runtime keeps generations attached to their source conversation 
   let chat, models, runtime, personalization;
   let requestSignal;
   const requestBodies = [];
-  globalThis.fetch = async (url, init) => {
-    const auxiliary = agentAuxiliary(url, init);
-    if (auxiliary) return auxiliary;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) return response('completion', init.signal);
     requestSignal = init.signal;
-    requestBodies.push(JSON.parse(init.body));
-    return hangingAgentResponse([{ content: '你好' }], init.signal);
+    requestBodies.push(body);
+    return response('completion', init.signal, true);
   };
   function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); personalization = usePersonalization(); return null; }
   async function until(predicate) {
@@ -1416,7 +1355,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.equal(chat.conversations[0].modelId, 'test', 'a new conversation binds to the model that answered it');
     assert.equal(chat.conversations[0].messages[0].quote, '引用需要保留');
     await until(() => requestSignal && chat.conversations[0].messages.length === 2);
-    assert.equal(requestBodies[0].config.thinkingEffort, 'high');
+    assert.equal(requestBodies[0].reasoning_effort, 'high');
     assert.ok(JSON.stringify(requestBodies[0]).includes('first preference'));
     await act(async () => { personalization.update({ customInstructions: 'updated preference' }); });
     await act(async () => { chat.dispatch({ type: 'select', id: null }); });
@@ -1432,10 +1371,10 @@ test('workspace runtime keeps generations attached to their source conversation 
     requestSignal = undefined;
     await act(async () => { runtime.retry(sourceId); });
     await until(() => requestSignal && !!runtime.runs[sourceId]);
-    assert.equal(requestBodies[1].config.thinkingEffort, 'high', 'retry resolves the effort of the conversation model');
+    assert.equal(requestBodies[1].reasoning_effort, 'high', 'retry resolves the effort of the conversation model');
     assert.ok(JSON.stringify(requestBodies[1]).includes('updated preference'), 'retry reads the latest personalization');
     assert.ok(JSON.stringify(requestBodies[1]).includes('引用需要保留'), 'retry includes the original quote');
-    assert.ok(requestBodies[1].messages.some((message) => message.feedback === 'bad'), 'retry includes feedback on the version being replaced');
+    assert.ok(JSON.stringify(requestBodies[1]).includes('踩（没有帮助）'), 'retry includes feedback on the version being replaced');
     await act(async () => { chat.dispatch({ type: 'delete', id: sourceId }); });
     await until(() => Object.keys(runtime.runs).length === 0);
     assert.equal(requestSignal.aborted, true);
@@ -1458,13 +1397,13 @@ test('background replies in separate conversations run together, stay unread and
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
   const gates = [];
-  globalThis.fetch = async (url, init) => {
-    const auxiliary = agentAuxiliary(url, init);
-    if (auxiliary) return auxiliary;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) return response('completion', init.signal);
     const gate = deferred();
     gates.push(gate);
     await gate.promise;
-    return agentResponse([{ content: '你好' }, { content: '你好，世界' }]);
+    return response('completion', init.signal);
   };
   let chat, models, runtime;
   function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
@@ -1541,17 +1480,17 @@ test('a supplement sent after the answer text starts becomes a separate follow-u
   const gates = [];
   const requestBodies = [];
   let replyCalls = 0;
-  globalThis.fetch = async (url, init) => {
-    const auxiliary = agentAuxiliary(url, init, { steer: 'deferred' });
-    if (auxiliary) return auxiliary;
-    requestBodies.push(JSON.parse(init.body));
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) return response('completion', init.signal);
+    requestBodies.push(body);
     replyCalls++;
     if (replyCalls === 1) {
       const gate = deferred();
       gates.push(gate);
-      return gatedAgentResponse([{ content: '你好' }], gate);
+      return gatedResponse('completion', gate);
     }
-    return agentResponse([{ content: '好的' }]);
+    return response('completion', init.signal);
   };
   let chat, models, runtime;
   function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
@@ -1653,18 +1592,17 @@ test('AI titles run beside the first reply, retry after a failed turn, and never
   const titleRequests = [];
   const titleSignals = [];
   const errorResponse = () => new Response(JSON.stringify({ error: { message: 'unavailable' } }), { status: 401, headers: { 'content-type': 'application/json' } });
-  globalThis.fetch = async (url, init) => {
-    const target = String(url);
-    if (target === '/api/agent/stop' || target === '/api/agent/steer') return Response.json({ stopped: true });
-    if (target === '/api/agent/title') {
-      titleRequests.push(JSON.parse(init.body));
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (isTitleRequest(body)) {
+      titleRequests.push(body);
       titleSignals.push(init.signal);
       if (fail) return errorResponse();
       if (holdTitle) await new Promise((resolve) => { releaseTitle = resolve; });
-      return Response.json({ title: '你好，世界' });
+      return response('completion', init.signal);
     }
     if (fail) return errorResponse();
-    return agentResponse([{ content: '你好，世界' }]);
+    return response('completion', init.signal);
   };
   let chat, models, runtime;
   function Harness() { chat = useChat(); models = useModels(); runtime = useChatRuntime(); return null; }
@@ -1684,7 +1622,7 @@ test('AI titles run beside the first reply, retry after a failed turn, and never
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
     assert.equal(conversation(firstId).title, 'first message');
     assert.equal(conversation(firstId).titleSource, 'auto');
-    assert.equal(titleRequests[0].config.modelId, 'test-model', 'without a title model the conversation model is used');
+    assert.equal(titleRequests[0].model, 'test-model', 'without a title model the conversation model is used');
     assert.ok(!conversation(firstId).messages.some((message) => message.role === 'assistant' && message.id === 'title'), 'a title never becomes a message');
 
     // A later successful reply retries the title once and applies it.
@@ -1722,7 +1660,7 @@ test('AI titles run beside the first reply, retry after a failed turn, and never
     await act(async () => { assert.equal(runtime.send('fourth conversation', null), true); });
     const fourthId = chat.activeId;
     await until(() => conversation(fourthId)?.titleSource === 'ai', 'the explicit title model generates a title');
-    assert.equal(titleRequests.at(-1).config.modelId, 'title-model-id');
+    assert.equal(titleRequests.at(-1).model, 'title-model-id');
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previous.fetch; globalThis.window = previous.window; globalThis.document = previous.document; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
@@ -1932,26 +1870,16 @@ test('the process header stays running after thinking ends and measures through 
     { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } },
     { type: 'message_stop' },
   ];
-  globalThis.fetch = async (url, init) => {
-    const auxiliary = agentAuxiliary(url, init);
-    if (auxiliary) return auxiliary;
+  globalThis.fetch = async (_url, init) => {
     const encoder = new TextEncoder();
-    const frames = [
-      'event: ready\ndata: {}\n\n',
-      `event: update\ndata: ${JSON.stringify({ content: '', reasoning: '先想一下', reasoningActive: true })}\n\n`,
-      `event: update\ndata: ${JSON.stringify({ content: '', reasoning: '先想一下', reasoningActive: false })}\n\n`,
-      `event: update\ndata: ${JSON.stringify({ content: '答案', reasoning: '先想一下', reasoningActive: false })}\n\n`,
-      `event: done\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`,
-    ];
+    const chunks = frames.map((frame) => encoder.encode(`event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`));
     let index = 0;
     return new Response(new ReadableStream({
       async pull(controller) {
-        if (index === frames.length) { controller.close(); return; }
-        // Thinking stops before the first answer token, so the header must stay active.
-        if (index === 3) await new Promise((resolve) => setTimeout(resolve, 120));
-        // The pause is the answer streaming after thinking has already stopped.
+        if (index === chunks.length) { controller.close(); return; }
+        // Pause is the answer streaming after thinking has already stopped.
         if (index === 4) await new Promise((resolve) => setTimeout(resolve, gapAfterThinkingMs));
-        controller.enqueue(encoder.encode(frames[index++]));
+        controller.enqueue(chunks[index++]);
       },
     }), { headers: { 'content-type': 'text/event-stream' } });
   };

@@ -6,7 +6,7 @@ import {
   MIN_VISIBLE_OUTPUT_TOKENS,
   thinkingBudgetFor,
   thinkingBudgetsFor,
-} from '../agent/src/core/thinking-budget.ts';
+} from '../src/core/agent/thinking-budget.ts';
 
 test('thinking budgets always leave room for the visible answer', () => {
   for (const maxOutput of [4096, 8192, 16384, 32768, 200000]) {

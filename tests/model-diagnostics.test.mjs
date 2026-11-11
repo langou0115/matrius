@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAssistantMessageEventStream } from '@mariozechner/pi-ai';
 
-import { createReplyRun } from '../agent/src/core/runner.ts';
-import { createReplyDiagnostics, replyDiagnostics } from '../agent/src/core/diagnostics.ts';
+import { createReplyRun } from '../src/core/agent/runner.ts';
+import { createReplyDiagnostics, replyDiagnostics } from '../src/core/agent/diagnostics.ts';
 
 const config = {
   id: 'test', name: 'Test', modelId: 'test-model', protocol: 'completion',

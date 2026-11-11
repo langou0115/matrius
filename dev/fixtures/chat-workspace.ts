@@ -1,4 +1,4 @@
-import type { MessageFile } from '../../agent/src/core/types';
+import type { MessageFile } from '../../src/core/agent/types';
 import type { Conversation } from '../../src/features/chat/chat-state';
 import type { WorkspaceData } from '../../src/features/workspace/workspace-repository';
 

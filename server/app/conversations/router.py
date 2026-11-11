@@ -18,7 +18,6 @@ from app.conversations.schemas import (
 from app.conversations.serializers import conversation_out, message_out
 from app.db import get_db
 from app.errors import conflict, invalid, not_found
-from app.features.dependencies import require_feature
 from app.instance.dependencies import InstanceContext, read_rate_limit, write_rate_limit
 from app.models import Conversation, ConversationDeletion, Message, StoredFile
 from app.utils import (
@@ -330,10 +329,6 @@ async def create_message(
     ctx: InstanceContext = Depends(write_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    if payload.uiArtifacts:
-        await require_feature("generative-ui")(ctx)
-        if payload.role != "assistant":
-            raise invalid("UI artifacts require an assistant message.")
     client_id = validate_client_id(payload.clientId)
     existing = await _find_by_id_or_client(db, Message, ctx.instance_id, payload.id, client_id)
     if existing is not None:
@@ -368,7 +363,6 @@ async def create_message(
         reasoning=payload.reasoning,
         activities=activities_payload(payload.activities),
         process=process_payload(payload.process),
-        ui_artifacts=[item.model_dump(exclude_none=True) for item in payload.uiArtifacts] or None,
         thinking_ms=payload.thinkingMs,
         status=status,
         error=payload.error,
@@ -431,12 +425,6 @@ async def update_message(
         setattr(message, _snake(name), fields[name])
     if "activities" in fields:
         message.activities = activities_payload(payload.activities)
-    if "uiArtifacts" in fields:
-        if payload.uiArtifacts:
-            await require_feature("generative-ui")(ctx)
-            if message.role != "assistant":
-                raise invalid("UI artifacts require an assistant message.")
-        message.ui_artifacts = [item.model_dump(exclude_none=True) for item in payload.uiArtifacts or []] or None
     if "process" in fields:
         message.process = process_payload(payload.process)
 

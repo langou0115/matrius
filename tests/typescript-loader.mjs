@@ -19,7 +19,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier.endsWith('.css')) {
     return { url: 'data:text/javascript,export default {}', shortCircuit: true };
   }
-  const local = specifier.startsWith('@agent/') ? pathToFileURL(resolvePath('agent/src', specifier.slice(7))) : specifier.startsWith('@/')
+  const local = specifier.startsWith('@/')
     ? pathToFileURL(resolvePath('src', specifier.slice(2)))
     : specifier.startsWith('.') && context.parentURL ? new URL(specifier, context.parentURL) : null;
   if (local?.protocol === 'file:' && !local.pathname.includes('/node_modules/')) {

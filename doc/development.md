@@ -9,8 +9,8 @@
 当前使用 npm 和 `package-lock.json`，前端为 React 19 + TypeScript，Vite 8 构建，React Router 7 路由。需要 Node.js 24 与 npm。
 
 ```bash
-npm ci                         # 根据锁文件安装依赖（含 agent 工作区），postinstall 生成 KaTeX 本地资源
-npm run dev                    # 常驻：迁移数据库 + FastAPI reload + agent 进程 + Vite
+npm ci                         # 根据锁文件安装依赖，postinstall 生成 KaTeX 本地资源
+npm run dev                    # 常驻：迁移数据库 + FastAPI reload + Vite
 npm run dev -- --check         # 只校验工具、端口与路径，不启动服务
 npm run dev -- --clear         # 重建 Vite 依赖预构建后启动
 npm run db:migrate             # 只迁移 server/.data/matrius.db，不启动服务
@@ -215,12 +215,3 @@ uv run --no-sync pytest
 - 密钥与 Provider、模型元数据都保留在本机浏览器，删除服务商或清除站点数据才会移除密钥。无鉴权本地模型取消“接口需要 API key”。Chat Mock 支持相同真实调用，但会话和 Provider 配置只存在本次预览内存中。
 
 - 模型 SVG 图标来自 `@thesvg/react`，按单图标路径导入，选择品牌提供的彩色版本并保留原始填色/渐变；无需图标生成脚本，也不运行时请求外部图片。
-
-
-### Node Agent 边界
-
-Agent 代码集中在 `agent/src/`。`core/` 包含模型循环、工具、上下文处理、共享类型和浏览器可用的远程适配。前端只导入共享类型、纯函数及 `remote-run` / `remote-client`；模型执行留在 Node，包括通过 `/api/agent/memory/edit` 编辑记忆。
-
-生产保持 Caddy / Web / API 三个容器。API 镜像从仓库根构建，在单 worker Uvicorn 旁运行独立 Node Agent。`scripts/run-services.mjs` 在任一进程退出时停止另一个，容器健康检查同时探测 8000 和 8123。Caddy 优先将 `/api/agent/*` 与 `/api/copilotkit`（含子路径）流式转发至 `api:8123`。
-
-Python 仍是唯一数据库写入者，浏览器通过 REST 保存消息。运行状态只保存在内存：断开连接会停止运行，进程重启不会续跑；已收到内容沿用现有保存流程。模型密钥随单次请求传入，不在 Node 持久化。

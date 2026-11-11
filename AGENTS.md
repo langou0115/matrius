@@ -21,8 +21,7 @@ Matrius 是 React 19 + TypeScript（Vite 8）前端与 FastAPI 后端的自部�
 
 ```bash
 npm ci
-npm run dev                 # 本机迁移 + Agent + Vite + FastAPI 热更新，SQLite 与文件都在 server/.data
-npm run agent               # 只启动 agent 进程（默认 127.0.0.1:8123）
+npm run dev                 # 本机迁移 + Vite + FastAPI 热更新，SQLite 与文件都在 server/.data
 npm run build               # Vite 生产构建到 dist/（Dockerfile.web 使用，日常开发不需要）
 npm run deploy              # 唯一生产发布入口
 npm run db:migrate          # 只迁移本机开发库，不启动服务
@@ -54,12 +53,12 @@ uv run --no-sync pytest
 ## 架构与边界
 
 - 依赖方向：UI → features → storage → data source。
-- Agent Runtime 在独立的 Node agent 进程（`agent/`）运行，浏览器只提交请求并渲染流；模型调用全部由该进程发起，Python 只提供工具 API 与数据。agent 不直连 SQLite，消息仍由浏览器经 REST 写入。
+- Agent Runtime 在客户端运行；服务端只提供工具 API 和单次模型代理。
 - 单用户实例：服务端是业务数据的唯一事实源，不提供本地工作区、匿名使用或本地/云端切换；IndexedDB 仅存模型配置、密钥和设备状态。
 - 模型密钥只存客户端，不写日志、不上传。
 - 无需登录，所有客户端共享唯一实例；业务表使用 instance_id=1，写操作使用 baseRevision 乐观并发。
 - SQLite 存持久数据（单服务器、单实例、单 uvicorn worker），数据库为 `DATA_DIR/matrius.db`，文件落在 `DATA_DIR/files/<fileId>/<文件名>`，文档草稿落在 `DATA_DIR/drafts`（进程内元数据 + 文件系统，重启即失效），限流与短期缓存只存在于 API 进程内存；结构变更走 Alembic，并确保能在空库执行。
-- 文档引擎：`server/vendor/officecli` 内置 Linux x64 与 Windows x64 二进制，生产镜像固定使用 Linux 版；旧版 Office 转换依赖 LibreOffice。工具 API 在服务端无状态执行，agent 进程只负责调度与参数组装。macOS 本机需设置 `OFFICECLI_PATH`。
+- 文档引擎：`server/vendor/officecli` 内置 Linux x64 与 Windows x64 二进制，生产镜像固定使用 Linux 版；旧版 Office 转换依赖 LibreOffice。工具 API 在服务端无状态执行，Agent 仍在客户端。macOS 本机需设置 `OFFICECLI_PATH`。
 - 保持简单：不引入微服务、多 Agent 编排、RBAC、组织、租户或多用户管理；`/admin` 与 `/api/admin/*` 已移除。
 - 新增状态管理、网络或代码生成库前先与维护者确认。
 
@@ -72,7 +71,7 @@ uv run --no-sync pytest
 ## 部署
 
 - 唯一入口是 `npm run deploy`：同步源码、服务器构建生产镜像、健康检查后退出。不运行 Vite 或 Uvicorn 热重载。
-- `npm run dev` 完全在本机常驻运行 Agent、Vite 与 FastAPI，数据在 `server/.data/matrius.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
+- `npm run dev` 完全在本机常驻运行 Vite 与 FastAPI，数据在 `server/.data/matrius.db` 和 `server/.data/files`，不访问服务器；Ctrl+C 仅停止本机进程。启动时自动迁移开发库并运行 `alembic check`；开发会话已运行时可用 `npm run db:migrate` 单独升级同一个开发库，不会读取生产 `DATABASE_URL` / `DATA_DIR`。
 - 部署成功后，`registry.py` 中登记的功能立即对实例开放。
 - 生产只运行 Caddy / Web / API 三个容器，持久化只有 `matrius_prod_api_data` 卷（SQLite + 上传文件）。API 镜像额外包含 Linux OfficeCLI、LibreOffice 与中文字体，镜像会明显增大；`/tmp` 使用 512 MiB tmpfs 供转换使用。
 - API 必须保持单 uvicorn worker：文档草稿与限流都在进程内，多 worker 会不可见且互相拆分限额。`npm run deploy` 没有子命令：首次执行自动初始化，之后每次都会备份数据库、应用迁移、更新 Web/API 与 Caddy；`--remove-orphans` 会清理旧拓扑遗留容器。

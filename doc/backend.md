@@ -7,10 +7,16 @@
 ## 边界
 
 ```text
-React browser -- /api/agent/*, /api/copilotkit --> Node Agent --> Model provider
-     |                                               |
-     |                                               +--> Python tool API
-     +-- REST /api/* --> FastAPI --> SQLite / files / document engine
+客户端 Agent Runtime（上下文、循环、流式事件、工具调度、取消）
+    │
+    ├── REST /api/* ──────────────→ FastAPI
+    │                                 ├── 校验、限流
+    │                                 ├── SQLite（事实源，/data/matrius.db）
+    │                                 ├── 本地文件（/data/files）
+    │                                 ├── 进程内缓存与限流
+    │                                 └── DuckDuckGo / Bing（搜索）、trafilatura（网页提取）
+    │
+    └── /api/model-proxy/* ──────→ 现有 Node 模型中继 → 模型服务商
 ```
 
 - 服务端**不运行 Agent Loop**，不保存流式中间态，也不保管模型 API key。
@@ -314,14 +320,3 @@ token_usage_daily, token_usage_estimate_daily, usage_backfills
 ## 实例功能开关
 
 功能清单位于 `app/features/registry.py`；GET /api/features 无需凭据，返回此实例全部已登记功能。前端使用 useFeature / FeatureGate，后端使用 require_feature。响应禁止缓存，无账户授权或改密门禁。
-
-
-### Node Agent 边界
-
-消息创建、更新、详情和导入支持 `uiArtifacts`。API 校验产物名称、结构与大小，存入 `messages.ui_artifacts`；非空 UI 写入检查 `generative-ui` 功能。Node 将模型 UI 工具调用转为独立快照，并在 CopilotKit 路径发出 `TOOL_CALL_START/ARGS/END/RESULT`。Python 不执行生成的脚本。
-
-Agent 代码集中在 `agent/src/`。`core/` 包含模型循环、工具、上下文处理、共享类型和浏览器可用的远程适配。前端只导入共享类型、纯函数及 `remote-run` / `remote-client`；模型执行留在 Node，包括通过 `/api/agent/memory/edit` 编辑记忆。
-
-生产保持 Caddy / Web / API 三个容器。API 镜像从仓库根构建，在单 worker Uvicorn 旁运行独立 Node Agent。`scripts/run-services.mjs` 在任一进程退出时停止另一个，容器健康检查同时探测 8000 和 8123。Caddy 优先将 `/api/agent/*` 与 `/api/copilotkit`（含子路径）流式转发至 `api:8123`。
-
-Python 仍是唯一数据库写入者，浏览器通过 REST 保存消息。运行状态只保存在内存：断开连接会停止运行，进程重启不会续跑；已收到内容沿用现有保存流程。模型密钥随单次请求传入，不在 Node 持久化。

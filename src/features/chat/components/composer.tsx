@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
-import type { MessageFile } from '@agent/core/types';
-import type { ThinkingEffort } from '@agent/core/thinking-effort';
+import type { MessageFile } from '@/core/agent/types';
+import type { ThinkingEffort } from '@/core/agent/thinking-effort';
 import { Icon } from '@/components/web/icon';
 import { ChevronRight, Paperclip } from 'lucide-react';
 import { useModels } from '@/features/models/model-state';

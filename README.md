@@ -41,7 +41,7 @@ npm ci
 npm run dev
 ```
 
-打开 `http://localhost:8081`，登录实例后在「设置 → 模型服务」添加服务商和模型后即可对话。`npm ci` 会同时安装 agent 工作区（`agent/`）的依赖；`npm run dev` 会同时跑 FastAPI、Vite 和 agent 进程（`127.0.0.1:8123`）。模型调用全部在 agent 进程里发出，浏览器只负责界面与请求。
+打开 `http://localhost:8081`，登录实例后在「设置 → 模型服务」添加服务商和模型后即可对话。
 
 
 开发模式可访问 `/mock`，其中 `/mock/process` 可预览思考过程、工具步骤和中断状态，`/mock/storage` 可预览保存失败提示，均不调用模型；回答末尾的来源区留待后续实现。Vite 的 HMR 会自行重连，模型回复生成期间不再暂停热更新；刷新或离开页面时仍保留 `beforeunload` 确认，避免误丢正在进行的回复。正式 Web 使用静态生产构建。
@@ -92,14 +92,3 @@ npm run test
 ## 许可
 
 见 [LICENSE](LICENSE)。
-
-
-### Node Agent 边界
-
-主聊天支持模型生成对比表格、卡片、步骤与交互图表/计算器，生成的 UI 随消息保存并在历史会话恢复。`/copilot` 复用同一套组件与工具契约。动态界面采用隔离 iframe，只运行自包含内容，不加载外部资源。
-
-Agent 代码集中在 `agent/src/`。`core/` 包含模型循环、工具、上下文处理、共享类型和浏览器可用的远程适配。前端只导入共享类型、纯函数及 `remote-run` / `remote-client`；模型执行留在 Node，包括通过 `/api/agent/memory/edit` 编辑记忆。
-
-生产保持 Caddy / Web / API 三个容器。API 镜像从仓库根构建，在单 worker Uvicorn 旁运行独立 Node Agent。`scripts/run-services.mjs` 在任一进程退出时停止另一个，容器健康检查同时探测 8000 和 8123。Caddy 优先将 `/api/agent/*` 与 `/api/copilotkit`（含子路径）流式转发至 `api:8123`。
-
-Python 仍是唯一数据库写入者，浏览器通过 REST 保存消息。运行状态只保存在内存：断开连接会停止运行，进程重启不会续跑；已收到内容沿用现有保存流程。模型密钥随单次请求传入，不在 Node 持久化。

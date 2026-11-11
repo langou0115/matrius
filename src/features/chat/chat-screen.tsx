@@ -3,10 +3,10 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
-import type { MessageFile } from '@agent/core/types';
-import { buildSystemPrompt } from '@agent/core/system-prompt';
-import { createFileTool, fileToolsSystemPrompt } from '@agent/core/file-tools';
-import { createWebTools, webToolsSystemPrompt } from '@agent/core/web-tools';
+import type { MessageFile } from '@/core/agent/types';
+import { buildSystemPrompt } from '@/core/agent/system-prompt';
+import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
+import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { Composer } from './components/composer';
 import { ContextMeter } from './components/context-meter';
@@ -14,7 +14,7 @@ import { measureContextUsage } from './context-usage';
 import { ConversationTitle } from './components/conversation-title';
 import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom';
 import { useDrafts } from './draft-state';
-import { AssistantAnswer } from '@/features/copilot/ui-artifacts';
+import { MessageContent } from './components/message-content';
 import { MessageAttachments } from './components/message-attachments';
 import { GeneratedFiles } from './components/generated-files';
 import { CollapsibleMessageContent } from './components/collapsible-message-content';
@@ -64,7 +64,6 @@ export default function ChatScreen() {
   const memory = useMemory();
   const networkTools = useNetworkTools();
   const filesEnabled = useFeature('files');
-  const uiEnabled = useFeature('generative-ui');
   const instance = useInstance();
   const preview = useIsPreview();
   const [notices, setNotices] = useState<ChatNoticeItem[]>([]);
@@ -200,7 +199,7 @@ export default function ChatScreen() {
               ? <UserMessage key={message.id} message={message} />
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} process={message.process} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} open={reasoningOpen[message.id] ?? false} onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [message.id]: open }))} />}
-              <AssistantAnswer content={message.content} streaming={message.status === 'streaming'} artifacts={uiEnabled ? message.uiArtifacts : undefined} onPrompt={generating ? undefined : (text) => { runtime.send(text, conversation.id); }} />
+              <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
               <ReplyStatus message={message} onRetry={message.status === 'error' && message.id === lastMessage?.id && !generating
                 ? () => runtime.retry(conversation.id) : undefined} />
               {/* Saved files wait for the reply to finish, so the answer is not pushed down mid-stream. */}

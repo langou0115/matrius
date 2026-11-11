@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field
 from pydantic_core import PydanticCustomError
 
 
@@ -75,7 +75,10 @@ def process_payload(values: list[ProcessActivity] | None) -> list[dict[str, Any]
     """Keep the event order: thinking segments and tool calls are interleaved on purpose."""
     if not values:
         return None
-    return [value.model_dump(exclude_none=True, exclude_defaults=isinstance(value, WebActivity)) for value in values]
+    return [
+        value.model_dump(exclude_none=True, exclude_defaults=isinstance(value, WebActivity))
+        for value in values
+    ]
 
 
 class ReadMarker(BaseModel):
@@ -116,64 +119,7 @@ class ConversationPatch(BaseModel):
     readState: ReadStateUpdate | None = None
 
 
-class UiTableProps(BaseModel):
-    title: str = Field(max_length=300)
-    columns: list[Annotated[str, Field(max_length=300)]] = Field(min_length=1, max_length=8)
-    rows: list[Annotated[list[Annotated[str, Field(max_length=2000)]], Field(max_length=8)]] = Field(max_length=50)
-    note: str | None = Field(default=None, max_length=2000)
-
-
-class UiCardItem(BaseModel):
-    label: str = Field(max_length=300)
-    value: str = Field(max_length=2000)
-
-
-class UiCardProps(BaseModel):
-    title: str = Field(max_length=300)
-    items: list[UiCardItem] = Field(min_length=1, max_length=12)
-    note: str | None = Field(default=None, max_length=2000)
-
-
-class UiStep(BaseModel):
-    title: str = Field(max_length=300)
-    detail: str | None = Field(default=None, max_length=2000)
-
-
-class UiStepsProps(BaseModel):
-    title: str = Field(max_length=300)
-    steps: list[UiStep] = Field(min_length=1, max_length=12)
-
-
-class UiSandboxProps(BaseModel):
-    initialHeight: int = Field(ge=160, le=1200)
-    placeholderMessages: list[Annotated[str, Field(max_length=300)]] = Field(max_length=5)
-    css: str = Field(max_length=50000)
-    html: str = Field(max_length=100000)
-    jsFunctions: str = Field(max_length=50000)
-    jsExpressions: str = Field(max_length=50000)
-
-
-class UiArtifact(BaseModel):
-    textOffset: int | None = Field(default=None, ge=0, le=1000000)
-    streaming: bool | None = None
-    id: str = Field(min_length=1, max_length=128)
-    name: Literal["comparisonTable", "keyValueCard", "stepsList", "generateSandboxedUi"]
-    props: dict[str, Any]
-
-    @model_validator(mode="after")
-    def validate_props(self):
-        schema = {
-            "comparisonTable": UiTableProps,
-            "keyValueCard": UiCardProps,
-            "stepsList": UiStepsProps,
-            "generateSandboxedUi": UiSandboxProps,
-        }[self.name]
-        self.props = schema.model_validate(self.props).model_dump(exclude_none=True)
-        return self
-
-
 class MessageCreate(BaseModel):
-    uiArtifacts: list[UiArtifact] = Field(default_factory=list, max_length=12)
     id: uuid.UUID | None = None
     clientId: str | None = None
     role: Literal["user", "assistant"]
@@ -191,7 +137,6 @@ class MessageCreate(BaseModel):
 
 
 class MessagePatch(BaseModel):
-    uiArtifacts: list[UiArtifact] | None = Field(default=None, max_length=12)
     baseRevision: int = Field(ge=1)
     content: str | None = Field(default=None, max_length=1_000_000)
     quote: str | None = Field(default=None, max_length=1_000_000)

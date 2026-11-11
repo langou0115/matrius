@@ -10,7 +10,7 @@ import {
   getFileActivityStart,
   normalizeFile,
   salvageTruncatedArguments,
-} from '../agent/src/core/file-tools.ts';
+} from '../src/core/agent/file-tools.ts';
 
 const file = (id, filename = `${id}.pdf`, size = 1024, revision = 1) => ({
   id, filename, contentType: 'application/pdf', size, revision,
