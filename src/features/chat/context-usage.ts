@@ -5,12 +5,16 @@ import type { Message } from '@/core/agent/types';
 import type { ReplyUpdate } from '@/core/agent/types';
 import type { AgentTool } from '@mariozechner/pi-agent-core';
 import { appendConversationSummary, type ConversationSummary } from '@/core/agent/compaction';
+import type { MemoryPreferences } from '@/core/agent/memory';
+import { memoryPromptBlock } from '@/core/agent/memory';
 
-/** Latest call occupancy, or an estimate of the next request when no call is available. */
+/** One call's prompt-side split plus its output, or an estimate of the next request. */
 export type ContextUsage = {
-  /** Latest call input including cache, or estimated system/tools/user history. */
-  input: number;
-  /** Latest call output, or assistant text in the estimated next request. */
+  /** Prompt tokens that were not served from cache (including tokens written to it). */
+  uncachedInput: number;
+  /** Prompt tokens read from the provider cache. */
+  cachedInput: number;
+  /** Tokens produced by the latest call. */
   output: number;
   /** Occupancy of one call, never the sum of multiple billed calls. */
   total: number;
@@ -23,38 +27,44 @@ export type ContextUsage = {
 };
 
 /**
- * Live readings come from the latest individual model call. Before a call (including after
- * reload), estimate retained text, summary and tool definitions; never substitute daily usage.
+ * Live readings come from the latest individual model call, split into uncached input, cached
+ * input and output. Before a call (including after reload), estimate retained text, summary and
+ * tool definitions as uncached input; never substitute daily usage.
  */
 export function measureContextUsage(
   messages: Message[],
   systemPrompt: string,
   config: Pick<ModelConfig, 'contextWindow' | 'maxOutput'>,
-  options: { tools?: AgentTool[]; summary?: ConversationSummary; latestCall?: ReplyUpdate['contextTokens'] } = {},
+  options: { tools?: AgentTool[]; summary?: ConversationSummary; memory?: MemoryPreferences; latestCall?: ReplyUpdate['contextTokens'] } = {},
 ): ContextUsage {
   const covered = options.summary ? messages.findIndex((message) => message.id === options.summary!.coveredUntilMessageId) : -1;
   if (covered >= 0) {
     messages = messages.slice(covered + 1);
     systemPrompt = appendConversationSummary(systemPrompt, options.summary!.summary);
   }
-  let input = estimateTextTokens(systemPrompt);
-  if (options.tools?.length) input += estimateTextTokens(JSON.stringify(options.tools.map(({ name, description, parameters }) => ({ name, description, parameters }))));
+  let estimatedInput = estimateTextTokens(systemPrompt);
+  if (options.tools?.length) {
+    estimatedInput += estimateTextTokens(JSON.stringify(options.tools.map(({ name, description, parameters }) => ({ name, description, parameters }))));
+  }
+  for (const message of withoutFailedReplies(messages)) estimatedInput += estimateMessageTokens(message);
+  if (options.memory) estimatedInput += estimateTextTokens(memoryPromptBlock(options.memory));
+
+  let uncachedInput = estimatedInput;
+  let cachedInput = 0;
   let output = 0;
-  for (const message of withoutFailedReplies(messages)) {
-    const tokens = estimateMessageTokens(message);
-    if (message.role === 'user') input += tokens;
-    else output += tokens;
-  }
   if (options.latestCall) {
-    input = options.latestCall.input;
-    output = options.latestCall.output;
+    const input = Math.max(0, options.latestCall.input);
+    cachedInput = Math.min(input, Math.max(0, options.latestCall.cacheRead ?? 0));
+    uncachedInput = Math.max(0, input - cachedInput);
+    output = Math.max(0, options.latestCall.output);
   }
-  const total = input + output;
+  const total = uncachedInput + cachedInput + output;
   const window = Math.max(1, config.contextWindow);
   const reservedOutput = Math.min(config.maxOutput, Math.floor(window * 0.5));
   const limit = Math.max(1, window - reservedOutput - CONTEXT_SAFETY_TOKENS);
   return {
-    input,
+    uncachedInput,
+    cachedInput,
     output,
     total,
     window,

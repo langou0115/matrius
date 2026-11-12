@@ -548,6 +548,51 @@ async def web_search(
     return await _search_uncached(query, limit, None, trace)
 
 
+async def web_search_many(
+    queries: list[str],
+    limit: int,
+    *,
+    trace: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Search several related queries in one tool call and merge the unique results.
+
+    A single query keeps the exact old path (and cache key). Multiple queries run concurrently;
+    the merged list is deduplicated by canonical URL and re-ranked against all query terms so
+    one call can supply enough candidates for a batch page read.
+    """
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        value = query.strip()
+        if value and value not in seen:
+            seen.add(value)
+            normalized.append(value)
+    if not normalized:
+        return []
+    if len(normalized) == 1:
+        return await web_search(normalized[0], limit, trace=trace)
+
+    per_query_limit = max(10, min(CANDIDATE_LIMIT, limit))
+    settled = await asyncio.gather(
+        *(web_search(query, per_query_limit) for query in normalized),
+        return_exceptions=True,
+    )
+    merged: list[dict[str, Any]] = []
+    failures: list[BaseException] = []
+    for outcome in settled:
+        if isinstance(outcome, BaseException):
+            failures.append(outcome)
+        else:
+            merged.extend(outcome)
+
+    if not merged and failures and len(failures) == len(normalized):
+        raise failures[0]
+
+    if trace is not None:
+        trace.update({"queries": normalized, "failedQueries": len(failures)})
+    return _select_diverse(_rank_relevant(" ".join(normalized), _dedupe(merged)), limit)
+
+
 async def _search_uncached(
     query: str,
     limit: int,

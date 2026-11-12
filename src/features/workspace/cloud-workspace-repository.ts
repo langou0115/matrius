@@ -1,4 +1,4 @@
-import { compactActivities } from '@/core/agent/activity-payload';
+import { compactActivities, compactProcess } from '@/core/agent/activity-payload';
 import type { ConversationSummary } from '@/core/agent/compaction';
 import { ApiError } from '@/core/api/instance-client';
 import type { Conversation, Message } from '@/features/chat/chat-state';
@@ -32,15 +32,20 @@ const metadata = (value: Conversation) => ({
   contextSummary: value.contextSummary ?? null,
   readState: { completed: marker(value.completedReadAt), error: marker(value.errorReadAt) },
 });
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const messageBody = (value: Message) => ({
   role: value.role, content: value.content, quote: value.quote ?? null, reasoning: value.reasoning ?? null,
-  process: value.process ?? null,
+  // The ordered process carries raw tool entries; the server re-validates each one, so it goes
+  // through the same limits as `activities` instead of uploading whatever the run produced.
+  process: compactProcess(value.process),
   thinkingMs: value.thinkingMs ?? null, feedback: value.feedback ?? null,
   status: value.status === 'streaming' ? 'stopped' : value.status ?? 'complete', error: value.error ?? null,
   ...(value.role === 'user' && value.steering ? { steering: true } : {}),
   ...(value.role === 'assistant' ? { activities: compactActivities(value.activities) } : {}),
   // Image attachments contribute their cloud ids while only documents have metadata here.
-  fileIds: value.fileIds ?? value.files?.map((file) => file.id) ?? [],
+  // The server takes UUIDs only; a local placeholder would reject the whole message.
+  fileIds: (value.fileIds ?? value.files?.map((file) => file.id) ?? [])
+    .filter((id) => uuidPattern.test(id)).slice(0, 20),
 });
 
 /** The server puts the conflicting record in the error body so the caller can resync. */

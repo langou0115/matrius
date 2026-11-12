@@ -42,11 +42,26 @@ function clearSaveErrorSoon(timers: ErrorTimers, setError: (message: string | nu
   timers.timer = setTimeout(finish, wait);
 }
 
+/** The server names the offending field on a rejected payload; without it a 422 reads like a
+    generic outage and gives the reader nothing to act on. */
+function validationField(payload: unknown): string | null {
+  const details = (payload as { error?: { details?: unknown } } | undefined)?.error?.details;
+  if (!Array.isArray(details) || !details.length) return null;
+  const loc = (details[0] as { loc?: unknown }).loc;
+  if (!Array.isArray(loc)) return null;
+  const parts = loc.filter((part) => typeof part === 'string' && part !== 'body');
+  return parts.length ? parts.join('.') : null;
+}
+
 /** Name the cause: "sometimes while a reply runs" is not actionable, but 429 / 5xx / network is. */
 function saveErrorMessage(reason: unknown): string {
   if (reason instanceof ApiError) {
     if (reason.status === 0) return '最新修改未能保存到云端：暂时无法连接服务器。请检查网络后重试。';
     if (reason.status === 429) return '最新修改未能保存到云端：写入过于频繁（429）。请先保留未保存内容，稍后刷新页面。';
+    if (reason.status === 422) {
+      const field = validationField(reason.payload);
+      return `最新修改未能保存到云端：请求参数不合法${field ? `（${field}）` : ''}。请先保留未保存内容，再刷新页面。`;
+    }
     return `最新修改未能保存到云端：${reason.message}（${reason.status}${reason.code ? ` ${reason.code}` : ''}）。请先保留未保存内容，再刷新页面。`;
   }
   const detail = reason instanceof Error && reason.message ? `（${reason.message}）` : '';

@@ -36,6 +36,7 @@ class WebActivity(BaseModel):
     kind: Literal["search", "fetch", "file"]
     status: Literal["running", "complete", "stopped", "error"]
     query: str | None = Field(default=None, max_length=500)
+    queries: list[str] | None = Field(default=None, max_length=4)
     results: list[WebSearchResult] = Field(default_factory=list, max_length=20)
     url: HttpUrl | None = None
     urls: list[HttpUrl] = Field(default_factory=list, max_length=10)

@@ -8,10 +8,12 @@ import httpx
 import pytest
 from ddgs.engines import ENGINES
 from ddgs.exceptions import RatelimitException, TimeoutException
+from pydantic import ValidationError
 
 from app import cache
 from app.errors import AppError
 from app.tools import search
+from app.tools.schemas import SearchRequest
 
 BING_RSS = """
 <rss><channel>
@@ -583,3 +585,58 @@ async def test_degraded_empty_search_is_not_cached(settings, monkeypatch):
     monkeypatch.setattr(search, "_bing_search", bing)
     assert await search.web_search("transient", 3) == []
     assert await cache.cache_get(search_cache_key("transient", 3)) is None
+
+
+def test_search_request_normalizes_query_forms():
+    request = SearchRequest(queries=[" alpha ", "beta", "alpha"])
+    assert request.queries == ["alpha", "beta"]
+    assert request.query == "alpha"
+    with pytest.raises(ValidationError):
+        SearchRequest()
+    with pytest.raises(ValidationError):
+        SearchRequest(queries=["one", "two", "three", "four", "five"])
+
+
+def _search_hit(title: str, url: str) -> dict:
+    return {"title": title, "url": url, "snippet": title, "domain": "example.com", "engine": "test", "rank": 1}
+
+
+async def test_multi_query_search_merges_and_dedupes(monkeypatch):
+    calls: list[tuple[str, int]] = []
+
+    async def fake_web_search(query, limit, *, trace=None):
+        calls.append((query, limit))
+        if query == "alpha":
+            return [_search_hit("Alpha", "https://example.com/a"), _search_hit("Shared old", "https://example.com/shared")]
+        return [_search_hit("Shared newer and longer", "https://example.com/shared"), _search_hit("Beta", "https://example.com/b")]
+
+    monkeypatch.setattr(search, "web_search", fake_web_search)
+    results = await search.web_search_many(["alpha", "beta"], 10)
+    assert sorted(calls) == [("alpha", 10), ("beta", 10)]
+    assert {item["url"] for item in results} == {
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/shared",
+    }
+    shared = next(item for item in results if item["url"] == "https://example.com/shared")
+    assert shared["title"] == "Shared newer and longer"
+
+
+async def test_multi_query_search_keeps_partial_results(monkeypatch):
+    async def fake_web_search(query, _limit, *, trace=None):
+        if query == "broken":
+            raise AppError(502, "upstream_error", "temporary")
+        return [_search_hit("Good", "https://example.com/good")]
+
+    monkeypatch.setattr(search, "web_search", fake_web_search)
+    results = await search.web_search_many(["broken", "good"], 10)
+    assert [item["url"] for item in results] == ["https://example.com/good"]
+
+
+async def test_multi_query_search_raises_when_every_query_fails(monkeypatch):
+    async def fake_web_search(_query, _limit, *, trace=None):
+        raise AppError(502, "upstream_error", "temporary")
+
+    monkeypatch.setattr(search, "web_search", fake_web_search)
+    with pytest.raises(AppError):
+        await search.web_search_many(["alpha", "beta"], 10)

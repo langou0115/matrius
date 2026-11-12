@@ -3,7 +3,7 @@ import type { AgentTool } from '@mariozechner/pi-agent-core';
 import type { ModelConfig } from '@/core/llm/model-config';
 import { validateAgentRequest, validateContextSize } from './context';
 import type { ConversationSummary } from './compaction';
-import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
+import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
 import type { ThinkingEffort } from './thinking-effort';
 import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, TokenUsage, WebActivity } from './types';
 import type { createReplyRun } from './runner';
@@ -16,6 +16,8 @@ export type AgentRequest = {
   apiKey: string;
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
+  /** Long-term memory text travels in the trailing request context, not the cacheable system prompt. */
+  memoryText?: string;
   /** Rolling summary persisted with the conversation; empty means no earlier history is summarized. */
   contextSummary?: ConversationSummary;
   /** Cloud tools available to this run; omitted or empty keeps the text-only local mode. */
@@ -90,7 +92,7 @@ export function createAgentRuntime({
       snapshot = { runs: {}, error: null };
       listeners.clear();
     },
-    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), contextSummary, tools }: AgentRequest): boolean {
+    start({ conversationId, replyId, messages, config, apiKey, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, memoryText, contextSummary, tools }: AgentRequest): boolean {
       if (disposed || active.has(conversationId)) return false;
       // The size check runs after silent compaction, so an over-window history can still be
       // reduced instead of failing before the request starts.
@@ -143,7 +145,7 @@ export function createAgentRuntime({
         if (overflow) return { status: 'error' as const, error: overflow };
         run = createReplyRun({
           config: requestConfig, apiKey, messages: prepared.messages, thinkingEffort,
-          systemPrompt: prepared.systemPrompt, tools, onUpdate(value) {
+          systemPrompt: prepared.systemPrompt, ...(memoryText ? { memoryText } : {}), tools, onUpdate(value) {
             if (disposed || cancelled) return;
             const { contextTokens, ...reply } = value;
             if (contextTokens && snapshot.contexts?.[conversationId] !== contextTokens) {

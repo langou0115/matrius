@@ -37,6 +37,8 @@ export type WebActivity = {
   kind: 'search' | 'fetch' | 'file';
   status: 'running' | 'complete' | 'stopped' | 'error';
   query?: string;
+  /** All queries sent in one web_search call; retained for debugging. */
+  queries?: string[];
   results?: WebSearchResult[];
   url?: string;
   urls?: string[];
@@ -95,7 +97,17 @@ export type Message = {
 export type AgentProfile = { customInstructions: string; aboutName: string; occupation: string; aboutMore: string };
 export type ReplyUpdate = {
   /** Current model call only; never the sum of a run's billable usage. */
-  contextTokens?: { input: number; output: number; modelId: string; contextWindow: number };
+  contextTokens?: {
+    /** Prompt-side total including cached tokens. */
+    input: number;
+    /** Prompt tokens read from the provider cache. */
+    cacheRead?: number;
+    /** Prompt tokens written to the provider cache. */
+    cacheWrite?: number;
+    output: number;
+    modelId: string;
+    contextWindow: number;
+  };
   content: string;
   reasoning: string;
   reasoningActive: boolean;

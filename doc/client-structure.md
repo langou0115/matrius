@@ -44,9 +44,10 @@ src/
 │   ├── chat/
 │   │   ├── chat-state.tsx              会话状态、选择与管理动作
 │   │   ├── draft-state.tsx             独立草稿状态，跨设置导航保留
+│   │   ├── display-preferences.ts      思考块展示与默认展开的设备级开关
 │   │   ├── message-text.ts            用户消息与引用的完整复制文本
 │   │   ├── chat-runtime.tsx            聊天状态/模型设置与共享 Agent 核心之间的 React 适配，含标题请求调度
-│   │   ├── context-usage.ts            上下文窗口优先使用运行中最近单次请求用量；无记录时估算正文、摘要和完整工具定义
+│   │   ├── context-usage.ts            上下文窗口优先使用运行中最近单次请求用量，拆分为未缓存输入、缓存输入和输出；无记录时估算正文、摘要和完整工具定义
 │   │   ├── chat-screen.tsx             欢迎页、消息区、按会话保存的输入草稿
 │   │   ├── chat-route.tsx              URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
@@ -67,6 +68,8 @@ src/
 │   │       ├── message-content.tsx     用户与助手 Markdown/GFM、KaTeX 渲染
 │   │       ├── collapsible-message-content.tsx 长用户消息按渲染高度折叠
 │   │       ├── reasoning-block.tsx     等待与思考共用的状态行及折叠正文
+│   │       ├── research-group.tsx      搜索/读取分组合并、行状态与来源去重
+│   │       ├── research-panel.tsx      来源结果侧栏与窄屏底部弹层
 │   │       ├── reply-status.tsx        停止/失败提示及末条失败回复的重试操作
 │   │       ├── code-block.tsx          代码高亮、复制与折叠
 │   │       ├── model-icon.tsx          theSVG 彩色模型品牌与通用 SVG 标记
@@ -252,4 +255,4 @@ src/
 - `features/workspace/cloud-workspace-repository.ts`：唯一实例的内存 REST 仓储，加载服务端数据并按 revision 保存变化；不访问 IndexedDB，不包含模型配置或凭据。
 - `components/web/instance-workspace.tsx`：生产只加载后端工作区并用 REST 保存；连接不可用时等待重连。开发预览使用内存，不加载正式业务数据。
 
-上下文占用与计费用量分开：运行期间按会话和模型保存最近一次调用的输入（含缓存读取/写入）与输出，不累加各轮调用。新调用开始时从实际请求内容估算，服务商返回用量后更新。运行时数据仅在内存中；刷新后按当前工具定义、保留正文与滚动摘要估算，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。
+上下文占用与计费用量分开：运行期间按会话和模型保存最近一次调用的输入（含缓存读取/写入）与输出，不累加各轮调用；面板把输入拆成未缓存输入和缓存输入，并与输出一起展示。新调用开始时从实际请求内容估算，服务商返回用量后更新。运行时数据仅在内存中；刷新后按当前工具定义、保留正文与滚动摘要估算，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。

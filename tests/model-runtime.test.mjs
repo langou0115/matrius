@@ -17,7 +17,7 @@ import { NetworkToolsProvider } from '../src/features/instance/network-tools-sta
 import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
 import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
-import { createWebTools, getWebActivityEnd, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
+import { createWebTools, getWebActivityEnd, getWebActivityStart, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
 import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.ts';
 import { ApiError } from '../src/core/api/instance-client.ts';
 import { parseWorkspace } from '../src/features/workspace/workspace-repository.ts';
@@ -95,6 +95,8 @@ test('web tools are preferred over memory unless the task needs no outside facts
   assert.match(prompt, /use Chinese for Chinese local policies, places, Chinese-language media and China-specific products/);
   assert.match(prompt, /One search plus one batch read is usually enough/);
   assert.match(prompt, /Batch every URL you need into one web_fetch call/);
+  assert.match(prompt, /pass up to four different queries in one web_search queries array/);
+  assert.match(prompt, /instead of making one more fetch just to strengthen the answer/);
   assert.match(prompt, /Stop searching and reading as soon as the evidence supports an answer/);
 });
 
@@ -104,14 +106,32 @@ test('search tool description carries the topic-based language rule', () => {
   assert.match(tools[0].description, /Chinese local policy, place and China-specific queries in Chinese/);
 });
 
-test('one search asks the server for the full 20-result window', async () => {
+test('one search asks the server for the merged 30-result window', async () => {
   let body;
   const tools = createWebTools(async (_path, init) => {
     body = JSON.parse(init.body);
     return { results: [] };
   });
   await tools[0].execute('search', { query: 'OpenClaw latest version' });
-  assert.equal(body.limit, 20);
+  assert.equal(body.limit, 30);
+  assert.deepEqual(body.queries, ['OpenClaw latest version']);
+});
+
+test('one search can send four queries and keeps them in the activity', async () => {
+  let body;
+  const tools = createWebTools(async (_path, init) => {
+    body = JSON.parse(init.body);
+    return { query: 'first', queries: ['first', 'second'], results: [
+      { title: 'Result', url: 'https://example.com/a', snippet: 'Snippet', domain: 'example.com', engine: 'test', rank: 1 },
+    ] };
+  });
+  const queries = ['first', 'second', 'third', 'fourth'];
+  const result = await tools[0].execute('search', { queries });
+  assert.deepEqual(body.queries, queries);
+  assert.deepEqual(result.details.queries, queries);
+  assert.match(result.content[0].text, /Web search results for: first \/ second \/ third \/ fourth/);
+  const activity = getWebActivityStart('web_search', 'search-1', { queries });
+  assert.deepEqual(activity.queries, queries, 'every keyword stays available for debugging');
 });
 
 test('web tool results carry stop guidance instead of a remaining budget that invites more calls', async () => {
@@ -210,6 +230,16 @@ test('a short retry-after is honoured but cancelling the delay makes no second r
   assert.equal(attempts, 1);
 });
 
+test('the client does not retry a failed page; the API owns the fetch retry budget', async () => {
+  let attempts = 0;
+  const tools = createWebTools(async () => {
+    attempts += 1;
+    throw new ApiError(503, 'busy', 'Temporary failure', 0);
+  });
+  await assert.rejects(tools[1].execute('fetch', { url: 'https://example.com/a' }), /Temporary failure/);
+  assert.equal(attempts, 1, 'one failed page must not be requested twice');
+});
+
 test('multi-page results use OpenStudio-sized excerpts instead of overflowing the next model context', async () => {
   const tools = createWebTools(async (_path, init) => ({ url: JSON.parse(init.body).url, title: 'Page', text: 'x'.repeat(50_000) }));
   const result = await tools[1].execute('fetch', { urls: ['https://example.com/a', 'https://example.com/b'] });
@@ -240,6 +270,16 @@ test('a second fetch cannot exceed the run content budget', async () => {
   const urls = Array.from({ length: 5 }, (_, index) => `https://example.com/${index}`);
   await tools[1].execute('first', { urls });
   await assert.rejects(tools[1].execute('second', { url: 'https://example.com/next' }), /正文预算已用完/);
+});
+
+test('page reads have no per-run page or call count cap', async () => {
+  const tools = createWebTools(async (_path, init) => {
+    const { url } = JSON.parse(init.body);
+    return { url, title: 'Page', text: 'Evidence' };
+  });
+  await tools[1].execute('first', { urls: Array.from({ length: 10 }, (_, index) => `https://example.com/${index}`) });
+  const next = await tools[1].execute('second', { url: 'https://example.com/next' });
+  assert.deepEqual(next.details.urls, ['https://example.com/next']);
 });
 
 test('off-topic search snippets carry a warning rather than being treated as verified evidence', async () => {
@@ -531,6 +571,8 @@ test('steering text is wrapped in context and injected between turns of the same
   assert.match(second, /请改成英文/);
   assert.equal(updates.at(-1).content, '先回答第一段\n\n再补充第二段', 'both turns stay in one visible reply');
   assert.equal(updates.at(-1).contextTokens.input, 900, 'context includes the latest cache read once');
+  assert.equal(updates.at(-1).contextTokens.cacheRead, 800);
+  assert.equal(updates.at(-1).contextTokens.cacheWrite, 0);
   assert.equal(updates.at(-1).contextTokens.output, 20);
   assert.deepEqual(result.usage, { input: 200, output: 40, cacheRead: 1300, cacheWrite: 0 }, 'billing still sums both calls');
 });
@@ -726,7 +768,7 @@ test('personalization defaults, limits and prompt composition keep optional sect
   assert.deepEqual(readPersonalization(undefined), defaultPersonalization);
   for (const prompt of [buildSystemPrompt(defaultPersonalization), buildSystemPrompt({ ...defaultPersonalization, customInstructions: '  \n  ' })]) {
     assert.ok(prompt.startsWith(DEFAULT_SYSTEM_PROMPT));
-    assert.equal(prompt.match(/<current_context>/g)?.length, 1);
+    assert.ok(!prompt.includes('<current_context>'), 'the live clock stays out of the cacheable system prefix');
     assert.ok(!prompt.includes('<user_instructions>') && !prompt.includes('<user_profile>'));
   }
   const preferences = readPersonalization({ customInstructions: '  使用中文\n先给结论  ', aboutName: '小林', memoryEnabled: true });
@@ -832,9 +874,10 @@ test('three real pi providers stream text and preserve multi-turn context withou
       const systemPayload = JSON.stringify(protocol === 'message' ? request.body.system
         : (protocol === 'responses' ? request.body.input : request.body.messages).filter(item => item.role === 'system' || item.role === 'developer'));
       for (const preference of ['优先给出简洁结论', '小林', '设计师', '正在学习编程']) assert.ok(systemPayload.includes(preference), `${protocol} carries personalization as system instructions`);
-      assert.match(systemPayload, /<current_context>/);
-      assert.match(systemPayload, /Current date: \d{4}-\d{2}-\d{2}/);
-      assert.match(systemPayload, /Timezone:/);
+      assert.ok(!systemPayload.includes('<current_context>'), `${protocol} keeps the live clock out of the cached system prefix`);
+      assert.match(payload, /<current_context>/);
+      assert.match(payload, /Current date: \d{4}-\d{2}-\d{2}/);
+      assert.match(payload, /Timezone:/);
       assert.ok(payload.includes('先前的回答'));
       assert.ok(payload.includes('继续'));
       assert.ok(payload.includes('选中的历史回复'), `${protocol} includes the selected quote`);
@@ -1171,8 +1214,9 @@ test('real pi tool loop searches, reads evidence, then answers without losing pr
   let calls = 0;
   const updates = [];
   const toolRequests = [];
-  const frozenPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT, new Date('2026-10-24T16:05:06Z'), 'Asia/Shanghai');
+  const frozenPrompt = DEFAULT_SYSTEM_PROMPT;
   const requestPrompts = [];
+  const requestTimeContexts = [];
   const url = 'https://docs.python.org/3/library/asyncio-task.html';
   const tools = createWebTools(async (path, init) => {
     toolRequests.push(path);
@@ -1183,6 +1227,7 @@ test('real pi tool loop searches, reads evidence, then answers without losing pr
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(init.body);
     requestPrompts.push(body.messages.find((message) => message.role === 'system')?.content);
+    requestTimeContexts.push(body.messages.filter((message) => typeof message.content === 'string' && message.content.includes('<current_context>')));
     const index = calls++;
     if (index === 2) assert.match(JSON.stringify(body.messages), /waits for all tasks/);
     const delta = index < 2 ? { role: 'assistant', content: index === 0 ? '先搜索官方文档。' : '页面已读，开始整理答案。',
@@ -1199,7 +1244,8 @@ test('real pi tool loop searches, reads evidence, then answers without losing pr
     assert.equal(result.status, 'complete');
     assert.equal(calls, 3);
     assert.deepEqual(requestPrompts, [frozenPrompt, frozenPrompt, frozenPrompt], 'the initial system prompt is reused unchanged across search and fetch continuations');
-    assert.equal(requestPrompts[0].match(/<current_context>/g).length, 1);
+    assert.ok(!frozenPrompt.includes('<current_context>'), 'the live clock stays out of the cacheable system prefix');
+    assert.ok(requestTimeContexts.every((items) => items.length === 1 && items[0].role === 'user'), 'each request appends one time-context user message');
     assert.deepEqual(toolRequests, ['/api/tools/search', '/api/tools/fetch']);
     assert.deepEqual(updates.at(-1).activities.map((activity) => activity.status), ['complete', 'complete']);
     assert.match(updates.at(-1).content, /参考\[文档\]/);
@@ -1216,7 +1262,7 @@ test('real pi tool loop searches, reads evidence, then answers without losing pr
   } finally { globalThis.fetch = original; }
 });
 
-test('two five-page fetch batches stay sequential and within the ten-page budget', async () => {
+test('two five-page fetch batches stay sequential without overlapping', async () => {
   const original = globalThis.fetch;
   let modelCalls = 0;
   let active = 0;

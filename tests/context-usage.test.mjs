@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { measureContextUsage } from '../src/features/chat/context-usage.ts';
 
-test('context usage splits estimated input and output against the model window', () => {
+test('context usage estimates the next request as uncached input', () => {
   const messages = [
     { id: 'u1', role: 'user', content: 'a'.repeat(400) },
     { id: 'a1', role: 'assistant', content: 'a'.repeat(200) },
@@ -11,9 +11,10 @@ test('context usage splits estimated input and output against the model window',
   ];
   const usage = measureContextUsage(messages, 'system', { contextWindow: 10_000, maxOutput: 1_000 });
 
-  // system 2 + user (8 + 100) + user (8 + 3); assistant (8 + 50).
-  assert.equal(usage.input, 121);
-  assert.equal(usage.output, 58);
+  // system 2; user (8 + 100) + assistant (8 + 50) + user (8 + 3).
+  assert.equal(usage.uncachedInput, 179);
+  assert.equal(usage.cachedInput, 0);
+  assert.equal(usage.output, 0);
   assert.equal(usage.total, 179);
   assert.equal(usage.window, 10_000);
   assert.equal(usage.limit, 10_000 - 1_000 - 2_048);
@@ -39,15 +40,43 @@ test('tool definitions count toward context and covered history is replaced by i
   const withTools = measureContextUsage(messages, '', config, {
     tools: [{ name: 'file', description: 'instructions'.repeat(1000), parameters: { type: 'object' } }],
   });
-  assert.ok(withTools.input > plain.input + 2000);
+  assert.ok(withTools.uncachedInput > plain.uncachedInput + 2000);
   const summarized = measureContextUsage(messages, '', config, { summary: { coveredUntilMessageId: 'old', summary: 'short' } });
   assert.ok(summarized.total < plain.total);
 });
 
-test('the current call uses provider input including cache, not cumulative billing', () => {
+test('the latest call splits prompt tokens into uncached input and cached input', () => {
+  const usage = measureContextUsage([], '', { contextWindow: 128000, maxOutput: 4096 }, {
+    latestCall: {
+      input: 80000, cacheRead: 30000, cacheWrite: 0,
+      output: 4000, modelId: 'model', contextWindow: 128000,
+    },
+  });
+  assert.equal(usage.uncachedInput, 50000);
+  assert.equal(usage.cachedInput, 30000);
+  assert.equal(usage.output, 4000);
+  assert.equal(usage.total, 84000);
+  assert.equal(usage.percent, 66);
+});
+
+test('cache writes stay in uncached input instead of counting as cache reads', () => {
+  const usage = measureContextUsage([], '', { contextWindow: 10000, maxOutput: 1000 }, {
+    latestCall: {
+      input: 1000, cacheRead: 400, cacheWrite: 100,
+      output: 10, modelId: 'model', contextWindow: 10000,
+    },
+  });
+  assert.equal(usage.uncachedInput, 600);
+  assert.equal(usage.cachedInput, 400);
+  assert.equal(usage.output, 10);
+  assert.equal(usage.total, 1010);
+});
+
+test('a call without cache splits still accounts for its whole prompt', () => {
   const usage = measureContextUsage([], '', { contextWindow: 128000, maxOutput: 4096 }, {
     latestCall: { input: 80000, output: 4000, modelId: 'model', contextWindow: 128000 },
   });
+  assert.equal(usage.uncachedInput, 80000);
+  assert.equal(usage.cachedInput, 0);
   assert.equal(usage.total, 84000);
-  assert.equal(usage.percent, 66);
 });

@@ -1,10 +1,11 @@
-import { AlertCircle, Brain, FileText, Globe2, LoaderCircle, Sparkles } from 'lucide-react';
+import { AlertCircle, Brain, Eye, FileText, Globe2, LoaderCircle, Sparkles } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { SelectField } from '@/components/web/select-field';
 import { useNetworkTools } from '@/features/instance/network-tools-state';
 import { ModelIcon } from '@/features/chat/components/model-icon';
+import { setChatDisplay, useChatDisplay } from '@/features/chat/display-preferences';
 import { MemoryDialog } from '@/features/memory/memory-dialog';
 import { useMemory } from '@/features/memory/memory-state';
 import { useModels } from '@/features/models/model-state';
@@ -38,8 +39,9 @@ function AutoSizeTextarea(props: ComponentProps<'textarea'>) {
   </span>;
 }
 
-function WebToolsSection() {
+function OtherSettingsSection() {
   const { enabled, ready, saving, error, setEnabled } = useNetworkTools();
+  const display = useChatDisplay();
   const busy = !ready || saving;
   return <section className="settings-section" aria-labelledby="other-settings-heading">
     <h2 id="other-settings-heading">其他设置</h2>
@@ -53,6 +55,29 @@ function WebToolsSection() {
         <label className="model-switch-label">
           <input className="model-checkbox-input" type="checkbox" checked={enabled} disabled={busy} aria-label="网页搜索"
             onChange={(event) => void setEnabled(event.target.checked)} />
+          <span className="toggle-switch" aria-hidden="true" />
+        </label>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-icon"><Brain size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="settings-row-copy">
+          <strong>思考块默认展开</strong>
+        </span>
+        <label className="model-switch-label">
+          <input className="model-checkbox-input" type="checkbox" checked={display.thinkingExpanded}
+            disabled={!display.showThinking} aria-label="思考块默认展开"
+            onChange={(event) => setChatDisplay({ thinkingExpanded: event.target.checked })} />
+          <span className="toggle-switch" aria-hidden="true" />
+        </label>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-icon"><Eye size={19} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="settings-row-copy">
+          <strong>展示思考块</strong>
+        </span>
+        <label className="model-switch-label">
+          <input className="model-checkbox-input" type="checkbox" checked={display.showThinking} aria-label="展示思考块"
+            onChange={(event) => setChatDisplay({ showThinking: event.target.checked })} />
           <span className="toggle-switch" aria-hidden="true" />
         </label>
       </div>
@@ -169,6 +194,6 @@ export default function PersonalizationSettingsScreen() {
       </div>
     </section>
     <MemorySection />
-    <WebToolsSection />
+    <OtherSettingsSection />
   </SettingsPage>;
 }

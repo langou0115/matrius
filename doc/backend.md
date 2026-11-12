@@ -122,6 +122,7 @@ DELETE /api/messages/{id}?baseRevision=
 ```
 
 - 字段：`role`（`user|assistant`）、`content`、`steering`（用户补充消息）、`quote`、`reasoning`、`activities`（联网搜索/读取步骤，客户端上传前去掉 snippet/engine）、`process`（完整思考与工具事件顺序，仅用于展示）、`thinkingMs`、`status`（`complete|stopped|error`）、`error`、`feedback`（`good|bad`）、`fileIds`、服务端 `position`。
+- 客户端在上传前把 `activities` 和 `process` 里的工具条目都按服务端上限裁剪：单个搜索结果最多 20 条、URL 最多 10 个且必须是 http(s)、标题/错误等字段截断到对应长度、`process` 最多 100 段、`fileIds` 只保留 UUID。服务端逐条校验，任何一条超限都会让整次保存返回 422，所以多关键词搜索合并出的结果不能原样上传。
 - `steering=true` 只用于真正注入当前 run 的用户补充/纠正；服务端只接受用户消息上的该标记。`position` 仍按追加顺序分配，客户端加载时依据该标记把消息显示在被插话的助手回复之前。回复正文已开始后发送的消息作为下一轮普通用户消息保存，不带该标记，位置就在已完成的回复之后。
 - `status=streaming` 返回 422；用户消息固定 `complete`。
 - `position` 在锁定会话行后取 `max(position)+1`，多设备并发追加不会重号。
@@ -220,10 +221,11 @@ POST /api/usage/backfill { utcOffsetMinutes }   # 每实例一次，估算历史
 ### 搜索
 
 ```text
-POST /api/tools/search { query, limit? (1-20, 默认 10) }
+POST /api/tools/search { query?, queries? (1-4), limit? (1-50, 默认 10) }
 ```
 
 - 主来源是 `ddgs` 的 `duckduckgo` 后端；只有失败、超时、被限流或零结果时才在剩余预算内回退 Bing RSS，不混合两家的结果。整次搜索上限 `SEARCH_TIMEOUT_SECONDS`（默认 8 秒），单次 ddgs 上限 `SEARCH_DDGS_TIMEOUT_SECONDS`（默认 4 秒），为回退预留约 2 秒。DuckDuckGo 的 HTML 接口改用 GET：不少代理出口会对 POST 返回 HTTP 202 验证页，而同一地址仍接受 GET；202/403/429 归类为 `blocked`。
+- `query` 与 `queries` 至少提供一个，合并去重后最多 4 个；多个 query 并发执行并各自使用缓存与 single-flight，结果按 canonical URL 去重、按合并后的词面相关性重排，最终最多返回 `limit` 条。一次多 query 请求仍只消耗一次用户限流额度。
 - 快速传输失败最多尝试 `SEARCH_MAX_ATTEMPTS`（默认 2）次；超出预算、被限流或耗时超过 2 秒的失败不重试，避免遗留后台请求。Bing 回退同样最多尝试 2 次，只重试超时或传输错误，并复用进程内的长连接以减少代理 TLS 握手开销。连续失败 `SEARCH_BREAKER_FAILURES`（默认 3）次后熔断 `SEARCH_BREAKER_COOLDOWN_SECONDS`（默认 60 秒），期间直接走 Bing；`0` 可关闭熔断，`SEARCH_FALLBACK=false` 可只保留 DuckDuckGo。
 - 可达来源返回零结果时响应 `200 []`，不缓存；只有实际尝试的所有来源都失败才返回 502 `upstream_error`。这修复了旧逻辑中「DuckDuckGo 失败 + Bing 成功但零结果」被误报为 502 的问题。
 - 服务端规范化 URL、移除跟踪参数、去重，按查询关键词与标题/域名/摘要的相关性排序，再优先保证域名多样性；标题截断 280 字符，摘要 640 字符。相关性只是词面匹配，不等于事实核实。

@@ -53,6 +53,7 @@ export function readActivities(value: unknown): WebActivity[] | undefined {
       // No live runtime survives a document reload. Never restore a perpetual spinner.
       status: item.status === 'running' ? 'stopped' : item.status,
       ...(typeof item.query === 'string' ? { query: item.query } : {}),
+      ...(Array.isArray(item.queries) && item.queries.every((query) => typeof query === 'string') ? { queries: item.queries.slice(0, 4) } : {}),
       ...(results?.length ? { results } : {}),
       ...(typeof item.url === 'string' ? { url: item.url } : {}),
       ...(Array.isArray(item.urls) && item.urls.every((url) => typeof url === 'string') ? { urls: item.urls.slice(0, 10) } : {}),

@@ -1,4 +1,4 @@
-import { ChevronRight, CircleAlert, FileText, Globe2, Search } from 'lucide-react';
+import { CircleAlert, FileText, Search } from 'lucide-react';
 import { memo, useId, useState } from 'react';
 
 import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
@@ -16,37 +16,48 @@ export type ResearchRenderStep =
   | { type: 'group'; group: ResearchGroup };
 
 /**
- * Merge every search call into one row and every fetch call into one row, keeping the row at
- * the first occurrence. Raw activities stay untouched for storage and debugging; only the
- * reasoning panel is aggregated, so the header can say "found N pages" instead of "searched N
- * times".
+ * Merge only adjacent search calls into one row and adjacent fetch calls into another. A thinking
+ * segment, file operation or the other tool kind breaks the run, so `search → think → search`
+ * stays two rows instead of being falsely combined. Raw activities are untouched for storage and
+ * debugging; the grouped header can say "found N pages" instead of "searched N times".
  */
 export function groupResearchSteps(steps: ProcessActivity[]): ResearchRenderStep[] {
-  const groups = new Map<ResearchKind, WebActivity[]>();
-  const firstIndex = new Map<ResearchKind, number>();
-  steps.forEach((step, index) => {
-    if (step.kind !== 'search' && step.kind !== 'fetch') return;
-    if (!groups.has(step.kind)) {
-      groups.set(step.kind, []);
-      firstIndex.set(step.kind, index);
-    }
-    groups.get(step.kind)!.push(step);
-  });
-
   const result: ResearchRenderStep[] = [];
-  steps.forEach((step, index) => {
-    if (step.kind === 'search' || step.kind === 'fetch') {
-      if (firstIndex.get(step.kind) === index) {
-        result.push({
-          type: 'group',
-          group: { id: `research:${step.kind}`, kind: step.kind, activities: groups.get(step.kind)! },
-        });
-      }
-      return;
+  let index = 0;
+  while (index < steps.length) {
+    const step = steps[index];
+    if (step.kind !== 'search' && step.kind !== 'fetch') {
+      result.push({ type: 'step', step });
+      index++;
+      continue;
     }
-    result.push({ type: 'step', step });
-  });
+    const kind = step.kind;
+    const activities: WebActivity[] = [];
+    while (index < steps.length) {
+      const next = steps[index];
+      if (next.kind !== kind) break;
+      activities.push(next);
+      index++;
+    }
+    result.push({
+      type: 'group',
+      group: { id: `research:${kind}:${activities[0].id}`, kind, activities },
+    });
+  }
   return result;
+}
+
+/** The row a results panel belongs to, found again after a live update so the open panel keeps
+    showing results that arrived while the reply was still running. */
+export function findResearchGroup(steps: ProcessActivity[], id: string): ResearchGroup | null {
+  for (const entry of groupResearchSteps(steps)) {
+    if (entry.type === 'group' && entry.group.id === id) return entry.group;
+  }
+  return null;
+}
+
+export function researchPanelTitle(kind: ResearchKind): string {
+  return kind === 'search' ? '搜索结果' : '读取的网页';
 }
 
 function normalizedUrl(value: string): string {
@@ -59,7 +70,7 @@ function normalizedUrl(value: string): string {
   }
 }
 
-function hostname(url: string): string {
+export function hostname(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
 }
 
@@ -68,7 +79,7 @@ function formatTook(ms: number): string {
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
 }
 
-function uniqueSearchResults(activities: WebActivity[]): WebSearchResult[] {
+export function uniqueSearchResults(activities: WebActivity[]): WebSearchResult[] {
   const seen = new Set<string>();
   const results: WebSearchResult[] = [];
   for (const activity of activities) {
@@ -82,9 +93,9 @@ function uniqueSearchResults(activities: WebActivity[]): WebSearchResult[] {
   return results;
 }
 
-type FetchedPage = { url: string; title?: string };
+export type FetchedPage = { url: string; title?: string };
 
-function uniqueFetchedPages(activities: WebActivity[]): FetchedPage[] {
+export function uniqueFetchedPages(activities: WebActivity[]): FetchedPage[] {
   const titles = new Map<string, string>();
   const order: string[] = [];
   const seen = new Set<string>();
@@ -101,6 +112,12 @@ function uniqueFetchedPages(activities: WebActivity[]): FetchedPage[] {
   return order.map((url) => ({ url, title: titles.get(url) }));
 }
 
+/** Only pages whose read actually finished are sources. A failed or interrupted call still carries
+    the URLs it tried, and those must not be listed (or counted) as readable pages. */
+export function readPages(activities: WebActivity[]): FetchedPage[] {
+  return uniqueFetchedPages(activities.filter((activity) => activity.status === 'complete'));
+}
+
 type GroupStatus = 'running' | 'complete' | 'stopped' | 'error';
 
 function groupStatus(activities: WebActivity[]): GroupStatus {
@@ -110,89 +127,71 @@ function groupStatus(activities: WebActivity[]): GroupStatus {
   return 'complete';
 }
 
-/** The site's own root favicon keeps requests on the result's domain; a 404 or a broken
-    response falls back to the neutral globe instead of leaving a broken image. */
-function SiteIcon({ url, size = 14 }: { url: string; size?: number }) {
-  const [failed, setFailed] = useState(false);
-  let source: string | null = null;
-  try { source = `https://${new URL(url).hostname}/favicon.ico`; } catch { /* unusable URL */ }
-  if (!source || failed) return <Globe2 size={size} aria-hidden="true" />;
-  return <img className="web-activity-result-icon" src={source} width={size} height={size} alt=""
-    loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+/** Warnings and partial failures arrive as an `error` or `warning` on a call that may still have
+    usable sources. */
+export type ResearchNote = { id: string; text: string; error: boolean };
+
+export function researchNotes(activities: WebActivity[]): ResearchNote[] {
+  return activities.flatMap((activity) => [
+    ...(activity.error ? [{ id: `error:${activity.id}`, text: activity.error, error: true }] : []),
+    ...(activity.warning ? [{ id: `warning:${activity.id}`, text: activity.warning, error: false }] : []),
+  ]);
 }
 
-function SearchResults({ results }: { results: WebSearchResult[] }) {
-  return <span className="web-activity-results">
-    {results.map((result) => <a className="web-activity-result" key={result.url}
-      href={result.url} target="_blank" rel="noopener noreferrer">
-      <SiteIcon url={result.url} />
-      <span className="web-activity-result-copy">
-        <span className="web-activity-result-title">{result.title}</span>
-        <span className="web-activity-result-domain">{result.domain || hostname(result.url)}</span>
-      </span>
-    </a>)}
-  </span>;
-}
-
-export const ResearchGroupRow = memo(function ResearchGroupRow({ group }: { group: ResearchGroup }) {
+/**
+ * One aggregated research row. A batch with at least one usable source is a button that opens its
+ * results in the panel beside the conversation (a bottom sheet on a narrow viewport), so a long
+ * result list never pushes the answer down. A batch where nothing could be read keeps its failure
+ * lines folded under the row instead — there is nothing to show in the panel, so the row explains
+ * itself.
+ */
+export const ResearchGroupRow = memo(function ResearchGroupRow({ group, open = false, onOpen }: {
+  group: ResearchGroup;
+  open?: boolean;
+  onOpen?: (opener: HTMLElement) => void;
+}) {
   const status = groupStatus(group.activities);
   const running = status === 'running';
   const failed = status === 'error';
   const stopped = status === 'stopped';
-  const partialFailure = !failed && group.activities.some((activity) => activity.status === 'error');
-  const finished = !running;
-  const [expansion, setExpansion] = useState<{ finished: boolean; open: boolean } | null>(null);
-  const open = expansion?.finished === finished ? expansion.open : !finished;
-  const bodyId = useId();
   const results = group.kind === 'search' ? uniqueSearchResults(group.activities) : [];
   const pages = group.kind === 'fetch' ? uniqueFetchedPages(group.activities) : [];
+  const readable = group.kind === 'fetch' ? readPages(group.activities) : [];
   const tookMs = group.activities.reduce((sum, activity) => sum + (activity.tookMs ?? 0), 0);
   const Glyph = failed ? CircleAlert : group.kind === 'search' ? Search : FileText;
   const state = group.kind === 'search'
     ? running ? '正在搜索'
       : failed ? '搜索失败'
         : stopped ? '搜索已停止'
-          : results.length ? `搜索到 ${results.length} 个网页${partialFailure ? '（部分失败）' : ''}` : '未找到网页'
+          : results.length ? `搜索到 ${results.length} 个网页` : '未找到网页'
     : running ? '正在读取'
       : failed ? '读取失败'
         : stopped ? '读取已停止'
-          : pages.length ? `浏览了 ${pages.length} 个页面${partialFailure ? '（部分失败）' : ''}` : '没有读取到页面';
+          : pages.length ? `浏览了 ${pages.length} 个页面` : '没有读取到页面';
+  // A batch with a readable page still opens its panel; only an all-failed batch folds the reason
+  // under the row, because there is nothing else the click could show.
+  const available = group.kind === 'search' ? results.length > 0 : readable.length > 0;
+  const notes = researchNotes(group.activities);
+  const inlineNotes = !available && notes.length > 0;
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesId = useId();
 
   return <div className={`web-activity research-group is-${status}`}>
-    <button type="button" className="web-activity-toggle" aria-expanded={open} aria-controls={bodyId}
-      onClick={() => setExpansion({ finished, open: !open })}>
+    <button type="button" className="web-activity-toggle" aria-expanded={inlineNotes ? notesOpen : open}
+      {...(inlineNotes ? { 'aria-controls': notesId } : { 'aria-haspopup': 'dialog' as const })}
+      onClick={(event) => {
+        if (inlineNotes) { setNotesOpen((value) => !value); return; }
+        onOpen?.(event.currentTarget);
+      }}>
       <Glyph size={15} strokeWidth={1.75} className="web-activity-icon" aria-hidden="true" />
       <span className="web-activity-label">{group.kind === 'search' ? '搜索资料' : '读取网页'}</span>
       <span className={`web-activity-state${failed ? ' is-error' : ''}`}>{state}</span>
       {tookMs > 0 && !running
         ? <span className="web-activity-time">{formatTook(tookMs)}</span>
         : null}
-      <ChevronRight size={14} className="web-activity-chevron" aria-hidden="true" />
     </button>
-    <div className="web-activity-details" id={bodyId} hidden={!open}>
-      {group.kind === 'search' && results.length
-        ? <div className="web-activity-sources"><SearchResults results={results} /></div>
-        : null}
-      {group.kind === 'search' && !results.length && status === 'complete'
-        ? <span className="web-activity-empty">本次检索未找到可用结果。</span> : null}
-      {group.kind === 'fetch' && pages.length > 0
-        ? <span className="web-activity-results">
-          {pages.map((page) => <a className="web-activity-result" key={page.url} href={page.url}
-            target="_blank" rel="noopener noreferrer">
-            <SiteIcon url={page.url} size={15} />
-            <span className="web-activity-result-copy">
-              <span className="web-activity-result-title">{page.title || hostname(page.url)}</span>
-              <span className="web-activity-result-domain">{page.url}</span>
-            </span>
-          </a>)}
-        </span>
-        : null}
-      {group.kind === 'fetch' && !pages.length && status === 'complete'
-        ? <span className="web-activity-empty">没有读取到可用页面。</span> : null}
-      {group.activities.map((activity) => activity.error
-        ? <span className="web-activity-error" key={`error:${activity.id}`}>{activity.error}</span> : null)}
-      {group.activities.map((activity) => activity.warning
-        ? <span className="web-activity-empty" key={`warning:${activity.id}`}>{activity.warning}</span> : null)}
-    </div>
+    {inlineNotes && <div className="web-activity-notes" id={notesId} hidden={!notesOpen}>
+      {notes.map((note) => <span key={note.id} className={note.error ? 'web-activity-error' : 'web-activity-empty'}>{note.text}</span>)}
+    </div>}
   </div>;
 });

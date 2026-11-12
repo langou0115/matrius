@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useReducer, useRef, 
 import { createAgentRuntime } from '@/core/agent/runtime';
 import { buildRetryHistory } from '@/core/agent/context';
 import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
-import { generateMemorySummary } from '@/core/agent/memory';
+import { generateMemorySummary, memoryPromptBlock } from '@/core/agent/memory';
 import { generateConversationTitle } from '@/core/agent/title';
 import type { MessageFile, SteerOutcome } from '@/core/agent/types';
 import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
@@ -213,7 +213,7 @@ function useRuntime() {
         request: instance.request, conversationId, availableFiles: collectAvailableFiles(history),
       }).tool);
     }
-    const prompts = [buildSystemPrompt(preferences, memoryRef.current)];
+    const prompts = [buildSystemPrompt(preferences)];
     if (useWebTools) prompts.push(webToolsSystemPrompt());
     if (useFileTools) prompts.push(fileToolsSystemPrompt());
     const started = agent.start({
@@ -222,6 +222,7 @@ function useRuntime() {
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
       // Thinking depth belongs to the model, so the bound model carries its own depth.
       thinkingEffort: config?.thinkingEffort ?? 'low',
+      memoryText: memoryPromptBlock(memoryRef.current),
       systemPrompt: prompts.join('\n\n'),
       ...(tools.length ? { tools } : {}),
     });

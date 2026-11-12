@@ -6,8 +6,8 @@ import { directStream } from '@/core/llm/direct-stream';
 import type { ThinkingEffort } from './thinking-effort';
 import { thinkingBudgetsFor } from './thinking-budget';
 import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from './types';
-import { DEFAULT_SYSTEM_PROMPT, withCurrentContext } from './system-prompt';
-import { buildContext, buildSteeringMessage } from './context';
+import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
+import { buildContext, buildSteeringMessage, requestContextMessage } from './context';
 import { estimateTextTokens } from './context';
 import { collectGeneratedFiles, getFileActivityEnd, getFileActivityStart } from './file-tools';
 import { getWebActivityEnd, getWebActivityStart } from './web-tools';
@@ -67,10 +67,12 @@ function tokenCount(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
-export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = withCurrentContext(DEFAULT_SYSTEM_PROMPT), tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal }: {
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, memoryText, tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
+  /** Long-term memory text is volatile; it travels in the trailing request context, not the system prompt. */
+  memoryText?: string;
   /** Registered cloud tools. Empty means a local text-only run, where a tool call is an error. */
   tools?: AgentTool[];
   onUpdate: (value: ReplyUpdate) => void; streamFn?: StreamFn;
@@ -84,14 +86,15 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   const diagnostics = createReplyDiagnostics(config, thinkingEffort);
   if (thinkingEffort !== 'default') model.reasoning = true;
   const agent = new Agent({
-    initialState: { model, messages: buildContext(messages, config), systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
+    initialState: { model, messages: [...buildContext(messages, config), requestContextMessage(memoryText)], systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
     getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream((model, context, options) => {
+      const estimatedInput = estimateTextTokens(context.systemPrompt ?? '')
+        + estimateTextTokens(JSON.stringify(context.tools ?? []))
+        + context.messages.reduce((sum, message) => sum + 8 + (typeof message.content === 'string'
+          ? estimateTextTokens(message.content)
+          : message.content.reduce((tokens, block) => tokens + (block.type === 'image' ? 4096 : estimateTextTokens(JSON.stringify(block))), 0)), 0);
       contextTokens = {
-        input: estimateTextTokens(context.systemPrompt ?? '')
-          + estimateTextTokens(JSON.stringify(context.tools ?? []))
-          + context.messages.reduce((sum, message) => sum + 8 + (typeof message.content === 'string'
-            ? estimateTextTokens(message.content)
-            : message.content.reduce((tokens, block) => tokens + (block.type === 'image' ? 4096 : estimateTextTokens(JSON.stringify(block))), 0)), 0),
+        input: estimatedInput, cacheRead: 0, cacheWrite: 0,
         output: 0, modelId: config.id, contextWindow: config.contextWindow,
       };
       emit();
@@ -116,8 +119,13 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     tokenUsage.output += tokenCount(usage.output);
     tokenUsage.cacheRead += tokenCount(usage.cacheRead);
     tokenUsage.cacheWrite += tokenCount(usage.cacheWrite);
-    const input = tokenCount(usage.input) + tokenCount(usage.cacheRead) + tokenCount(usage.cacheWrite);
-    if (input > 0) contextTokens = { input, output: tokenCount(usage.output), modelId: config.id, contextWindow: config.contextWindow };
+    const cacheRead = tokenCount(usage.cacheRead);
+    const cacheWrite = tokenCount(usage.cacheWrite);
+    const input = tokenCount(usage.input) + cacheRead + cacheWrite;
+    if (input > 0) contextTokens = {
+      input, cacheRead, cacheWrite,
+      output: tokenCount(usage.output), modelId: config.id, contextWindow: config.contextWindow,
+    };
   }
   const hasUsage = () => tokenUsage.input + tokenUsage.output + tokenUsage.cacheRead + tokenUsage.cacheWrite > 0;
   /** Usage travels with the result so the caller can report it to the instance. */

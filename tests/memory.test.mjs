@@ -11,6 +11,7 @@ import {
   readMemoryPreferences,
   serializeMemoryField,
 } from '../src/core/agent/memory.ts';
+import { requestContextMessage } from '../src/core/agent/context.ts';
 import { buildSystemPrompt } from '../src/core/agent/system-prompt.ts';
 
 const profile = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' };
@@ -36,14 +37,16 @@ test('memory normalization strips wrappers and fences from a generated summary',
   assert.equal(normalizeMemorySummary('  # 记忆  '), '# 记忆');
 });
 
-test('memory enters the system prompt only while enabled and non-empty', () => {
+test('memory travels in the trailing request context only while enabled and non-empty', () => {
   const base = buildSystemPrompt(profile);
-  assert.ok(!base.includes('<user_memory>'));
+  assert.ok(!base.includes('<user_memory>'), 'the cacheable system prompt stays free of volatile memory');
   const memory = { enabled: true, summary: '# 记忆\n- 用户偏好中文' };
-  assert.match(buildSystemPrompt(profile, memory), /<user_memory>[\s\S]*用户偏好中文[\s\S]*<\/user_memory>/);
-  assert.ok(!buildSystemPrompt(profile, { enabled: false, summary: memory.summary }).includes('用户偏好中文'));
-  assert.equal(memoryPromptBlock(memory).includes('用户偏好中文'), true);
+  assert.match(memoryPromptBlock(memory), /<user_memory>[\s\S]*用户偏好中文[\s\S]*<\/user_memory>/);
   assert.equal(memoryPromptBlock({ enabled: false, summary: memory.summary }), '');
+  const message = requestContextMessage(memoryPromptBlock(memory));
+  assert.equal(message.role, 'user');
+  assert.match(message.content, /<user_memory>[\s\S]*用户偏好中文[\s\S]*<\/user_memory>/);
+  assert.match(message.content, /<current_context>/);
 });
 
 test('the memory tool replaces the full summary and rejects oversized writes', async () => {

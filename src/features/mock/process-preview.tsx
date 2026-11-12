@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { processActivities, processAnswer, processReasoning } from '../../../dev/fixtures/process-preview';
 import type { Message, ProcessActivity, WebActivity } from '@/core/agent/types';
+import { useWideViewport } from '@/components/web/use-mobile';
+import { useChatDisplay } from '@/features/chat/display-preferences';
 import { MessageContent } from '@/features/chat/components/message-content';
 import { ReasoningBlock, type ReasoningState } from '@/features/chat/components/reasoning-block';
+import { ResearchPanel } from '@/features/chat/components/research-panel';
+import { findResearchGroup } from '@/features/chat/components/research-group';
 import { ReplyStatus } from '@/features/chat/components/reply-status';
 
 const phases = [
@@ -18,10 +22,16 @@ export default function ProcessPreview() {
   const [startedAt, setStartedAt] = useState(Date.now);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(8400);
+  const [openResearchId, setOpenResearchId] = useState<string | null>(null);
+  const researchOpener = useRef<HTMLElement | null>(null);
+  const wideViewport = useWideViewport();
+  const display = useChatDisplay();
   const running = !['complete', 'stopped', 'error'].includes(phase);
   const state: ReasoningState = running ? 'running' : phase as ReasoningState;
-  const activities: WebActivity[] = phase === 'search' ? [{ ...processActivities[0], status: 'running', results: [] }]
-    : phase === 'fetch' ? [processActivities[0], { ...processActivities[1], status: 'running' }]
+  const searches = processActivities.filter((activity) => activity.kind === 'search');
+  const fetches = processActivities.filter((activity) => activity.kind === 'fetch');
+  const activities: WebActivity[] = phase === 'search' ? [{ ...searches[0], status: 'running', results: [] }]
+    : phase === 'fetch' ? [...searches, { ...fetches[0], status: 'running' }]
       : ['rethink', 'answer', 'complete', 'stopped', 'error'].includes(phase) ? processActivities : [];
   const process: ProcessActivity[] = phase === 'waiting' ? [] : [
     { id: 'first-thought', kind: 'thinking', content: processReasoning, status: phase === 'thinking' ? 'running' : 'complete' },
@@ -33,7 +43,8 @@ export default function ProcessPreview() {
   const message: Message = { id: 'preview', role: 'assistant', content: phase === 'answer' ? processAnswer.slice(0, 68) : running ? '' : processAnswer,
     status: running ? 'streaming' : phase as Message['status'],
     ...(phase === 'error' ? { error: '连接已中断，已生成内容已保留。' } : {}) };
-  return <div className="chat-screen"><main className="chat-main has-messages" id="main-content">
+  const panelGroup = openResearchId ? findResearchGroup(process, openResearchId) : null;
+  return <div className={`chat-screen${panelGroup && wideViewport ? ' has-research-panel' : ''}`}><main className="chat-main has-messages" id="main-content">
     <header className="chat-topbar"><strong>回复过程预览</strong></header>
     <div className="messages-scroll"><div className="messages-content">
       <p className="process-preview-intro">使用真实回复组件预览各阶段，不发送模型请求。</p>
@@ -45,10 +56,20 @@ export default function ProcessPreview() {
       <article className="assistant-message" aria-label="回复过程示例">
         <ReasoningBlock state={state} reasoning={phase === 'waiting' ? '' : processReasoning}
           open={reasoningOpen} onOpenChange={setReasoningOpen}
+          showThinking={display.showThinking} thinkingExpanded={display.thinkingExpanded}
+          openResearchId={openResearchId}
+          onOpenResearch={(group, opener) => { researchOpener.current = opener; setOpenResearchId(group.id); }}
           activities={activities} process={process} startedAt={running ? startedAt : null} elapsedMs={running ? null : elapsedMs} />
         <MessageContent content={message.content} />
         <ReplyStatus message={message} />
       </article>
     </div></div>
-  </main></div>;
+  </main>
+  {panelGroup && <ResearchPanel group={panelGroup} mode={wideViewport ? 'side' : 'sheet'} onClose={() => {
+    setOpenResearchId(null);
+    const opener = researchOpener.current;
+    researchOpener.current = null;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+  }} />}
+  </div>;
 }

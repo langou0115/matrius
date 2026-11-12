@@ -5,8 +5,10 @@ import { ApiError } from '../src/core/api/instance-client.ts';
 import { defaultPersonalization } from '../src/features/settings/personalization.ts';
 import { createCloudWorkspaceRepository } from '../src/features/workspace/cloud-workspace-repository.ts';
 
+const savedId = '11111111-2222-3333-4444-555555555555';
+const uploadedId = '99999999-8888-7777-6666-555555555555';
 const saved = {
-  id: 'saved-1', filename: 'final.pdf', contentType: 'application/pdf', size: 2048, revision: 1,
+  id: savedId, filename: 'final.pdf', contentType: 'application/pdf', size: 2048, revision: 1,
 };
 const conversation = {
   id: 'srv-1', clientId: 'conv-1', title: 'Files', pinned: false, updatedAt: 10, revision: 1,
@@ -26,7 +28,7 @@ function fakeRequest() {
       return {
         messages: [{
           id: 'srv-m1', clientId: 'm1', role: 'assistant', content: 'answer', status: 'complete',
-          revision: 1, fileIds: ['saved-1'], files: [saved],
+          revision: 1, fileIds: [savedId], files: [saved],
         }],
         nextCursor: null,
       };
@@ -49,7 +51,7 @@ test('cloud load restores file metadata and keeps ids aligned with the server', 
   const [remoteConversation] = loaded.data.chat.conversations;
   assert.equal(remoteConversation.id, 'conv-1');
   const [message] = remoteConversation.messages;
-  assert.deepEqual(message.fileIds, ['saved-1']);
+  assert.deepEqual(message.fileIds, [savedId]);
   assert.deepEqual(message.files, [saved]);
 });
 
@@ -61,7 +63,7 @@ test('cloud save sends fileIds derived from attachments when a message has no ex
   const data = structuredClone(loaded.data);
   data.chat.conversations[0].messages.push({
     id: 'm2', role: 'user', content: '', files: [{
-      id: 'uploaded-1', filename: 'notes.txt', contentType: 'text/plain', size: 5,
+      id: uploadedId, filename: 'notes.txt', contentType: 'text/plain', size: 5,
     }],
   });
   await repo.save(data);
@@ -69,6 +71,6 @@ test('cloud save sends fileIds derived from attachments when a message has no ex
   const posted = calls.find((call) => call.path === '/api/conversations/srv-1/messages');
   assert.ok(posted, 'the new message must be uploaded');
   assert.equal(posted.method, 'POST');
-  assert.deepEqual(posted.body.fileIds, ['uploaded-1']);
+  assert.deepEqual(posted.body.fileIds, [uploadedId]);
   assert.equal(posted.body.content, '');
 });

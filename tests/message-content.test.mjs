@@ -15,6 +15,7 @@ import { highlightCode } from '../src/features/chat/markdown/highlight-code.ts';
 import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
 import { ReasoningBlock } from '../src/features/chat/components/reasoning-block.tsx';
 import { groupResearchSteps } from '../src/features/chat/components/research-group.tsx';
+import { ResearchPanel } from '../src/features/chat/components/research-panel.tsx';
 import { ReplyStatus } from '../src/features/chat/components/reply-status.tsx';
 
 test('collapsed thinking stays lightweight and the waiting header remains clickable', () => {
@@ -124,7 +125,7 @@ test('the latest failure exposes retry and removes it as soon as the caller star
   }
 });
 
-test('reasoning keeps all source links inside one aggregated search row and reports an empty search row', () => {
+test('search rows aggregate their sources for the panel and report the count', () => {
   const results = Array.from({ length: 8 }, (_, rank) => ({
     rank, title: `Source ${rank}`, url: `https://example.com/${rank}`, domain: 'example.com', snippet: '', engine: 'duckduckgo',
   }));
@@ -134,14 +135,14 @@ test('reasoning keeps all source links inside one aggregated search row and repo
       { id: 'empty', kind: 'search', status: 'complete', query: 'empty', results: [] },
     ],
   })));
-  assert.equal(document.querySelectorAll('.web-activity-sources a').length, 8);
-  assert.equal(document.querySelectorAll('.web-activity-sources img').length, 8, 'results use the site favicon');
-  assert.equal(document.querySelector('.web-activity-sources img').getAttribute('src'), 'https://example.com/favicon.ico');
-  assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'false');
-  assert.equal(document.querySelector('.web-activity-details').hidden, true);
-  assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
+  const row = document.querySelector('.web-activity-toggle');
+  assert.equal(row.getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(row.getAttribute('aria-expanded'), 'false');
   assert.equal(document.querySelectorAll('.web-activity').length, 1, 'two searches share one row');
   assert.match(document.querySelector('.web-activity-state').textContent, /搜索到 8 个网页/);
+  assert.equal(document.querySelector('.web-activity-details'), null, 'sources live in the panel, not under the row');
+  assert.equal(document.querySelectorAll('.research-result').length, 0);
+  assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
   assert.doesNotMatch(document.body.textContent, /2 次|搜索次数/);
 });
 
@@ -153,37 +154,52 @@ test('an all-empty search group says there are no usable results', () => {
     ],
   })));
   assert.equal(document.querySelectorAll('.web-activity').length, 1);
-  assert.match(document.querySelector('.web-activity-empty').textContent, /未找到可用结果/);
+  assert.match(document.querySelector('.web-activity-state').textContent, /未找到网页/);
+  assert.equal(document.querySelector('.web-activity-notes'), null, 'a clean batch folds nothing under the row');
 });
 
 test('grouping keeps every raw search query available for storage and debugging', () => {
   const steps = groupResearchSteps([
     { id: 'search-1', kind: 'search', status: 'complete', query: 'first query', results: [] },
-    { id: 'fetch-1', kind: 'fetch', status: 'complete', url: 'https://example.com/a', urls: ['https://example.com/a'] },
     { id: 'search-2', kind: 'search', status: 'complete', query: 'second query', results: [] },
+    { id: 'fetch-1', kind: 'fetch', status: 'complete', url: 'https://example.com/a', urls: ['https://example.com/a'] },
   ]);
   const search = steps.find((entry) => entry.type === 'group' && entry.group.kind === 'search');
   assert.ok(search && search.type === 'group');
   assert.deepEqual(search.group.activities.map((activity) => activity.query), ['first query', 'second query']);
 });
 
-test('search result icons fall back to the globe when a favicon is unavailable', async () => {
+test('a thinking segment between two searches keeps them as separate rows', () => {
+  const steps = groupResearchSteps([
+    { id: 'search-1', kind: 'search', status: 'complete', query: 'first query', results: [] },
+    { id: 'thought', kind: 'thinking', content: '先停一下', status: 'complete' },
+    { id: 'search-2', kind: 'search', status: 'complete', query: 'second query', results: [] },
+  ]);
+  const searchGroups = steps.filter((entry) => entry.type === 'group' && entry.group.kind === 'search');
+  assert.equal(searchGroups.length, 2);
+  assert.deepEqual(steps.map((entry) => entry.type === 'group' ? entry.group.kind : entry.step.kind),
+    ['search', 'thinking', 'search']);
+});
+
+test('result cards fall back to the globe when a favicon is unavailable', async () => {
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window;
   globalThis.document = document;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
+  const group = { id: 'research:search:search', kind: 'search', activities: [{ id: 'search', kind: 'search', status: 'complete', query: 'q',
+    results: [{ rank: 0, title: 'Source', url: 'https://unreachable.example/x', domain: 'unreachable.example', snippet: '摘要' }] }] };
   try {
-    await act(async () => root.render(createElement(ReasoningBlock, {
-      state: 'complete', open: true, activities: [{ id: 'search', kind: 'search', status: 'complete', query: 'q',
-        results: [{ rank: 0, title: 'Source', url: 'https://unreachable.example/x', domain: 'unreachable.example' }] }],
-    })));
-    const image = document.querySelector('.web-activity-result-icon');
+    await act(async () => root.render(createElement(ResearchPanel, { group, mode: 'side', onClose: () => {} })));
+    const image = document.querySelector('.research-result-icon');
     assert.equal(image.getAttribute('src'), 'https://unreachable.example/favicon.ico');
+    assert.equal(document.querySelector('.research-result').getAttribute('href'), 'https://unreachable.example/x');
+    assert.equal(document.querySelector('.research-result-domain').textContent, 'unreachable.example');
+    assert.equal(document.querySelector('.research-result-snippet').textContent, '摘要');
     await act(async () => { image.dispatchEvent(new window.Event('error')); });
-    assert.equal(document.querySelector('.web-activity-result-icon'), null);
-    assert.ok(document.querySelector('.web-activity-result svg'), 'falls back to the default globe');
+    assert.equal(document.querySelector('.research-result-icon'), null);
+    assert.ok(document.querySelector('.research-result svg'), 'falls back to the default globe');
   } finally {
     await act(async () => root.unmount());
     globalThis.window = previous.window;
@@ -209,14 +225,14 @@ test('thinking disclosure keeps its open state and content across tool, answer a
       await render({ state, reasoning: '已收到的思考', activities: [{ id: 'search', kind: 'search', query: '资料', status: state === 'running' ? 'running' : 'complete', results: [] }] });
       assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
       assert.equal(document.querySelector('.reasoning-label').textContent, '思考过程');
-      // Legacy transcripts have no live segment, so they stay folded until the reader opens them.
-      assert.equal(document.querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
-      assert.equal(document.querySelector('.thinking-body').hidden, true);
-      await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      // Thinking reads open by default; folding it is the reader's own choice.
+      assert.equal(document.querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
       assert.ok(document.querySelector('.thinking-body').textContent.includes('已收到的思考'));
       assert.equal(document.querySelector('.thinking-body').hidden, false);
       await act(async () => { document.querySelector('.thinking-toggle').click(); });
       assert.equal(document.querySelector('.thinking-body').hidden, true);
+      await act(async () => { document.querySelector('.thinking-toggle').click(); });
+      assert.equal(document.querySelector('.thinking-body').hidden, false);
       assert.equal(document.querySelector('.response-sources'), null);
     }
     await act(async () => { document.querySelector('.reasoning-toggle').click(); });
@@ -229,7 +245,7 @@ test('thinking disclosure keeps its open state and content across tool, answer a
   }
 });
 
-test('only the thinking segment being written stays open', async () => {
+test('thinking segments start open and fold only when the reader closes them', async () => {
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window;
@@ -243,35 +259,29 @@ test('only the thinking segment being written stays open', async () => {
   });
   const rows = () => [...document.querySelectorAll('.thinking-toggle')];
   try {
-    // The newest step is the one being produced, so it reads inline while it streams.
+    // The segment being written reads inline, and so does a finished one.
     await render([thought('running')]);
     assert.equal(rows()[0].getAttribute('aria-expanded'), 'true');
     assert.equal(document.querySelector('.thinking-body').hidden, false);
     assert.equal(rows()[0].textContent, '思考', 'an open thought repeats nothing above its own text');
 
-    // It finished: fold back to the one-line preview instead of stacking completed segments open.
     await render([thought('complete')]);
-    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
-    assert.equal(document.querySelector('.thinking-body').hidden, true);
-    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
-
-    // The next thinking block opens; the previous one stays folded when the new one arrives.
-    await render([thought('complete'), search, thought('running', { id: 't2', content: '再想一下' })]);
-    assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['false', 'true']);
-
-    // The reply ends, so even the active segment folds back into its preview row.
-    await render([thought('complete'), search, thought('complete', { id: 't2', content: '再想一下' })], 'complete');
-    assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['false', 'false']);
-    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
-
-    // A manual open on a finished segment still holds while its status does not change.
-    await act(async () => { rows()[0].click(); });
     assert.equal(rows()[0].getAttribute('aria-expanded'), 'true');
-    await render([thought('complete'), search, thought('complete', { id: 't2', content: '再想一下' })], 'complete');
-    assert.equal(rows()[0].getAttribute('aria-expanded'), 'true', 'the reader choice survives a re-render');
-    await act(async () => { rows()[0].click(); });
+    assert.ok(document.querySelector('.thinking-body').textContent.includes('先想一下'));
+    assert.equal(rows()[0].querySelector('.thinking-preview'), null, 'an open segment shows no teaser');
 
-    // The snippet is one line of prose: fences, links and markdown markers do not reach the row.
+    // Every segment, old or live, keeps its text open.
+    await render([thought('complete'), search, thought('running', { id: 't2', content: '再想一下' })]);
+    assert.deepEqual(rows().map((row) => row.getAttribute('aria-expanded')), ['true', 'true']);
+
+    // Folding is the reader's call, and it survives a re-render while the status is unchanged.
+    await act(async () => { rows()[0].click(); });
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
+    assert.equal(rows()[0].querySelector('.thinking-preview').textContent, '先想一下');
+    await render([thought('complete'), search, thought('running', { id: 't2', content: '再想一下' })]);
+    assert.equal(rows()[0].getAttribute('aria-expanded'), 'false');
+
+    // A folded row's teaser is one line of prose: fences, links and markdown markers do not reach it.
     await render([thought('complete', { content: '**结论**：先看 [官方文档](https://example.com/a)\n\n```ts\nconst x = 1;\n```\n后面还有内容' }), search], 'complete');
     assert.match(rows()[0].querySelector('.thinking-preview').textContent, /^结论：先看 官方文档/);
     assert.ok(!rows()[0].querySelector('.thinking-preview').textContent.includes('```'));
@@ -281,6 +291,24 @@ test('only the thinking segment being written stays open', async () => {
     globalThis.document = previous.document;
     globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
   }
+});
+
+test('the display switches hide or fold thinking segments', () => {
+  const process = [
+    { id: 't1', kind: 'thinking', content: '先想一下', status: 'complete' },
+    { id: 's1', kind: 'search', status: 'complete', query: '资料', results: [] },
+  ];
+  const hidden = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
+    state: 'complete', open: true, process, showThinking: false,
+  }))).document;
+  assert.equal(hidden.querySelectorAll('.thinking-step').length, 0, 'thinking blocks can be hidden entirely');
+  assert.equal(hidden.querySelectorAll('.web-activity').length, 1, 'tool rows stay');
+
+  const folded = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
+    state: 'complete', open: true, process, thinkingExpanded: false,
+  }))).document;
+  assert.equal(folded.querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
+  assert.equal(folded.querySelector('.thinking-preview').textContent, '先想一下');
 });
 
 test('a long transcript closes from its own end instead of the header far above', async () => {
@@ -328,7 +356,7 @@ test('a long transcript closes from its own end instead of the header far above'
   }
 });
 
-test('tool sections follow OpenStudio: active details open, completed details collapse and can be reopened', async () => {
+test('a research row opens the result panel and marks itself expanded instead of unfolding', async () => {
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window;
@@ -336,19 +364,27 @@ test('tool sections follow OpenStudio: active details open, completed details co
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.getElementById('root'));
   const activity = { id: 'batch', kind: 'fetch', url: 'https://example.com/a', urls: ['https://example.com/a', 'https://example.com/b'] };
-  const render = (status) => act(async () => root.render(createElement(ReasoningBlock, { open: true, state: status === 'running' ? 'running' : 'complete', activities: [{ ...activity, status }] })));
+  const opened = [];
+  // `openResearchId` stands in for the panel the screen keeps beside the conversation.
+  const render = (status, openId = null) => act(async () => root.render(createElement(ReasoningBlock, {
+    open: true, state: status === 'running' ? 'running' : 'complete', activities: [{ ...activity, status }],
+    openResearchId: openId, onOpenResearch: (group, opener) => opened.push({ group, opener }),
+  })));
+  const row = () => document.querySelector('.web-activity-toggle');
   try {
     await render('running');
-    assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'true');
-    assert.equal(document.querySelectorAll('.web-activity-result').length, 2);
-    await render('complete');
-    assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'false');
-    await act(async () => document.querySelector('.web-activity-toggle').click());
-    assert.equal(document.querySelector('.web-activity-details').hidden, false);
-    await render('complete');
-    assert.equal(document.querySelector('.web-activity-details').hidden, false, 'later render does not reset manual expansion');
-    await act(async () => document.querySelector('.web-activity-toggle').click());
-    assert.equal(document.querySelector('.web-activity-details').hidden, true);
+    assert.equal(row().getAttribute('aria-haspopup'), 'dialog');
+    assert.equal(row().getAttribute('aria-expanded'), 'false');
+    assert.equal(document.querySelector('.web-activity-details'), null, 'nothing unfolds under the row');
+    await act(async () => row().click());
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].group.kind, 'fetch');
+    assert.deepEqual(opened[0].group.activities.map((item) => item.id), ['batch']);
+    assert.equal(opened[0].opener, row(), 'the screen gets the row back to restore focus to');
+    await render('complete', opened[0].group.id);
+    assert.equal(row().getAttribute('aria-expanded'), 'true', 'the open panel marks its row');
+    await render('complete', 'research:fetch:other');
+    assert.equal(row().getAttribute('aria-expanded'), 'false');
   } finally {
     await act(async () => root.unmount());
     globalThis.window = previous.window;
@@ -357,7 +393,217 @@ test('tool sections follow OpenStudio: active details open, completed details co
   }
 });
 
-test('the process renders one aggregated search row and one fetch row around thinking segments', () => {
+test('the result panel lists search hits and read pages and closes on Esc or the close button', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const search = { id: 'research:search:s1', kind: 'search', activities: [
+    { id: 's1', kind: 'search', status: 'complete', query: 'q', results: [
+      { rank: 1, title: 'Python docs', url: 'https://docs.python.org/a', domain: 'docs.python.org', snippet: '第一段摘要' },
+      { rank: 2, title: 'Python docs', url: 'https://docs.python.org/a#task', domain: 'docs.python.org', snippet: '去重后的同页' },
+      { rank: 3, title: 'Guide', url: 'https://example.com/g', domain: 'example.com', snippet: '' },
+    ] },
+  ] };
+  const fetch = { id: 'research:fetch:f1', kind: 'fetch', activities: [
+    { id: 'f1', kind: 'fetch', status: 'complete', url: 'https://example.com/a', urls: ['https://example.com/a', 'https://example.com/b'], title: '示例页' },
+  ] };
+  let closes = 0;
+  const focused = [];
+  // linkedom has no activeElement, so the panel's focus call is observed instead.
+  const focus = window.HTMLElement.prototype.focus;
+  window.HTMLElement.prototype.focus = function (options) { focused.push({ element: this, options }); };
+  const render = (group) => act(async () => root.render(createElement(ResearchPanel, { group, mode: 'side', onClose: () => closes++ })));
+  try {
+    await render(search);
+    assert.equal(document.querySelector('.research-panel-header h2').textContent, '搜索结果');
+    const cards = [...document.querySelectorAll('.research-result')];
+    assert.equal(cards.length, 2, 'the same URL with a different hash is one source');
+    assert.deepEqual(cards.map((card) => card.querySelector('.research-result-title').textContent), ['Python docs', 'Guide']);
+    assert.equal(cards[0].querySelector('.research-result-snippet').textContent, '第一段摘要');
+    assert.equal(cards[1].querySelector('.research-result-snippet'), null, 'a missing snippet leaves no empty line');
+    assert.ok(focused.some((entry) => entry.element.classList?.contains('research-panel')), 'focus moves into the panel');
+    assert.deepEqual(focused.at(-1)?.options, { preventScroll: true });
+
+    await act(async () => {
+      // linkedom does not expose KeyboardEvent; a keydown Event carrying `key` is enough for React.
+      const escape = new window.Event('keydown', { bubbles: true });
+      escape.key = 'Escape';
+      document.querySelector('.research-panel').dispatchEvent(escape);
+    });
+    assert.equal(closes, 1);
+    await act(async () => { document.querySelector('.research-panel-header button').click(); });
+    assert.equal(closes, 2);
+
+    await render(fetch);
+    assert.equal(document.querySelector('.research-panel-header h2').textContent, '读取的网页');
+    const pages = [...document.querySelectorAll('.research-result')];
+    assert.equal(pages.length, 2);
+    assert.equal(pages[0].querySelector('.research-result-title').textContent, '示例页');
+    assert.equal(pages[0].querySelector('.research-result-url').textContent, 'https://example.com/a');
+  } finally {
+    window.HTMLElement.prototype.focus = focus;
+    await act(async () => root.unmount());
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('the result panel explains an empty or still-running batch', () => {
+  const complete = groupResearchSteps([
+    { id: 'empty', kind: 'search', status: 'complete', query: 'q', results: [] },
+  ]).find((entry) => entry.type === 'group').group;
+  const running = groupResearchSteps([
+    { id: 'pending', kind: 'fetch', status: 'running', urls: ['https://example.com/a'] },
+  ]).find((entry) => entry.type === 'group').group;
+  const { document } = parseHTML(renderToStaticMarkup(createElement(ResearchPanel, { group: complete, mode: 'side', onClose: () => {} })));
+  assert.match(document.querySelector('.research-empty').textContent, /未找到可用结果/);
+  const live = parseHTML(renderToStaticMarkup(createElement(ResearchPanel, { group: running, mode: 'side', onClose: () => {} }))).document;
+  // A page still being read is not a source yet: the panel says it is working instead of listing
+  // the URL as if it had been read.
+  assert.match(live.querySelector('.research-empty').textContent, /正在读取页面/);
+  assert.equal(live.querySelector('.research-result'), null);
+});
+
+test('the narrow-viewport sheet shows the same list in a bottom dialog', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT, HTMLElement: globalThis.HTMLElement };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.HTMLElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  window.HTMLElement.prototype.close = function () { this.removeAttribute('open'); };
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.HTMLElement = window.HTMLElement;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const group = { id: 'research:search:s1', kind: 'search', activities: [
+    { id: 's1', kind: 'search', status: 'complete', query: 'q', results: [
+      { rank: 1, title: 'Python docs', url: 'https://docs.python.org/a', domain: 'docs.python.org', snippet: '摘要' },
+    ] },
+  ] };
+  let closes = 0;
+  window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  try {
+    await act(async () => root.render(createElement(ResearchPanel, { group, mode: 'sheet', onClose: () => closes++ })));
+    const dialog = document.querySelector('dialog.research-sheet');
+    assert.ok(dialog, 'the sheet is a dialog in the top layer');
+    assert.equal(dialog.querySelector('.dialog-header h2').textContent, '搜索结果');
+    assert.equal(dialog.querySelectorAll('.research-result').length, 1);
+    await act(async () => { dialog.querySelector('.dialog-header button').click(); });
+    assert.equal(closes, 1);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.HTMLElement = previous.HTMLElement;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('a partially failed batch still opens the panel, and the panel names the skipped pages', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const opened = [];
+  const activity = { id: 'partial', kind: 'fetch', status: 'complete', urls: ['https://example.com/a'], title: '示例',
+    error: '1 个网页未能读取，已保留其余可用来源。' };
+  try {
+    await act(async () => root.render(createElement(ReasoningBlock, {
+      state: 'complete', open: true, activities: [activity],
+      onOpenResearch: (...args) => opened.push(args),
+    })));
+    const row = () => document.querySelector('.web-activity-toggle');
+    assert.equal(document.querySelector('.web-activity-notes'), null, 'the transcript does not grow a failure line');
+    assert.doesNotMatch(document.querySelector('.web-activity-state').textContent, /部分失败/);
+    await act(async () => row().click());
+    assert.equal(opened.length, 1, 'one readable page is enough to open the panel');
+    assert.equal(document.querySelector('.web-activity-details'), null);
+
+    const panel = parseHTML(renderToStaticMarkup(createElement(ResearchPanel, {
+      group: opened[0][0], mode: 'side', onClose: () => {},
+    }))).document;
+    assert.equal(panel.querySelectorAll('.research-result').length, 1);
+    assert.equal(panel.querySelector('.research-note.is-error').textContent, '1 个网页未能读取，已保留其余可用来源。');
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('a batch with no readable page folds its reason under the row instead of opening the panel', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const opened = [];
+  try {
+    await act(async () => root.render(createElement(ReasoningBlock, {
+      state: 'error', open: true,
+      activities: [{ id: 'dead', kind: 'fetch', status: 'error', url: 'https://example.com/dead', error: '网页读取超时。' }],
+      onOpenResearch: (...args) => opened.push(args),
+    })));
+    const row = () => document.querySelector('.web-activity-toggle');
+    assert.equal(document.querySelector('.web-activity-notes').hidden, true);
+    await act(async () => row().click());
+    assert.equal(document.querySelector('.web-activity-notes').hidden, false);
+    assert.equal(document.querySelector('.web-activity-notes .web-activity-error').textContent, '网页读取超时。');
+    assert.equal(opened.length, 0, 'nothing to list means no panel');
+    await act(async () => row().click());
+    assert.equal(document.querySelector('.web-activity-notes').hidden, true);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('a successful file operation is a plain row, while a failed one opens its details', async () => {
+  const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  const render = (activity) => act(async () => root.render(createElement(ReasoningBlock, {
+    state: 'complete', open: true, activities: [activity],
+  })));
+  const ok = { id: 'file-ok', kind: 'file', operation: 'edit', status: 'complete', filename: '报告.docx', tookMs: 1200 };
+  try {
+    await render(ok);
+    assert.ok(document.querySelector('.file-activity .web-activity-row'), 'a clean file row is not a button');
+    assert.equal(document.querySelector('.file-activity .web-activity-toggle'), null);
+    assert.equal(document.querySelector('.web-activity-details'), null);
+    assert.match(document.querySelector('.web-activity-state').textContent, /已编辑文档/);
+    const failed = { ...ok, id: 'file-bad', status: 'error', error: '文件不存在。', tookMs: 30 };
+    await render(failed);
+    const row = document.querySelector('.file-activity .web-activity-toggle');
+    assert.ok(row, 'a failed file row can be opened');
+    assert.equal(row.getAttribute('aria-expanded'), 'false');
+    assert.equal(document.querySelector('.web-activity-details').hidden, true);
+    assert.equal(document.querySelector('.file-activity .web-activity-state'), null, 'a folded failure keeps only the icon');
+    await act(async () => row.click());
+    assert.equal(document.querySelector('.web-activity-details').hidden, false);
+    assert.match(document.querySelector('.file-activity .web-activity-state').textContent, /编辑文档失败/);
+    assert.match(document.querySelector('.web-activity-error').textContent, /文件不存在/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  }
+});
+
+test('the process keeps non-adjacent search and fetch runs in event order', () => {
   const process = [
     { id: 'first', kind: 'thinking', content: '先搜索', status: 'complete' },
     { id: 'search-1', kind: 'search', status: 'complete', query: 'Python', results: [
@@ -375,19 +621,44 @@ test('the process renders one aggregated search row and one fetch row around thi
     state: 'running', open: true, reasoning: 'legacy merged transcript', process,
   })));
   const steps = [...document.querySelector('.reasoning-steps').children];
-  assert.equal(steps.length, 4, 'two searches and two fetches collapse into two rows');
-  // Only the segment still being written is open; earlier ones fold to their preview line.
-  assert.equal(steps[0].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
-  assert.equal(steps[0].querySelector('.thinking-body').textContent, '');
-  assert.equal(steps[0].querySelector('.thinking-preview').textContent, '先搜索');
+  assert.equal(steps.length, 6, 'a thinking segment separates both tool runs');
+  assert.ok(steps[0].querySelector('.thinking-body').textContent.includes('先搜索'));
   assert.equal(steps[1].querySelectorAll('.web-activity').length, 1);
-  assert.match(steps[1].querySelector('.web-activity-state').textContent, /搜索到 3 个网页/);
+  assert.match(steps[1].querySelector('.web-activity-state').textContent, /搜索到 2 个网页/);
   assert.equal(steps[2].querySelectorAll('.web-activity').length, 1);
-  assert.match(steps[2].querySelector('.web-activity-state').textContent, /浏览了 2 个页面/);
+  assert.match(steps[2].querySelector('.web-activity-state').textContent, /浏览了 1 个页面/);
   assert.equal(steps[3].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
   assert.ok(steps[3].querySelector('.thinking-body').textContent.includes('再分析'));
+  assert.equal(steps[4].querySelectorAll('.web-activity').length, 1);
+  assert.match(steps[4].querySelector('.web-activity-state').textContent, /搜索到 1 个网页/);
+  assert.equal(steps[5].querySelectorAll('.web-activity').length, 1);
+  assert.match(steps[5].querySelector('.web-activity-state').textContent, /浏览了 1 个页面/);
   assert.ok(!document.body.textContent.includes('legacy merged transcript'));
   assert.doesNotMatch(document.body.textContent, /2 次搜索|搜索次数/);
+});
+
+test('adjacent search and fetch runs merge while keeping their order', () => {
+  const process = [
+    { id: 'first', kind: 'thinking', content: '先搜索', status: 'complete' },
+    { id: 'search-1', kind: 'search', status: 'complete', query: 'Python', results: [
+      { rank: 1, title: 'Python docs', url: 'https://docs.python.org/a', domain: 'docs.python.org' },
+      { rank: 2, title: 'Python guide', url: 'https://example.com/python', domain: 'example.com' },
+    ] },
+    { id: 'search-2', kind: 'search', status: 'complete', query: 'Python asyncio', results: [
+      { rank: 3, title: 'Python asyncio', url: 'https://docs.python.org/b', domain: 'docs.python.org' },
+    ] },
+    { id: 'fetch-1', kind: 'fetch', status: 'complete', url: 'https://example.com/a', urls: ['https://example.com/a'] },
+    { id: 'fetch-2', kind: 'fetch', status: 'complete', url: 'https://example.com/b', urls: ['https://example.com/b'] },
+    { id: 'second', kind: 'thinking', content: '再分析', status: 'running' },
+  ];
+  const { document } = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
+    state: 'running', open: true, process,
+  })));
+  const steps = [...document.querySelector('.reasoning-steps').children];
+  assert.equal(steps.length, 4, 'search → search and fetch → fetch collapse into one row each');
+  assert.match(steps[1].querySelector('.web-activity-state').textContent, /搜索到 3 个网页/);
+  assert.match(steps[2].querySelector('.web-activity-state').textContent, /浏览了 2 个页面/);
+  assert.equal(steps[3].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
 });
 
 function render(content) { return renderToStaticMarkup(createElement(MessageContent, { content })); }

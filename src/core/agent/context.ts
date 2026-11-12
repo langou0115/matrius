@@ -3,6 +3,16 @@ import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { createAgentModel, type ModelConfig } from '@/core/llm/model-config';
 import { withoutFailedReplies } from './history';
 import type { Message, MessageFile, MessageImage } from './types';
+import { currentContextText } from './system-prompt';
+
+/**
+ * Volatile request context (long-term memory and the current clock) as the final user message.
+ * Keeping it after the saved history leaves the system/tools/history prefix cacheable.
+ */
+export function requestContextMessage(memoryText = '', now = new Date(), timeZone?: string): AgentMessage {
+  const text = [memoryText, currentContextText(now, timeZone)].filter(Boolean).join('\n\n');
+  return { role: 'user', content: text, timestamp: Date.now() };
+}
 
 /** Keep quoted history distinct from the user's new request in every model protocol. */
 export function getRequestText(message: Pick<Message, 'role' | 'content' | 'quote'>): string {

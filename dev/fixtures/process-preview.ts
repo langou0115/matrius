@@ -8,9 +8,9 @@ export const processActivities: WebActivity[] = [
   { id: 'search', kind: 'search', status: 'complete', query: 'Python asyncio TaskGroup documentation', tookMs: 620,
     results: [{ title: 'Coroutines and Tasks — Python documentation', url, domain: 'docs.python.org',
       snippet: 'Task groups combine a task creation API with a reliable way to wait for tasks.', engine: 'duckduckgo', rank: 1 }] },
-  { id: 'fetch', kind: 'fetch', status: 'complete', url, urls: [url], title: 'Coroutines and Tasks', tookMs: 430 },
   { id: 'search-2', kind: 'search', status: 'complete', query: 'Python asyncio TaskGroup exception handling', tookMs: 510,
     results: [{ title: 'Task Groups — Python documentation', url: url2, domain: 'docs.python.org',
       snippet: 'If any child task fails, the remaining tasks are cancelled and the error is re-raised.', engine: 'duckduckgo', rank: 1 }] },
+  { id: 'fetch', kind: 'fetch', status: 'complete', url, urls: [url], title: 'Coroutines and Tasks', tookMs: 430 },
   { id: 'fetch-2', kind: 'fetch', status: 'complete', url: url2, urls: [url2], title: 'Task Groups', tookMs: 360 },
 ];

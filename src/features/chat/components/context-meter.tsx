@@ -1,16 +1,25 @@
-﻿import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import type { ContextUsage } from '../context-usage';
+
+const PARTS = [
+  { key: 'uncachedInput', label: '未缓存输入', tone: 'context-uncached' },
+  { key: 'cachedInput', label: '缓存输入', tone: 'context-cached' },
+  { key: 'output', label: '输出', tone: 'context-output' },
+] as const;
 
 export function ContextMeter({ usage }: { usage: ContextUsage }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
-  const format = (value: number) => value >= 1000
-    ? `${Number((value / 1000).toFixed(1))}k`
-    : `${Math.round(value / 10) * 10}`;
+  const format = (value: number) => {
+    if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`;
+    if (value >= 1000) return `${Number((value / 1000).toFixed(1))}k`;
+    return `${Math.round(value)}`;
+  };
   const over = usage.total > usage.limit;
+  const scale = Math.max(usage.window, usage.total);
 
   useEffect(() => {
     if (!open) return;
@@ -47,13 +56,14 @@ export function ContextMeter({ usage }: { usage: ContextUsage }) {
     {open && <section id={id} className={`context-details${over ? ' is-over' : ''}`} aria-label="上下文用量详情">
       <header><strong>上下文窗口</strong><span className="context-percent">{usage.percent}%</span></header>
       <div className="context-composition" role="img" aria-label={`上下文占用 ${usage.percent}%`}>
-        <span className="context-input" style={{ width: `${Math.min(100, usage.input / Math.max(usage.window, usage.total) * 100)}%` }} />
-        <span className="context-output" style={{ width: `${Math.min(100, usage.output / Math.max(usage.window, usage.total) * 100)}%` }} />
+        {PARTS.map((part) => <span key={part.key} className={part.tone}
+          style={{ width: `${Math.min(100, usage[part.key] / scale * 100)}%` }} />)}
       </div>
       <div className="context-capacity">{format(usage.total)} / {format(usage.window)} tokens</div>
       <div className="context-legend">
-        <span><i className="context-input" />输入 <b>{format(usage.input)}</b></span>
-        <span><i className="context-output" />输出 <b>{format(usage.output)}</b></span>
+        {PARTS.map((part) => <span key={part.key}>
+          <i className={part.tone} aria-hidden="true" />{part.label} <b>{format(usage[part.key])}</b>
+        </span>)}
       </div>
     </section>}
   </div>;

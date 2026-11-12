@@ -76,7 +76,11 @@ class Settings(BaseSettings):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 Matrius/0.1"
     )
-    fetch_timeout_seconds: int = 45
+    # One page's whole budget: queueing, redirects, body and extraction. A batch waits only for
+    # its slowest page, so this is the batch's worst case too. Kept intentionally short: blocked
+    # or hanging origins are common (paywalls, bot checks, a stale proxy) and a page that cannot
+    # be read should not hold the reply. Large/slow-but-working pages may now fail instead.
+    fetch_timeout_seconds: int = 3
     fetch_max_attempts: int = 2
     fetch_max_bytes: int = 5 * 1024 * 1024
     # Short-lived fetch cache: research agents often re-read the same source within one reply.

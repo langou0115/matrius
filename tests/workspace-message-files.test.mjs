@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { compactActivities } from '../src/core/agent/activity-payload.ts';
+import { compactActivities, compactProcess } from '../src/core/agent/activity-payload.ts';
 import {
   parseWorkspace,
   readActivities,
@@ -95,6 +95,13 @@ test('a ten-page fetch keeps every page URL in the persisted activity', () => {
   assert.deepEqual(activity.urls, urls);
 });
 
+test('a multi-query search keeps every keyword in the persisted activity', () => {
+  const [activity] = compactActivities([{
+    id: 'search', kind: 'search', status: 'complete', query: 'first', queries: ['first', 'second'],
+  }]);
+  assert.deepEqual(activity.queries, ['first', 'second']);
+});
+
 test('long tool failures cannot exceed the server activity limits and wedge conversation saving', () => {
   const [activity] = compactActivities([{
     id: 'bad-call', kind: 'file', operation: 'create', status: 'error',
@@ -107,4 +114,33 @@ test('long tool failures cannot exceed the server activity limits and wedge conv
   assert.equal(activity.title.length, 300);
   assert.equal(activity.id, 'bad-call');
   assert.equal(activity.status, 'error');
+});
+
+test('the ordered process is compacted like activities so one merged search cannot fail the save', () => {
+  const results = Array.from({ length: 30 }, (_, index) => ({
+    rank: index, title: 't'.repeat(400), url: `https://example.com/${index}`, domain: 'example.com', snippet: 'snippet',
+  }));
+  results.push({ rank: 99, title: 'bad', url: 'ftp://example.com/x', domain: 'ftp' });
+  const compacted = compactProcess([
+    { id: 'think', kind: 'thinking', content: '先想一下', status: 'complete' },
+    { id: 'search', kind: 'search', status: 'complete', query: 'q', queries: ['q1', 'q2'], results },
+    { id: 'fetch', kind: 'fetch', status: 'complete', url: 'https://example.com/a', urls: ['https://example.com/a', 'javascript:alert(1)'] },
+  ]);
+  assert.equal(compacted.length, 3);
+  assert.equal(compacted[0].kind, 'thinking');
+  assert.equal(compacted[0].content, '先想一下');
+  assert.equal(compacted[1].results.length, 20, 'the server accepts at most 20 results');
+  assert.ok(compacted[1].results.every((result) => result.url.startsWith('https://')));
+  assert.equal(compacted[1].results[0].title.length, 300);
+  assert.deepEqual(compacted[1].queries, ['q1', 'q2']);
+  assert.deepEqual(compacted[2].urls, ['https://example.com/a'], 'non-http URLs never reach the server');
+});
+
+test('a process longer than the server limit keeps its newest steps', () => {
+  const process = Array.from({ length: 130 }, (_, index) => ({
+    id: `t${index}`, kind: 'thinking', content: `step ${index}`, status: 'complete',
+  }));
+  const compacted = compactProcess(process);
+  assert.equal(compacted.length, 100);
+  assert.equal(compacted.at(-1).id, 't129');
 });

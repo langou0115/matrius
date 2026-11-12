@@ -6,12 +6,24 @@ import { fileContentUrl } from '@/features/files/files-api';
 import type { Message } from '../chat-state';
 import { formatFileSize } from './attachment-list';
 import { MessageContent } from './message-content';
-import { ResearchGroupRow, groupResearchSteps } from './research-group';
+import { ResearchGroupRow, groupResearchSteps, type ResearchGroup } from './research-group';
 
 export type ReasoningState = 'running' | 'complete' | 'stopped' | 'error';
 
 /** The footer control only earns its space once the expanded transcript is taller than this. */
 const COLLAPSE_AFTER_HEIGHT = 420;
+
+/** Ordered segments for a reply: the recorded process when there is one, otherwise the legacy
+    reasoning text followed by the tool calls that were stored separately. An empty thinking
+    segment renders nothing, so it is dropped here as well; otherwise it would break a search run
+    into two rows in the panel lookup while the transcript already merged them. */
+export function visibleProcessSteps(reasoning?: string, activities?: WebActivity[], process?: ProcessActivity[], showThinking = true): ProcessActivity[] {
+  const steps: ProcessActivity[] = process?.length ? process : [
+    ...(reasoning?.trim() ? [{ id: 'legacy-thinking', kind: 'thinking' as const, content: reasoning, status: 'complete' as const }] : []),
+    ...(activities ?? []),
+  ];
+  return steps.filter((step) => step.kind !== 'thinking' || (showThinking && step.content.trim()));
+}
 
 export function getReasoningState(message: Pick<Message, 'status' | 'content' | 'reasoning' | 'reasoningActive' | 'activities'>): ReasoningState {
   // The header describes the whole reply, not just the current thinking token block.
@@ -61,7 +73,10 @@ const FileActivityRow = memo(function FileActivityRow({ activity }: { activity: 
   const failed = activity.status === 'error';
   const finished = !running;
   const [expansion, setExpansion] = useState<{ finished: boolean; open: boolean } | null>(null);
-  const open = expansion?.finished === finished ? expansion.open : !finished;
+  // A successful file operation is a one-line record like the search and read rows and cannot be
+  // opened. Only a problem has more to say, so only then does the row open into its details.
+  const expandable = failed || !!activity.error || !!activity.warning;
+  const open = expandable && (expansion?.finished === finished ? expansion.open : !finished);
   const bodyId = useId();
   const name = fileOperationName(activity.operation);
   const draft = !activity.savedFileId && activity.fileId?.startsWith('draft:') === true;
@@ -70,20 +85,24 @@ const FileActivityRow = memo(function FileActivityRow({ activity }: { activity: 
       : activity.operation === 'edit' ? FilePenLine
         : activity.operation === 'save' ? Save
           : activity.operation === 'delete' ? Trash2 : FileText;
+  const line = <>
+    <Glyph size={15} strokeWidth={1.75} className="web-activity-icon" aria-hidden="true" />
+    {activity.filename
+      ? <span className="web-activity-label file-activity-name" title={activity.filename}>{activity.filename}</span>
+      : <span className="web-activity-label">{name}</span>}
+    {/* A folded failure keeps only the red icon: the status and the reason belong to the opened
+        row, so the transcript does not grow a red line for every failed operation. */}
+    {(!failed || open) && <span className={`web-activity-state${failed ? ' is-error' : ''}`}>{fileActivityLabel(activity)}</span>}
+    {activity.tookMs !== undefined && !running
+      ? <span className="web-activity-time">{formatTook(activity.tookMs)}</span>
+      : null}
+  </>;
   return <div className={`web-activity file-activity is-${activity.status}`}>
-    <button type="button" className="web-activity-toggle" aria-expanded={open} aria-controls={bodyId}
-      onClick={() => setExpansion({ finished, open: !open })}>
-      <Glyph size={15} strokeWidth={1.75} className="web-activity-icon" aria-hidden="true" />
-      {activity.filename
-        ? <span className="web-activity-label file-activity-name" title={activity.filename}>{activity.filename}</span>
-        : <span className="web-activity-label">{name}</span>}
-      <span className={`web-activity-state${failed ? ' is-error' : ''}`}>{fileActivityLabel(activity)}</span>
-      {activity.tookMs !== undefined && !running
-        ? <span className="web-activity-time">{formatTook(activity.tookMs)}</span>
-        : null}
-      <ChevronRight size={14} className="web-activity-chevron" aria-hidden="true" />
-    </button>
-    <div className="web-activity-details" id={bodyId} hidden={!open}>
+    {expandable
+      ? <button type="button" className="web-activity-toggle" aria-expanded={open} aria-controls={bodyId}
+        onClick={() => setExpansion({ finished, open: !open })}>{line}</button>
+      : <div className="web-activity-row">{line}</div>}
+    {expandable && <div className="web-activity-details" id={bodyId} hidden={!open}>
       <span className="web-activity-subject">{name}{activity.filename ? ` · ${activity.filename}` : ''}</span>
       {activity.size !== undefined && <span className="web-activity-empty">{formatFileSize(activity.size)}</span>}
       {draft && <span className="web-activity-empty">草稿文件：保存后才会进入资料库。</span>}
@@ -97,7 +116,7 @@ const FileActivityRow = memo(function FileActivityRow({ activity }: { activity: 
       </a>}
       {activity.warning && <span className="web-activity-empty">{activity.warning}</span>}
       {activity.error && <span className={failed ? 'web-activity-error' : 'web-activity-empty'}>{activity.error}</span>}
-    </div>
+    </div>}
   </div>;
 });
 
@@ -113,22 +132,22 @@ function thinkingPreview(content: string): string {
 }
 
 /**
- * One reasoning segment. It reads as a row like the tool calls around it: open only while it is
- * being written, folded as soon as the model stops writing it, so a long process stays a list
- * instead of a wall of text. `expanded` is that live default; the reader's own choice outranks it
- * until the segment starts or finishes streaming.
+ * One reasoning segment. It reads as a row like the tool calls around it, and it starts open: the
+ * thinking is the point of the transcript, so a finished segment keeps showing its text instead of
+ * folding into a one-line teaser. A reader who folds it gets that choice back until the segment's
+ * own status changes.
  *
  * The live segment renders as plain text on purpose: thought blocks of 10k+ characters arrive in
  * 50 ms batches, and re-parsing Markdown around an unclosed fence or table on every batch made the
  * tall block reflow — with the transcript pinned to the bottom, that reads as flickering. Markdown
  * is parsed once the segment stops streaming, when its text is final.
  */
-const ThinkingRow = memo(function ThinkingRow({ activity, streaming, expanded }:
-  { activity: ThinkingActivity; streaming: boolean; expanded: boolean }) {
+const ThinkingRow = memo(function ThinkingRow({ activity, streaming, defaultExpanded }:
+  { activity: ThinkingActivity; streaming: boolean; defaultExpanded: boolean }) {
   const failed = activity.status === 'error';
   const [expansion, setExpansion] = useState<{ key: string; open: boolean } | null>(null);
-  const key = `${activity.status}:${expanded}`;
-  const open = expansion?.key === key ? expansion.open : expanded;
+  const key = `${activity.status}:${defaultExpanded}`;
+  const open = expansion?.key === key ? expansion.open : defaultExpanded;
   const bodyId = useId();
   // The folded row says what that thought was about; open, the text below already says it.
   const preview = open ? '' : thinkingPreview(activity.content);
@@ -173,6 +192,14 @@ type Props = {
   /** Key the caller's choice by reply id, including the wait before the message exists. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Research group whose result panel is open, so its row reads as expanded. */
+  openResearchId?: string | null;
+  /** Open one search/read batch in the result panel instead of expanding it inline. */
+  onOpenResearch?: (group: ResearchGroup, opener: HTMLElement) => void;
+  /** Show the thinking segments in the process (personalization "展示思考块"). */
+  showThinking?: boolean;
+  /** Thinking segments start open instead of folding into their teaser. */
+  thinkingExpanded?: boolean;
 };
 
 /**
@@ -180,7 +207,7 @@ type Props = {
  * reasoning the model produced. Sending and thinking share one row so the reply area
  * never swaps components mid-flight: the line simply grows an expandable body.
  */
-export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, startedAt = null, activities, process, open: controlledOpen, onOpenChange }: Props) {
+export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, startedAt = null, activities, process, open: controlledOpen, onOpenChange, openResearchId = null, onOpenResearch, showThinking = true, thinkingExpanded = true }: Props) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const bodyId = useId();
@@ -188,14 +215,10 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
   const running = state === 'running';
   const text = reasoning.trim();
   // Legacy replies have no event ordering; new replies render the ordered runtime segments.
-  const steps: ProcessActivity[] = process?.length ? process : [
-    ...(text ? [{ id: 'legacy-thinking', kind: 'thinking' as const, content: text, status: 'complete' as const }] : []),
-    ...(activities ?? []),
-  ];
-  const visibleSteps = steps.filter((step) => step.kind !== 'thinking' || step.content.trim());
-  // All search calls share one row and all page reads share one row; raw activities stay intact
-  // in the message for storage and debugging.
-  const renderSteps = groupResearchSteps(visibleSteps);
+  const steps = visibleProcessSteps(text, activities, process, showThinking);
+  // Adjacent search calls share one row and adjacent page reads share another; raw activities stay
+  // intact in the message for storage and debugging.
+  const renderSteps = groupResearchSteps(steps);
   const stepsRef = useRef<HTMLDivElement>(null);
   const [showCollapse, setShowCollapse] = useState(false);
   useEffect(() => {
@@ -241,18 +264,15 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     <span className="sr-only" role="status">{label}</span>
     <button ref={header} type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>{line}</button>
     <div className="reasoning-body" id={bodyId} hidden={!open}>
-      {open && visibleSteps.length ? <>
+      {open && steps.length ? <>
         <div className="reasoning-steps" ref={stepsRef}>{renderSteps.map((entry) => <div
           key={entry.type === 'group' ? entry.group.id : entry.step.id}
           className={`reasoning-process-step${entry.type === 'step' && entry.step.kind === 'thinking' ? ' thinking-step' : ''}`}>
           {entry.type === 'group'
-            ? <ResearchGroupRow group={entry.group} />
+            ? <ResearchGroupRow group={entry.group} open={entry.group.id === openResearchId}
+              onOpen={onOpenResearch ? (opener) => onOpenResearch(entry.group, opener) : undefined} />
             : entry.step.kind === 'thinking'
-              ? <ThinkingRow activity={entry.step} streaming={running && entry.step.status === 'running'}
-                // Only the segment being written is open by default. When it ends and the next
-                // tool or thought starts, this row folds back to its one-line preview; a manual
-                // open/close on that segment still wins for as long as its status does not change.
-                expanded={running && entry.step.status === 'running'} />
+              ? <ThinkingRow activity={entry.step} streaming={running && entry.step.status === 'running'} defaultExpanded={thinkingExpanded} />
               : entry.step.kind === 'file' ? <FileActivityRow activity={entry.step} /> : null}
         </div>)}</div>
         {showCollapse && <button type="button" className="reasoning-collapse" onClick={collapse}>

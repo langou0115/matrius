@@ -6,12 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cache import concurrency_limit, enforce_rate_limit
 from app.config import get_settings
 from app.db import get_db
-from app.errors import invalid
 from app.files.router import get_owned_file
 from app.instance.dependencies import InstanceContext, ToolCaller, get_tool_caller, read_rate_limit
 from app.tools.files import grep_file_text, read_file_text
 from app.tools.schemas import FetchRequest, FileGrepRequest, FileReadRequest, SearchRequest
-from app.tools.search import web_search
+from app.tools.search import web_search_many
 from app.tools.web_fetch import web_fetch
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
@@ -30,12 +29,10 @@ async def search_web(
 ) -> dict[str, Any]:
     calls_per_minute, concurrency = _tool_budget(caller)
     await enforce_rate_limit("tool_search", caller.identity, calls_per_minute)
-    query = payload.query.strip()
-    if not query:
-        raise invalid("搜索关键词不能为空。")
+    queries = payload.queries or [payload.query or ""]
     async with concurrency_limit("tool_search", caller.identity, concurrency):
-        results = await web_search(query, payload.limit)
-    return {"query": query, "results": results}
+        results = await web_search_many(queries, payload.limit)
+    return {"query": queries[0], "queries": queries, "results": results}
 
 
 @router.post("/fetch")

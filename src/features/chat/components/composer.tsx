@@ -114,6 +114,8 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     };
   }, []);
   const composing = useRef(false);
+  // Mirrors the IME state in render so the hint can yield to the composition text.
+  const [composingText, setComposingText] = useState(false);
   const [showModels, setShowModels] = useState(false);
   const [showEffort, setShowEffort] = useState(false);
   const [pickerPosition, setPickerPosition] = useState<{ left: number; bottom: number; width: number; maxHeight: number } | null>(null);
@@ -391,6 +393,11 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
     </div>
     : null;
 
+  // Drawn as an overlay instead of a native placeholder: the hint must never become
+  // editable text, otherwise some browsers put the caret inside the hint when the
+  // empty field is clicked.
+  const showHint = !value && !attachments.length && !composingText;
+
   return <>
     <form className="composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       {quote && <QuoteCard content={quote} hideIcon onRemove={sending ? undefined : onRemoveQuote} />}
@@ -399,24 +406,26 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
         onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addFiles(files); }} />
       {attachments.length > 0 && <AttachmentList attachments={attachments} removingDisabled={sending}
         onRemove={removeAttachment} onRetry={(attachment) => startUpload(attachment)} />}
-      <textarea
-        ref={input}
-        aria-label="消息内容"
-        placeholder={attachments.length ? '' : '发消息，探索更多可能…'}
-        value={value}
-        readOnly={sending}
-        rows={2}
-        onPaste={handlePaste}
-        onChange={(event) => onChange(event.target.value)}
-        onCompositionStart={() => { composing.current = true; }}
-        onCompositionEnd={() => { composing.current = false; }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && window.matchMedia('(pointer: fine)').matches && !composing.current && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
-            event.preventDefault();
-            void submit();
-          }
-        }}
-      />
+      <div className="composer-editor">
+        {showHint && <div className="composer-hint" aria-hidden="true">发消息，探索更多可能…</div>}
+        <textarea
+          ref={input}
+          aria-label="消息内容"
+          value={value}
+          readOnly={sending}
+          rows={2}
+          onPaste={handlePaste}
+          onChange={(event) => onChange(event.target.value)}
+          onCompositionStart={() => { composing.current = true; setComposingText(true); }}
+          onCompositionEnd={() => { composing.current = false; setComposingText(false); }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && window.matchMedia('(pointer: fine)').matches && !composing.current && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        />
+      </div>
       <div className="composer-toolbar">
         <button type="button" className="composer-attach" onClick={() => { onNotice(null); picking.current = true; fileInput.current?.click(); }}
           aria-label="添加附件">

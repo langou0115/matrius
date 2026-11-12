@@ -53,7 +53,8 @@ h1, h2, h3, p { margin: 0; }
 .matrius-app[data-color-mode='dark'] .sidebar-section-label,
 .matrius-app[data-color-mode='dark'] .sidebar .icon-button { color: var(--sidebar-muted-text); }
 .matrius-app[data-color-mode='dark'] .sidebar-settings-entry-text > span { color: var(--sidebar-muted-text); opacity: 1; }
-.matrius-app[data-color-mode='dark'] .composer textarea::placeholder { opacity: 1; }
+.matrius-app[data-color-mode='dark'] .composer textarea::placeholder,
+.matrius-app[data-color-mode='dark'] .composer-hint { opacity: 1; }
 
 .matrius-app[data-color-mode='light'] { color-scheme: light; }
 .app-shell { display: flex; width: 100%; height: 100%; overflow: hidden; }
@@ -173,7 +174,13 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 /* Chat */
 .chat-main, .settings-main, .mock-main { display: flex; flex-direction: column; height: 100%; min-height: 0; outline: none; }
 .chat-main { background: transparent; }
-.chat-screen { position: relative; height: 100%; min-height: 0; }
+.chat-screen { position: relative; height: 100%; min-height: 0; --research-panel-width: 0px; }
+/* Sources open in a column beside the conversation on a wide canvas, so the transcript narrows and
+   re-centres instead of being covered; the navigator and notices move with the usable width. */
+.chat-screen.has-research-panel { display: flex; --research-panel-width: clamp(280px, 26vw, 373px); }
+.chat-screen.has-research-panel > .chat-main { flex: 1 1 auto; min-width: 0; }
+.chat-screen.has-research-panel .conversation-navigator { right: calc(var(--research-panel-width) + 20px); }
+.chat-screen.has-research-panel .chat-notice-anchor { left: calc(50% - var(--research-panel-width) / 2); }
 .chat-notice-anchor { position: absolute; top: calc(var(--header-height) + 8px); left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; gap: 6px; width: calc(100% - 48px); max-width: var(--chat-column); pointer-events: none; }
 .chat-notice { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 10px 8px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 9%, transparent); pointer-events: auto; }
 .chat-notice > svg { flex-shrink: 0; color: var(--muted-text); }
@@ -251,8 +258,12 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .composer-meta { display: flex; align-items: center; justify-content: center; min-height: 24px; margin-top: 2px; }
 .composer-meta .context-meter { display: flex; }
 .composer-meta .composer-usage { height: 24px; }
-.composer textarea { width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: var(--text-body); min-height: 54px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
+.composer textarea { position: relative; width: 100%; display: block; resize: none; background: none; border: none; padding: 0 4px; line-height: 24px; font-size: var(--text-body); min-height: 54px; max-height: 192px; color: var(--foreground); outline: none; overflow-y: auto; }
 .composer textarea::placeholder { color: var(--muted-text); opacity: .8; }
+/* A decorative hint instead of a native placeholder: it must never be hit-tested
+   or selected, otherwise a click can land the caret inside the hint text. */
+.composer-editor { position: relative; }
+.composer-hint { position: absolute; top: 0; left: 0; width: 100%; padding: 0 4px; color: var(--muted-text); font-size: var(--text-body); line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere; opacity: .8; pointer-events: none; -webkit-user-select: none; user-select: none; }
 .composer-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 7px; }
 /* A clear, borderless entry point; the surface appears only during interaction. */
 .composer-attach { position: relative; display: grid; flex-shrink: 0; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: var(--radius-sm); background: transparent; color: color-mix(in srgb, var(--foreground) 78%, var(--soft)); transition: background 140ms, color 140ms; touch-action: manipulation; }
@@ -261,7 +272,7 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .composer-attach:active { background: color-mix(in srgb, var(--foreground) 12%, var(--soft)); color: var(--foreground); }
 .composer-attach:focus-visible { outline-offset: 2px; background: color-mix(in srgb, var(--foreground) 7%, var(--soft)); color: var(--foreground); }
 @media (prefers-reduced-motion: reduce) { .composer-attach { transition: none; } }
-/* Context usage trigger; estimates are shown in the expandable details. */
+/* Context occupancy trigger; the details split the latest call into uncached input, cached input and output. */
 .composer-usage { display: inline-flex; align-items: center; gap: 7px; flex: none; height: 28px; padding: 0 9px; border-radius: 9px; background: color-mix(in srgb, var(--foreground) 5%, var(--card)); color: var(--muted-text); font-size: var(--text-caption); line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .composer-usage-ring { width: 16px; height: 16px; flex: none; }
 .composer-usage-track { fill: none; stroke: color-mix(in srgb, var(--foreground) 14%, var(--card)); stroke-width: 2.5; }
@@ -1033,8 +1044,8 @@ input[type='password']::-ms-clear { display: none; }
 @keyframes reasoning-light { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .reasoning-meta { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--muted-text); }
 .reasoning-time { flex: none; font-size: var(--text-body); font-variant-numeric: tabular-nums; }
-.reasoning-chevron, .web-activity-chevron, .thinking-chevron { flex: none; transition: opacity 140ms ease, transform 180ms ease; }
-.reasoning-toggle[aria-expanded='true'] .reasoning-chevron, .web-activity-toggle[aria-expanded='true'] .web-activity-chevron, .thinking-toggle[aria-expanded='true'] .thinking-chevron { transform: rotate(90deg); }
+.reasoning-chevron, .thinking-chevron { flex: none; transition: opacity 140ms ease, transform 180ms ease; }
+.reasoning-toggle[aria-expanded='true'] .reasoning-chevron, .thinking-toggle[aria-expanded='true'] .thinking-chevron { transform: rotate(90deg); }
 .reasoning-body { min-width: 0; padding: 8px 0 2px; }
 .reasoning-body[hidden] { display: none; }
 .reasoning-steps { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
@@ -1073,19 +1084,32 @@ input[type='password']::-ms-clear { display: none; }
 .web-activities { display: flex; flex-direction: column; gap: 12px; margin-bottom: 0; }
 .web-activity { position: relative; min-width: 0; }
 .web-activity:not(:last-child)::after { content: ''; position: absolute; left: 7px; top: calc(100% + 2px); bottom: -10px; border-left: 1px solid var(--border); pointer-events: none; }
-.web-activity-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; width: 100%; min-width: 0; min-height: 18px; padding: 0; line-height: 18px; text-align: left; color: var(--muted-text); }
+/* The row is the click target, so it carries the feedback: a soft rounded pill behind the whole
+   line on hover, press and keyboard focus. The pill is drawn by a pseudo element that reaches
+   slightly past the text, which keeps text alignment and row height intact. */
+.web-activity-toggle, .web-activity-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; width: 100%; min-width: 0; min-height: 18px; padding: 0; line-height: 18px; text-align: left; color: var(--muted-text); }
+.web-activity-toggle { position: relative; z-index: 1; border-radius: 9px; }
+.web-activity-toggle::before { content: ''; position: absolute; z-index: -1; inset: -4px -8px; border-radius: inherit; background: transparent; box-shadow: inset 0 0 0 1px transparent; pointer-events: none; transition: background 140ms, box-shadow 140ms; }
 .web-activity-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.web-activity-toggle:focus-visible::before { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.web-activity-toggle:active::before { background: color-mix(in srgb, var(--foreground) 9%, transparent); }
+/* A file row that is open keeps a light backing, so the details under it stay attributable.
+   Research rows do not: the panel beside the conversation already shows what was opened, and a
+   lingering highlight on the transcript line just looks like a stale selection. */
+.file-activity .web-activity-toggle[aria-expanded='true']::before { background: var(--soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 10%, var(--background)); }
+@media (hover: hover) {
+  .web-activity-toggle:hover::before { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+}
 .web-activity-icon { flex: none; color: var(--muted-text); pointer-events: none; }
 .web-activity.is-error .web-activity-icon { color: var(--destructive); }
+/* One row, one text tier: the label keeps the emphasis through weight and colour, while the
+   state ("浏览了 3 个页面") and duration sit at the same size instead of dropping a tier below it. */
 .web-activity-label { color: var(--foreground); font-family: var(--font-medium); font-size: var(--reasoning-text); }
-.web-activity-state, .web-activity-time { color: var(--muted-text); font-size: 11px; }
+.web-activity-state, .web-activity-time { color: var(--muted-text); font-size: var(--reasoning-text); }
 .web-activity-time { font-variant-numeric: tabular-nums; }
 .web-activity-details { display: flex; flex-direction: column; gap: 4px; padding-left: 25px; margin-top: 4px; max-height: 160px; overflow-y: auto; overscroll-behavior: contain; }
-/* One row can collect several searches or read batches, so it gets more room than a single call. */
-.research-group .web-activity-details { max-height: 280px; }
 .web-activity-details[hidden] { display: none; }
 .web-activity-subject { min-width: 0; overflow-wrap: anywhere; color: var(--muted-text); font-size: var(--text-small); line-height: 1.5; }
-.web-activity-sources { min-width: 0; margin-top: 4px; }
 .web-activity-results { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .web-activity-result { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); font-size: 12px; text-decoration: none; transition: background 180ms; }
 .web-activity-result > svg { flex: none; color: var(--muted-text); }
@@ -1098,6 +1122,66 @@ input[type='password']::-ms-clear { display: none; }
 .web-activity-result-domain { color: var(--muted-text); overflow-wrap: anywhere; font-size: 12px; }
 .web-activity-empty { color: var(--muted-text); font-size: var(--text-caption); line-height: 1.6; }
 .web-activity-error { color: var(--destructive); font-size: var(--text-caption); line-height: 1.5; overflow-wrap: anywhere; }
+/* A failed search or read keeps its reason inline; results themselves open in the panel. */
+.web-activity-notes { display: flex; flex-direction: column; gap: 4px; padding-left: 25px; margin-top: 4px; }
+.web-activity-notes[hidden] { display: none; }
+
+/* Research results: a column beside the conversation on a wide canvas, a bottom sheet when a
+   column would squeeze the transcript. Only the result list scrolls; the header stays fixed. */
+.research-panel { display: flex; flex: none; flex-direction: column; width: var(--research-panel-width); height: 100%; min-height: 0; border-left: 1px solid var(--border); background: var(--background); outline: none; animation: research-panel-in 160ms ease-out; }
+.research-panel-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 12px; height: var(--header-height); padding: 0 8px 0 20px; }
+.research-panel-header h2 { overflow: hidden; font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.research-panel-body { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; padding: 4px 20px 28px; overflow-y: auto; overscroll-behavior: contain; }
+/* The list scrollbar belongs to the panel: it only shows while the pointer is over the panel or
+   the list has keyboard focus. The gutter is reserved either way, so cards never jump sideways.
+   Chromium and Safari style the scrollbar through the legacy pseudo elements only while
+   scrollbar-width stays `auto`; setting a standard width here would silently disable them. */
+@supports not selector(::-webkit-scrollbar) {
+  .research-panel-body { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  :is(.research-panel, .research-sheet):hover .research-panel-body,
+  .research-panel-body:focus-within { scrollbar-color: var(--scrollbar-thumb) transparent; }
+}
+@supports selector(::-webkit-scrollbar) {
+  .matrius-app .research-panel-body::-webkit-scrollbar { width: 10px; }
+  .matrius-app .research-panel-body::-webkit-scrollbar-thumb { background-color: transparent; }
+  .matrius-app :is(.research-panel, .research-sheet):hover .research-panel-body::-webkit-scrollbar-thumb,
+  .matrius-app .research-panel-body:focus-within::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); }
+  .matrius-app :is(.research-panel, .research-sheet):hover .research-panel-body::-webkit-scrollbar-thumb:hover,
+  .matrius-app .research-panel-body:focus-within::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
+  .matrius-app .research-panel-body::-webkit-scrollbar-button:vertical:decrement:start,
+  .matrius-app .research-panel-body::-webkit-scrollbar-button:vertical:increment:end { display: none; }
+}
+.research-result { display: flex; min-width: 0; flex-direction: column; gap: 6px; margin: 0 -10px; padding: 15px 10px; border-radius: 10px; color: var(--foreground); transition: background 140ms; }
+.research-result-site { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--muted-text); font-size: var(--text-small); line-height: 1.4; }
+.research-result-site > svg { flex: none; color: var(--muted-text); }
+.research-result-icon { flex: none; border-radius: 3px; object-fit: contain; }
+.research-result-domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.research-result-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: var(--text-body); font-family: var(--font-medium); font-weight: 400; line-height: 1.45; overflow-wrap: anywhere; }
+.research-result-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: var(--muted-text); font-size: var(--text-small); line-height: 1.65; overflow-wrap: anywhere; }
+.research-result-url { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--muted-text); font-size: var(--text-caption); line-height: 1.5; overflow-wrap: anywhere; }
+.research-result:hover .research-result-title { text-decoration: underline; }
+.research-result:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* Each source is a card-sized hit target, so it needs the same hover and press feedback as a row. */
+@media (hover: hover) {
+  .research-result:hover { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+}
+.research-result:active { background: color-mix(in srgb, var(--foreground) 9%, transparent); }
+.research-result:focus-visible { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+/* Partial failures belong to the source list, not the transcript: they sit above the cards. */
+.research-notes { display: flex; flex-direction: column; gap: 2px; padding: 10px 0 2px; }
+.research-note { margin: 0; color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; overflow-wrap: anywhere; }
+.research-note.is-error { color: var(--destructive); }
+.research-empty { padding: 18px 0; color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; }
+@keyframes research-panel-in { from { opacity: 0; transform: translateX(10px); } }
+/* The narrow-viewport sheet: same list, slid up from the bottom edge with a rounded top. */
+.dialog.research-sheet { position: fixed; inset: auto 0 0; width: min(560px, 100%); max-width: 100%; height: min(86dvh, 760px); max-height: 86dvh; margin: 0 auto; border-radius: 18px 18px 0 0; box-shadow: 0 -10px 48px rgb(0 0 0 / 14%); animation: research-sheet-in 220ms ease-out; }
+.research-sheet .dialog-panel { display: flex; flex-direction: column; height: 100%; max-height: none; padding: 0; overflow: hidden; border: 0; border-radius: inherit; }
+.research-sheet .dialog-header { flex: none; margin: 0; padding: 16px 12px 14px 20px; border-bottom: 1px solid var(--border); }
+.research-sheet .dialog-header h2 { font-size: var(--text-body); font-family: var(--font-medium); }
+.research-sheet .dialog-header .icon-button { width: 36px; height: 36px; }
+.research-sheet .research-panel-body { padding: 0 20px max(20px, env(safe-area-inset-bottom)); }
+@keyframes research-sheet-in { from { opacity: 0; transform: translateY(18px); } }
+@media (prefers-reduced-motion: reduce) { .research-panel, .dialog.research-sheet { animation: none; } }
 /* Reasoning is supporting detail: the answer's typography demoted one step and tightened,
    so headings inside it never compete with the headings of the answer itself. */
 .reasoning-body .message-markdown { color: var(--muted-text); font-size: var(--reasoning-text); line-height: 1.5; }
@@ -1118,15 +1202,14 @@ input[type='password']::-ms-clear { display: none; }
 @keyframes reasoning-breathe { 50% { opacity: 0.45; } }
 /* The toggle stays quiet until it is wanted; touch and reduced-motion users always see it. */
 @media (hover: hover) {
-  .reasoning-chevron, .web-activity-chevron, .thinking-chevron { opacity: 0; }
+  .reasoning-chevron, .thinking-chevron { opacity: 0; }
   .reasoning-toggle:hover .reasoning-chevron, .reasoning-toggle:focus-visible .reasoning-chevron,
-  .web-activity-toggle:hover .web-activity-chevron, .web-activity-toggle:focus-visible .web-activity-chevron,
   .thinking-toggle:hover .thinking-chevron, .thinking-toggle:focus-visible .thinking-chevron { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .reasoning-label.is-running { animation: none; background: none; -webkit-text-fill-color: currentColor; }
   .reasoning-icon.is-running { animation: none; }
-  .reasoning-chevron, .web-activity-chevron, .thinking-chevron, .web-activity-result { transition: none; }
+  .reasoning-chevron, .thinking-chevron, .web-activity-result, .web-activity-toggle::before, .research-result { transition: none; }
   .model-checkbox, .model-checkbox::before, .toggle-switch, .toggle-switch::before { transition: none; }
 }
 @media (max-width: 600px) {
@@ -1142,7 +1225,7 @@ input[type='password']::-ms-clear { display: none; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (pointer: coarse) {
-  .web-activity-toggle, .thinking-toggle { min-height: 44px; }
+  .web-activity-toggle, .web-activity-row, .thinking-toggle { min-height: 44px; }
   .settings-back, .settings-nav-item { min-height: 44px; }
   .model-picker, .model-effort-trigger, .sidebar-section-label button, .new-conversation, .conversation-select, .reasoning-toggle, .reasoning-collapse, .provider-heading-actions .icon-button, .model-config-actions .icon-button { min-height: 44px; }
   /* The card action buttons are square; the coarse-pointer minimum has to grow the pair together. */
@@ -1461,15 +1544,14 @@ input[type='password']::-ms-clear { display: none; }
 
 .context-composition { display: flex; height: 6px; overflow: hidden; border-radius: 5px; background: color-mix(in srgb, var(--foreground) 8%, var(--card)); }
 .context-composition > span { height: 100%; }
-.context-input { background: var(--primary); }
-.context-output { background: color-mix(in srgb, var(--primary) 40%, var(--card)); }
-.context-capacity { margin-top: 8px; font-variant-numeric: tabular-nums; }
-.context-legend { display: flex; justify-content: flex-start; gap: 18px; margin-top: 12px; font-size: var(--text-caption); color: var(--muted-text); }
+.context-uncached { background: var(--primary); }
+.context-cached { background: color-mix(in srgb, var(--primary) 58%, var(--card)); }
+.context-output { background: color-mix(in srgb, var(--primary) 28%, var(--card)); }
+.context-capacity { margin-top: 8px; font-variant-numeric: tabular-nums; color: var(--muted-text); font-size: var(--text-caption); }
+.context-legend { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 6px 16px; margin-top: 12px; font-size: var(--text-caption); color: var(--muted-text); }
 .context-legend > span { display: flex; align-items: center; gap: 5px; }
 .context-legend i { width: 7px; height: 7px; border-radius: 2px; }
 .context-legend b { color: var(--foreground); font-weight: 400; }
-
-.context-capacity { color: var(--muted-text); font-size: var(--text-caption); }
 .context-details header .context-percent { color: var(--foreground); font-size: var(--text-small); font-variant-numeric: tabular-nums; }
 .context-details.is-over header .context-percent { color: var(--destructive); }
 
@@ -1516,7 +1598,7 @@ input[type='password']::-ms-clear { display: none; }
   .library-skeleton-check { display: none; }
   .reasoning-body { padding-top: 2px; }
   .reasoning-steps, .web-activities { gap: 4px; }
-  .reasoning-steps :is(.thinking-toggle, .web-activity-toggle) { min-height: 44px; }
+  .reasoning-steps :is(.thinking-toggle, .web-activity-toggle, .web-activity-row) { min-height: 44px; }
   /* Connect the 15px icons centred in 44px rows, across the compact 4px gap.
      Starting below the icon also carries the line alongside expanded details. */
   .reasoning-steps > .reasoning-process-step:not(:last-child)::after { top: 30px; bottom: -18px; }
@@ -1531,7 +1613,7 @@ input[type='password']::-ms-clear { display: none; }
      so the list's last line is not cut off by a blank band. Only the strip below the card gets
      the bar backdrop; the card keeps its own surface. */
   .bottom-composer { position: relative; padding: 0 12px max(8px, env(safe-area-inset-bottom)); background: linear-gradient(to bottom, transparent calc(100% - max(8px, env(safe-area-inset-bottom))), var(--background) calc(100% - max(8px, env(safe-area-inset-bottom)))); }
-  .composer textarea, .settings-main input, .settings-main textarea, .settings-main select { font-size: 16px; }
+  .composer textarea, .composer-hint, .settings-main input, .settings-main textarea, .settings-main select { font-size: 16px; }
   .composer textarea { max-height: min(180px, 30dvh); }
   .welcome-scroll { padding: 20px 12px max(8px, env(safe-area-inset-bottom)); }
   .welcome-content { display: flex; flex-direction: column; flex: 1; margin: 0 auto; padding: 0; }

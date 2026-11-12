@@ -1,10 +1,13 @@
-import type { MemoryPreferences } from './memory';
 import type { AgentProfile } from './types';
 
 export const DEFAULT_SYSTEM_PROMPT = 'You are Matrius, a helpful assistant. Respond in the user’s language.';
 
-/** Constructed once with the system prompt; an Agent's tool loop reuses this snapshot. */
-export function withCurrentContext(systemPrompt: string, now = new Date(), timeZone?: string): string {
+/**
+ * Current time/date for resolving relative dates. Kept out of the system prompt so the stable
+ * prompt prefix (system + tools + history) stays identical between requests and provider prompt
+ * caching can hit; the runner appends it as the last user message.
+ */
+export function currentContextText(now = new Date(), timeZone?: string): string {
   let zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
   const format = (selectedZone: string) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: selectedZone, year: 'numeric', month: '2-digit', day: '2-digit',
@@ -13,7 +16,7 @@ export function withCurrentContext(systemPrompt: string, now = new Date(), timeZ
   let parts: Record<string, string>;
   try { parts = format(zone); }
   catch { zone = 'UTC'; parts = format(zone); }
-  return [systemPrompt, '<current_context>',
+  return ['<current_context>',
     `Current date: ${parts.year}-${parts.month}-${parts.day}`,
     `Current local time: ${parts.hour}:${parts.minute}:${parts.second} (${parts.timeZoneName.replace('GMT', 'UTC')})`,
     `Timezone: ${zone}`,
@@ -22,25 +25,21 @@ export function withCurrentContext(systemPrompt: string, now = new Date(), timeZ
   ].join('\n');
 }
 
-const MEMORY_TAG = /<\/?(?:user_memory|user_instructions|user_profile|current_context)>/gi;
-/** Memory is model-written text. Encode wrapper tags so a summary cannot break the prompt. */
-function sanitizeMemoryTags(value: string): string {
-  return value.replace(MEMORY_TAG, (tag) => tag.replace('<', '&lt;').replace('>', '&gt;'));
+/** Prepend the context block to a system prompt; production keeps it in a trailing message instead. */
+export function withCurrentContext(systemPrompt: string, now = new Date(), timeZone?: string): string {
+  return [systemPrompt, currentContextText(now, timeZone)].join('\n');
 }
 
-export function buildSystemPrompt(preferences: AgentProfile, memory?: MemoryPreferences): string {
+/** Stable instructions only: the current clock and long-term memory travel as trailing context messages. */
+export function buildSystemPrompt(preferences: AgentProfile): string {
   const profile = [
     preferences.aboutName.trim() ? `称呼：${preferences.aboutName.trim()}` : '',
     preferences.occupation.trim() ? `职业：${preferences.occupation.trim()}` : '',
     preferences.aboutMore.trim() ? `更多信息：${preferences.aboutMore.trim()}` : '',
   ].filter(Boolean);
-  const memoryBlock = memory?.enabled && memory.summary.trim()
-    ? `<user_memory>\n以下是记忆助手从过去的对话中整理的长期记忆。它可能已经过时；与用户当前的说法冲突时，以当前对话为准。\n${sanitizeMemoryTags(memory.summary.trim())}\n</user_memory>`
-    : '';
   return [
-    withCurrentContext(DEFAULT_SYSTEM_PROMPT),
+    DEFAULT_SYSTEM_PROMPT,
     preferences.customInstructions.trim() ? `<user_instructions>\n${preferences.customInstructions.trim()}\n</user_instructions>` : '',
     profile.length ? `<user_profile>\n以下是用户主动提供的资料，按与当前任务的相关性使用：\n${profile.join('\n')}\n</user_profile>` : '',
-    memoryBlock,
   ].filter(Boolean).join('\n\n');
 }
