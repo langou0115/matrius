@@ -87,6 +87,14 @@ test('file tool activities keep their operation and saved links across a reload'
   assert.deepEqual(restored, activities);
 });
 
+test('a ten-page fetch keeps every page URL in the persisted activity', () => {
+  const urls = Array.from({ length: 10 }, (_, index) => `https://example.com/${index}`);
+  const [activity] = compactActivities([{
+    id: 'fetch', kind: 'fetch', status: 'complete', url: urls[0], urls, title: 'Page',
+  }]);
+  assert.deepEqual(activity.urls, urls);
+});
+
 test('long tool failures cannot exceed the server activity limits and wedge conversation saving', () => {
   const [activity] = compactActivities([{
     id: 'bad-call', kind: 'file', operation: 'create', status: 'error',

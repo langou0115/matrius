@@ -217,6 +217,31 @@ test('multi-page results use OpenStudio-sized excerpts instead of overflowing th
   assert.match(result.content[0].text, /truncated/);
 });
 
+test('a ten-page fetch starts all ten requests and shares one content budget', async () => {
+  const urls = Array.from({ length: 10 }, (_, index) => `https://example.com/${index}`);
+  const pending = new Map();
+  const tools = createWebTools((_path, init) => new Promise((resolve) => {
+    pending.set(JSON.parse(init.body).url, resolve);
+  }));
+  const resultPromise = tools[1].execute('ten', { urls });
+  assert.equal(pending.size, 10, 'ten requests must be in flight before any response');
+  for (const url of urls) pending.get(url)({ url, title: url, text: 'x'.repeat(50_000) });
+  const result = await resultPromise;
+  assert.equal(result.details.urls.length, 10);
+  assert.ok(result.details.contentChars <= 50_000);
+  assert.ok(result.content[0].text.length < 5_500, 'each page gets an equal share of the run budget');
+});
+
+test('a second fetch cannot exceed the run content budget', async () => {
+  const tools = createWebTools(async (_path, init) => {
+    const { url } = JSON.parse(init.body);
+    return { url, title: 'Page', text: 'x'.repeat(50_000) };
+  });
+  const urls = Array.from({ length: 5 }, (_, index) => `https://example.com/${index}`);
+  await tools[1].execute('first', { urls });
+  await assert.rejects(tools[1].execute('second', { url: 'https://example.com/next' }), /正文预算已用完/);
+});
+
 test('off-topic search snippets carry a warning rather than being treated as verified evidence', async () => {
   const tools = createWebTools(async () => ({ results: [
     { title: 'Welcome', url: 'https://example.com/', snippet: 'Homepage', rank: 1 },
@@ -1191,7 +1216,7 @@ test('real pi tool loop searches, reads evidence, then answers without losing pr
   } finally { globalThis.fetch = original; }
 });
 
-test('two model fetch batches never exceed four concurrent page requests', async () => {
+test('two five-page fetch batches stay sequential and within the ten-page budget', async () => {
   const original = globalThis.fetch;
   let modelCalls = 0;
   let active = 0;
@@ -1201,7 +1226,7 @@ test('two model fetch batches never exceed four concurrent page requests', async
   const tools = createWebTools(async (_path, init) => {
     active++; peak = Math.max(peak, active); pages++;
     try {
-      if (active > 4) throw new ApiError(429, 'rate_limited', 'Too many parallel pages');
+      if (active > 5) throw new ApiError(429, 'rate_limited', 'Too many parallel pages');
       await new Promise((resolve) => setTimeout(resolve, 10));
       return { url: JSON.parse(init.body).url, title: 'Page', text: 'Evidence' };
     } finally { active--; }
@@ -1210,8 +1235,8 @@ test('two model fetch batches never exceed four concurrent page requests', async
     const first = modelCalls++ === 0;
     const delta = first ? { role: 'assistant', tool_calls: [0, 1].map((batch) => ({
       index: batch, id: `batch-${batch}`, type: 'function', function: { name: 'web_fetch',
-        arguments: JSON.stringify({ urls: [0, 1, 2, 3].map((page) => `https://example.com/${batch}/${page}`) }) },
-    })) } : { role: 'assistant', content: '已核对八个网页。' };
+        arguments: JSON.stringify({ urls: [0, 1, 2, 3, 4].map((page) => `https://example.com/${batch}/${page}`) }) },
+    })) } : { role: 'assistant', content: '已核对十个网页。' };
     return new Response([{ choices: [{ index: 0, delta, finish_reason: null }] },
       { choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }] }]
       .map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
@@ -1219,8 +1244,8 @@ test('two model fetch batches never exceed four concurrent page requests', async
   try {
     const result = await createReplyRun({ config, apiKey: 'test', messages: history, tools, onUpdate: (update) => updates.push(update) }).start();
     assert.equal(result.status, 'complete');
-    assert.equal(pages, 8);
-    assert.equal(peak, 4, 'independent pages stay parallel but model batches cannot self-trigger the four-slot limiter');
+    assert.equal(pages, 10);
+    assert.equal(peak, 5, 'independent pages stay parallel but model batches cannot overlap');
     assert.ok(updates.at(-1).activities.every((activity) => activity.status === 'complete'));
   } finally { globalThis.fetch = original; }
 });

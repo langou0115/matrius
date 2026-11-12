@@ -21,7 +21,7 @@ from app.tools.urls import validate_fetch_url
 
 logger = logging.getLogger(__name__)
 
-FETCH_SEMAPHORE = asyncio.Semaphore(4)
+FETCH_SEMAPHORE = asyncio.Semaphore(10)
 # Research replies frequently read the same page more than once. Share one in-flight fetch
 # per URL and keep the extracted result briefly, instead of hitting the origin each time.
 _fetch_flights: dict[str, asyncio.Task[dict[str, Any]]] = {}

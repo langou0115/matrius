@@ -17,7 +17,7 @@ export function compactActivities(activities: WebActivity[] | undefined): unknow
         .map(({ title, url, domain, rank }) => ({ title: title.slice(0, 300), url, domain: domain.slice(0, 300), rank })),
     } : {}),
     ...(activity.url ? { url: activity.url } : {}),
-    ...(activity.urls?.length ? { urls: activity.urls.slice(0, 4) } : {}),
+    ...(activity.urls?.length ? { urls: activity.urls.slice(0, 10) } : {}),
     ...(activity.title ? { title: activity.title.slice(0, 300) } : {}),
     ...(activity.operation ? { operation: activity.operation } : {}),
     ...(activity.fileId ? { fileId: activity.fileId } : {}),

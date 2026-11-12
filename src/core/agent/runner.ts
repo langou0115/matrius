@@ -100,8 +100,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     transport: 'sse', maxRetryDelayMs: 5000,
     // Keep reasoning from eating the whole reply window; document writes need the tokens.
     thinkingBudgets: thinkingBudgetsFor(config.maxOutput),
-    // Match OpenStudio: serialize model tool calls, while each fetch batches four pages.
-    // Parallel four-page calls otherwise overflow the instance's four-request cap.
+    // Keep model tool batches sequential: a batch of up to ten pages already fills the
+    // instance's ten-request cap, so two parallel batches would self-trigger a 429.
     toolExecution: 'sequential',
   });
   // A truncated reply carries no text and no usable tool call, so retrying it with less

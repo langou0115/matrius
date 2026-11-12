@@ -243,7 +243,7 @@ POST /api/tools/fetch { url, mode? (fast|full) }
 - content-type 明确为文本时直接接受；明确为图片、音视频、字体、PDF、压缩包或 Office 文档时直接拒绝。缺失、`application/octet-stream` 或未知类型时读取前 4 KiB 嗅探：NUL、二进制魔数或大量不可打印字符拒绝；HTML / JSON / 纯文本按实际内容处理。非 HTML 的 JSON、XML、代码、纯文本和 Markdown 原样保留结构。
 - HTML 的提取链是 `trafilatura`（`fast` 先 precision、`full` 先 recall，结果为空时换另一种偏向重试）→ `html_markdown.py` → lxml 纯文本。提取前清理 NUL 和 C0 控制字符；`html_markdown` 返回空字符串时继续降级到 lxml。返回 title/url/text，文本截断 `FETCH_MAX_CHARS`；text 字段可包含 Markdown。缓存版本随提取格式更新，避免复用旧版扁平正文。
 - 404/410 返回 422 `fetch_not_found`；401/403 和验证页返回 422 `fetch_blocked`；纯 JavaScript 空壳返回 422 `fetch_requires_browser`。上游 429 返回 503 `fetch_rate_limited` 并传递 Retry-After，下载超时为 504 `fetch_timeout`，代理失败为 502 `fetch_proxy_error`，网络失败为 502 `fetch_network_error`。无浏览器渲染、登录或验证码处理能力；这些页面不会冒充成功读取。
-- 相同 URL + 模式使用 single-flight 合并并发请求，结果缓存 10 分钟（`FETCH_CACHE_TTL_SECONDS`）；全局抓取并发 4，每个实例最多 4 个在途读取。
+- 相同 URL + 模式使用 single-flight 合并并发请求，结果缓存 10 分钟（`FETCH_CACHE_TTL_SECONDS`）；全局抓取并发 10，每个实例最多 10 个在途读取。
 - `WEBTOOL_PROXY_URL` 同样作用于抓取请求；URL 与每一跳重定向仍在本地校验，代理不会跳过 SSRF 检查。
 - 生产环境仍建议在主机或云防火墙限制 API 容器的出站网段，缩小 SSRF 与 DNS 重绑定的残余风险。
 
@@ -278,7 +278,7 @@ POST /api/tools/file
 | 会话/消息/实例写操作 | 用户 120/分钟 |
 | 会话/消息/实例读取 | 用户 240/分钟 |
 | 文件上传 | 用户 20/分钟，并发解析 2 |
-| 搜索/网页读取 | 用户 30/分钟，并发 4 |
+| 搜索/网页读取 | 用户 60/分钟，并发 10 |
 | 文档工具读（list/read/grep/help/inspect） | 用户 60/分钟，并发 2 |
 | 文档工具写（create/edit/save/delete） | 用户 20/分钟，并发 2 |
 

@@ -14,6 +14,7 @@ import { normalizeMarkdown } from '../src/features/chat/markdown/normalize-markd
 import { highlightCode } from '../src/features/chat/markdown/highlight-code.ts';
 import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
 import { ReasoningBlock } from '../src/features/chat/components/reasoning-block.tsx';
+import { groupResearchSteps } from '../src/features/chat/components/research-group.tsx';
 import { ReplyStatus } from '../src/features/chat/components/reply-status.tsx';
 
 test('collapsed thinking stays lightweight and the waiting header remains clickable', () => {
@@ -123,7 +124,7 @@ test('the latest failure exposes retry and removes it as soon as the caller star
   }
 });
 
-test('reasoning keeps all source links inside collapsed tool sections and reports empty searches', () => {
+test('reasoning keeps all source links inside one aggregated search row and reports an empty search row', () => {
   const results = Array.from({ length: 8 }, (_, rank) => ({
     rank, title: `Source ${rank}`, url: `https://example.com/${rank}`, domain: 'example.com', snippet: '', engine: 'duckduckgo',
   }));
@@ -138,8 +139,32 @@ test('reasoning keeps all source links inside collapsed tool sections and report
   assert.equal(document.querySelector('.web-activity-sources img').getAttribute('src'), 'https://example.com/favicon.ico');
   assert.equal(document.querySelector('.web-activity-toggle').getAttribute('aria-expanded'), 'false');
   assert.equal(document.querySelector('.web-activity-details').hidden, true);
-  assert.match(document.querySelector('.web-activity-empty').textContent, /未找到可用结果/);
   assert.equal(document.querySelector('.reasoning-toggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(document.querySelectorAll('.web-activity').length, 1, 'two searches share one row');
+  assert.match(document.querySelector('.web-activity-state').textContent, /搜索到 8 个网页/);
+  assert.doesNotMatch(document.body.textContent, /2 次|搜索次数/);
+});
+
+test('an all-empty search group says there are no usable results', () => {
+  const { document } = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
+    state: 'complete', open: true, activities: [
+      { id: 'empty-1', kind: 'search', status: 'complete', query: 'one', results: [] },
+      { id: 'empty-2', kind: 'search', status: 'complete', query: 'two', results: [] },
+    ],
+  })));
+  assert.equal(document.querySelectorAll('.web-activity').length, 1);
+  assert.match(document.querySelector('.web-activity-empty').textContent, /未找到可用结果/);
+});
+
+test('grouping keeps every raw search query available for storage and debugging', () => {
+  const steps = groupResearchSteps([
+    { id: 'search-1', kind: 'search', status: 'complete', query: 'first query', results: [] },
+    { id: 'fetch-1', kind: 'fetch', status: 'complete', url: 'https://example.com/a', urls: ['https://example.com/a'] },
+    { id: 'search-2', kind: 'search', status: 'complete', query: 'second query', results: [] },
+  ]);
+  const search = steps.find((entry) => entry.type === 'group' && entry.group.kind === 'search');
+  assert.ok(search && search.type === 'group');
+  assert.deepEqual(search.group.activities.map((activity) => activity.query), ['first query', 'second query']);
 });
 
 test('search result icons fall back to the globe when a favicon is unavailable', async () => {
@@ -332,27 +357,37 @@ test('tool sections follow OpenStudio: active details open, completed details co
   }
 });
 
-test('the process renders separate thinking segments around search and fetch in event order', () => {
+test('the process renders one aggregated search row and one fetch row around thinking segments', () => {
   const process = [
     { id: 'first', kind: 'thinking', content: '先搜索', status: 'complete' },
-    { id: 'search', kind: 'search', status: 'complete', query: 'Python' },
-    { id: 'fetch', kind: 'fetch', status: 'complete', url: 'https://example.com/a' },
+    { id: 'search-1', kind: 'search', status: 'complete', query: 'Python', results: [
+      { rank: 1, title: 'Python docs', url: 'https://docs.python.org/a', domain: 'docs.python.org' },
+      { rank: 2, title: 'Python guide', url: 'https://example.com/python', domain: 'example.com' },
+    ] },
+    { id: 'fetch-1', kind: 'fetch', status: 'complete', url: 'https://example.com/a', urls: ['https://example.com/a'] },
     { id: 'second', kind: 'thinking', content: '再分析', status: 'running' },
+    { id: 'search-2', kind: 'search', status: 'complete', query: 'Python asyncio', results: [
+      { rank: 3, title: 'Python asyncio', url: 'https://docs.python.org/b', domain: 'docs.python.org' },
+    ] },
+    { id: 'fetch-2', kind: 'fetch', status: 'complete', url: 'https://example.com/b', urls: ['https://example.com/b'] },
   ];
   const { document } = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
     state: 'running', open: true, reasoning: 'legacy merged transcript', process,
   })));
   const steps = [...document.querySelector('.reasoning-steps').children];
-  assert.equal(steps.length, 4);
+  assert.equal(steps.length, 4, 'two searches and two fetches collapse into two rows');
   // Only the segment still being written is open; earlier ones fold to their preview line.
   assert.equal(steps[0].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'false');
   assert.equal(steps[0].querySelector('.thinking-body').textContent, '');
   assert.equal(steps[0].querySelector('.thinking-preview').textContent, '先搜索');
-  assert.ok(steps[1].querySelector('.web-activity'));
-  assert.ok(steps[2].querySelector('.web-activity'));
+  assert.equal(steps[1].querySelectorAll('.web-activity').length, 1);
+  assert.match(steps[1].querySelector('.web-activity-state').textContent, /搜索到 3 个网页/);
+  assert.equal(steps[2].querySelectorAll('.web-activity').length, 1);
+  assert.match(steps[2].querySelector('.web-activity-state').textContent, /浏览了 2 个页面/);
   assert.equal(steps[3].querySelector('.thinking-toggle').getAttribute('aria-expanded'), 'true');
   assert.ok(steps[3].querySelector('.thinking-body').textContent.includes('再分析'));
   assert.ok(!document.body.textContent.includes('legacy merged transcript'));
+  assert.doesNotMatch(document.body.textContent, /2 次搜索|搜索次数/);
 });
 
 function render(content) { return renderToStaticMarkup(createElement(MessageContent, { content })); }

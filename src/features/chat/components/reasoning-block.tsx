@@ -1,11 +1,12 @@
-import { Brain, Check, ChevronRight, ChevronUp, CircleAlert, FilePenLine, FilePlus2, FileText, Globe2, Save, Search, Square, Trash2 } from 'lucide-react';
+import { Brain, Check, ChevronRight, ChevronUp, CircleAlert, FilePenLine, FilePlus2, FileText, Save, Square, Trash2 } from 'lucide-react';
 import { memo, useEffect, useId, useRef, useState } from 'react';
 
-import type { ProcessActivity, ThinkingActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
+import type { ProcessActivity, ThinkingActivity, WebActivity } from '@/core/agent/types';
 import { fileContentUrl } from '@/features/files/files-api';
 import type { Message } from '../chat-state';
 import { formatFileSize } from './attachment-list';
 import { MessageContent } from './message-content';
+import { ResearchGroupRow, groupResearchSteps } from './research-group';
 
 export type ReasoningState = 'running' | 'complete' | 'stopped' | 'error';
 
@@ -25,22 +26,9 @@ function formatElapsed(seconds: number) {
   return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 
-function hostname(url: string | undefined): string {
-  if (!url) return '';
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
-}
-
 function formatTook(ms: number): string {
   if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
-}
-
-function activityLabel(activity: WebActivity): string {
-  if (activity.status === 'stopped') return activity.kind === 'search' ? '搜索已停止' : '读取已停止';
-  if (activity.kind === 'search') {
-    return activity.status === 'error' ? '搜索失败' : activity.status === 'running' ? '正在搜索' : '已搜索';
-  }
-  return activity.status === 'error' ? '读取失败' : activity.status === 'running' ? '正在读取' : '已读取';
 }
 
 const FILE_OPERATION_NAMES: Record<string, string> = {
@@ -109,76 +97,6 @@ const FileActivityRow = memo(function FileActivityRow({ activity }: { activity: 
       </a>}
       {activity.warning && <span className="web-activity-empty">{activity.warning}</span>}
       {activity.error && <span className={failed ? 'web-activity-error' : 'web-activity-empty'}>{activity.error}</span>}
-    </div>
-  </div>;
-});
-
-/** The site's own root favicon keeps requests on the result's domain; a 404 or a broken
-    response falls back to the neutral globe instead of leaving a broken image. */
-function SiteIcon({ url, size = 14 }: { url: string; size?: number }) {
-  const [failed, setFailed] = useState(false);
-  let source: string | null = null;
-  try { source = `https://${new URL(url).hostname}/favicon.ico`; } catch { /* unusable URL */ }
-  if (!source || failed) return <Globe2 size={size} aria-hidden="true" />;
-  return <img className="web-activity-result-icon" src={source} width={size} height={size} alt=""
-    loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
-}
-
-function SearchResults({ results }: { results: WebSearchResult[] }) {
-  return <span className="web-activity-results">
-    {results.map((result) => <a className="web-activity-result" key={`${result.rank}:${result.url}`}
-      href={result.url} target="_blank" rel="noopener noreferrer">
-      <SiteIcon url={result.url} />
-      <span className="web-activity-result-copy">
-      <span className="web-activity-result-title">{result.title}</span>
-      <span className="web-activity-result-domain">{result.domain || hostname(result.url)}</span>
-      </span>
-    </a>)}
-  </span>;
-}
-
-const WebActivityRow = memo(function WebActivityRow({ activity }: { activity: WebActivity }) {
-  const running = activity.status === 'running';
-  const failed = activity.status === 'error';
-  const finished = !running;
-  const [expansion, setExpansion] = useState<{ finished: boolean; open: boolean } | null>(null);
-  const open = expansion?.finished === finished ? expansion.open : !finished;
-  const bodyId = useId();
-  const Glyph = failed ? CircleAlert : activity.kind === 'search' ? Search : FileText;
-  const urls = activity.kind === 'fetch' ? activity.urls ?? (activity.url ? [activity.url] : []) : [];
-  return <div className={`web-activity is-${activity.status}`}>
-    <button type="button" className="web-activity-toggle" aria-expanded={open} aria-controls={bodyId}
-      onClick={() => setExpansion({ finished, open: !open })}>
-        <Glyph size={15} strokeWidth={1.75} className="web-activity-icon" aria-hidden="true" />
-        <span className="web-activity-label">{activity.kind === 'search' ? '搜索资料' : '读取网页'}</span>
-        <span className="web-activity-state">{activityLabel(activity)}</span>
-        {activity.tookMs !== undefined && !running
-          ? <span className="web-activity-time">{formatTook(activity.tookMs)}</span>
-          : null}
-        <ChevronRight size={14} className="web-activity-chevron" aria-hidden="true" />
-    </button>
-    <div className="web-activity-details" id={bodyId} hidden={!open}>
-      {activity.kind === 'search'
-        ? <span className="web-activity-subject">{activity.query}</span>
-        : null}
-      {activity.kind === 'search' && activity.results?.length ? <div className="web-activity-sources">
-        <SearchResults results={activity.results} />
-      </div> : null}
-      {activity.kind === 'search' && activity.status === 'complete' && !activity.results?.length
-        ? <span className="web-activity-empty">本次检索未找到可用结果。</span> : null}
-      {activity.kind === 'fetch' && urls.length > 0
-        ? <span className="web-activity-results">
-          {urls.map((url) => <a className="web-activity-result" key={url} href={url}
-            target="_blank" rel="noopener noreferrer">
-            <SiteIcon url={url} size={15} />
-            <span className="web-activity-result-copy">
-              <span className="web-activity-result-title">{url === activity.url ? activity.title || hostname(url) : hostname(url)}</span>
-              <span className="web-activity-result-domain">{url}</span>
-            </span>
-          </a>)}
-        </span>
-        : null}
-      {activity.error ? <span className={failed ? 'web-activity-error' : 'web-activity-empty'}>{activity.error}</span> : null}
     </div>
   </div>;
 });
@@ -275,6 +193,9 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     ...(activities ?? []),
   ];
   const visibleSteps = steps.filter((step) => step.kind !== 'thinking' || step.content.trim());
+  // All search calls share one row and all page reads share one row; raw activities stay intact
+  // in the message for storage and debugging.
+  const renderSteps = groupResearchSteps(visibleSteps);
   const stepsRef = useRef<HTMLDivElement>(null);
   const [showCollapse, setShowCollapse] = useState(false);
   useEffect(() => {
@@ -287,7 +208,7 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [open, visibleSteps.length]);
+  }, [open, renderSteps.length]);
   // Keep counting through reasoning, tools, the gap before the answer, and answer streaming.
   const live = running && startedAt !== null;
   const seconds = useElapsed(live ? startedAt : null);
@@ -321,15 +242,18 @@ export function ReasoningBlock({ reasoning = '', state, elapsedMs = null, starte
     <button ref={header} type="button" className="reasoning-toggle" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>{line}</button>
     <div className="reasoning-body" id={bodyId} hidden={!open}>
       {open && visibleSteps.length ? <>
-        <div className="reasoning-steps" ref={stepsRef}>{visibleSteps.map((step) => <div key={step.id}
-          className={`reasoning-process-step${step.kind === 'thinking' ? ' thinking-step' : ''}`}>
-          {step.kind === 'thinking'
-            ? <ThinkingRow activity={step} streaming={running && step.status === 'running'}
-              // Only the segment being written is open by default. When it ends and the next
-              // tool or thought starts, this row folds back to its one-line preview; a manual
-              // open/close on that segment still wins for as long as its status does not change.
-              expanded={running && step.status === 'running'} />
-            : step.kind === 'file' ? <FileActivityRow activity={step} /> : <WebActivityRow activity={step} />}
+        <div className="reasoning-steps" ref={stepsRef}>{renderSteps.map((entry) => <div
+          key={entry.type === 'group' ? entry.group.id : entry.step.id}
+          className={`reasoning-process-step${entry.type === 'step' && entry.step.kind === 'thinking' ? ' thinking-step' : ''}`}>
+          {entry.type === 'group'
+            ? <ResearchGroupRow group={entry.group} />
+            : entry.step.kind === 'thinking'
+              ? <ThinkingRow activity={entry.step} streaming={running && entry.step.status === 'running'}
+                // Only the segment being written is open by default. When it ends and the next
+                // tool or thought starts, this row folds back to its one-line preview; a manual
+                // open/close on that segment still wins for as long as its status does not change.
+                expanded={running && entry.step.status === 'running'} />
+              : entry.step.kind === 'file' ? <FileActivityRow activity={entry.step} /> : null}
         </div>)}</div>
         {showCollapse && <button type="button" className="reasoning-collapse" onClick={collapse}>
           <ChevronUp size={14} strokeWidth={1.75} aria-hidden="true" />

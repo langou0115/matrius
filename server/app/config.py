@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     # Short-lived fetch cache: research agents often re-read the same source within one reply.
     fetch_cache_ttl_seconds: int = 600
     # Instance in-flight cap for each web tool, on top of the global provider semaphore.
-    tool_concurrency: int = 4
+    tool_concurrency: int = 10
     max_upload_bytes: int = 20 * 1024 * 1024
     fetch_max_chars: int = 50000
 

@@ -55,7 +55,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
       activities: [{ id: 'search', kind: 'search', status: 'running', query: 'Python' }],
       process: [{ id: 'first', kind: 'thinking', content: '先搜索', status: 'complete' },
         { id: 'search', kind: 'search', status: 'complete', query: 'Python' },
-        { id: 'fetch', kind: 'fetch', status: 'complete', urls: ['https://example.com/1', 'https://example.com/2', 'https://example.com/3', 'https://example.com/4'] },
+        { id: 'fetch', kind: 'fetch', status: 'complete', urls: Array.from({ length: 10 }, (_, index) => `https://example.com/${index + 1}`) },
         { id: 'second', kind: 'thinking', content: '再分析', status: 'running' }] });
     await writeWorkspace(next, 5);
     assert.equal(messageWrites, 2, 'the quote and new reply are both persisted');
@@ -75,7 +75,7 @@ test('IndexedDB v1 migrates atomically, stores only changed bodies, preserves pa
     assert.equal(restored.data.chat.conversations[0].messages[1].thinkingMs, 4200, 'thinking duration survives a reload');
     assert.deepEqual(restored.data.chat.conversations[0].messages[1].process.map((step) => step.kind), ['thinking', 'search', 'fetch', 'thinking']);
     assert.equal(restored.data.chat.conversations[0].messages[1].process.at(-1).status, 'stopped');
-    assert.equal(restored.data.chat.conversations[0].messages[1].process[2].urls.length, 4);
+    assert.equal(restored.data.chat.conversations[0].messages[1].process[2].urls.length, 10);
     assert.equal(restored.data.chat.conversations[0].messages[1].feedback, 'bad', 'assistant feedback survives a database reload');
     assert.equal(restored.data.chat.conversations[0].messages[0].feedback, undefined, 'older messages do not get an implicit rating');
     assert.equal(restored.data.chat.conversations[0].messages[0].thinkingMs, undefined, 'messages without a measured duration stay undefined');

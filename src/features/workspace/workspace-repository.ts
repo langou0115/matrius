@@ -55,7 +55,7 @@ export function readActivities(value: unknown): WebActivity[] | undefined {
       ...(typeof item.query === 'string' ? { query: item.query } : {}),
       ...(results?.length ? { results } : {}),
       ...(typeof item.url === 'string' ? { url: item.url } : {}),
-      ...(Array.isArray(item.urls) && item.urls.every((url) => typeof url === 'string') ? { urls: item.urls.slice(0, 4) } : {}),
+      ...(Array.isArray(item.urls) && item.urls.every((url) => typeof url === 'string') ? { urls: item.urls.slice(0, 10) } : {}),
       ...(typeof item.title === 'string' ? { title: item.title } : {}),
       ...(typeof item.operation === 'string' ? { operation: item.operation } : {}),
       ...(typeof item.fileId === 'string' ? { fileId: item.fileId } : {}),
