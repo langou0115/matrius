@@ -1,7 +1,7 @@
 import { useMobile } from '@/components/web/use-mobile';
 import { Link, router, usePathname, type Href } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { FolderOpen, SquarePen } from 'lucide-react';
 
 import { BrandMark } from '@/components/web/brand-mark';
@@ -39,11 +39,28 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const [menu, setMenu] = useState<{ conversation: Conversation; anchor: HTMLButtonElement } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
-  const groups = [
-    { name: '置顶', items: sorted.filter((item) => item.pinned) },
-    { name: '最近', items: sorted.filter((item) => !item.pinned) },
-  ];
+  const groups = useMemo(() => {
+    const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+    return [
+      { name: '置顶', items: sorted.filter((item) => item.pinned) },
+      { name: '最近', items: sorted.filter((item) => !item.pinned) },
+    ];
+  }, [conversations]);
+  // Empty groups render nothing at all: a "置顶" heading with no pinned conversations is
+  // just a label that pushes the list down.
+  const visibleGroups = groups.filter((group) => group.items.length > 0);
+  // A folded group that lost its last conversation must not come back folded, or 置顶 would
+  // reappear as an empty-looking heading the next time something gets pinned.
+  useEffect(() => {
+    const empty = groups.flatMap((group) => group.items.length === 0 ? [group.name] : []);
+    if (empty.length === 0) return;
+    setCollapsed((current) => {
+      if (!empty.some((name) => current[name])) return current;
+      const next = { ...current };
+      for (const name of empty) delete next[name];
+      return next;
+    });
+  }, [groups]);
   function select(id: string | null) {
     // Record the choice before navigating; the workspace save is asynchronous and a quick
     // tab switch can happen before it lands.
@@ -70,8 +87,8 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
         </Link>}
       </nav>
       <nav className="conversation-list" aria-label="历史对话">
-        {groups.map((group) => (
-          <section className={`conversation-group${group.items.length === 0 ? ' is-empty' : ''}`} key={group.name}>
+        {visibleGroups.map((group) => (
+          <section className="conversation-group" key={group.name}>
             <h2 className="sidebar-section-label"><button type="button" aria-expanded={!collapsed[group.name]} aria-controls={`sidebar-${group.name}`} onClick={() => setCollapsed((current) => ({ ...current, [group.name]: !current[group.name] }))}><span>{group.name}</span><Icon name="chevron" size={16} /></button></h2>
             <div id={`sidebar-${group.name}`} hidden={collapsed[group.name]}>
             {group.items.map((item) => {

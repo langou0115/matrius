@@ -127,10 +127,8 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .conversation-group { margin-bottom: 8px; }
 /* A folded group collapses to its heading. Keeping the 8px section gap there leaves a hole
    between 置顶 and 最近, so drop it while the group is folded and let the label's own 3px
-   tail be the only separation. An empty group has no body to fold, so it keeps that same
-   compact spacing whether expanded or folded: the heading stays put, toggling never nudges
-   最近, and the empty group does not leave a hole above it. */
-.conversation-group:has(> [hidden]), .conversation-group.is-empty { margin-bottom: 0; }
+   tail be the only separation. Groups with no items are not rendered at all. */
+.conversation-group:has(> [hidden]) { margin-bottom: 0; }
 .conversation-item { position: relative; display: flex; align-items: center; min-height: 36px; flex-shrink: 0; border-radius: 8px; margin-bottom: 2px; }
 .conversation-item:hover, .conversation-item.menu-open { background: var(--sidebar-hover); }
 .conversation-item.is-active { background: var(--sidebar-selected); }
