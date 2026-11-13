@@ -8,7 +8,6 @@ import { thinkingBudgetsFor } from './thinking-budget';
 import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from './types';
 import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
 import { buildContext, buildSteeringMessage, requestContextMessage } from './context';
-import { estimateTextTokens } from './context';
 import { collectGeneratedFiles, getFileActivityEnd, getFileActivityStart } from './file-tools';
 import { getWebActivityEnd, getWebActivityStart } from './web-tools';
 import { createReplyDiagnostics } from './diagnostics';
@@ -87,19 +86,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   if (thinkingEffort !== 'default') model.reasoning = true;
   const agent = new Agent({
     initialState: { model, messages: [...buildContext(messages, config), requestContextMessage(memoryText)], systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
-    getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream((model, context, options) => {
-      const estimatedInput = estimateTextTokens(context.systemPrompt ?? '')
-        + estimateTextTokens(JSON.stringify(context.tools ?? []))
-        + context.messages.reduce((sum, message) => sum + 8 + (typeof message.content === 'string'
-          ? estimateTextTokens(message.content)
-          : message.content.reduce((tokens, block) => tokens + (block.type === 'image' ? 4096 : estimateTextTokens(JSON.stringify(block))), 0)), 0);
-      contextTokens = {
-        input: estimatedInput, cacheRead: 0, cacheWrite: 0,
-        output: 0, modelId: config.id, contextWindow: config.contextWindow,
-      };
-      emit();
-      return streamFn(model, context, options);
-    }),
+    getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream(streamFn),
     transport: 'sse', maxRetryDelayMs: 5000,
     // Keep reasoning from eating the whole reply window; document writes need the tokens.
     thinkingBudgets: thinkingBudgetsFor(config.maxOutput),
@@ -113,6 +100,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   let outputRetries = 0;
   // A tool-using run makes several model calls, and retries still cost tokens; report the sum.
   const tokenUsage: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  // The context meter reads the latest provider-reported call, held across call boundaries so a
+  // new request never replaces it with a zero-output estimate. It is not persisted and not summed.
   let contextTokens: import('./types').ReplyUpdate['contextTokens'];
   function countUsage(usage: AssistantMessage['usage']) {
     tokenUsage.input += tokenCount(usage.input);
@@ -122,9 +111,12 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     const cacheRead = tokenCount(usage.cacheRead);
     const cacheWrite = tokenCount(usage.cacheWrite);
     const input = tokenCount(usage.input) + cacheRead + cacheWrite;
-    if (input > 0) contextTokens = {
+    const output = tokenCount(usage.output);
+    // A provider that reports only completion tokens still has a reading worth showing; a
+    // counters-less message (aborted or failed) must not erase the last complete one.
+    if (input > 0 || output > 0) contextTokens = {
       input, cacheRead, cacheWrite,
-      output: tokenCount(usage.output), modelId: config.id, contextWindow: config.contextWindow,
+      output, modelId: config.id, contextWindow: config.contextWindow,
     };
   }
   const hasUsage = () => tokenUsage.input + tokenUsage.output + tokenUsage.cacheRead + tokenUsage.cacheWrite > 0;

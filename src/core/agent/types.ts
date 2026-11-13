@@ -96,7 +96,7 @@ export type Message = {
 
 export type AgentProfile = { customInstructions: string; aboutName: string; occupation: string; aboutMore: string };
 export type ReplyUpdate = {
-  /** Current model call only; never the sum of a run's billable usage. */
+  /** Latest provider-reported call; held until the next call reports usage, never an estimate. */
   contextTokens?: {
     /** Prompt-side total including cached tokens. */
     input: number;

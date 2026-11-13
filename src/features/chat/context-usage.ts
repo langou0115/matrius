@@ -27,9 +27,11 @@ export type ContextUsage = {
 };
 
 /**
- * Live readings come from the latest individual model call, split into uncached input, cached
- * input and output. Before a call (including after reload), estimate retained text, summary and
- * tool definitions as uncached input; never substitute daily usage.
+ * Live readings come from the latest provider-reported call, split into uncached input, cached
+ * input and output. The reading is held across call boundaries, so starting the next request
+ * never turns it into a zero-output estimate; only a conversation with no report yet (a new
+ * chat or a reload) is estimated from retained text, summary, memory and tool definitions.
+ * Never substitute daily usage.
  */
 export function measureContextUsage(
   messages: Message[],
