@@ -5,22 +5,41 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
+import type { WebActivity } from '@/core/agent/types';
+import { prepareCitations, type CitationSource } from '../citations';
 import { normalizeMarkdown } from '../markdown/normalize-markdown';
+import { CitationMarker } from './citation-marker';
 import { CodeBlock } from './code-block';
 
-const components: Components = {
-  pre({ node, children }) {
-    const code = node?.children[0];
-    if (code?.type !== 'element' || code.tagName !== 'code') return <pre>{children}</pre>;
-    const text = code.children.map((child) => child.type === 'text' ? child.value : '').join('').replace(/\n$/, '');
-    const classes = Array.isArray(code.properties.className) ? code.properties.className.join(' ') : '';
-    const language = /(?:^|\s)language-([^\s]+)/.exec(classes)?.[1] ?? '';
-    return <CodeBlock code={text} language={language} />;
-  },
-  table({ children }) { return <div className="message-table-scroll" tabIndex={0} role="region" aria-label="表格，可横向滚动"><table>{children}</table></div>; },
-  a({ node, children, ...props }) { return <a {...props} target={props.href?.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">{children}</a>; },
-  img({ node, alt, ...props }) { return <img {...props} alt={alt ?? ''} loading="lazy" />; },
-};
+function citationLabel(href: string | undefined): string | null {
+  if (!href?.startsWith('#citation-')) return null;
+  try {
+    return decodeURIComponent(href.slice('#citation-'.length));
+  } catch {
+    return null;
+  }
+}
+
+function createComponents(byLabel: Map<string, CitationSource> | null): Components {
+  return {
+    pre({ node, children }) {
+      const code = node?.children[0];
+      if (code?.type !== 'element' || code.tagName !== 'code') return <pre>{children}</pre>;
+      const text = code.children.map((child) => child.type === 'text' ? child.value : '').join('').replace(/\n$/, '');
+      const classes = Array.isArray(code.properties.className) ? code.properties.className.join(' ') : '';
+      const language = /(?:^|\s)language-([^\s]+)/.exec(classes)?.[1] ?? '';
+      return <CodeBlock code={text} language={language} />;
+    },
+    table({ children }) { return <div className="message-table-scroll" tabIndex={0} role="region" aria-label="表格，可横向滚动"><table>{children}</table></div>; },
+    a({ node: _node, children, href, ...props }) {
+      const label = byLabel ? citationLabel(href) : null;
+      const source = label ? byLabel?.get(label) : undefined;
+      if (source) return <CitationMarker source={source} />;
+      return <a {...props} href={href} target={href?.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">{children}</a>;
+    },
+    img({ node: _node, alt, ...props }) { return <img {...props} alt={alt ?? ''} loading="lazy" />; },
+  };
+}
 
 type HastProperties = { className?: unknown; title?: unknown; 'data-formula-error'?: unknown };
 type HastNode = { type: string; tagName?: string; properties?: HastProperties; children?: HastNode[]; value?: string };
@@ -94,7 +113,12 @@ function useStreamedContent(content: string, streaming: boolean): string {
   return content.startsWith(parsed) ? parsed : content;
 }
 
-export const MessageContent = memo(function MessageContent({ content, streaming = false }: { content: string; streaming?: boolean }) {
+export const MessageContent = memo(function MessageContent({ content, streaming = false, webActivities }: {
+  content: string;
+  streaming?: boolean;
+  /** Web tool calls made for this answer. Supplying them enables footnote citations and cards. */
+  webActivities?: WebActivity[];
+}) {
   const id = useId();
   const rendered = useStreamedContent(content, streaming);
   const previous = useRef(content);
@@ -117,11 +141,18 @@ export const MessageContent = memo(function MessageContent({ content, streaming 
   useEffect(() => () => {
     if (replaceTimer.current) clearTimeout(replaceTimer.current);
   }, []);
+  const prepared = useMemo(() => {
+    const normalized = normalizeMarkdown(rendered);
+    return webActivities === undefined
+      ? { markdown: normalized, byLabel: null }
+      : prepareCitations(normalized, webActivities);
+  }, [rendered, webActivities]);
+  const components = useMemo(() => createComponents(prepared.byLabel), [prepared.byLabel]);
   const body = useMemo(() => <Markdown
     components={components}
     remarkPlugins={[remarkGfm, remarkCjkFriendly, remarkMath]}
     remarkRehypeOptions={{ clobberPrefix: `message-${id}-`, footnoteLabel: '注释' }}
     rehypePlugins={[[rehypeKatex, { trust: false, strict: 'ignore', maxExpand: 1000, maxSize: 20 }], [rehypeFormulaSource, { streaming }]]}
-  >{normalizeMarkdown(rendered)}</Markdown>, [rendered, streaming, id]);
+  >{prepared.markdown}</Markdown>, [prepared.markdown, components, streaming, id]);
   return <div className={`message-markdown${replacing ? ' is-replacing' : ''}`}>{body}</div>;
 });

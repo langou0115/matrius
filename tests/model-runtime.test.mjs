@@ -98,6 +98,9 @@ test('web tools are preferred over memory unless the task needs no outside facts
   assert.match(prompt, /pass up to four different queries in one web_search queries array/);
   assert.match(prompt, /instead of making one more fetch just to strengthen the answer/);
   assert.match(prompt, /Stop searching and reading as soon as the evidence supports an answer/);
+  assert.match(prompt, /GitHub-style footnote markers/);
+  assert.match(prompt, /\[\^1\]: \[Page title\]\(https:\/\/full-page-url\)/);
+  assert.match(prompt, /app renders the source list itself/);
 });
 
 test('search tool description carries the topic-based language rule', () => {
@@ -574,7 +577,25 @@ test('steering text is wrapped in context and injected between turns of the same
   assert.equal(updates.at(-1).contextTokens.cacheRead, 800);
   assert.equal(updates.at(-1).contextTokens.cacheWrite, 0);
   assert.equal(updates.at(-1).contextTokens.output, 20);
+  const reported = updates.map((value) => value.contextTokens).filter(Boolean);
+  assert.ok(reported.every((value) => value.output > 0),
+    'a new model call keeps the last provider report instead of emitting a zero-output estimate');
   assert.deepEqual(result.usage, { input: 200, output: 40, cacheRead: 1300, cacheWrite: 0 }, 'billing still sums both calls');
+});
+
+test('a provider that reports completion tokens without prompt counters still updates the reading', async () => {
+  const updates = [];
+  const run = createReplyRun({
+    config, apiKey: 'test-key',
+    messages: [{ id: 'u1', role: 'user', content: '你好' }],
+    onUpdate: (value) => updates.push(value),
+    streamFn: () => assistantStream({ text: '回答', usage: { input: 0, output: 7, cacheRead: 0, cacheWrite: 0 } }),
+  });
+  const result = await run.start();
+  assert.equal(result.status, 'complete');
+  const sample = updates.map((value) => value.contextTokens).filter(Boolean).at(-1);
+  assert.equal(sample.output, 7);
+  assert.equal(sample.input, 0);
 });
 
 test('a supplement is deferred once the answer text starts streaming', async () => {

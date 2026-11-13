@@ -369,6 +369,13 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
    message actions and sits back visually until it moves below the finished reply. */
 .user-message[data-pending='true'] { opacity: .7; }
 .message-actions { display: flex; align-items: center; gap: 2px; min-height: 32px; margin-top: 8px; user-select: none; }
+/* The source count sits directly above the feedback row and reads as one quiet pill. */
+.message-sources { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; margin-top: 14px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--background); color: var(--muted-text); font-size: var(--text-caption); line-height: 1; transition: color 140ms, background 140ms, border-color 140ms; }
+.message-sources > svg { flex: none; }
+.message-sources:hover { border-color: color-mix(in srgb, var(--foreground) 16%, var(--border)); background: var(--soft); color: var(--foreground); }
+.message-sources:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.message-sources + .message-actions { margin-top: 2px; }
+@media (pointer: coarse) { .message-sources { min-height: 36px; padding: 0 12px; } }
 .message-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 9px; color: var(--muted-text); transition: color 140ms, background 140ms; }
 .message-action:hover { color: var(--foreground); background: var(--soft); }
 .message-action[aria-pressed='true'] { color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--background)); }
@@ -621,8 +628,10 @@ input[type='password']::-ms-clear { display: none; }
 .memory-model-select { flex: none; width: min(280px, 42%); min-width: 190px; }
 .memory-model-select .select-field { gap: 0; }
 .memory-model-select .select-field > span:first-child { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* Phones keep icon, title and control on one line, with the icon and title vertically
+   centred like every other row. Only the wide memory-model picker drops below the title. */
 @media (max-width: 640px) {
-  .memory-model-row { align-items: flex-start; }
+  .settings-row-copy { min-width: 0; }
   .memory-model-select { width: 100%; min-width: 0; }
 }
 .settings-link-row { display: flex; align-items: center; gap: 14px; margin-top: 18px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); transition: border-color 140ms, background 140ms; }
@@ -664,7 +673,7 @@ input[type='password']::-ms-clear { display: none; }
 .mock-card-arrow { flex-shrink: 0; transform: rotate(180deg); color: var(--muted-text); opacity: .55; }
 .mock-card:hover .mock-card-arrow { color: var(--primary); opacity: 1; }
 
-@media (max-width: 1150px) { .theme-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .settings-row { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 1150px) { .theme-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 800px) { .sidebar { width: 220px; min-width: 220px; } .sidebar-header { padding-left: 8px; } .brand { font-size: 17px; } .sidebar-header-actions { gap: 2px; } .welcome-scroll { padding: 24px 24px 70px; } .welcome-heading h1 { font-size: 25px; } .welcome-mark { width: 34px; height: 34px; } .settings-sidebar { width: 224px; min-width: 224px; } .settings-content { padding: 30px 24px 64px; } .theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .theme-card-label { font-size: var(--text-caption); } }
 @media (max-width: 600px) { .sidebar { width: 190px; min-width: 190px; padding-inline: 8px; } .sidebar-header { padding-inline: 4px; } .brand { font-size: 16px; gap: 7px; } .sidebar-header-actions { gap: 0; } .sidebar-header-actions .icon-button { width: 26px; } .sidebar-settings-entry-text > span { display: none; } .sidebar-settings-entry { padding: 10px 6px; gap: 7px; } .welcome-scroll { padding: 24px 18px 48px; } .welcome-content { padding-bottom: 0; } .welcome-heading h1 { font-size: 23px; } .welcome-mark { width: 30px; height: 30px; } .chat-topbar { padding-inline: 16px; } .theme-grid { grid-template-columns: minmax(0, 1fr); } .mode-switch { flex-wrap: wrap; } .mode-switch button { padding-inline: 8px; } .settings-sidebar { width: 190px; min-width: 190px; padding-inline: 8px; } .settings-content { padding: 24px 18px 56px; } .conversation-more { opacity: 1; } }
 @media (max-width: 900px) {
@@ -744,6 +753,18 @@ input[type='password']::-ms-clear { display: none; }
 .message-markdown tr:last-child td { border-bottom: 0; }
 .message-markdown th:last-child, .message-markdown td:last-child { border-right: 0; }
 .message-markdown .footnotes { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted-text); font-size: var(--text-small); }
+/* A citation marker reads as a small raised number, not as an underlined paragraph link. The
+   marker keeps its own pill because several of them often sit next to each other in one sentence. */
+.message-markdown .message-citation-wrap { display: inline; font-size: inherit; vertical-align: baseline; }
+.message-markdown .message-citation { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin: 0 1px 0 2px; padding: 0 3px; border-radius: 4px; background: color-mix(in srgb, var(--foreground) 7%, var(--background)); color: var(--muted-text); font-family: var(--font-medium); font-size: 10px; line-height: 1; text-decoration: none; vertical-align: super; transition: color 140ms, background 140ms; }
+.message-markdown .message-citation:hover, .message-markdown .message-citation:focus-visible { background: color-mix(in srgb, var(--primary) 14%, var(--background)); color: var(--primary); text-decoration: none; }
+.message-markdown .message-citation:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.message-markdown .message-citation.is-static { cursor: default; }
+.message-markdown .message-citation.is-static:hover { background: color-mix(in srgb, var(--foreground) 7%, var(--background)); color: var(--muted-text); }
+@media (pointer: coarse) {
+  .message-markdown .message-citation { position: relative; }
+  .message-markdown .message-citation::after { content: ''; position: absolute; inset: -8px -4px; }
+}
 .message-markdown .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* A display formula wider than the bubble scrolls inside it rather than stretching the message:
    `overscroll-behavior` keeps a swipe that reaches either end from dragging the conversation, and
@@ -1165,19 +1186,33 @@ input[type='password']::-ms-clear { display: none; }
 }
 .research-result:active { background: color-mix(in srgb, var(--foreground) 9%, transparent); }
 .research-result:focus-visible { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+/* A source that cannot be opened (a citation that only names a document) is not a card link. */
+.research-result.is-static { cursor: default; }
+.research-result.is-static:hover { background: none; }
+.research-result.is-static:hover .research-result-title { text-decoration: none; }
+.research-result-number { display: inline-flex; flex: none; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px; background: color-mix(in srgb, var(--foreground) 8%, var(--background)); color: var(--muted-text); font-family: var(--font-medium); font-size: 11px; line-height: 1; }
+/* The hover card is portalled into the app shell so it inherits the theme variables. */
+.citation-card { position: fixed; z-index: 70; display: flex; flex-direction: column; gap: 7px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 8px 28px rgb(0 0 0 / 16%); font-family: var(--font-display); font-size: var(--text-small); line-height: 1.55; pointer-events: auto; }
+.citation-card-site { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--muted-text); font-size: var(--text-caption); }
+.citation-card-site > svg { flex: none; }
+.citation-card-site > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-card-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-family: var(--font-medium); font-size: var(--text-ui); line-height: 1.45; overflow-wrap: anywhere; }
+.citation-card-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; overflow-wrap: anywhere; }
+@media (hover: none) { .citation-card { display: none; } }
 /* Partial failures belong to the source list, not the transcript: they sit above the cards. */
 .research-notes { display: flex; flex-direction: column; gap: 2px; padding: 10px 0 2px; }
 .research-note { margin: 0; color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; overflow-wrap: anywhere; }
 .research-note.is-error { color: var(--destructive); }
 .research-empty { padding: 18px 0; color: var(--muted-text); font-size: var(--text-small); line-height: 1.6; }
 @keyframes research-panel-in { from { opacity: 0; transform: translateX(10px); } }
-/* The narrow-viewport sheet: same list, slid up from the bottom edge with a rounded top. */
-.dialog.research-sheet { position: fixed; inset: auto 0 0; width: min(560px, 100%); max-width: 100%; height: min(86dvh, 760px); max-height: 86dvh; margin: 0 auto; border-radius: 18px 18px 0 0; box-shadow: 0 -10px 48px rgb(0 0 0 / 14%); animation: research-sheet-in 220ms ease-out; }
-.research-sheet .dialog-panel { display: flex; flex-direction: column; height: 100%; max-height: none; padding: 0; overflow: hidden; border: 0; border-radius: inherit; }
-.research-sheet .dialog-header { flex: none; margin: 0; padding: 16px 12px 14px 20px; border-bottom: 1px solid var(--border); }
+/* The narrow-viewport sheet mirrors the desktop source column: same themed surface, same cards,
+   instead of inheriting the generic dialog popover surface. */
+.dialog.research-sheet { position: fixed; inset: auto 0 0; width: min(560px, 100%); max-width: 100%; height: min(86dvh, 760px); max-height: 86dvh; margin: 0 auto; border-radius: 18px 18px 0 0; background: var(--background); color: var(--foreground); box-shadow: 0 -10px 48px rgb(0 0 0 / 14%); animation: research-sheet-in 220ms ease-out; }
+.research-sheet .dialog-panel { display: flex; flex-direction: column; height: 100%; max-height: none; padding: 0; overflow: hidden; border: 0; border-radius: inherit; background: var(--background); }
+.research-sheet .dialog-header { flex: none; margin: 0; padding: 16px 12px 14px 20px; border-bottom: 1px solid var(--border); background: var(--background); }
 .research-sheet .dialog-header h2 { font-size: var(--text-body); font-family: var(--font-medium); }
 .research-sheet .dialog-header .icon-button { width: 36px; height: 36px; }
-.research-sheet .research-panel-body { padding: 0 20px max(20px, env(safe-area-inset-bottom)); }
+.research-sheet .research-panel-body { padding: 0 20px max(20px, env(safe-area-inset-bottom)); background: var(--background); }
 @keyframes research-sheet-in { from { opacity: 0; transform: translateY(18px); } }
 @media (prefers-reduced-motion: reduce) { .research-panel, .dialog.research-sheet { animation: none; } }
 /* Reasoning is supporting detail: the answer's typography demoted one step and tightened,

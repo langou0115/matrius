@@ -3,11 +3,12 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
-import type { MessageFile } from '@/core/agent/types';
+import type { MessageFile, WebActivity } from '@/core/agent/types';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
 import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
 import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
 import { useChat, type Message, type MessageImage } from './chat-state';
+import { collectReplySources, webActivitiesOf, type ReplySources } from './citations';
 import { Composer } from './components/composer';
 import { ContextMeter } from './components/context-meter';
 import { measureContextUsage } from './context-usage';
@@ -19,10 +20,12 @@ import { MessageAttachments } from './components/message-attachments';
 import { GeneratedFiles } from './components/generated-files';
 import { CollapsibleMessageContent } from './components/collapsible-message-content';
 import { MessageActions } from './components/message-actions';
+import { SourceBadge } from './components/source-badge';
 import { ReasoningBlock, getReasoningState, visibleProcessSteps } from './components/reasoning-block';
 import { findResearchGroup, type ResearchGroup } from './components/research-group';
 import { useChatDisplay } from './display-preferences';
 import { ResearchPanel } from './components/research-panel';
+import { SourcesPanel } from './components/sources-panel';
 import { ReplyStatus } from './components/reply-status';
 import { useChatRuntime } from './chat-runtime';
 import { useModels } from '@/features/models/model-state';
@@ -39,6 +42,29 @@ import { QuoteCard } from './components/quote-card';
 import { ConversationNavigator } from './components/conversation-navigator';
 
 function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+
+// Text deltas replace the message object but keep the same `activities` array, while tool
+// start/end replaces that array. Keying the tool list by the array therefore keeps citation
+// parsing stable through a token stream without missing a new search or page read.
+const activityCache = new WeakMap<object, WebActivity[]>();
+const sourceCache = new WeakMap<Message, ReplySources>();
+
+function cachedWebActivities(message: Message): WebActivity[] {
+  const key: object = message.activities ?? message;
+  const cached = activityCache.get(key);
+  if (cached) return cached;
+  const activities = webActivitiesOf(message);
+  activityCache.set(key, activities);
+  return activities;
+}
+
+function cachedReplySources(message: Message): ReplySources {
+  const cached = sourceCache.get(message);
+  if (cached) return cached;
+  const sources = collectReplySources(message.content, cachedWebActivities(message));
+  sourceCache.set(message, sources);
+  return sources;
+}
 
 const RUNTIME_NOTICE_ID = 'runtime-error';
 const NO_MESSAGES: Message[] = [];
@@ -89,37 +115,46 @@ export default function ChatScreen() {
   // Keep each disclosure independent through completion, new replies and conversation switches.
   const [reasoningOpen, setReasoningOpen] = useState<Record<string, boolean>>({});
   const messages = conversation?.messages ?? NO_MESSAGES;
-  // The source panel belongs to one row: keep that row's identity and read the group back from the
-  // message on every render, so pages found while the reply is still running show up live.
+  // The source column belongs to one message: keep that identity and read the panel content back
+  // from the message on every render, so pages found while the reply is still running show up live.
   const wideViewport = useWideViewport();
   const display = useChatDisplay();
-  const [research, setResearch] = useState<{ messageId: string; groupId: string } | null>(null);
-  const researchOpener = useRef<HTMLElement | null>(null);
+  const [panel, setPanel] = useState<
+    { type: 'research'; messageId: string; groupId: string } | { type: 'sources'; messageId: string } | null
+  >(null);
+  const panelOpener = useRef<HTMLElement | null>(null);
+  const panelMessage = panel ? conversation?.messages.find((item) => item.id === panel.messageId) : undefined;
   const researchGroup = useMemo<ResearchGroup | null>(() => {
-    if (!research) return null;
-    const message = conversation?.messages.find((item) => item.id === research.messageId);
-    if (!message) return null;
-    return findResearchGroup(visibleProcessSteps(message.reasoning, message.activities, message.process, display.showThinking), research.groupId);
-  }, [research, conversation?.messages, display.showThinking]);
+    if (panel?.type !== 'research' || !panelMessage) return null;
+    return findResearchGroup(visibleProcessSteps(panelMessage.reasoning, panelMessage.activities, panelMessage.process, display.showThinking), panel.groupId);
+  }, [panel, panelMessage, display.showThinking]);
+  const sourcePanel = useMemo<ReplySources | null>(() => {
+    if (panel?.type !== 'sources' || !panelMessage) return null;
+    return cachedReplySources(panelMessage);
+  }, [panel, panelMessage]);
   function openResearch(messageId: string, group: ResearchGroup, opener: HTMLElement) {
     // Clicking a row only ever opens its group. The panel closes from its own button or Esc, so a
     // stray second click on the row cannot make the sources vanish under the reader.
-    researchOpener.current = opener;
-    setResearch({ messageId, groupId: group.id });
+    panelOpener.current = opener;
+    setPanel({ type: 'research', messageId, groupId: group.id });
   }
-  function closeResearch() {
-    setResearch(null);
-    const opener = researchOpener.current;
-    researchOpener.current = null;
+  function openSources(messageId: string, opener: HTMLElement) {
+    panelOpener.current = opener;
+    setPanel({ type: 'sources', messageId });
+  }
+  function closePanel() {
+    setPanel(null);
+    const opener = panelOpener.current;
+    panelOpener.current = null;
     if (opener?.isConnected) opener.focus({ preventScroll: true });
   }
   // The panel describes one reply; switching conversations closes it instead of showing old sources.
   // Adjusting the state during render (React's documented pattern) avoids an extra paint with the
   // previous conversation's sources and needs no effect.
-  const [researchOwner, setResearchOwner] = useState(activeId);
-  if (researchOwner !== activeId) {
-    setResearchOwner(activeId);
-    if (research) setResearch(null);
+  const [panelOwner, setPanelOwner] = useState(activeId);
+  if (panelOwner !== activeId) {
+    setPanelOwner(activeId);
+    if (panel) setPanel(null);
   }
   // Mirror chat-runtime's prompt assembly so the meter counts the tool instructions the next
   // request actually carries. The counts are estimates; the provider remains the authority.
@@ -215,7 +250,7 @@ export default function ChatScreen() {
     void models.setThinkingEffort(models.selected.id, value).catch(() => showNotice('保存思考强度失败，请重试。'));
   }
 
-  return <div className={`chat-screen${researchGroup && wideViewport ? ' has-research-panel' : ''}`}><main ref={mobile && hasMessages ? undefined : messageScroller} data-conversation-key={`${draftKey}-${mobile}-${hasMessages}`} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
+  return <div className={`chat-screen${(researchGroup || sourcePanel) && wideViewport ? ' has-research-panel' : ''}`}><main ref={mobile && hasMessages ? undefined : messageScroller} data-conversation-key={`${draftKey}-${mobile}-${hasMessages}`} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
     <header className="chat-topbar">
       {!sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
@@ -226,6 +261,13 @@ export default function ChatScreen() {
         <div className="messages-content">
           {messages.map((message) => {
             const live = message.id === liveReply?.id;
+            const webActivities = message.role === 'assistant' ? cachedWebActivities(message) : undefined;
+            // Citation rendering is part of web research: an answer that never called a web tool
+            // keeps ordinary Markdown footnotes instead of being rewritten into source markers.
+            const cites = !!webActivities?.length;
+            // The source chip is final only once the reply stops; a running answer keeps its sources
+            // in the live research rows and gains the chip when the text is complete.
+            const replySources = message.role === 'assistant' && message.status !== 'streaming' && cites ? cachedReplySources(message) : null;
             // Preserve an explicitly opened waiting disclosure even if the model only emits prose.
             const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length || !!message.process?.length
               || reasoningOpen[message.id] === true
@@ -233,12 +275,15 @@ export default function ChatScreen() {
             const block = message.role === 'user'
               ? <UserMessage key={message.id} message={message} />
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
-              {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} process={message.process} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} open={reasoningOpen[message.id] ?? false} onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [message.id]: open }))} openResearchId={research?.messageId === message.id ? research.groupId : null} onOpenResearch={(group, opener) => openResearch(message.id, group, opener)} showThinking={display.showThinking} thinkingExpanded={display.thinkingExpanded} />}
-              <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} /></div>
+              {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} process={message.process} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} open={reasoningOpen[message.id] ?? false} onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [message.id]: open }))} openResearchId={panel?.type === 'research' && panel.messageId === message.id ? panel.groupId : null} onOpenResearch={(group, opener) => openResearch(message.id, group, opener)} showThinking={display.showThinking} thinkingExpanded={display.thinkingExpanded} />}
+              <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} webActivities={cites ? webActivities : undefined} /></div>
               <ReplyStatus message={message} onRetry={message.status === 'error' && message.id === lastMessage?.id && !generating
                 ? () => runtime.retry(conversation.id) : undefined} />
               {/* Saved files wait for the reply to finish, so the answer is not pushed down mid-stream. */}
               {message.status !== 'streaming' && !!message.files?.length && <GeneratedFiles files={message.files} />}
+              {message.status !== 'streaming' && !!replySources?.total && <SourceBadge count={replySources.total}
+                open={panel?.type === 'sources' && panel.messageId === message.id}
+                onOpen={(opener) => openSources(message.id, opener)} />}
               {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message}
                 onFeedback={(feedback) => dispatch({ type: 'feedback', conversationId: conversation.id, messageId: message.id, feedback })} onFork={() => {
                 const forkId = createId();
@@ -271,7 +316,8 @@ export default function ChatScreen() {
       <Composer key={draftKey} value={draft} onChange={changeDraft} onSend={send} thinkingEffort={thinkingEffort} onThinkingEffortChange={updateThinkingEffort} onModelChange={bindModel} quote={quote} onRemoveQuote={() => setQuote(draftKey, '')} onNotice={showNotice} />
     </div></div>}
   </main>
-    {researchGroup && <ResearchPanel group={researchGroup} mode={wideViewport ? 'side' : 'sheet'} onClose={closeResearch} />}
+    {researchGroup && <ResearchPanel group={researchGroup} mode={wideViewport ? 'side' : 'sheet'} onClose={closePanel} />}
+    {sourcePanel && <SourcesPanel sources={sourcePanel} mode={wideViewport ? 'side' : 'sheet'} onClose={closePanel} />}
     <ChatNotice items={noticeItems} onClose={dismissNotice} />
     {hasMessages && <SelectionQuote key={`selection-${draftKey}`} containerRef={messageScroller} onQuote={(content) => {
       setQuote(draftKey, content);

@@ -16,6 +16,8 @@ import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
 import { ReasoningBlock } from '../src/features/chat/components/reasoning-block.tsx';
 import { groupResearchSteps } from '../src/features/chat/components/research-group.tsx';
 import { ResearchPanel } from '../src/features/chat/components/research-panel.tsx';
+import { SourcesPanel } from '../src/features/chat/components/sources-panel.tsx';
+import { SourceBadge } from '../src/features/chat/components/source-badge.tsx';
 import { ReplyStatus } from '../src/features/chat/components/reply-status.tsx';
 
 test('collapsed thinking stays lightweight and the waiting header remains clickable', () => {
@@ -682,6 +684,112 @@ test('CommonMark and GFM render real headings, lists, quotes, tables, tasks and 
   assert.equal(doc.querySelectorAll('input[type=checkbox]').length, 2);
   const reference = doc.querySelector('a[data-footnote-ref]');
   assert.ok(doc.getElementById(reference.getAttribute('href').slice(1)));
+});
+
+test('web footnotes become superscript source links and their definition list leaves the answer', () => {
+  const activities = [{
+    id: 'search', kind: 'search', status: 'complete', query: 'q',
+    results: [{ rank: 1, title: '来源标题', url: 'https://openai.com/docs', domain: 'openai.com', snippet: '来源摘要', engine: 'x' }],
+  }];
+  const { document } = parseHTML(renderToStaticMarkup(createElement(MessageContent, {
+    content: '第一段结论[^1]。\n\n第二段结论[^2]。\n\n[^1]: [官方文档](https://openai.com/docs)\n[^2]: [GitHub](https://github.com)',
+    webActivities: activities,
+  })));
+  const markers = [...document.querySelectorAll('.message-citation')];
+  assert.equal(markers.length, 2);
+  assert.equal(markers[0].textContent, '1');
+  assert.equal(markers[0].getAttribute('href'), 'https://openai.com/docs');
+  assert.equal(markers[0].getAttribute('target'), '_blank');
+  assert.equal(markers[0].getAttribute('rel'), 'noopener noreferrer');
+  assert.match(markers[0].getAttribute('aria-label'), /来源 1：官方文档/);
+  assert.equal(markers[1].getAttribute('href'), 'https://github.com');
+  assert.equal(document.querySelector('.footnotes'), null, 'sources belong in the panel, not under the text');
+  assert.doesNotMatch(document.querySelector('.message-markdown').textContent, /官方文档|GitHub/);
+});
+
+test('the source panel lists only cited sources and keeps their marker numbers', () => {
+  const sources = {
+    citations: [
+      { label: '1', number: 1, title: '官方文档', url: 'https://openai.com/docs', domain: 'openai.com', snippet: '摘要', resolved: true },
+      { label: '2', number: 2, title: 'GitHub', url: 'https://github.com', domain: 'github.com', resolved: true },
+    ],
+    total: 2,
+  };
+  const { document } = parseHTML(renderToStaticMarkup(createElement(SourcesPanel, { sources, mode: 'side', onClose: () => {} })));
+  assert.match(document.querySelector('.research-panel-header h2').textContent, /来源（2）/);
+  assert.equal(document.querySelectorAll('.research-result').length, 2);
+  assert.equal(document.querySelector('.research-result-number').textContent, '1');
+  assert.equal(document.querySelector('.research-result').getAttribute('href'), 'https://openai.com/docs');
+  assert.doesNotMatch(document.body.textContent, /搜索到的网页|读取的网页/);
+});
+
+test('the source badge reports the page count and opens the panel', async () => {
+  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
+  const previous = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.getElementById('root'));
+  let opener = null;
+  try {
+    await act(async () => root.render(createElement(SourceBadge, { count: 92, onOpen: (element) => { opener = element; } })));
+    const badge = document.querySelector('.message-sources');
+    assert.equal(badge.textContent, '92 个网页');
+    assert.equal(badge.getAttribute('aria-haspopup'), 'dialog');
+    assert.equal(badge.getAttribute('aria-expanded'), 'false');
+    await act(async () => badge.click());
+    assert.equal(opener, badge);
+    await act(async () => root.render(createElement(SourceBadge, { count: 92, open: true, onOpen: () => {} })));
+    assert.equal(document.querySelector('.message-sources').getAttribute('aria-expanded'), 'true');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+  }
+});
+
+test('a citation marker previews its source on hover and only links directly on touch devices', async () => {
+  const { window, document } = parseHTML('<html><body><div class="matrius-app"><div id="root"></div></div></body></html>');
+  const previous = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const media = { matches: false, addEventListener() {}, removeEventListener() {} };
+  window.matchMedia = () => media;
+  window.innerWidth = 1200;
+  window.innerHeight = 800;
+  const root = createRoot(document.getElementById('root'));
+  const activities = [{
+    id: 'search', kind: 'search', status: 'complete', query: 'q',
+    results: [{ rank: 1, title: '官方文档', url: 'https://openai.com/docs', domain: 'openai.com', snippet: '官方摘要', engine: 'x' }],
+  }];
+  try {
+    await act(async () => root.render(createElement(MessageContent, {
+      content: '结论[^1]\n\n[^1]: https://openai.com/docs',
+      webActivities: activities,
+    })));
+    const marker = document.querySelector('.message-citation');
+    assert.equal(marker.getAttribute('href'), 'https://openai.com/docs');
+    const hover = async () => { await act(async () => { marker.dispatchEvent(new window.Event('mouseover', { bubbles: true })); }); };
+
+    await hover();
+    assert.equal(document.querySelector('.citation-card'), null, 'touch devices skip the preview card');
+
+    media.matches = true;
+    await hover();
+    const card = document.querySelector('.citation-card');
+    assert.ok(card, 'a pointer device shows the source preview');
+    assert.match(card.textContent, /openai\.com/);
+    assert.match(card.textContent, /官方文档/);
+    assert.match(card.textContent, /官方摘要/);
+    assert.equal(marker.getAttribute('target'), '_blank');
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.window = previous.window;
+    globalThis.document = previous.document;
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+  }
 });
 
 test('emphasis delimited by CJK punctuation still renders as emphasis', () => {

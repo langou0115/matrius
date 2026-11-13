@@ -1,6 +1,7 @@
 import { CircleAlert, FileText, Search } from 'lucide-react';
 import { memo, useId, useState } from 'react';
 
+import { normalizedUrl } from '../citations';
 import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
 
 type ResearchKind = 'search' | 'fetch';
@@ -58,20 +59,6 @@ export function findResearchGroup(steps: ProcessActivity[], id: string): Researc
 
 export function researchPanelTitle(kind: ResearchKind): string {
   return kind === 'search' ? '搜索结果' : '读取的网页';
-}
-
-function normalizedUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return value;
-  }
-}
-
-export function hostname(url: string): string {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
 }
 
 function formatTook(ms: number): string {

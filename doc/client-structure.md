@@ -47,7 +47,7 @@ src/
 │   │   ├── display-preferences.ts      思考块展示与默认展开的设备级开关
 │   │   ├── message-text.ts            用户消息与引用的完整复制文本
 │   │   ├── chat-runtime.tsx            聊天状态/模型设置与共享 Agent 核心之间的 React 适配，含标题请求调度
-│   │   ├── context-usage.ts            上下文窗口优先使用运行中最近单次请求用量，拆分为未缓存输入、缓存输入和输出；无记录时估算正文、摘要和完整工具定义
+│   │   ├── context-usage.ts            上下文窗口使用最近一次服务商报告的请求用量，拆分为未缓存输入、缓存输入和输出；新调用开始时保留上次读数，无报告时估算正文、摘要、记忆和完整工具定义
 │   │   ├── chat-screen.tsx             欢迎页、消息区、按会话保存的输入草稿
 │   │   ├── chat-route.tsx              URL 选择对话与不存在提示
 │   │   ├── conversation-href.ts        正式与 Mock 对话地址
@@ -59,17 +59,23 @@ src/
 │   │   ├── message-order.ts            重新加载后还原 steering 消息顺序
 │   │   ├── scroll-position.ts          按会话记住滚动位置，防抖写入 localStorage
 │   │   ├── markdown/                   公式/货币规范化与高亮语言按需加载
+│   │   ├── citations.ts                脚注来源解析、引用链接重写与已引用来源汇总
 │   │   └── components/
 │   │       ├── sidebar.tsx             侧栏、会话管理与设置入口
 │   │       ├── conversation-title.tsx  顶栏标题单击重命名
 │   │       ├── conversation-select.tsx 长标题悬停/焦点滚动与动效偏好
 │   │       ├── conversation-menu.tsx   三点按钮旁的三项操作卡片
 │   │       ├── message-actions.tsx     消息复制、赞/踩与创建分支入口
-│   │       ├── message-content.tsx     用户与助手 Markdown/GFM、KaTeX 渲染
+│   │       ├── source-badge.tsx        回复反馈栏上方的「N 个网页」来源入口
+│   │       ├── citation-marker.tsx     正文上角标、来源悬浮卡片与直达链接
+│   │       ├── source-card.tsx         来源站点图标与可复用来源卡片
+│   │       ├── sources-panel.tsx       已引用来源侧栏，序号与正文上角标一致
+│   │       ├── side-panel.tsx          来源列与窄屏底部弹层共用的面板外壳
+│   │       ├── message-content.tsx     用户与助手 Markdown/GFM、KaTeX 渲染与引用改写
 │   │       ├── collapsible-message-content.tsx 长用户消息按渲染高度折叠
 │   │       ├── reasoning-block.tsx     等待与思考共用的状态行及折叠正文
 │   │       ├── research-group.tsx      搜索/读取分组合并、行状态与来源去重
-│   │       ├── research-panel.tsx      来源结果侧栏与窄屏底部弹层
+│   │       ├── research-panel.tsx      单次搜索/读取批次的来源侧栏与窄屏底部弹层
 │   │       ├── reply-status.tsx        停止/失败提示及末条失败回复的重试操作
 │   │       ├── code-block.tsx          代码高亮、复制与折叠
 │   │       ├── model-icon.tsx          theSVG 彩色模型品牌与通用 SVG 标记
@@ -213,6 +219,14 @@ src/
 - `scripts/sync-katex.mjs` 从已安装的 KaTeX 生成同版本 CSS、WOFF2 字体与许可证到 `public/vendor/katex/<版本>/`，由 `vite.config.ts` 在 `index.html` 注入样式链接，不依赖 CDN；资源由 postinstall 生成并忽略，不手工编辑。
 - `tests/message-content.test.mjs` 通过 Node/LinkeDOM 验证 Markdown、公式、代码边界、安全链接、高亮、折叠和复制；`tests/typescript-loader.mjs` 把 `@/router` 解析为 `tests/stubs/router.mjs`，并把 `import.meta.env.DEV` 改写为 `globalThis.__DEV__ === true`，组件测试不加载 React Router，默认按生产模式运行。TypeScript 测试加载器只服务于测试，不进入客户端。
 
+## 网页搜索引用
+
+- 联网工具开启且该回复实际发生 `web_search` / `web_fetch` 时，`webToolsSystemPrompt()` 要求模型用 `[^1]` 脚注标记来源，并在回答末尾用 `[^1]: [页面标题](完整 URL)` 定义；引用只允许来自 `web_search` 结果或 `web_fetch` 成功读取的页面。没有调用联网工具的回复仍按普通 Markdown 脚注处理。
+- `features/chat/citations.ts` 在 Markdown 渲染前按首次出现顺序分配序号，把脚注引用改写为可拦截的上角标链接，并从正文移除脚注定义列表；定义本身只用于提取标题、URL 和描述。
+- `citation-marker.tsx` 渲染上角标：点击直接在新标签页打开来源；桌面指针设备悬停或聚焦时显示站点、标题与搜索摘要卡片，触屏设备不显示卡片。只有 `http(s)` URL 会成为可点击来源。
+- 回复完成后，`source-badge.tsx` 在反馈栏上方显示「N 个网页」，N 只统计回答实际引用的来源；点击打开 `sources-panel.tsx`，按上角标序号列出这些来源，未引用的搜索命中或读取页面仍留在原有 search/fetch 行中，窄屏使用底部弹层。`webActivitiesOf()` 合并 `activities` 与 `process`，保证本地运行和历史消息使用同一套来源。
+- `tests/citations.test.mjs` 覆盖序号、定义移除、代码块保护、仅列引用来源与非 http(s) 链接；`tests/message-content.test.mjs` 覆盖上角标渲染、悬浮卡片和触屏直达。
+
 ## 设置模块
 
 - `/settings` 是可搜索的设置目录，根路径跳转到 `/settings/appearance`；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 `/settings/theme`、`/settings/display` 路径由 `appearance-redirect.tsx` 跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；实例、存储与用量是云端整页路由，不进入 Mock 分类。所有路径都在 `src/router/routes.tsx` 注册。
@@ -255,4 +269,4 @@ src/
 - `features/workspace/cloud-workspace-repository.ts`：唯一实例的内存 REST 仓储，加载服务端数据并按 revision 保存变化；不访问 IndexedDB，不包含模型配置或凭据。
 - `components/web/instance-workspace.tsx`：生产只加载后端工作区并用 REST 保存；连接不可用时等待重连。开发预览使用内存，不加载正式业务数据。
 
-上下文占用与计费用量分开：运行期间按会话和模型保存最近一次调用的输入（含缓存读取/写入）与输出，不累加各轮调用；面板把输入拆成未缓存输入和缓存输入，并与输出一起展示。新调用开始时从实际请求内容估算，服务商返回用量后更新。运行时数据仅在内存中；刷新后按当前工具定义、保留正文与滚动摘要估算，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。
+上下文占用与计费用量分开：运行期间按会话和模型保存最近一次服务商报告的调用输入（含缓存读取/写入）与输出，不累加各轮调用；面板把输入拆成未缓存输入和缓存输入，并与输出一起展示。新调用开始时保留上一次报告的读数，等本次调用返回用量后再替换，不用估算值覆盖（避免输出短暂显示为 0）；只有会话还没有报告（新对话或刷新后）才按当前工具定义、保留正文、记忆与滚动摘要估算。运行时数据仅在内存中，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。
