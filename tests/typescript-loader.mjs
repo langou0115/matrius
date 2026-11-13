@@ -20,7 +20,7 @@ export async function resolve(specifier, context, nextResolve) {
     return { url: 'data:text/javascript,export default {}', shortCircuit: true };
   }
   const local = specifier.startsWith('@/')
-    ? pathToFileURL(resolvePath('src', specifier.slice(2)))
+    ? pathToFileURL(resolvePath('ui', specifier.slice(2)))
     : specifier.startsWith('.') && context.parentURL ? new URL(specifier, context.parentURL) : null;
   if (local?.protocol === 'file:' && !local.pathname.includes('/node_modules/')) {
     for (const extension of ['', '.ts', '.tsx']) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { chatReducer } from '../src/features/chat/chat-state.tsx';
+import { chatReducer } from '../ui/features/chat/chat-state.tsx';
 
 const conversation = (id, updatedAt) => ({ id, title: id, pinned: false, updatedAt, messages: [] });
 const stateWith = (...conversations) => ({

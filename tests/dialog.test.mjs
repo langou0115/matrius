@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { Dialog } from '../src/components/web/dialog.tsx';
+import { Dialog } from '../ui/components/web/dialog.tsx';
 
 test('dragging a text selection out of the panel does not close the dialog', async () => {
   const previous = { window: globalThis.window, document: globalThis.document,

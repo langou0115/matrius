@@ -7,18 +7,18 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { MessageContent } from '../src/features/chat/components/message-content.tsx';
-import { CodeBlock } from '../src/features/chat/components/code-block.tsx';
-import { ModelIcon } from '../src/features/chat/components/model-icon.tsx';
-import { normalizeMarkdown } from '../src/features/chat/markdown/normalize-markdown.ts';
-import { highlightCode } from '../src/features/chat/markdown/highlight-code.ts';
-import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
-import { ReasoningBlock } from '../src/features/chat/components/reasoning-block.tsx';
-import { groupResearchSteps } from '../src/features/chat/components/research-group.tsx';
-import { ResearchPanel } from '../src/features/chat/components/research-panel.tsx';
-import { SourcesPanel } from '../src/features/chat/components/sources-panel.tsx';
-import { SourceBadge } from '../src/features/chat/components/source-badge.tsx';
-import { ReplyStatus } from '../src/features/chat/components/reply-status.tsx';
+import { MessageContent } from '../ui/features/chat/components/message-content.tsx';
+import { CodeBlock } from '../ui/features/chat/components/code-block.tsx';
+import { ModelIcon } from '../ui/features/chat/components/model-icon.tsx';
+import { normalizeMarkdown } from '../ui/features/chat/markdown/normalize-markdown.ts';
+import { highlightCode } from '../ui/features/chat/markdown/highlight-code.ts';
+import { createDemoWorkspace } from '../ui/features/mock/fixtures/chat-workspace.ts';
+import { ReasoningBlock } from '../ui/features/chat/components/reasoning-block.tsx';
+import { groupResearchSteps } from '../ui/features/chat/components/research-group.tsx';
+import { ResearchPanel } from '../ui/features/chat/components/research-panel.tsx';
+import { SourcesPanel } from '../ui/features/chat/components/sources-panel.tsx';
+import { SourceBadge } from '../ui/features/chat/components/source-badge.tsx';
+import { ReplyStatus } from '../ui/features/chat/components/reply-status.tsx';
 
 test('collapsed thinking stays lightweight and the waiting header remains clickable', () => {
   const reasoning = renderToStaticMarkup(createElement(ReasoningBlock, { state: 'running', reasoning: '**Long thinking transcript**' }));
@@ -981,7 +981,7 @@ test('code block supports collapse, expand, raw copying and clipboard failures',
 });
 
 test('conversation titles scroll only on overflow and engagement, cancel on exit and respect reduced motion', async () => {
-  const { ConversationSelect } = await import('../src/features/chat/components/conversation-select.tsx');
+  const { ConversationSelect } = await import('../ui/features/chat/components/conversation-select.tsx');
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   const previous = { window: globalThis.window, document: globalThis.document };
   globalThis.window = window;
@@ -1042,8 +1042,8 @@ test('conversation titles scroll only on overflow and engagement, cancel on exit
 });
 
 test('message actions copy original text, toggle exclusive feedback and invoke fork; user messages have copy only', async () => {
-  const { MessageActions } = await import('../src/features/chat/components/message-actions.tsx');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { MessageActions } = await import('../ui/features/chat/components/message-actions.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   const previous = { window: globalThis.window, document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator') };
   globalThis.window = window;
@@ -1099,7 +1099,7 @@ test('message actions copy original text, toggle exclusive feedback and invoke f
 });
 
 test('fork creates an independent conversation through the selected assistant message without changing its source', async () => {
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   const previous = { window: globalThis.window, document: globalThis.document };
   globalThis.window = window;

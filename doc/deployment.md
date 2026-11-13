@@ -4,6 +4,8 @@
 
 [文档索引](README.md)
 
+> **已暂时禁用**：Node API 的镜像/Compose 尚未切换完成，`npm run deploy` 已从 `package.json` 移除。本文保留为恢复部署时的参考，当前不要执行文中命令。
+
 ## 服务器要做什么
 
 就三件事：

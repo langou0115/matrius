@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ApiError } from '../src/core/api/instance-client.ts';
-import { createCloudWorkspaceRepository } from '../src/features/workspace/cloud-workspace-repository.ts';
-import { workspaceScope } from '../src/features/workspace/workspace-mode.ts';
+import { ApiError } from '../ui/core/api/instance-client.ts';
+import { createCloudWorkspaceRepository } from '../ui/features/workspace/cloud-workspace-repository.ts';
+import { workspaceScope } from '../ui/features/workspace/workspace-mode.ts';
 
 const profile = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' };
 const appearance = { themeId: 'twitter', mode: 'system' };

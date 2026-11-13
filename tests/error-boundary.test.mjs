@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { AppErrorBoundary } from '../src/components/web/app-error-boundary.tsx';
+import { AppErrorBoundary } from '../ui/components/web/app-error-boundary.tsx';
 
 function Boom() {
   throw new Error('boom');

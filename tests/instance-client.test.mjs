@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createInstanceClient, ApiError } from '../src/core/api/instance-client.ts';
-import { visibleSettings } from '../src/features/settings/settings-catalog.ts';
-import { workspaceScope } from '../src/features/workspace/workspace-mode.ts';
+import { createInstanceClient, ApiError } from '../ui/core/api/instance-client.ts';
+import { visibleSettings } from '../ui/features/settings/settings-catalog.ts';
+import { workspaceScope } from '../ui/features/workspace/workspace-mode.ts';
 
 test('instance connects without cookies or authorization and loads capabilities', async () => {
   const client = createInstanceClient(async (url, init) => {

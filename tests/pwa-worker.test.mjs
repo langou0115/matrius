@@ -17,7 +17,7 @@ function worker(overrides = {}) {
 
 test('worker excludes API, external and development traffic from caches', () => {
   const { context } = worker();
-  for (const path of ['/api/auth/me', '/api/model-proxy/x', '/src/main.tsx', '/@vite/client', '/node_modules/x', '/assets/x.js?t=1', 'https://other.test/x']) {
+  for (const path of ['/api/auth/me', '/api/model-proxy/x', '/ui/main.tsx', '/@vite/client', '/node_modules/x', '/assets/x.js?t=1', 'https://other.test/x']) {
     context.request = { method: 'GET', url: new URL(path, 'https://matrius.test').href };
     assert.equal(vm.runInContext('isCacheable(request)', context), false, path);
   }

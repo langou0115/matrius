@@ -7,24 +7,18 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
 import devApiProxy from './scripts/dev-api-proxy.cjs';
-import modelProxy from './scripts/model-proxy.cjs';
 
 const fromRoot = (path: string) => fileURLToPath(new URL(path, import.meta.url)).replace(/\\/gu, '/');
 
 const katexVersion = (JSON.parse(readFileSync(fromRoot('./node_modules/katex/package.json'), 'utf8')) as { version: string }).version;
 
-/**
- * The development server answers first-party API and model traffic. The model relay
- * uses the shared stateless relay. Both handlers own the response
- * when they return true.
- */
+/** The development server proxies first-party API traffic to the local Node API. */
 function developmentMiddleware(): Plugin {
   return {
     name: 'matrius-development-middleware',
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
-        if (modelProxy.handleModelProxy(request, response)) return;
         if (devApiProxy.handleDevApi(request, response)) return;
         next();
       });
@@ -93,9 +87,9 @@ export default defineConfig({
     alias: [
       // pi 0.73.1's umbrella entry imports Node credential discovery and every provider.
       // Keep the browser bundle on our explicit three-provider adapter, as Metro did.
-      { find: /^@mariozechner\/pi-ai$/u, replacement: fromRoot('./src/core/llm/pi-agent-bridge.ts') },
+      { find: /^@mariozechner\/pi-ai$/u, replacement: fromRoot('./ui/core/llm/pi-agent-bridge.ts') },
       { find: /^@\/assets\//u, replacement: fromRoot('./assets/') },
-      { find: /^@\//u, replacement: fromRoot('./src/') },
+      { find: /^@\//u, replacement: fromRoot('./ui/') },
     ],
   },
   server: {
@@ -106,7 +100,7 @@ export default defineConfig({
     strictPort: true,
     // Transform the first screen right after startup, so the browser's first load
     // does not pay for the whole module graph one request at a time.
-    warmup: { clientFiles: ['./src/main.tsx', './src/router/routes.tsx'] },
+    warmup: { clientFiles: ['./ui/main.tsx', './ui/router/routes.tsx'] },
   },
   build: {
     outDir: 'dist',

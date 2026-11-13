@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ApiError } from '../src/core/api/instance-client.ts';
-import { defaultPersonalization } from '../src/features/settings/personalization.ts';
-import { createCloudWorkspaceRepository } from '../src/features/workspace/cloud-workspace-repository.ts';
+import { ApiError } from '../ui/core/api/instance-client.ts';
+import { defaultPersonalization } from '../ui/features/settings/personalization.ts';
+import { createCloudWorkspaceRepository } from '../ui/features/workspace/cloud-workspace-repository.ts';
 
 const savedId = '11111111-2222-3333-4444-555555555555';
 const uploadedId = '99999999-8888-7777-6666-555555555555';

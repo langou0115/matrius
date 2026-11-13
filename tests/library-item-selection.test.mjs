@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { LibraryItem } from '../src/features/files/library-item.tsx';
+import { LibraryItem } from '../ui/features/files/library-item.tsx';
 
 test('mobile long press opens file actions and selection mode uses independent checkboxes', async (t) => {
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };

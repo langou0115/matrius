@@ -3,7 +3,7 @@ import test from 'node:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import { StorageErrorToast } from '../src/components/web/storage-error-toast.tsx';
+import { StorageErrorToast } from '../ui/components/web/storage-error-toast.tsx';
 
 test('save errors expose plain text and disappear after five seconds even without a successful save', async (t) => {
   const keys = ['window', 'document', 'IS_REACT_ACT_ENVIRONMENT'];

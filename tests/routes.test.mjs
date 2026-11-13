@@ -36,7 +36,7 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   const { act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { MemoryRouter } = await import('react-router-dom');
-  const { AppRoutes } = await import('../src/router/routes.tsx');
+  const { AppRoutes } = await import('../ui/router/routes.tsx');
 
   for (const path of ['/', '/c/example', '/library', '/settings', '/settings/appearance', '/settings/models',
     '/settings/personalization', '/settings/account', '/settings/storage', '/settings/usage', '/settings/about',

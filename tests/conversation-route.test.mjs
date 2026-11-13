@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { resumeHref } from '../src/features/chat/conversation-route-state.ts';
-import { readLastRouteId, writeLastRoute } from '../src/features/chat/last-conversation.ts';
+import { resumeHref } from '../ui/features/chat/conversation-route-state.ts';
+import { readLastRouteId, writeLastRoute } from '../ui/features/chat/last-conversation.ts';
 
 const conversations = [{ id: 'a' }, { id: 'b' }];
 

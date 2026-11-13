@@ -12,14 +12,6 @@ export function devDataDir(directory = root) {
   return join(directory, 'server', '.data');
 }
 
-/**
- * SQLAlchemy's SQLite URL: three slashes plus the path. A POSIX absolute path
- * therefore starts with a fourth slash; a Windows path keeps its drive letter.
- */
-export function sqliteUrl(file) {
-  return `sqlite+aiosqlite:///${file.replaceAll('\\', '/')}`;
-}
-
 export function devPorts(env) {
   const ports = [env.DEV_WEB_PORT || '8081', env.DEV_API_PORT || '8000'].map((port) => {
     if (!/^[1-9]\d*$/u.test(port) || Number(port) > 65535) throw new Error('Invalid DEV_WEB_PORT or DEV_API_PORT.');
@@ -27,14 +19,6 @@ export function devPorts(env) {
   });
   if (ports[0] === ports[1]) throw new Error('DEV_WEB_PORT and DEV_API_PORT must differ.');
   return ports;
-}
-
-export function devApiArgs(apiPort, platform = process.platform) {
-  const launch = platform === 'win32'
-    ? ['python', 'scripts/dev-api.py']
-    : ['uvicorn'];
-  return ['run', '--no-sync', ...launch, 'app.main:app', '--host', '127.0.0.1',
-    '--port', String(apiPort), '--reload', '--reload-dir', 'app'];
 }
 
 /** Vite's CLI arguments; `--force` rebuilds the dependency pre-bundle before starting. */
@@ -55,21 +39,9 @@ export function devEnvironment({ env = {}, dataDir = devDataDir(), webPort }) {
     ...env,
     APP_ENV: 'development',
     APP_URL: `http://localhost:${webPort}`,
-    DATABASE_URL: sqliteUrl(join(dataDir, 'matrius.db')),
+    DATABASE_URL: '',
     DATA_DIR: dataDir,
   };
-}
-
-/**
- * The backend reads .env.local itself in development, so runtime settings (proxy,
- * search/fetch budgets, limits) apply without restarting uvicorn. Only startup-only
- * values are copied into the child environment; copying runtime keys here would freeze
- * them and keep overriding the file after an edit.
- */
-export function devBackendEnv({ env = {}, dataDir = devDataDir(), webPort, envFile }) {
-  const environment = devEnvironment({ env, dataDir, webPort });
-  if (envFile) environment.MATRIUS_DEV_ENV_FILE = resolve(envFile);
-  return environment;
 }
 
 /**
@@ -171,25 +143,6 @@ export function supervise() {
   return { start, watch, stop, finished, get stopping() { return stopping; }, get failure() { return failure; } };
 }
 
-function capture(command, args, signal, options = {}) {
-  return new Promise((accept, reject) => {
-    execFile(command, args,
-      { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal, ...options },
-      (error, stdout, stderr) => {
-        if (error) {
-          if (signal?.aborted) { reject(signal.reason); return; }
-          const detail = String(stderr ?? '').split('\n').map((line) => line.trim())
-            .filter(Boolean).slice(-3).join(' ');
-          reject(new Error(`${command} failed${detail ? `: ${detail}` : ''}`));
-        } else accept(stdout);
-      });
-  });
-}
-
-async function runBackend(args, env, signal) {
-  return capture('uv', ['run', '--no-sync', ...args], signal, { cwd: join(root, 'server'), env });
-}
-
 async function ready(url, signal) {
   for (let attempt = 0; attempt < 90; attempt++) {
     signal.throwIfAborted();
@@ -199,15 +152,15 @@ async function ready(url, signal) {
     } catch { /* The API may still be importing the app. */ }
     await new Promise((accept) => setTimeout(accept, 500));
   }
-  throw new Error('Local API readiness failed. Check the uvicorn output above.');
+  throw new Error('Local API readiness failed. Check the Node API output above.');
 }
 
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
   if (args.includes('--help')) {
     console.log('npm run dev [-- --check | --reset-db | --clear]\n'
-      + 'Runs FastAPI + Vite entirely on this machine; no Docker, SSH or WSL required.\n'
+      + 'Runs the Node API + Vite entirely on this machine; no Docker, SSH or WSL required.\n'
       + 'Data lives in server/.data (SQLite + uploaded files) and is never synced to the server.\n'
-      + 'Requires Node.js, npm ci and uv (uv installs Python 3.12 itself).\n'
+      + 'Requires Node.js and npm ci; no Python or uv is needed.\n'
       + '--check validates local configuration, tools, ports and paths without starting services.\n'
       + '--reset-db deletes server/.data/matrius.db* and server/.data/files before migrating; stop the API first.\n'
       + '--clear rebuilds Vite\'s dependency pre-bundle from scratch; use it after a dependency change.\n'
@@ -224,10 +177,9 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   const [webPort, apiPort] = devPorts(local);
   const dataDir = devDataDir();
 
-  await capture('uv', ['--version']).catch(() => {
-    throw new Error('Install uv first: https://docs.astral.sh/uv/getting-started/installation/');
-  });
   await readFile(join(root, 'node_modules/vite/bin/vite.js')).catch(() => { throw new Error('Run npm ci first.'); });
+  await readFile(join(root, 'node_modules/tsx/package.json')).catch(() => { throw new Error('Run npm ci first.'); });
+  await readFile(join(root, 'server/main.ts')).catch(() => { throw new Error('Missing server/main.ts.'); });
 
   if (args.includes('--check')) {
     await availablePort(webPort);
@@ -239,13 +191,15 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     return;
   }
 
-  // Runtime settings stay in .env.local and are hot-read by the backend. Only
-  // startup-only values (database location, env-file path) are copied
-  // into the process environment; fixing DATABASE_URL/DATA_DIR here also keeps a
-  // production path in .env.local from leaking into local development.
-  const backendEnv = devBackendEnv({
-    env, dataDir, webPort, envFile: join(root, '.env.local'),
-  });
+  // Runtime settings stay in .env.local and are read by the Node API. Only
+  // startup-only values (data directory, ports) are copied into the child
+  // environment; a production path in .env.local must not leak into development.
+  const backendEnv = {
+    ...devEnvironment({ env, dataDir, webPort }),
+    DATABASE_URL: '',
+    HOST: '127.0.0.1',
+    PORT: String(apiPort),
+  };
 
   const abort = new AbortController();
   const runner = supervise();
@@ -257,11 +211,6 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   try {
     await availablePort(webPort);
     await availablePort(apiPort);
-    console.log('Syncing local Python dependencies from server/uv.lock...');
-    const sync = runner.start('uv', ['sync', '--python', '3.12', '--frozen', '--extra', 'dev'],
-      { cwd: join(root, 'server') });
-    if (await sync.done !== 0) throw new Error('uv sync failed.');
-
     if (args.includes('--reset-db')) {
       console.log(`Resetting ${dataDir}...`);
       await resetDatabase(dataDir);
@@ -269,18 +218,11 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await mkdir(join(dataDir, 'files'), { recursive: true });
 
     abort.signal.throwIfAborted();
-    console.log('Applying migrations to server/.data/matrius.db...');
-    await runBackend(['alembic', 'upgrade', 'head'], backendEnv, abort.signal);
-    // Fails when models changed without a matching migration.
-    await runBackend(['alembic', 'check'], backendEnv, abort.signal);
-    console.log('Ensuring the singleton instance exists...');
-    await runBackend(['python', '-m', 'app.bootstrap'], {
-      ...backendEnv,
-    }, abort.signal);
-    abort.signal.throwIfAborted();
-
-    const api = runner.start('uv', devApiArgs(apiPort), { cwd: join(root, 'server'), env: backendEnv });
-    runner.watch(api, 'FastAPI');
+    const api = runner.start(process.execPath, ['--import', 'tsx', 'server/main.ts'], {
+      cwd: root,
+      env: backendEnv,
+    });
+    runner.watch(api, 'Node API');
     await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal);
     abort.signal.throwIfAborted();
 

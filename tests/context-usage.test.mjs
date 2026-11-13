@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { measureContextUsage } from '../src/features/chat/context-usage.ts';
+import { measureContextUsage } from '../ui/features/chat/context-usage.ts';
 
 test('context usage estimates the next request as uncached input', () => {
   const messages = [

@@ -27,7 +27,7 @@ test('source selection rejects secrets, traversal, generated files and unsafe fi
     '../outside', '/absolute', 'a/../outside', 'a\\b', 'a\nb', '.remote-sync-manifest']) {
     assert.equal(canSync(path), false, path);
   }
-  for (const path of ['src/main.tsx', 'server/app/main.py', '.env.local.example',
+  for (const path of ['ui/main.tsx', 'server/app/main.py', '.env.local.example',
     'docker-compose/.env.production.example', 'assets/a b.png']) assert.equal(canSync(path), true, path);
 });
 
@@ -244,11 +244,11 @@ test('remote deploys production once per invocation and locks concurrent session
     assert.match(await readFile(curlLog, 'utf8'), /\/api\/health/);
 
     await writeFile(dockerLog, '');
-    const changed = { ...initial, 'server/app/main.py': 'second', 'old file.txt': null, 'src/new file.ts': 'hello' };
+    const changed = { ...initial, 'server/app/main.py': 'second', 'old file.txt': null, 'ui/new file.ts': 'hello' };
     const second = await deploy(changed);
     assert.equal(second.code, 0, second.output.errors);
     assert.equal(await readFile(join(workspace, 'source/server/app/main.py'), 'utf8'), 'second');
-    assert.equal(await readFile(join(workspace, 'source/src/new file.ts'), 'utf8'), 'hello');
+    assert.equal(await readFile(join(workspace, 'source/ui/new file.ts'), 'utf8'), 'hello');
     await assert.rejects(readFile(join(workspace, 'source/old file.txt')), { code: 'ENOENT' });
     commands = await readFile(dockerLog, 'utf8');
     // Source changes must be included in rebuilt production images.
@@ -259,7 +259,7 @@ test('remote deploys production once per invocation and locks concurrent session
     assert.doesNotMatch(commands, /--force-recreate caddy/);
 
     // Frontend source changes also reach the production image build.
-    const frontend = { ...changed, 'src/new file.ts': 'updated' };
+    const frontend = { ...changed, 'ui/new file.ts': 'updated' };
     await writeFile(dockerLog, '');
     const frontendDeploy = await deploy(frontend);
     assert.equal(frontendDeploy.code, 0, frontendDeploy.output.errors);
@@ -313,7 +313,7 @@ test('remote deploys production once per invocation and locks concurrent session
     await main({ args: [], env: cliEnv });
     assert.equal(await readFile(join(workspace, 'source/server/app/main.py'), 'utf8'),
       await readFile(join(repo, 'server/app/main.py'), 'utf8'));
-    await assert.rejects(readFile(join(workspace, 'source/src/new file.ts')), { code: 'ENOENT' });
+    await assert.rejects(readFile(join(workspace, 'source/ui/new file.ts')), { code: 'ENOENT' });
     commands = await readFile(dockerLog, 'utf8');
     assert.match(commands, / build web api\n/);
     assert.match(commands, /up -d --no-deps web api\n/);

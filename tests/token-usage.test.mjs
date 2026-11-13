@@ -4,12 +4,12 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { TokenUsageSection } from '../src/features/usage/token-usage-section.tsx';
-import { createAgentRuntime } from '../src/core/agent/runtime.ts';
+import { TokenUsageSection } from '../ui/features/usage/token-usage-section.tsx';
+import { createAgentRuntime } from '../ui/core/agent/runtime.ts';
 import {
   addDays, buildCumulative, buildHeatmap, buildTrendHeatmap, buildWeekly, formatCompactTokens, formatMonthYear,
   localDateKey, summarizeUsage,
-} from '../src/features/usage/usage-stats.ts';
+} from '../ui/features/usage/usage-stats.ts';
 
 const END = new Date(2026, 10, 6); // Friday, 6 November 2026, local time.
 

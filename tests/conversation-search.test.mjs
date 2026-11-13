@@ -6,7 +6,7 @@ import {
   searchConversations,
   splitMatches,
   toPlainText,
-} from '../src/features/chat/conversation-search.ts';
+} from '../ui/features/chat/conversation-search.ts';
 
 const message = (content, id = content) => ({ id, role: 'user', content });
 const conversation = (id, title, updatedAt, messages) => ({

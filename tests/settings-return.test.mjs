@@ -8,7 +8,7 @@ import {
   resetWorkspaceReturnForTests,
   workspaceReturnHref,
   workspaceReturnLabel,
-} from '../src/features/settings/settings-return.ts';
+} from '../ui/features/settings/settings-return.ts';
 
 test('settings paths are recognised for real and preview routes', () => {
   for (const path of ['/settings', '/settings/', '/settings/appearance',

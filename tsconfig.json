@@ -13,9 +13,9 @@
     "isolatedModules": true,
     "types": ["vite/client", "node"],
     "paths": {
-      "@/*": ["./src/*"],
+      "@/*": ["./ui/*"],
       "@/assets/*": ["./assets/*"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["ui", "contract", "vite.config.ts"]
 }

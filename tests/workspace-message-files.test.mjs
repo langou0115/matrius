@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { compactActivities, compactProcess } from '../src/core/agent/activity-payload.ts';
+import { compactActivities, compactProcess } from '../ui/core/agent/activity-payload.ts';
 import {
   parseWorkspace,
   readActivities,
   readFileIds,
   readMessageFiles,
   stripMessageImages,
-} from '../src/features/workspace/workspace-repository.ts';
+} from '../ui/features/workspace/workspace-repository.ts';
 
 const report = { id: 'f1', filename: '报告.pdf', contentType: 'application/pdf', size: 2048, revision: 3 };
 

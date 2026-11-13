@@ -8,21 +8,21 @@
 
 移动端资料库的搜索与筛选栏放在文件滚动容器外，使用不透明背景固定在说明文字下方；只有文件列表滚动，隐藏滚动条但保留手势滚动与分页加载，避免吸顶晃动以及文件从工具栏缝隙透出。桌面保留滚动区内的吸顶工具栏。
 
-当前只实现 Web 端：React 19 + TypeScript，Vite 8 构建，React Router 7 路由。入口是根目录 `index.html` 与 `src/main.tsx`；页面、组件与导航都不再区分平台后缀。共享状态与配色不依赖 DOM。
+当前只实现 Web 端：React 19 + TypeScript，Vite 8 构建，React Router 7 路由。入口是根目录 `index.html` 与 `ui/main.tsx`；页面、组件与导航都不再区分平台后缀。共享状态与配色不依赖 DOM。
 
 ## 路由与文件命名
 
 - 所有前端文件使用普通 `X.tsx` / `X.ts` 后缀，不再有 `.web.tsx` / `.web.ts`、`.native.*` 或 fallback 兄弟文件；项目只维护 Web + PWA 目标。
-- 路由由 `src/router/routes.tsx` 中的显式 `<Routes>` 定义，是唯一路由表。页面模块放在哪个目录不会自动成为路由。
+- 路由由 `ui/router/routes.tsx` 中的显式 `<Routes>` 定义，是唯一路由表。页面模块放在哪个目录不会自动成为路由。
 - 除聊天路由外，页面都用 `React.lazy` 按需加载；`/mock/*` 统一包在 `MockOnly` 中，生产构建直接 `<Navigate to="/" replace />`；未知 URL 也重定向到 `/`。
 - 导航 API 只从 `@/router` 导入：`Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href` 类型。功能代码不要直接导入 `react-router-dom`；测试通过 `tests/stubs/router.mjs` 替换该模块。
-- 新增页面时在 `src/router/routes.tsx` 注册路径，再把页面组件放进对应的 `features/` 模块；如需开发预览，在 `/mock/*` 路由中复用该组件，并往 `features/mock/mock-items.ts` 增加一条清单记录。
+- 新增页面时在 `ui/router/routes.tsx` 注册路径，再把页面组件放进对应的 `features/` 模块；如需开发预览，在 `/mock/*` 路由中复用该组件，并往 `features/mock/mock-items.ts` 增加一条清单记录。
 
 ## 当前结构
 
 ```text
 index.html                              Vite 入口 HTML、#root、PWA/Apple 元数据
-src/
+ui/
 ├── main.tsx                            createRoot + BrowserRouter + RouterNavigationBridge + AppRoutes
 ├── router/
 │   ├── index.tsx                       Link、router.push/replace/back、Redirect、usePathname、useLocalSearchParams、RouterNavigationBridge、Href
@@ -180,9 +180,9 @@ src/
 └── global.css                          @font-face、样式、布局、焦点与选区
 ```
 
-- 路径别名 `@/` 指向 `src/`，`@/assets/` 指向 `assets/`。字体在 `assets/fonts/`，由 `src/global.css` 顶部的 `@font-face` 引用 `../assets/fonts/*.ttf`，Vite 负责哈希并输出到构建产物。品牌标志文件是 `public/brand/matrius-sailboat.png`，favicon 使用透明底彩色 PNG（`public/favicon.png`，由 `assets/images/favicon.png` 复制，不再提供 `/favicon.ico`），PWA/Apple 图标使用同一帆船图案（`public/icons/`）；Apple 图标使用深蓝底，可遮罩图标使用深蓝底并保留安全边距。
+- 路径别名 `@/` 指向 `ui/`，`@/assets/` 指向 `assets/`。字体在 `assets/fonts/`，由 `ui/global.css` 顶部的 `@font-face` 引用 `../assets/fonts/*.ttf`，Vite 负责哈希并输出到构建产物。品牌标志文件是 `public/brand/matrius-sailboat.png`，favicon 使用透明底彩色 PNG（`public/favicon.png`，由 `assets/images/favicon.png` 复制，不再提供 `/favicon.ico`），PWA/Apple 图标使用同一帆船图案（`public/icons/`）；Apple 图标使用深蓝底，可遮罩图标使用深蓝底并保留安全边距。
 - 模板 Explore、标签导航、启动动画组件和 reset-project 脚本已移除。
-- `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 9 个专项会话。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需在 `src/router/routes.tsx` 注册一个 `/mock/*` 路由并往清单加一条记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；所有 `/mock/*` 路由由 `routes.tsx` 的 `MockOnly` 统一保护，生产构建直接跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
+- `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 9 个专项会话。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需在 `ui/router/routes.tsx` 注册一个 `/mock/*` 路由并往清单加一条记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；所有 `/mock/*` 路由由 `routes.tsx` 的 `MockOnly` 统一保护，生产构建直接跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
 - `/mock/process` 通过 `features/mock/process-preview.tsx` 复用思考折叠区、正文和中断提示；阶段切换保留展开状态及连续计时，包含等待、思考、搜索、读取、再次思考、回答和结束，可验证按发生顺序追加步骤及整轮完成状态。模拟数据位于 `dev/fixtures/process-preview.ts`，不调用模型或写入聊天记录。
 - `/mock/library` 直接复用 `features/files/library-screen.tsx`，由 `features/files/mock-library.ts` 提供 500 个内存文件（含 SVG 缩略图）与 `/api/files` 的列表、用量、重命名、删除实现；预览模式下 `enabled` 恒为真、不请求真实接口，侧栏“资料库”入口也指向该路由。`/mock/storage` 复用 `components/web/storage-error-toast.tsx` 预览各种保存失败提示。
 - Web 会话与外观通过实例 REST 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过本地 Runtime 生成真实回复。
@@ -195,21 +195,21 @@ src/
 
 | 功能 | 目标位置 |
 | --- | --- |
-| 本地数据库、实体仓储与后续迁移 | `src/core/database/` |
-| 本地 Agent Runtime、上下文与云端工具调度 | `src/core/agent/` |
-| 模型直连 / 代理传输、SSE、解码器 | `src/core/llm/` |
-| 安全存储、文件、剪贴板等平台适配 | `src/core/platform/` |
-| 实例 REST 客户端、连接状态、409 冲突与错误映射 | `src/core/api/` |
+| 本地数据库、实体仓储与后续迁移 | `ui/core/database/` |
+| 本地 Agent Runtime、上下文与云端工具调度 | `ui/core/agent/` |
+| 模型直连 / 代理传输、SSE、解码器 | `ui/core/llm/` |
+| 安全存储、文件、剪贴板等平台适配 | `ui/core/platform/` |
+| 实例 REST 客户端、连接状态、409 冲突与错误映射 | `ui/core/api/` |
 | 更多消息格式适配 | 聊天模块内的消息渲染组件 |
-| 记忆、文件、实例访问 | `src/features/<module>/` |
+| 记忆、文件、实例访问 | `ui/features/<module>/` |
 | 移动 Web 响应式布局 | 保持共享状态与契约，后续按窄屏、软键盘与安全区适配 |
 
 其中模型直连与本地 Runtime 已有最小实现，其余目录随功能创建。
 
 ## 职责边界
 
-- `src/router/routes.tsx` 只负责路径到页面组件的映射与 Mock 守卫，具体界面和业务状态在 `features/`。
-- `src/router/index.tsx` 是导航 API 的唯一入口；功能代码只从这里取 `Link`、`router` 和 hooks，不直接依赖 React Router 的类型。
+- `ui/router/routes.tsx` 只负责路径到页面组件的映射与 Mock 守卫，具体界面和业务状态在 `features/`。
+- `ui/router/index.tsx` 是导航 API 的唯一入口；功能代码只从这里取 `Link`、`router` 和 hooks，不直接依赖 React Router 的类型。
 - Web 的 DOM、CSS、浏览器事件只进入 Web 组件及其依赖；不要在共享状态模块调用浏览器 API。
 - 输入草稿保存在独立的 Draft Context，避免每次键入更新侧栏，同时在切换设置后保留草稿。
 - 数据源接入后统一经过仓储，不在页面里自行选择本地或云端数据源。
@@ -229,7 +229,7 @@ src/
 
 ## 设置模块
 
-- `/settings` 是可搜索的设置目录，根路径跳转到 `/settings/appearance`；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 `/settings/theme`、`/settings/display` 路径由 `appearance-redirect.tsx` 跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；实例、存储与用量是云端整页路由，不进入 Mock 分类。所有路径都在 `src/router/routes.tsx` 注册。
+- `/settings` 是可搜索的设置目录，根路径跳转到 `/settings/appearance`；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 `/settings/theme`、`/settings/display` 路径由 `appearance-redirect.tsx` 跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；实例、存储与用量是云端整页路由，不进入 Mock 分类。所有路径都在 `ui/router/routes.tsx` 注册。
 - `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-page.tsx` 渲染目录、搜索与分类导航，并管理共用页面框架与返回入口；`settings-detail-screen.tsx` 提供外观与关于等详情控件。`settings-return.ts` 记录进入设置前的页面：从会话进入返回该会话，从资料库进入返回资料库；只有直接打开设置且没有来源时才回退到当前会话或新对话。
 - 标签页标题由 `features/chat/document-title.ts` 决定：`/c/<id>`（含 Mock）使用对话名，空标题和其他页面使用 Matrius。
 - 设置子页均不卸载根工作区 Provider，导航期间保留会话、草稿与外观状态。
@@ -254,7 +254,7 @@ src/
 - `features/files/storage-screen.tsx`：设置中的“存储”分类（位于实例下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
 - `features/usage/usage-screen.tsx`：设置中的“用量”分类（位于存储下方），仅实例具备 `usage` 功能时可见；`token-usage-section.tsx` 展示今日/近 7 天/近 30 天、输入输出占比，以及截至今天向前回溯六个月的日热力图和包含本周的最近六周柱状图，支持点击日格或周柱查看精确 token 数；`usage-api.ts` 读取统计并在每轮回复后上报 token。
 - `settings-catalog.ts` / `settings-page.tsx`：分类与搜索按功能能力统一过滤。
-- `src/router/routes.tsx` 中的 `/settings/storage`、`/settings/usage`：存储与用量设置路由组装；存储与用量仅在实例具备对应功能时出现在导航中。
+- `ui/router/routes.tsx` 中的 `/settings/storage`、`/settings/usage`：存储与用量设置路由组装；存储与用量仅在实例具备对应功能时出现在导航中。
 
 ## 开发与发布脚本
 

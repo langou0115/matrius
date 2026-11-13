@@ -6,7 +6,7 @@ import { parseHTML } from 'linkedom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 
-import { MessageContent } from '../src/features/chat/components/message-content.tsx';
+import { MessageContent } from '../ui/features/chat/components/message-content.tsx';
 
 /**
  * Inline math alignment, pinned at the two layers a browser actually consults.
@@ -59,7 +59,7 @@ test('formulas stay inline in lists, tables and bold text', () => {
 });
 
 test('the stylesheet leaves the inline baseline to KaTeX', () => {
-  const { code } = transform({ filename: 'global.css', code: readFileSync('src/global.css'), errorRecovery: false });
+  const { code } = transform({ filename: 'global.css', code: readFileSync('ui/global.css'), errorRecovery: false });
   const css = code.toString();
   const declarations = (selector) => {
     const rule = css.match(new RegExp(`${selector.replace(/[.>]/g, '\\$&')} \\{([^}]*)\\}`));

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import {
   defaultChatDisplay, getChatDisplay, setChatDisplay,
-} from '../src/features/chat/display-preferences.ts';
+} from '../ui/features/chat/display-preferences.ts';
 
 test('process display switches default on and update one field at a time', () => {
   setChatDisplay(defaultChatDisplay);

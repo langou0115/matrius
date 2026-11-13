@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { useFileLibrary } from '../src/features/files/use-file-library.ts';
+import { useFileLibrary } from '../ui/features/files/use-file-library.ts';
 
 const file = (id, extras = {}) => ({
   id, filename: `${id}.pdf`, contentType: 'application/pdf', size: 10, revision: 1, ...extras,

@@ -7,7 +7,7 @@
 ## 平台与路由
 
 - React 19 + TypeScript 的普通 Web 应用，Vite 8 构建，React Router 7 路由；只维护 Web 界面，移动 Web 响应式适配后续按单独要求进行。界面使用原生 DOM 与 CSS，共享状态和业务契约不依赖 DOM。
-- 路由表只有 `src/router/routes.tsx` 一处，入口是根目录 `index.html` 与 `src/main.tsx`；页面组件不再要求放在某个路由目录，也没有 `.web.tsx` / `.tsx` fallback 成对规则。
+- 路由表只有 `ui/router/routes.tsx` 一处，入口是根目录 `index.html` 与 `ui/main.tsx`；页面组件不再要求放在某个路由目录，也没有 `.web.tsx` / `.tsx` fallback 成对规则。
 - 导航统一从 `@/router` 导入 `Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href`；功能代码不直接导入 `react-router-dom`。测试通过 `tests/stubs/router.mjs` 替换该模块。
 - `Link asChild` 的锚点使用共享 `LinkAnchor`，由 `@/router` 的 `Link` 注入 `href` 与导航处理。
 - 浏览器差异集中在适配层，不在业务页面散落平台 API 调用。业务契约与 Web 实现分离，便于后续替换底层传输或存储。
@@ -26,7 +26,7 @@
 
 ## 字体
 
-目标随包提供 Inter、Noto Sans SC 和 JetBrains Mono，避免运行时依赖在线字体。字体文件在 `assets/fonts/`，由 `src/global.css` 顶部的 `@font-face` 声明引用 `../assets/fonts/*.ttf`；Vite 负责哈希并输出这些字体，不再使用 expo-font / `useFonts`。字体族名保持 `Inter`、`InterMedium`、`InterSemiBold`、`NotoSansSC`、`NotoSansSCSemiBold` 和 `JetBrainsMono`。
+目标随包提供 Inter、Noto Sans SC 和 JetBrains Mono，避免运行时依赖在线字体。字体文件在 `assets/fonts/`，由 `ui/global.css` 顶部的 `@font-face` 声明引用 `../assets/fonts/*.ttf`；Vite 负责哈希并输出这些字体，不再使用 expo-font / `useFonts`。字体族名保持 `Inter`、`InterMedium`、`InterSemiBold`、`NotoSansSC`、`NotoSansSCSemiBold` 和 `JetBrainsMono`。
 
 - 旧版中文字体采用 GB2312 两级字表子集，迁移时保留完整字表并检查缺字；字体子集不等于覆盖全部 Unicode 汉字。
 - 控制字体体积与字重数量；字体回退由统一 CSS 字体栈处理。

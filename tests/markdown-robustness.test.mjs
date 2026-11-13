@@ -4,8 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { parseHTML } from 'linkedom';
 
-import { MessageContent } from '../src/features/chat/components/message-content.tsx';
-import { createDemoWorkspace } from '../dev/fixtures/chat-workspace.ts';
+import { MessageContent } from '../ui/features/chat/components/message-content.tsx';
+import { createDemoWorkspace } from '../ui/features/mock/fixtures/chat-workspace.ts';
 
 const render = (content) => renderToStaticMarkup(createElement(MessageContent, { content }));
 /** The same reply while it is still arriving. Visually identical; only the failure log differs. */

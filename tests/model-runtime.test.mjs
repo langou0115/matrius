@@ -1,32 +1,39 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createReplyRun, describeModelError } from '../src/core/agent/runner.ts';
-import { buildContext, buildRetryHistory, validateAgentRequest } from '../src/core/agent/context.ts';
-import { findRecentStart, getContextBudget, prepareHistory } from '../src/core/agent/compaction.ts';
-import { withoutFailedReplies } from '../src/core/agent/history.ts';
-import { createAgentRuntime } from '../src/core/agent/runtime.ts';
-import { validateModelConfig, createAgentModel } from '../src/core/llm/model-config.ts';
-import { fetchProviderCatalog } from '../src/core/llm/provider-catalog.ts';
-import { createModelCredentials } from '../src/core/platform/model-credentials.ts';
-import { searchSettings } from '../src/features/settings/settings-catalog.ts';
-import { PersonalizationProvider, usePersonalization } from '../src/features/settings/personalization-state.tsx';
-import { MemoryProvider } from '../src/features/memory/memory-state.tsx';
-import { InstanceProvider } from '../src/features/instance/instance-state.tsx';
-import { NetworkToolsProvider } from '../src/features/instance/network-tools-state.tsx';
-import { defaultPersonalization, readPersonalization } from '../src/features/settings/personalization.ts';
-import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../src/core/agent/system-prompt.ts';
-import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../src/core/agent/title.ts';
-import { createWebTools, getWebActivityEnd, getWebActivityStart, webToolsSystemPrompt } from '../src/core/agent/web-tools.ts';
-import { createRunProtection, hasActiveBrowserRun } from '../src/core/platform/run-protection.ts';
-import { ApiError } from '../src/core/api/instance-client.ts';
-import { parseWorkspace } from '../src/features/workspace/workspace-repository.ts';
+import { createReplyRun, describeModelError } from '../ui/core/agent/runner.ts';
+import { buildContext, buildRetryHistory, validateAgentRequest } from '../ui/core/agent/context.ts';
+import { findRecentStart, getContextBudget, prepareHistory } from '../ui/core/agent/compaction.ts';
+import { withoutFailedReplies } from '../ui/core/agent/history.ts';
+import { createAgentRuntime } from '../ui/core/agent/runtime.ts';
+import { validateModelConfig, createAgentModel } from '../ui/core/llm/model-config.ts';
+import { fetchProviderCatalog } from '../ui/core/llm/provider-catalog.ts';
+import { createModelCredentials } from '../ui/core/platform/model-credentials.ts';
+import { searchSettings } from '../ui/features/settings/settings-catalog.ts';
+import { PersonalizationProvider, usePersonalization } from '../ui/features/settings/personalization-state.tsx';
+import { MemoryProvider } from '../ui/features/memory/memory-state.tsx';
+import { InstanceProvider } from '../ui/features/instance/instance-state.tsx';
+import { NetworkToolsProvider } from '../ui/features/instance/network-tools-state.tsx';
+import { defaultPersonalization, readPersonalization } from '../ui/features/settings/personalization.ts';
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, withCurrentContext } from '../ui/core/agent/system-prompt.ts';
+import { TITLE_SYSTEM_PROMPT, generateConversationTitle, normalizeConversationTitle } from '../ui/core/agent/title.ts';
+import { generateMemorySummary } from '../ui/core/agent/memory.ts';
+import { createWebTools, getWebActivityEnd, getWebActivityStart, webToolsSystemPrompt } from '../ui/core/agent/web-tools.ts';
+import { createRunProtection, hasActiveBrowserRun } from '../ui/core/platform/run-protection.ts';
+import { ApiError } from '../ui/core/api/instance-client.ts';
+import { parseWorkspace } from '../ui/features/workspace/workspace-repository.ts';
+
+// The provider defaults to the remote SSE runtime; these tests exercise the
+// browser runtime directly, so inject it explicitly.
+const runtimeFactory = createAgentRuntime;
+const titleGenerator = generateConversationTitle;
+const memoryGenerator = generateMemorySummary;
 
 test('a late sync response cannot resurrect a deleted conversation, including after restoring the workspace', async () => {
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -771,7 +778,7 @@ test('stored rolling summaries survive parsing and malformed copies are dropped'
 test('agent core has no UI, feature-module or browser dependencies', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
   const ts = (await import('typescript')).default;
-  const directory = new URL('../src/core/agent/', import.meta.url);
+  const directory = new URL('../ui/core/agent/', import.meta.url);
   for (const file of readdirSync(directory).filter((name) => name.endsWith('.ts'))) {
     const source = ts.createSourceFile(file, readFileSync(new URL(file, directory), 'utf8'), ts.ScriptTarget.Latest, true);
     function visit(node) {
@@ -1084,7 +1091,7 @@ test('sending after a failure preserves the question and partial reply on screen
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1129,7 +1136,7 @@ test('a steering message is inserted before the streaming reply it supplements',
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1445,9 +1452,9 @@ test('workspace runtime keeps generations attached to their source conversation 
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
-  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
-  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../ui/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../ui/features/chat/chat-runtime.tsx');
   const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1468,7 +1475,7 @@ test('workspace runtime keeps generations attached to their source conversation 
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, { runtimeFactory, titleGenerator, memoryGenerator }, createElement(Harness))))))))); });
     await act(async () => { assert.equal(runtime.send('keep this draft', null), false); });
     assert.equal(chat.conversations.length, 0);
     await act(async () => { await models.save(config, 'key'); });
@@ -1513,9 +1520,9 @@ test('background replies in separate conversations run together, stay unread and
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
-  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
-  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../ui/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../ui/features/chat/chat-runtime.tsx');
   const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1537,7 +1544,7 @@ test('background replies in separate conversations run together, stay unread and
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, { runtimeFactory, titleGenerator, memoryGenerator }, createElement(Harness))))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     await act(async () => { assert.equal(runtime.send('first', null), true); });
@@ -1594,9 +1601,9 @@ test('a supplement sent after the answer text starts becomes a separate follow-u
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
-  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
-  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../ui/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../ui/features/chat/chat-runtime.tsx');
   const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1624,7 +1631,7 @@ test('a supplement sent after the answer text starts becomes a separate follow-u
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, { runtimeFactory, titleGenerator, memoryGenerator }, createElement(Harness))))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     await act(async () => { assert.equal(runtime.send('first question', null), true); });
@@ -1661,7 +1668,7 @@ test('conversation titles are only auto-replaced while unattended, and renames s
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1703,9 +1710,9 @@ test('AI titles run beside the first reply, retry after a failed turn, and never
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
-  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
-  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../ui/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../ui/features/chat/chat-runtime.tsx');
   const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1736,7 +1743,7 @@ test('AI titles run beside the first reply, retry after a failed turn, and never
   }
   const conversation = (id) => chat.conversations.find((item) => item.id === id);
   try {
-    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, { runtimeFactory, titleGenerator, memoryGenerator }, createElement(Harness))))))))); });
     await act(async () => { await models.save(config, 'key'); });
 
     // The first turn and its title both fail: the truncated first message stays.
@@ -1795,8 +1802,8 @@ test('conversation URLs override saved selection, follow history changes and rej
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
-  const { useConversationRouteState } = await import('../src/features/chat/conversation-route-state.ts');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
+  const { useConversationRouteState } = await import('../ui/features/chat/conversation-route-state.ts');
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -1835,7 +1842,7 @@ test('common file extensions use dedicated local Material icons, including upper
   const { renderToStaticMarkup } = await import('react-dom/server');
   const { parseHTML } = await import('linkedom');
   const { existsSync } = await import('node:fs');
-  const { FileTypeIcon } = await import('../src/features/chat/components/file-type-icon.tsx');
+  const { FileTypeIcon } = await import('../ui/features/chat/components/file-type-icon.tsx');
   const cases = [
     ['report.doc', 'word'], ['report.DOCX', 'word'], ['budget.xls', 'table'], ['budget.xlsx', 'table'],
     ['slides.ppt', 'powerpoint'], ['slides.pptx', 'powerpoint'], ['report.pdf', 'pdf'],
@@ -1855,7 +1862,7 @@ test('common file extensions use dedicated local Material icons, including upper
 test('model brand icons recognise spaced GPT names instead of falling back', async () => {
   const { createElement } = await import('react');
   const { renderToStaticMarkup } = await import('react-dom/server');
-  const { ModelIcon } = await import('../src/features/chat/components/model-icon.tsx');
+  const { ModelIcon } = await import('../ui/features/chat/components/model-icon.tsx');
   const Openai = (await import('@thesvg/react/openai')).default;
   const brand = renderToStaticMarkup(createElement(Openai, { width: 16, height: 16, 'aria-hidden': true, focusable: false, variant: 'light' }));
   const render = (props) => renderToStaticMarkup(createElement(ModelIcon, { ...props, size: 16 }));
@@ -1871,12 +1878,12 @@ test('composer reports validation in a compact chat notice without blocking inpu
   const { createElement, act, useState } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider } = await import('../src/features/chat/chat-state.tsx');
-  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
-  const { ChatRuntimeProvider } = await import('../src/features/chat/chat-runtime.tsx');
-  const { Composer } = await import('../src/features/chat/components/composer.tsx');
-  const { ChatNotice } = await import('../src/features/chat/components/chat-notice.tsx');
-  const { conversationHref } = await import('../src/features/chat/conversation-href.ts');
+  const { ChatProvider } = await import('../ui/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../ui/features/models/model-state.tsx');
+  const { ChatRuntimeProvider } = await import('../ui/features/chat/chat-runtime.tsx');
+  const { Composer } = await import('../ui/features/chat/components/composer.tsx');
+  const { ChatNotice } = await import('../ui/features/chat/components/chat-notice.tsx');
+  const { conversationHref } = await import('../ui/features/chat/conversation-href.ts');
   assert.equal(conversationHref(null), '/');
   assert.equal(conversationHref('a/b'), '/c/a%2Fb');
   assert.equal(conversationHref('demo', true), '/mock/chat/c/demo');
@@ -1921,7 +1928,7 @@ test('composer reports validation in a compact chat notice without blocking inpu
     await act(async () => { (document.querySelector('[aria-label="关闭提示"]') ?? document.querySelector('[aria-label="关闭弹窗"]')).click(); });
   }
   try {
-    await act(async () => { root.render(createElement(InstanceProvider, { preview: false }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: false }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, { runtimeFactory, titleGenerator, memoryGenerator }, createElement(Harness))))))))); });
     // Wait for the signed-in account's `files` capability: the picker drops its
     // image-only filter and document uploads become available.
     for (let attempt = 0; attempt < 100 && document.querySelector('input[type="file"]')?.hasAttribute('accept'); attempt++) {
@@ -1974,9 +1981,9 @@ test('the process header stays running after thinking ends and measures through 
   const { createElement, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { parseHTML } = await import('linkedom');
-  const { ChatProvider, useChat } = await import('../src/features/chat/chat-state.tsx');
-  const { ModelProvider, useModels } = await import('../src/features/models/model-state.tsx');
-  const { ChatRuntimeProvider, useChatRuntime } = await import('../src/features/chat/chat-runtime.tsx');
+  const { ChatProvider, useChat } = await import('../ui/features/chat/chat-state.tsx');
+  const { ModelProvider, useModels } = await import('../ui/features/models/model-state.tsx');
+  const { ChatRuntimeProvider, useChatRuntime } = await import('../ui/features/chat/chat-runtime.tsx');
   const previous = { fetch: globalThis.fetch, window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -2014,7 +2021,7 @@ test('the process header stays running after thinking ends and measures through 
     assert.ok(predicate(), 'expected runtime transition');
   }
   try {
-    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, null, createElement(Harness))))))))); });
+    await act(async () => { root.render(createElement(InstanceProvider, { preview: true }, createElement(PersonalizationProvider, null, createElement(ChatProvider, null, createElement(ModelProvider, { preview: true }, createElement(NetworkToolsProvider, null, createElement(MemoryProvider, { initialPreferences: { enabled: false, summary: '' } }, createElement(ChatRuntimeProvider, { runtimeFactory, titleGenerator, memoryGenerator }, createElement(Harness))))))))); });
     await act(async () => { await models.save({ ...config, protocol: 'message', baseUrl: 'https://test.invalid' }, 'key'); });
     await act(async () => { assert.equal(runtime.send('问题', null), true); });
     await until(() => chat.conversations[0]?.messages[1]?.reasoningActive === false && !!chat.conversations[0]?.messages[1]?.reasoning);
@@ -2022,7 +2029,7 @@ test('the process header stays running after thinking ends and measures through 
     assert.ok(Object.keys(runtime.runs).length > 0, 'the request is still running after thinking_end');
     assert.equal(thinkingFinished.status, 'streaming');
     assert.equal(thinkingFinished.content, '', 'thinking ends before the first answer token');
-    const { getReasoningState, ReasoningBlock } = await import('../src/features/chat/components/reasoning-block.tsx');
+    const { getReasoningState, ReasoningBlock } = await import('../ui/features/chat/components/reasoning-block.tsx');
     const { renderToStaticMarkup } = await import('react-dom/server');
     assert.equal(getReasoningState(thinkingFinished), 'running');
     const markup = renderToStaticMarkup(createElement(ReasoningBlock, { reasoning: thinkingFinished.reasoning, state: getReasoningState(thinkingFinished), elapsedMs: thinkingFinished.thinkingMs }));

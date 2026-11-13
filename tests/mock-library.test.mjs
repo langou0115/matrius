@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { previewFileRequest } from '../src/features/files/mock-library.ts';
+import { previewFileRequest } from '../ui/features/files/mock-library.ts';
 
 const list = (params = '') => previewFileRequest(`/api/files?${params}`);
 

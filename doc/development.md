@@ -1,5 +1,9 @@
 # 开发、验证与交付
 
+> 后端已经迁移到单 Node/TypeScript 进程。`npm run dev` 启动 Node API + Vite；`server/` 是唯一后端实现，Python/FastAPI 已移除。
+>
+> 部署命令已暂时禁用：`npm run deploy` 已从 `package.json` 移除，镜像/Compose 尚未切到 Node API。下文部署章节保留为恢复参考。
+
 移动端验证需覆盖 360px / 390px 窄屏、横屏、安全区、软键盘、侧栏遮罩与设置逐级返回。PWA 需在 HTTPS 或 localhost 的生产构建上验证安装；开发模式不注册 service worker。构建插件为 `sw.js` 注入哈希静态资源清单和构建缓存版本，安装成功后才更新缓存，更新等待旧页面关闭后激活；只缓存应用静态资源，云端数据和模型请求仍需联网。首次离线打开要求此前在线完成一次安装缓存。
 
 [文档索引](README.md)
@@ -10,7 +14,7 @@
 
 ```bash
 npm ci                         # 根据锁文件安装依赖，postinstall 生成 KaTeX 本地资源
-npm run dev                    # 常驻：迁移数据库 + FastAPI reload + Vite
+npm run dev                    # 常驻：Node API + Vite
 npm run dev -- --check         # 只校验工具、端口与路径，不启动服务
 npm run dev -- --clear         # 重建 Vite 依赖预构建后启动
 npm run db:migrate             # 只迁移 server/.data/matrius.db，不启动服务
@@ -34,25 +38,11 @@ node scripts/sync-katex.mjs    # 按需重新生成 KaTeX CSS 与字体（npm ci
 
 Web 是 Vite 构建的单页应用，入口为根目录 `index.html`，产物在 `dist/`，支持运行时创建的 `/c/<conversation-id>`。托管服务需把页面路径回退到 `index.html`（如 Nginx `try_files $uri $uri/ /index.html;`）；静态资源仍按原路径提供。不能预生成浏览器本地的对话 ID。发布前验证对话链接直达、刷新、前进后退与无效 ID 提示。
 
-仓库内置零依赖的生产服务 `scripts/server.mjs`，配置 `MATRIUS_API_URL` 指向运行中的 FastAPI 后，再执行 `npm run build && node scripts/server.mjs` 可同时托管 `dist/` 和同源模型中继 `/api/model-proxy`。静态回退规则与 Nginx 配置一致；哈希后的 `/assets/` 使用 immutable 长缓存，`/sw.js`、`/manifest.json` 与 SPA 入口返回 `no-cache`；SSE 响应直接透传，不做缓冲。可用 `PORT`、`HOST`、`MATRIUS_STATIC_DIR` 调整监听地址与产物目录。
-
-中继只接受带 `x-matrius-target-origin` 的 GET/POST，并拒绝凭据、回环、私网和链路本地目标；DNS 解析结果会固定到实际连接，避免 DNS rebinding。若改用 Nginx 等托管服务，需要额外代理 `/api/model-proxy/`，保留请求头并关闭响应缓冲（`proxy_buffering off`）以支持流式输出。
-
-中继逻辑与服务器框架解耦，导出为 `handleModelProxy(req, res): boolean`。生产部署中它保留在 Web 容器，由 Caddy 将 `/api/model-proxy/*` 路由过去；FastAPI 不处理模型请求，但中继会先通过固定 API 地址的 `/api/features` 校验实例 Cookie。Compose 为 Web 设置 `MATRIUS_API_URL=http://api:8000`。例如 Express：
-
-```js
-import modelProxy from './scripts/model-proxy.cjs';
-
-app.use((req, res, next) => {
-  if (!modelProxy.handleModelProxy(req, res)) next();
-});
-```
-
-静态页面也可由该进程托管，或交给 Nginx/CDN；只要页面与 `/api/model-proxy` 保持同源，浏览器就不会遇到 CORS。
+生产构建是静态 `dist/`，由 Caddy 或 Web 容器托管；页面与 `/api/*` 同源，SSE 需要关闭代理缓冲。模型请求、Agent 循环、工具和 title/memory 都在 Node API 内完成，浏览器不再有模型中继。静态回退规则与 Nginx 配置一致；哈希后的 `/assets/` 使用 immutable 长缓存，`/sw.js`、`/manifest.json` 与 SPA 入口返回 `no-cache`。
 
 生产发布只通过 `npm run deploy` 构建 Web 静态产物；`Dockerfile.web` 内部执行 `npm run build`。仓库不包含原生工程或应用商店发布流程。
 
-PWA 元数据直接写在 `index.html`：`<html lang="zh-CN">`、manifest 链接、主题色、`apple-touch-icon` 与 Apple 移动端 meta 标签，不再由构建后脚本注入。`public/manifest.json` 声明可安装应用信息，`public/sw.js` 预缓存应用外壳并在导航时使用网络优先策略，离线时回退到缓存的 SPA 入口；它会跳过 Vite 开发 URL（`/@`、`/src/`、`/node_modules/`、带 `t=` 查询的请求），缓存名为 `matrius-v10-<build hash>`。`/favicon.png` 位于 `public/`，不再提供 `/favicon.ico`。修改 service worker 的缓存策略时需同步递增 `CACHE_NAME`。
+PWA 元数据直接写在 `index.html`：`<html lang="zh-CN">`、manifest 链接、主题色、`apple-touch-icon` 与 Apple 移动端 meta 标签，不再由构建后脚本注入。`public/manifest.json` 声明可安装应用信息，`public/sw.js` 预缓存应用外壳并在导航时使用网络优先策略，离线时回退到缓存的 SPA 入口；它会跳过 Vite 开发 URL（`/@`、`/ui/`、`/node_modules/`、带 `t=` 查询的请求），缓存名为 `matrius-v10-<build hash>`。`/favicon.png` 位于 `public/`，不再提供 `/favicon.ico`。修改 service worker 的缓存策略时需同步递增 `CACHE_NAME`。
 
 ## 本机全栈开发：npm run dev
 
@@ -173,13 +163,13 @@ uv run --no-sync pytest
 
 - 用户要求的界面调试数据位于 `dev/fixtures/chat-workspace.ts`，不放进业务组件或普通启动数据中。
 - 运行 `npm run dev` 后打开 `/mock`（例如 `http://localhost:8081/mock`，端口以实际启动输出为准）。这是预览索引页，列出当前各项 mock 测试，点进去即可查看，不需要管理员后台或登录。
-- 新增一项 mock 测试：在 `src/router/routes.tsx` 加一个包在 `MockOnly` 里的 `/mock/*` 路由（复用真实页面组件，参考 `/mock/process`），再往 `src/features/mock/mock-items.ts` 的 `mockItems` 加一条记录。索引页与工具栏标签都会自动跟上。
+- 新增一项 mock 测试：在 `ui/router/routes.tsx` 加一个包在 `MockOnly` 里的 `/mock/*` 路由（复用真实页面组件，参考 `/mock/process`），再往 `ui/features/mock/mock-items.ts` 的 `mockItems` 加一条记录。索引页与工具栏标签都会自动跟上。
 - Chat Mock 复用完整聊天界面与交互，只替换工作区初始数据并增加右下角工具卡片，不隐藏正式界面的入口。侧栏设置进入 `/mock/chat/settings`，复用正式设置组件；返回 `/mock/chat` 时保留会话、草稿与外观状态。设置属于聊天预览流程，不单独列为 Mock 测试项。
 - 参考 `../openstudio/tests/seed-software-test.mjs` 的批量长对话与专项样例结构，提供 100 个八轮对话和 9 个专项会话，共 109 个会话、1730 条消息。
 - 专项覆盖 Markdown 标题/列表/引用/表格/脚注、多语言代码块、公式与货币、50 轮长对话、40 段单条长回复、Unicode/RTL、长链接与 HTML 原文、短回复和未闭合标记；前四个专项会话置顶。
 - 点击侧栏切换样例，也可通过搜索标题或正文定位内容，支持置顶、重命名、删除与输入草稿；配置并选中模型后，发送会调用真实模型，沿用正式对话流程。
 - 示例模式不读取或写入浏览器真实工作区，变更仅保存在内存中。右下角提供重置和退出入口；刷新示例地址也会重置。
-- `/mock/*` 全部由 `src/router/routes.tsx` 的 `MockOnly` 统一保护：`import.meta.env.DEV` 为真时渲染，生产构建直接 `<Navigate to="/" replace />`。索引页、工具栏与示例数据仅在开发分支动态加载。
+- `/mock/*` 全部由 `ui/router/routes.tsx` 的 `MockOnly` 统一保护：`import.meta.env.DEV` 为真时渲染，生产构建直接 `<Navigate to="/" replace />`。索引页、工具栏与示例数据仅在开发分支动态加载。
 - `npm run dev` 使用 Vite 开发模式，`import.meta.env.DEV` 为真，可访问 Mock；`npm run build` 生成生产构建，Mock 路由被重定向掉。`npm run deploy` 构建生产产物，服务器上的 `/mock` 同时由 Caddy 拒绝。该标记取决于构建模式，与域名或登录状态无关。
 - 发布前检查构建后的 JS/HTML 不包含 Mock 索引文案、工具栏或示例数据；路由名称和重定向页面仍可能存在于静态产物中，不代表 Mock 页面可用。
 - 用户与助手消息共用 Markdown/GFM 与 KaTeX 渲染，支持标题、列表、引用、表格、脚注、公式和按需代码高亮；代码块可复制与折叠。Mermaid 等未知代码语言作为原文展示，已接入三种协议的实时流式模型输出。

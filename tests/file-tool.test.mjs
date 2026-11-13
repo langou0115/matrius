@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ApiError } from '../src/core/api/instance-client.ts';
+import { ApiError } from '../ui/core/api/instance-client.ts';
 
 import {
   collectGeneratedFiles,
@@ -10,7 +10,7 @@ import {
   getFileActivityStart,
   normalizeFile,
   salvageTruncatedArguments,
-} from '../src/core/agent/file-tools.ts';
+} from '../ui/core/agent/file-tools.ts';
 
 const file = (id, filename = `${id}.pdf`, size = 1024, revision = 1) => ({
   id, filename, contentType: 'application/pdf', size, revision,

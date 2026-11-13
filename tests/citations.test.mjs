@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import {
   collectReplySources, extractCitations, prepareCitations, webActivitiesOf,
-} from '../src/features/chat/citations.ts';
+} from '../ui/features/chat/citations.ts';
 
 test('footnote references become numbered citation links and definitions leave the body', () => {
   const content = '第一段[^b]。\n\n第二段[^1]，再次引用[^b]。\n\n[^b]: [B 来源](https://b.example/page#part)\n[^1]: 来源：A 文档';

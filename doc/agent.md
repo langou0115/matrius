@@ -2,6 +2,8 @@
 
 [文档索引](README.md)
 
+> **迁移状态**：Agent Runtime 正在从 `ui/core/agent` 迁移到 `server/agent`。迁移完成前，下文“客户端运行”的描述仍适用于当前实现；目标协议见 `contract/agent-protocol.ts` 与 [`server/agent/README.md`](../server/agent/README.md)。
+
 ## Agent Runtime
 
 **Agent Runtime 统一在客户端本地运行，本地模式与云端模式共用同一套 Runtime。** 云端模式表示接入云端能力，不改变 Runtime 的运行位置。
@@ -30,10 +32,10 @@
 
 未登录时不注册云端工具，Runtime 只运行纯对话与记忆注入。登录后通过统一能力集开放工具，沿用同一套循环。
 
-共享核心集中在客户端 `src/core/agent/`，不依赖 React、DOM、路由页面、聊天状态或设置模块。界面层通过同一接口提交请求、订阅运行状态和接收回复：
+共享核心集中在 `ui/core/agent/`（迁移目标 `server/agent/`），不依赖 React、DOM、路由页面、聊天状态或设置模块。界面层通过同一接口提交请求、订阅运行状态和接收回复：
 
 ```text
-src/core/agent/
+ui/core/agent/
 ├── runtime.ts         # createAgentRuntime：校验、运行状态、批量回复、取消与资源释放
 ├── runner.ts          # pi-agent 创建、流式事件、超时与错误处理
 ├── context.ts         # 引用、图片、历史上下文与保守 token 预算检查
@@ -44,7 +46,7 @@ src/core/agent/
 └── thinking-effort.ts # 共享思考强度契约
 ```
 
-- 模型传输与协议解码放在 `src/core/llm/`，Runtime 不与某一种模型协议耦合。
+- 模型传输与协议解码放在 `ui/core/llm/`，Runtime 不与某一种模型协议耦合。
 - `createAgentRuntime({ onReply, onSummary })` 返回 `start(request)`、`stop(conversationId?)`、`getSnapshot()`、`subscribe(listener)`、`clearError()` 和 `dispose()`；每个工作区独立创建实例。`onSummary` 在静默压缩产生或清除滚动摘要时回调，由适配层写入会话记录。运行状态按会话记录（`runs: Record<conversationId, RuntimeRun>`）：同一会话只允许一个活动请求，不同会话可以并发；`stop(id)` 只取消指定会话，无参调用取消全部（仅用于工作区卸载）。`start` 接收模型配置、临时凭据、消息、会话/回复 ID、系统提示与思考强度；请求开始时复制输入，后续 UI 修改不改变正在运行的请求。凭据不进入可订阅状态或消息存储。运行失败写入对应助手消息（`status: 'error'`）而不是工作区级 `error`，避免后台失败串到当前打开的会话；`error` 仅承载发送前的配置/凭据/上下文校验错误。
 - Runtime 默认延迟加载 `runner.ts` 与 `compaction.ts`，也可通过 `loadRunner` / `loadCompactor` 注入兼容实现。`core/llm/direct-stream.ts` 负责三种协议的流式传输；平台差异留在传输、凭据和存储适配层，不引入核心依赖。
 - `features/chat/chat-runtime.tsx` 是 React 聊天适配层，只读取当前模型/凭据与偏好、处理发送/重试、把核心回复写入会话状态；通过 `useSyncExternalStore` 订阅核心状态。删除运行中的对话只取消该会话的请求，卸载工作区取消全部；切换设置或其他会话不改变生成所属会话。后台回复完成且用户不在该会话（或处于设置等全页路由）时，会话写入 `completedReadAt: null` 并在适配层生成最多 3 条临时通知卡片；打开会话后清除未读。复制文本、选区和导航继续属于聊天 UI。

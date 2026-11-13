@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 
-import { readWorkspace, writeWorkspace, readLocalValue, writeLocalValue, LocalDataConflict } from '../src/core/database/browser-store.ts';
-import { loadWorkspace, stripMessageImages } from '../src/features/workspace/workspace-repository.ts';
-import { saveModelPreferences, loadModelPreferences } from '../src/features/models/model-repository.ts';
-import { createStoredModelCredentials } from '../src/features/models/model-credential-store.ts';
+import { readWorkspace, writeWorkspace, readLocalValue, writeLocalValue, LocalDataConflict } from '../ui/core/database/browser-store.ts';
+import { loadWorkspace, stripMessageImages } from '../ui/features/workspace/workspace-repository.ts';
+import { saveModelPreferences, loadModelPreferences } from '../ui/features/models/model-repository.ts';
+import { createStoredModelCredentials } from '../ui/features/models/model-credential-store.ts';
 
 const initial = {
   schemaVersion: 1,

@@ -2,7 +2,9 @@
 
 [文档索引](README.md)
 
-后端位于 [`server/`](../server/)，使用 Python 3.12 + FastAPI，部署说明见[服务器部署](deployment.md)。
+> **迁移中**：后端的目标实现是 `server/` 下的 Node/TypeScript 服务（Fastify + `node:sqlite` + 结构化工具注册表）。本文仍描述当前 Python/FastAPI 实现；新目录、命令、数据库兼容规则和迁移状态见 [`server/README.md`](../server/README.md)。迁移完成后再整体改写本文。
+
+后端位于 [`server/`](../server/)，当前运行实现使用 Python 3.12 + FastAPI，部署说明见[服务器部署](deployment.md)。
 
 ## 边界
 

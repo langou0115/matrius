@@ -4,7 +4,7 @@ import { createElement, useRef, act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import { useChatAutoScroll } from '../src/features/chat/components/scroll-to-bottom.tsx';
+import { useChatAutoScroll } from '../ui/features/chat/components/scroll-to-bottom.tsx';
 
 /**
  * The button is meant for "I scrolled back to read something", not for "the page moved one line".
@@ -150,9 +150,9 @@ test('sending from an earlier position animates to the newest message', async ()
 });
 
 test('quoting accepts one assistant body, rejects controls, reasoning and cross-message ranges', async () => {
-  const { readSelectionQuote } = await import('../src/features/chat/components/selection-quote.tsx');
-  const { getCopyText } = await import('../src/features/chat/message-text.ts');
-  const { getRequestText } = await import('../src/core/agent/context.ts');
+  const { readSelectionQuote } = await import('../ui/features/chat/components/selection-quote.tsx');
+  const { getCopyText } = await import('../ui/features/chat/message-text.ts');
+  const { getRequestText } = await import('../ui/core/agent/context.ts');
   const { document } = parseHTML('<main><div data-quote-source><p>first paragraph</p><p>second paragraph</p><div class="message-code-header">copy</div></div><aside>reasoning</aside><div data-quote-source><p>another answer</p></div></main>');
   const container = document.querySelector('main');
   const [first, second, other] = document.querySelectorAll('p');
@@ -173,7 +173,7 @@ test('quoting accepts one assistant body, rejects controls, reasoning and cross-
 });
 
 test('selection actions capture the passage before focus changes and dismiss without disturbing copying', async () => {
-  const { SelectionQuote } = await import('../src/features/chat/components/selection-quote.tsx');
+  const { SelectionQuote } = await import('../ui/features/chat/components/selection-quote.tsx');
   const names = ['window', 'document', 'Node', 'innerWidth', 'innerHeight', 'requestAnimationFrame', 'cancelAnimationFrame', 'IS_REACT_ACT_ENVIRONMENT'];
   const previous = Object.fromEntries(names.map((name) => [name, globalThis[name]]));
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
@@ -212,7 +212,7 @@ test('selection actions capture the passage before focus changes and dismiss wit
 });
 
 test('quote drafts are isolated per conversation and survive screen remounts', async () => {
-  const { DraftProvider, useDrafts } = await import('../src/features/chat/draft-state.tsx');
+  const { DraftProvider, useDrafts } = await import('../ui/features/chat/draft-state.tsx');
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   globalThis.window = window; globalThis.document = document; globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -287,7 +287,7 @@ test('each conversation reopens where it was left, using the position saved in t
 });
 
 test('conversation navigation tracks reading, opens the question card and jumps to a selected question', async () => {
-  const { ConversationNavigator } = await import('../src/features/chat/components/conversation-navigator.tsx');
+  const { ConversationNavigator } = await import('../ui/features/chat/components/conversation-navigator.tsx');
   const names = ['window', 'document', 'Node', 'ResizeObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'IS_REACT_ACT_ENVIRONMENT'];
   const previous = Object.fromEntries(names.map((name) => [name, globalThis[name]]));
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');

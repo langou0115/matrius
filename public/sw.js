@@ -39,7 +39,7 @@ function isCacheable(request) {
   // and production servers share port 8081, so a worker left over from `npm run build`
   // plus `serve` would otherwise answer with stale development modules.
   if (url.searchParams.has('dev') || url.searchParams.has('t') || url.pathname.startsWith('/node_modules/')
-    || url.pathname.startsWith('/src/') || url.pathname.startsWith('/@')) return false;
+    || url.pathname.startsWith('/ui/') || url.pathname.startsWith('/@')) return false;
   return request.mode === 'navigate' || url.pathname.startsWith('/assets/')
     || url.pathname.startsWith('/icons/') || url.pathname.startsWith('/brand/')
     || url.pathname.startsWith('/vendor/katex/') || ['/manifest.json', '/favicon.png'].includes(url.pathname);
