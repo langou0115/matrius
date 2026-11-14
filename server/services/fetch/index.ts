@@ -50,6 +50,51 @@ function isProxy(error: unknown): boolean {
   return error instanceof AppError && error.code === 'fetch_proxy_error';
 }
 
+function fetchTimeoutError(): AppError {
+  return new AppError(504, 'fetch_timeout', '网页读取超时，已停止等待该页面。');
+}
+
+function cancelledError(): AppError {
+  return new AppError(499, 'request_cancelled', '请求已取消。');
+}
+
+/**
+ * DNS validation (`validateFetchUrl`) has no timeout of its own. Race it against the page
+ * deadline so a slow resolver cannot hold a batch open far beyond FETCH_TIMEOUT_SECONDS;
+ * cancellation must win immediately too.
+ */
+function withDeadline<T>(task: Promise<T>, ms: number, signal: AbortSignal | undefined, timeout: () => AppError): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => finish(cancelledError());
+    const finish = (error?: unknown, value?: T) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error === undefined) resolve(value as T);
+      else reject(error);
+    };
+    if (signal?.aborted) {
+      finish(cancelledError());
+      return;
+    }
+    timer = setTimeout(() => finish(timeout()), Math.max(1, ms));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    task.then((value) => finish(undefined, value), (error) => finish(error));
+  });
+}
+
+async function validateWithin(url: string, deadline: number, signal?: AbortSignal): Promise<string> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw fetchTimeoutError();
+  return withDeadline(validateFetchUrl(url), remaining, signal, fetchTimeoutError);
+}
+
 export function createFetchService(options: {
   cache: MemoryCache;
   settings: Settings;
@@ -58,13 +103,17 @@ export function createFetchService(options: {
   const { cache, settings, http } = options;
   const flights = new Map<string, Promise<FetchedPage>>();
 
-  async function download(url: string, deadline: number, signal?: AbortSignal): Promise<{
+  async function download(url: string, timeoutMs: number, signal?: AbortSignal): Promise<{
     finalUrl: string;
     body: string;
     truncated: boolean;
     contentType: string;
   }> {
-    let current = await validateFetchUrl(url);
+    // Resolve the initial host before starting the HTTP clock. DNS is local and usually
+    // instant, but a slow resolver must not consume the proxy's whole 3s budget; redirects
+    // are validated inside the remaining HTTP deadline below.
+    let current = await validateWithin(url, Date.now() + Math.min(1_500, timeoutMs), signal);
+    const deadline = Date.now() + timeoutMs;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new AppError(504, 'fetch_timeout', '网页读取超时，已停止等待该页面。');
@@ -84,7 +133,7 @@ export function createFetchService(options: {
         const location = response.headers.location;
         if (!location) throw new AppError(502, 'upstream_error', '网页重定向缺少目标地址。');
         if (hop === MAX_REDIRECTS) throw new AppError(502, 'upstream_error', '网页重定向次数过多。');
-        current = await validateFetchUrl(new URL(location, current).toString());
+        current = await validateWithin(new URL(location, current).toString(), deadline, signal);
         continue;
       }
 
@@ -110,11 +159,14 @@ export function createFetchService(options: {
         throw new AppError(502, 'fetch_upstream_error', `目标网站返回 HTTP ${response.status}。`);
       }
 
+      // Resolve the type before decoding: binaries are rejected without spending time on a
+      // charset guess, and a mislabelled HTML page still gets the right decoder.
+      const contentType = resolveMime(contentTypeHeader, response.body);
       return {
         finalUrl: current,
         body: decodeBody(response.body, contentTypeHeader),
         truncated: response.truncated,
-        contentType: resolveMime(contentTypeHeader, response.body),
+        contentType,
       };
     }
     throw new AppError(502, 'upstream_error', '网页重定向次数过多。');
@@ -125,20 +177,26 @@ export function createFetchService(options: {
     mode: 'fast' | 'full',
     options: { signal?: AbortSignal } = {},
   ): Promise<FetchedPage> {
-    const deadline = Date.now() + settings.FETCH_TIMEOUT_SECONDS * 1000;
+    // FETCH_TIMEOUT_SECONDS is the budget for one attempt, not the whole page: a page that
+    // timed out during connect/TLS can usually succeed on the warmed second connection.
+    const attemptTimeoutMs = Math.max(250, settings.FETCH_TIMEOUT_SECONDS * 1000);
     let attempts = 0;
     let downloaded: { finalUrl: string; body: string; truncated: boolean; contentType: string } | undefined;
     try {
       while (!downloaded) {
         attempts += 1;
         try {
-          downloaded = await download(url, deadline, options.signal);
+          downloaded = await download(url, attemptTimeoutMs, options.signal);
         } catch (error) {
+          if (options.signal?.aborted) throw new AppError(499, 'request_cancelled', '请求已取消。');
           if (error instanceof RetryableFetch) {
-            if (attempts >= settings.FETCH_MAX_ATTEMPTS || deadline - Date.now() < 5000) throw error.error;
-            const delay = Math.min(1000, Math.max(250, error.delayMs));
-            if (deadline - Date.now() <= delay) throw error.error;
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            if (attempts >= settings.FETCH_MAX_ATTEMPTS) throw error.error;
+            await new Promise((resolve) => setTimeout(resolve, Math.min(1000, Math.max(250, error.delayMs))));
+            continue;
+          }
+          const timedOut = error instanceof AppError ? error.code === 'fetch_timeout' : isTimeout(error);
+          if (timedOut && attempts < settings.FETCH_MAX_ATTEMPTS) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }
           throw error;
@@ -175,7 +233,9 @@ export function createFetchService(options: {
 
   return {
     async fetch(url, mode, options = {}) {
-      const key = `matrius:fetch:v3:${createHash('sha256').update(`${url}|${mode}`).digest('hex')}`;
+      // v4: the extractor moved to Readability with charset detection, so old cached excerpts
+      // must not keep serving the previous body dump.
+      const key = `matrius:fetch:v4:${createHash('sha256').update(`${url}|${mode}`).digest('hex')}`;
       const cached = cache.get(key);
       if (cached) {
         try {

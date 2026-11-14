@@ -1,8 +1,8 @@
 import type { AgentTool } from '@mariozechner/pi-agent-core';
 import type { Static } from 'typebox';
 
-import { AppError } from '../../errors';
-import type { FileToolRequest } from '../../services/documents/service';
+import { AppError } from '../../../errors';
+import type { FileToolRequest } from '../../../services/documents/service';
 import type { ToolModule } from '../types';
 import { endFileActivity, startFileActivity } from './activity';
 import { fileToolsSystemPrompt } from './prompt';
@@ -70,7 +70,7 @@ function renderResult(result: Record<string, unknown>): string {
   }
   if (isRecord(result.file)) {
     const file = result.file;
-    return `Saved to Library: ${String(file.filename)} (${String(file.size)} bytes). It is now available to later turns.`;
+    return `Saved to Library: ${String(file.filename)} (${String(file.size)} bytes). fileId: ${String(file.id)}. Use this exact fileId for subsequent inspect/edit calls.`;
   }
   if (isRecord(result.draft)) {
     const draft = result.draft;
@@ -96,11 +96,6 @@ function createFileTool(context: Parameters<ToolModule['create']>[0]): AgentTool
       if (!files) throw new Error('文件工具不可用。');
       if (signal?.aborted) throw new Error('请求已取消。');
       const request = { ...params } as unknown as FileToolRequest;
-      // Attachments belong to the active conversation unless the model explicitly asks
-      // for another scope; never default a chat listing to every file in the instance.
-      if (request.operation === 'list' && !request.conversationId && context.conversationId) {
-        request.conversationId = context.conversationId;
-      }
       try {
         const result = await files.run(context.instanceId, request);
         return {

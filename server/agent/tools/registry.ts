@@ -8,7 +8,7 @@ import type { FeatureId, ToolActivityAdapter, ToolContext, ToolModule } from './
  * Registration order is the order tools are offered to the model, so put the
  * most useful tool first. Feature-gated modules are filtered per run; an empty
  * feature set is the text-only mode. Keep this class free of concrete tool
- * imports: `server/tools/index.ts` owns the built-in list.
+ * imports: `server/agent/tools/index.ts` owns the built-in list.
  */
 export class ToolRegistry {
   private readonly modules = new Map<string, ToolModule>();

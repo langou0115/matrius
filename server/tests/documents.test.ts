@@ -17,7 +17,7 @@ import { extractText } from '../services/documents/extract';
 import { createFileToolService } from '../services/documents/file-service';
 import type { FetchService } from '../services/fetch';
 import type { SearchService } from '../services/search';
-import { toolRegistry } from '../tools';
+import { toolRegistry } from '../agent/tools';
 
 const search: SearchService = { searchMany: async () => [] };
 const fetch: FetchService = {

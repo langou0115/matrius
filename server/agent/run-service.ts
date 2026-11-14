@@ -8,8 +8,8 @@ import type {
   TokenUsage,
 } from '../../contract/agent-protocol';
 import { featureIds } from '../features/registry';
-import { toolRegistry } from '../tools';
-import type { ToolServices } from '../tools/types';
+import { toolRegistry } from './tools';
+import type { ToolServices } from './tools/types';
 import { createAgentRuntime } from './runtime';
 import type { ModelConfig } from './llm/model-config';
 import { isThinkingEffort, type ThinkingEffort } from './thinking-effort';

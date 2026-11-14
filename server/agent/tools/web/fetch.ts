@@ -1,7 +1,7 @@
 import type { AgentTool } from '@mariozechner/pi-agent-core';
 import type { Static } from 'typebox';
 
-import { AppError } from '../../errors';
+import { AppError } from '../../../errors';
 import type { ToolModule } from '../types';
 import {
   getWebActivityEnd,
@@ -23,8 +23,8 @@ type Details = {
 };
 
 const MAX_FETCH_PAGES_PER_CALL = 10;
-const MAX_FETCH_CONTENT_CHARS = 50_000;
-const MAX_MULTI_PAGE_CONTENT_CHARS = 16_000;
+// Page length is capped once, by FETCH_MAX_CHARS in the fetch service. The tool adds no
+// per-run or per-batch allowance, so a batch returns every page in full.
 const MAX_PREVIEW_CHARS = 640;
 
 function describeToolError(reason: unknown): Error {
@@ -57,7 +57,6 @@ function truncate(value: string, limit: number): string {
 function createWebFetchTool(context: Parameters<ToolModule['create']>[0]): AgentTool<typeof webFetchParameters, Details> {
   const services = context.services;
   if (!services) throw new Error('联网工具不可用。');
-  let fetchedContentChars = 0;
 
   return {
     name: WEB_FETCH_TOOL_NAME,
@@ -78,24 +77,12 @@ function createWebFetchTool(context: Parameters<ToolModule['create']>[0]): Agent
       const normalized = targets as string[];
       const mode = params.mode ?? 'fast';
       const startedAt = Date.now();
-      const remaining = MAX_FETCH_CONTENT_CHARS - fetchedContentChars;
-      if (remaining <= 0) {
-        throw new Error('本轮网页读取的正文预算已用完。只依据已读取的内容作答；其余部分请说明证据不足。');
-      }
-      const contentLimit = normalized.length > 1
-        ? Math.min(MAX_MULTI_PAGE_CONTENT_CHARS, Math.max(1, Math.floor(remaining / normalized.length) - 1))
-        : Math.min(MAX_FETCH_CONTENT_CHARS, remaining);
-      if (contentLimit < 1) {
-        throw new Error('本轮网页读取的正文预算已用完。只依据已读取的内容作答；其余部分请说明证据不足。');
-      }
 
       const settled = await Promise.allSettled(
         normalized.map((url) => services.fetch.fetch(url, mode, { ...(signal ? { signal } : {}) })),
       );
       if (signal?.aborted) throw new Error('请求已取消。');
-      const pages = settled.flatMap((page) => page.status === 'fulfilled'
-        ? [{ ...page.value, text: truncate(page.value.text, contentLimit) }]
-        : []);
+      const pages = settled.flatMap((page) => page.status === 'fulfilled' ? [page.value] : []);
       if (!pages.length) {
         const first = settled[0];
         if (normalized.length === 1 && first?.status === 'rejected') {
@@ -112,13 +99,12 @@ function createWebFetchTool(context: Parameters<ToolModule['create']>[0]): Agent
             `URL: ${page.value.url}`,
             ...(page.value.truncated ? ['Warning: the page text is truncated; missing sections have not been verified.'] : []),
             '',
-            truncate(page.value.text, contentLimit),
+            page.value.text,
           ].join('\n')
           : `Could not fetch ${normalized[index]}. Do not cite this URL as a verified source.`,
       }));
       const first = pages[0];
       const contentChars = pages.reduce((total, page) => total + page.text.length, 0);
-      fetchedContentChars += contentChars;
       const details: Details = {
         kind: 'fetch',
         url: first.url,
@@ -134,7 +120,7 @@ function createWebFetchTool(context: Parameters<ToolModule['create']>[0]): Agent
       return {
         content: [...content, {
           type: 'text' as const,
-          text: 'Fetched pages are evidence for the claims they support. If the key claims are covered, answer now; fetch another page only when a specific important claim is still unsupported. Do not try to verify every sentence with a separate fetch.',
+          text: 'The source-discovery phase should already cover the user question. Synthesize the batch and answer with these sources. Additional research is appropriate if these pages reveal an important evidence gap or failed to load; do not expand into unrelated features or re-verify an already supported claim.',
         }],
         details,
       };

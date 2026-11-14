@@ -127,7 +127,8 @@ button.icon-button.danger-icon:hover { color: var(--destructive); }
 .conversation-group { margin-bottom: 8px; }
 /* A folded group collapses to its heading. Keeping the 8px section gap there leaves a hole
    between 置顶 and 最近, so drop it while the group is folded and let the label's own 3px
-   tail be the only separation. Groups with no items are not rendered at all. */
+   tail be the only separation. An empty 置顶 is not rendered, but an empty 最近 keeps its
+   heading, so the history area always has its section label. */
 .conversation-group:has(> [hidden]) { margin-bottom: 0; }
 .conversation-item { position: relative; display: flex; align-items: center; min-height: 36px; flex-shrink: 0; border-radius: 8px; margin-bottom: 2px; }
 .conversation-item:hover, .conversation-item.menu-open { background: var(--sidebar-hover); }

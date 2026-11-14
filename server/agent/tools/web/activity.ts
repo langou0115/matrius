@@ -1,4 +1,4 @@
-import type { WebActivity, WebSearchResult } from '../../../contract/agent-protocol';
+import type { WebActivity, WebSearchResult } from '../../../../contract/agent-protocol';
 
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
 export const WEB_FETCH_TOOL_NAME = 'web_fetch';

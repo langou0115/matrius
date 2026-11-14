@@ -54,8 +54,8 @@ server/
 │   └── repositories/       # typed data access
 ├── routes/                 # Fastify route modules
 ├── services/               # storage, cache, search, fetch, documents, PDF
-├── tools/                  # model-facing tool modules + registry
 ├── agent/                  # agent runtime, title, memory, SSE bridge
+│   └── tools/              # model-facing tool modules + registry
 └── tests/                  # node:test integration/unit tests
 ```
 
@@ -114,11 +114,11 @@ refuses to guess at an unversioned database with tables.
 
 ## Adding a tool
 
-Read `server/tools/README.md`. The short version: copy `server/tools/_template/`,
+Read `server/agent/tools/README.md`. The short version: copy `server/agent/tools/_template/`,
 keep the service pi-free, set `id` to the `AgentTool.name`, register it in
-`server/tools/index.ts` only after the service exists and a test passes.
+`server/agent/tools/index.ts` only after the service exists and a test passes.
 
 ## Agent
 
 Read `server/agent/README.md`. The agent may import `server/services/*` and
-`server/tools/*`, never `ui/*`, React, IndexedDB or `fetch('/api/...')`.
+`server/agent/tools/*`, never `ui/*`, React, IndexedDB or `fetch('/api/...')`.

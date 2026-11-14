@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { loadSettings } from '../config';
 import { AppError } from '../errors';
 import { MemoryCache } from '../services/cache';
 import type { HttpClient, HttpResponse } from '../services/http';
+import { decodeBody } from '../services/http';
 import { extractContent, resolveMime } from '../services/fetch/extract';
 import { createFetchService } from '../services/fetch/index';
 import { validateFetchUrl } from '../services/fetch/url';
@@ -77,6 +79,63 @@ test('HTML extraction keeps headings, links, code and tables as Markdown', () =>
   assert.match(extracted.text, /\| A \| B \|/u);
 });
 
+/** A page whose article is long enough for Readability but wrapped in every kind of chrome. */
+const ARTICLE = `<!doctype html><html><head><title>Long article - Example Site</title></head><body>
+<header class="site-header"><nav><a href="/">Home</a> NavigationOnlyMarker</nav></header>
+<div class="cookie-banner">CookieOnlyMarker</div>
+<main><article>
+<h1>Long article</h1>
+<p>${'This paragraph explains the subject in enough detail for a reader. '.repeat(10)}</p>
+<h2>Details</h2>
+<p><strong>BoldMarker</strong> and <em>ItalicMarker</em> and <del>StrikeMarker</del>.</p>
+<ul><li>ParentItem<ul><li>NestedItem</li></ul></li><li>SiblingItem</li></ul>
+<pre><code class="language-ts">const value = 1;</code></pre>
+<table><tr><th>HeaderA</th><th>HeaderB</th></tr><tr><td>CellA</td><td>CellB</td></tr></table>
+</article></main>
+<aside>SidebarOnlyMarker</aside>
+<footer>FooterOnlyMarker</footer>
+</body></html>`;
+
+test('Readability keeps the article body and drops navigation, banners and footers', () => {
+  const extracted = extractContent(ARTICLE, 'https://example.com/article', 'fast');
+  assert.equal(extracted.extractor, 'readability');
+  assert.equal(extracted.title, 'Long article - Example Site');
+  assert.match(extracted.text, /subject in enough detail/u);
+  for (const marker of ['NavigationOnlyMarker', 'CookieOnlyMarker', 'SidebarOnlyMarker', 'FooterOnlyMarker']) {
+    assert.doesNotMatch(extracted.text, new RegExp(marker, 'u'));
+  }
+  // Formatting survives the HTML -> Markdown pass instead of flattening to plain text.
+  assert.match(extracted.text, /\*\*BoldMarker\*\*/u);
+  assert.match(extracted.text, /\*ItalicMarker\*/u);
+  assert.match(extracted.text, /~~StrikeMarker~~/u);
+  assert.match(extracted.text, /- ParentItem\n  - NestedItem\n- SiblingItem/u);
+  assert.match(extracted.text, /```\nconst value = 1;\n```/u);
+  assert.match(extracted.text, /\| HeaderA \| HeaderB \|/u);
+  assert.match(extracted.text, /\| CellA \| CellB \|/u);
+});
+
+test('decodeBody detects GB18030 when a Chinese page is mislabelled as UTF-8', () => {
+  const bytes = readFileSync(new URL('./fixtures/gbk-mislabeled.html', import.meta.url));
+  const decoded = decodeBody(bytes, 'text/html');
+  assert.match(decoded, /中文网页编码测试/u);
+  assert.doesNotMatch(decoded, /\uFFFD/u);
+
+  // A usable declaration still decodes a short page that no detector could classify alone.
+  const gbk = Buffer.concat([
+    Buffer.from('<html><head><title>'),
+    Buffer.from([0xd6, 0xd0, 0xce, 0xc4]),
+    Buffer.from('</title></head><body>'),
+    Buffer.from([0xce, 0xc4, 0xd7, 0xd6]),
+    Buffer.from('</body></html>'),
+  ]);
+  assert.match(decodeBody(gbk, 'text/html; charset=gbk'), /中文/u);
+  assert.match(decodeBody(gbk, 'text/html; charset=gbk'), /文字/u);
+
+  // Clean UTF-8 wins over a stale legacy declaration from the server.
+  const utf8 = Buffer.from('<html><body>中文网页</body></html>');
+  assert.match(decodeBody(utf8, 'text/html; charset=gbk'), /中文网页/u);
+});
+
 test('anti-bot and JavaScript shells are rejected with distinct codes', () => {
   assert.throws(
     () => extractContent('<html><head><title>Just a moment...</title></head><body>cf-chl-</body></html>', 'https://example.com/', 'fast'),
@@ -112,6 +171,28 @@ test('the fetch service downloads, follows redirects and caches the result', asy
   const cached = await service.fetch('https://8.8.8.8/', 'fast');
   assert.deepEqual(cached, page);
   assert.equal(calls, 2);
+});
+
+test('a timed-out page retries once with the configured 3s attempt budget', async () => {
+  let calls = 0;
+  const service = createFetchService({
+    cache: new MemoryCache(),
+    settings: settings({ FETCH_TIMEOUT_SECONDS: '3' }),
+    http: {
+      get: async () => {
+        calls += 1;
+        if (calls === 1) {
+          const error = new Error('timed out');
+          error.name = 'TimeoutError';
+          throw error;
+        }
+        return response(200, PAGE);
+      },
+    },
+  });
+  const page = await service.fetch('https://8.8.8.8/retry', 'fast');
+  assert.equal(calls, 2);
+  assert.equal(page.title, 'Example page');
 });
 
 test('fetch HTTP errors map to stable codes and transient 5xx retries', async () => {

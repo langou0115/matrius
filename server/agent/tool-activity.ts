@@ -25,7 +25,7 @@ export const emptyToolActivity: ToolActivityResolver = {
   files: () => [],
 };
 
-import type { ToolRegistry } from '../tools/registry';
+import type { ToolRegistry } from './tools/registry';
 
 /** Bind the registry's activity adapters to the runner's tool-agnostic hooks. */
 export function createToolActivityResolver(registry: ToolRegistry): ToolActivityResolver {
@@ -38,6 +38,14 @@ export function createToolActivityResolver(registry: ToolRegistry): ToolActivity
       const adapter = registry.activityFor(toolName);
       return adapter ? adapter.end(toolCallId, result, isError, previous) : null;
     },
-    files: () => [],
+    files: (result) => {
+      if (!result || typeof result !== 'object') return [];
+      const details = (result as { details?: Record<string, unknown> }).details;
+      const file = details?.file as Partial<MessageFile> | undefined;
+      if (!file || typeof file.id !== 'string' || typeof file.filename !== 'string'
+        || typeof file.contentType !== 'string' || typeof file.size !== 'number') return [];
+      return [{ id: file.id, filename: file.filename, contentType: file.contentType, size: file.size,
+        ...(typeof file.revision === 'number' ? { revision: file.revision } : {}) }];
+    },
   };
 }

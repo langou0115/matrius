@@ -75,6 +75,13 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthDependenc
       service: 'matrius',
       status: healthy ? 'ok' : 'degraded',
       checks,
+      // Presence of the upstream proxy, not its URL. Useful when page reads fail and the
+      // operator needs to know whether this process started with the proxy configured.
+      webTools: {
+        proxy: deps.settings.WEBTOOL_PROXY_URL ? 'configured' : 'direct',
+        fetchTimeoutSeconds: deps.settings.FETCH_TIMEOUT_SECONDS,
+        fetchMaxAttempts: deps.settings.FETCH_MAX_ATTEMPTS,
+      },
       // Filled in by the document services when they land. Do not report "ok"
       // before the engines have actually been probed.
       documents: { status: 'pending' },

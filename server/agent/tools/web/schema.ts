@@ -28,6 +28,6 @@ export const webFetchParameters = Type.Object({
     maxItems: MAX_FETCH_PAGES_PER_CALL,
   })),
   mode: Type.Optional(Type.Union([Type.Literal('fast'), Type.Literal('full')], {
-    description: 'fast keeps the main article text; full also keeps tables and more surrounding context.',
+    description: 'fast extracts the main article text; full favors recall and keeps the surrounding page text when the article body is sparse.',
   })),
 });

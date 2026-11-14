@@ -21,7 +21,8 @@ server/agent/
 ├── llm/
 │   ├── model-config.ts
 │   └── direct-stream.ts
-└── tools/            # adapters that bind server/tools modules to a run
+├── tool-activity.ts  # binds tool registry activity to the runner hooks
+└── tools/            # model-facing tool modules + registry
 ```
 
 ## Boundaries
@@ -58,7 +59,7 @@ the source of `ReplyUpdate` events changes.
 
 ## Tool responsibilities
 
-- `server/tools/*` owns schemas, prompts, activity mapping and model-facing
+- `server/agent/tools/*` owns schemas, prompts, activity mapping and model-facing
   behavior.
 - `server/services/*` owns search, fetch, files, documents and PDF work.
 - `server/agent/*` owns when tools run, cancellation, retries, budgets and the

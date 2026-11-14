@@ -10,7 +10,7 @@ wrappers around them.
 | `file-types.ts` | upload allow-list, safe filenames, content types | implemented |
 | `usage-estimate.ts` | historical token estimate | implemented |
 | `search.ts` | DuckDuckGo HTML + Bing RSS fallback, dedupe/rank/cache | implemented |
-| `fetch/` | SSRF validation, redirects, MIME sniffing, HTML extraction | implemented |
+| `fetch/` | SSRF validation, redirects, compression, MIME/charset detection, Readability HTML extraction | implemented |
 | `documents/extract.ts` | docx/xlsx/pptx/PDF text extraction | implemented |
 | `documents/file-service.ts` | file list/read/grep and extraction cache | implemented |
 | `documents/officecli.ts` | OfficeCLI process wrapper, create/edit/help/inspect | implemented |

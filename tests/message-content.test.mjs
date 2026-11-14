@@ -172,15 +172,27 @@ test('grouping keeps every raw search query available for storage and debugging'
 });
 
 test('a thinking segment between two searches keeps them as separate rows', () => {
-  const steps = groupResearchSteps([
-    { id: 'search-1', kind: 'search', status: 'complete', query: 'first query', results: [] },
+  const results = (offset) => Array.from({ length: 10 }, (_, index) => ({
+    rank: index + 1, title: `Source ${offset + index}`, url: `https://example.com/${offset + index}`,
+    domain: 'example.com', snippet: '',
+  }));
+  const process = [
+    { id: 'search-1', kind: 'search', status: 'complete', query: 'first query', results: results(0) },
     { id: 'thought', kind: 'thinking', content: '先停一下', status: 'complete' },
-    { id: 'search-2', kind: 'search', status: 'complete', query: 'second query', results: [] },
-  ]);
-  const searchGroups = steps.filter((entry) => entry.type === 'group' && entry.group.kind === 'search');
-  assert.equal(searchGroups.length, 2);
+    { id: 'search-2', kind: 'search', status: 'complete', query: 'second query', results: results(10) },
+  ];
+  const steps = groupResearchSteps(process);
+  assert.equal(steps.filter((entry) => entry.type === 'group' && entry.group.kind === 'search').length, 2);
   assert.deepEqual(steps.map((entry) => entry.type === 'group' ? entry.group.kind : entry.step.kind),
     ['search', 'thinking', 'search']);
+  // The first row must not absorb the later batch: it keeps its own ten sources in event order.
+  const { document } = parseHTML(renderToStaticMarkup(createElement(ReasoningBlock, {
+    state: 'complete', open: true, process,
+  })));
+  const rows = [...document.querySelectorAll('.web-activity')];
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.querySelector('.web-activity-state').textContent),
+    ['搜索到 10 个网页', '搜索到 10 个网页']);
 });
 
 test('result cards fall back to the globe when a favicon is unavailable', async () => {

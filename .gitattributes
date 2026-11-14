@@ -1,3 +1,5 @@
 # Remote containers execute these files on Linux, including Windows checkouts.
 *.sh text eol=lf
 Dockerfile* text eol=lf
+# Encoding fixtures are raw GBK bytes; checkout must not rewrite their line endings.
+server/tests/fixtures/* binary

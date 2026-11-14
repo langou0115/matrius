@@ -291,6 +291,7 @@ export function createSearchService(options: {
         }
         if ([202, 403, 429].includes(response.status)) {
           status = 'blocked';
+          if (settings.SEARCH_BREAKER_FAILURES > 0) breaker.openUntil = Date.now() + settings.SEARCH_BREAKER_COOLDOWN_SECONDS * 1000;
           error = `DuckDuckGo returned HTTP ${response.status}`;
           break;
         }
@@ -381,7 +382,7 @@ export function createSearchService(options: {
   }
 
   async function search(query: string, limit: number, options: SearchOptions = {}): Promise<SearchResult[]> {
-    const cacheKey = `matrius:search:v2:${createHash('sha256').update(`${query}|${limit}`).digest('hex')}`;
+    const cacheKey = `matrius:search:v3:${createHash('sha256').update(`${query}|${limit}`).digest('hex')}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       try {
@@ -414,7 +415,16 @@ export function createSearchService(options: {
         else failures.push(outcome.reason);
       }
       if (!merged.length && failures.length === normalized.length) throw failures[0];
-      return selectDiverse(rankRelevant(normalized.join(' '), dedupeResults(merged)), limit);
+      const scores = new Map<string, number>();
+      for (const outcome of settled) {
+        if (outcome.status !== 'fulfilled') continue;
+        outcome.value.forEach((result, index) => {
+          const key = canonicalResultKey(result.url);
+          scores.set(key, (scores.get(key) ?? 0) + 1 / (60 + index + 1));
+        });
+      }
+      return selectDiverse(dedupeResults(merged).sort((a, b) =>
+        (scores.get(canonicalResultKey(b.url)) ?? 0) - (scores.get(canonicalResultKey(a.url)) ?? 0)), limit);
     },
   };
 }

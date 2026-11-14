@@ -427,7 +427,7 @@ export function createDocumentService(options: {
     if (!format) throw invalid('help 需要 format 或带格式的文件。');
     if (format === 'pdf') return { operation: 'help', format, text: PDF_HELP, truncated: false };
     if (format in LEGACY_FORMATS) format = LEGACY_FORMATS[format];
-    const text = await officeHelp(settings, format, request.element);
+    const text = (await officeHelp(settings, format, request.element)) + '\n\nMatrius adapter: parent/path must start with /. PPT slides must be added under /. Raw data, src, image, path and external-resource properties are blocked even if listed above. Use supported text, table and shape properties.';
     return { operation: 'help', format, text, truncated: text.length >= 30_000 };
   }
 

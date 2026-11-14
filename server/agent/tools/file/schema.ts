@@ -8,7 +8,7 @@ const officeCommand = Type.Object({
     Type.Literal('duplicate'),
     Type.Literal('move'),
   ]),
-  parent: Type.Optional(Type.String({ maxLength: 500 })),
+  parent: Type.Optional(Type.String({ maxLength: 500, description: 'Required for add. Absolute Office path starting with /. Add PPT slide at /; add shapes under /slide[N]. Inspect first for existing paths.' })),
   path: Type.Optional(Type.String({ maxLength: 500 })),
   type: Type.Optional(Type.String({ maxLength: 40 })),
   props: Type.Optional(Type.Record(Type.String({ maxLength: 100 }),
@@ -84,7 +84,7 @@ export const fileParameters = Type.Object({
     minLength: 1,
     maxLength: 80,
   })),
-  conversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  conversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: 'Optional list filter for one conversation. Omit to discover all Library files in this instance, including files from other conversations.' })),
   format: Type.Optional(Type.Union([
     Type.Literal('docx'),
     Type.Literal('xlsx'),
@@ -94,7 +94,7 @@ export const fileParameters = Type.Object({
   filename: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   commands: Type.Optional(Type.Array(officeCommand, {
     maxItems: 100,
-    description: 'Structured Office commands. Batch one logical block per call; the model-facing cap is 20 commands.',
+    description: 'Structured Office commands. Use help for supported properties and inspect for paths before editing. Never use data, src, image or path as props. Batch one logical block per call; prefer at most 20 commands.',
   })),
   pdfChanges: Type.Optional(Type.Array(pdfChange, {
     maxItems: 100,

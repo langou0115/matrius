@@ -46,7 +46,7 @@ npx eslint .                # 使用 eslint.config.mjs 检查，可选
 ## 架构与边界
 
 - 依赖方向：UI → features → repository → API / storage。
-- Agent Runtime 在 `server/agent`，通过 `POST /api/agent/runs` 的 SSE 与 UI 通信。服务端工具由 Agent 直接调用 `server/services/*`，不再通过 HTTP 回调自身。`ui/core/agent` 只剩测试注入的浏览器实现和共享小工具，生产聊天不再使用；后续可删除。
+- Agent Runtime 与模型工具模块都在 `server/agent`（工具在 `server/agent/tools`），通过 `POST /api/agent/runs` 的 SSE 与 UI 通信。服务端工具由 Agent 直接调用 `server/services/*`，不再通过 HTTP 回调自身。`ui/core/agent` 只剩测试注入的浏览器实现和共享小工具，生产聊天不再使用；后续可删除。
 - 单用户实例：服务端是业务数据的唯一事实源，不提供本地工作区、匿名使用或本地/云端切换；IndexedDB 仅存模型配置、密钥和设备状态。
 - 模型配置与 API key 只持久化在客户端；每次 Agent run 临时发送给服务端，服务端不落库、不写日志。若迁移后的默认实现变化，必须先更新文档和设置说明。
 - 无需登录，所有客户端共享唯一实例；业务表使用 instance_id=1，写操作使用 baseRevision 乐观并发。

@@ -1,8 +1,8 @@
 import type { AgentTool } from '@mariozechner/pi-agent-core';
 import type { Static } from 'typebox';
 
-import type { WebSearchResult } from '../../../contract/agent-protocol';
-import { AppError } from '../../errors';
+import type { WebSearchResult } from '../../../../contract/agent-protocol';
+import { AppError } from '../../../errors';
 import type { ToolModule } from '../types';
 import {
   getWebActivityEnd,
@@ -21,7 +21,6 @@ type Details = {
   tookMs: number;
 };
 
-const MAX_SEARCH_CALLS_PER_RUN = 6;
 const DEFAULT_SEARCH_LIMIT = 30;
 const MAX_SEARCH_QUERIES_PER_CALL = 4;
 
@@ -52,13 +51,12 @@ function searchResultText(queries: string[], results: WebSearchResult[]): string
 function createWebSearchTool(context: Parameters<ToolModule['create']>[0]): AgentTool<typeof webSearchParameters, Details> {
   const services = context.services;
   if (!services) throw new Error('联网工具不可用。');
-  let searchCalls = 0;
 
   return {
     name: WEB_SEARCH_TOOL_NAME,
     label: 'Web search',
     description:
-      'Search the web for current or externally verifiable information. Prefer searching over answering from memory whenever facts may have changed or the user asks you to look up, verify or find sources; answer directly only for simple tasks that need no outside facts. Respect an explicit request not to browse. Keep the exact subject, entity names, locations and stated dates; do not guess an answer or broaden to unrelated topics, and never repeat near-identical queries. Write software, product, release, science and international-news queries in English and keep official names and versions verbatim; write Chinese local policy, place and China-specific queries in Chinese. If you need several angles, languages or facets, put up to four queries in the queries array in one call instead of repeating web_search. Snippets are leads, not verified facts: read the most relevant pages before citing details, but do not try to verify every claim separately. Empty or failed results mean the evidence is insufficient, not that the subject does not exist. Usually one search is enough; search again only when the results are clearly off-topic or a distinct sub-question is still missing.',
+      'Search the web for current or externally verifiable information. Prefer searching over answering from memory whenever facts may have changed or the user asks you to look up, verify or find sources; answer directly only for simple tasks that need no outside facts. Respect an explicit request not to browse. Keep the exact subject, entity names, locations and stated dates; do not guess an answer or broaden to unrelated topics, and never repeat near-identical queries. Write software, product, release, science and international-news queries in English and keep official names and versions verbatim; write Chinese local policy, place and China-specific queries in Chinese. If you need several angles, languages or facets, put up to four queries in the queries array in one call instead of repeating web_search. Snippets are leads, not verified facts: read the most relevant pages before citing details, but do not try to verify every claim separately. Empty or failed results mean the evidence is insufficient, not that the subject does not exist. Before fetching, discover complementary primary sources covering the question. Additional search calls are useful during this discovery phase when important angles or sources are still missing. Once the source set is sufficient, batch-read the selected URLs instead of alternating search and fetch.',
     parameters: webSearchParameters,
     execute: async (_toolCallId, params: Params, signal) => {
       const rawQueries = params.queries ?? (params.query ? [params.query] : []);
@@ -67,10 +65,6 @@ function createWebSearchTool(context: Parameters<ToolModule['create']>[0]): Agen
       }
       const queries = [...new Set(rawQueries.map((query) => query.trim()).filter(Boolean))];
       if (!queries.length) throw new Error('搜索关键词不能为空。');
-      if (searchCalls >= MAX_SEARCH_CALLS_PER_RUN) {
-        throw new Error('本轮搜索次数已达上限。只依据已有证据作答；无法核实的部分请明确说明。');
-      }
-      searchCalls += 1;
 
       const startedAt = Date.now();
       let results: WebSearchResult[];
@@ -91,7 +85,7 @@ function createWebSearchTool(context: Parameters<ToolModule['create']>[0]): Agen
       return {
         content: [{
           type: 'text',
-          text: `${searchResultText(queries, results)}\n\nSearch results are leads, not verified facts. If they already answer the question, stop searching and answer; search again only when a distinct part of the question is still missing. When you do need page details, read the most relevant pages in one web_fetch call.`,
+          text: `${searchResultText(queries, results)}\n\nSearch results are leads, not verified facts. These results are one part of source discovery. Before fetching, check whether the full question has enough relevant primary sources; if not, search the missing angles now. Once the source set is sufficient, put the selected distinct URLs into one web_fetch urls batch. Avoid fetching one page now and searching a foreseeable related angle afterward.`,
         }],
         details,
       };

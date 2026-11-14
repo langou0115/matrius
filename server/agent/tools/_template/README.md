@@ -1,8 +1,8 @@
 # Tool module template
 
-Copy this directory to `server/tools/<name>/`, then replace the placeholders.
+Copy this directory to `server/agent/tools/<name>/`, then replace the placeholders.
 The example compiles and is intentionally **not** registered in
-`server/tools/index.ts`.
+`server/agent/tools/index.ts`.
 
 ```ts
 // schema.ts

@@ -1,5 +1,9 @@
 export function fileToolsSystemPrompt(): string {
   return [
+    'You have access to all files in this instance Library, including uploads and documents saved in other conversations. Call list with no conversationId to discover them before claiming a file is unavailable. Only pass conversationId when the user specifically wants files from one conversation.',
+    'The controlled Office adapter blocks external resources and raw payload properties such as data, src, image and path, even when OfficeCLI help lists them. Use supported text, table and shape properties instead. Failed operations do not create a usable file handle; never guess one.',
+
+    'Office parent/path must start with /. PPT slides are added at parent="/", never /presentation. Read help for supported properties before adding charts or shapes; do not guess. Text read start/end are one-based; omit start for inspect.',
     'You can use the single `file` tool for attachments and Library documents.',
     'Only access files by fileId (a UUID from list, or a draft: handle from create/edit); never invent a filename, fileId or filesystem path.',
     'Use list to discover files, read for bounded text, grep for a regular-expression match, and help/inspect before writing.',

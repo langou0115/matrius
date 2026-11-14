@@ -17,6 +17,7 @@ function testSettings() {
       PORT: '8000',
       HOST: '127.0.0.1',
       LOG_LEVEL: 'silent',
+      WEBTOOL_PROXY_URL: '',
     }),
   };
 }
@@ -34,6 +35,7 @@ test('health reports database and schema readiness', async () => {
     const payload = ready.json() as {
       status: string;
       checks: Record<string, string>;
+      webTools: { proxy: string; fetchTimeoutSeconds: number; fetchMaxAttempts: number };
       documents: { status: string };
     };
     assert.equal(payload.status, 'ok');
@@ -43,6 +45,7 @@ test('health reports database and schema readiness', async () => {
       cache: 'ok',
       storage: 'ok',
     });
+    assert.deepEqual(payload.webTools, { proxy: 'direct', fetchTimeoutSeconds: 3, fetchMaxAttempts: 2 });
     assert.equal(payload.documents.status, 'pending');
 
     // The readiness probe must notice a migration mismatch, not only a broken DB.

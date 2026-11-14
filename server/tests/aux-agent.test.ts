@@ -39,6 +39,10 @@ test('conversation titles and memory summaries are normalized', () => {
   assert.equal(normalizeConversationTitle('## "测试标题"'), '测试标题');
   assert.equal(normalizeConversationTitle('Title: Hello world from the test'), 'Hello world from the test');
   assert.equal(normalizeConversationTitle('   '), null);
+  // Mixed-language titles keep the topic instead of collapsing to the product name.
+  assert.equal(normalizeConversationTitle('Claude Desktop 最近更新'), 'Claude Desktop 最近更新');
+  assert.equal(normalizeConversationTitle('Claude Desktop 最近更新与功能变化详解'), 'Claude Desktop 最近更新与功能变化');
+  assert.equal(normalizeConversationTitle('一'.repeat(20)), '一'.repeat(16));
   assert.equal(normalizeMemorySummary('<memory>\n# User\n- Likes TypeScript\n</memory>'), '# User\n- Likes TypeScript');
   assert.equal(normalizeMemorySummary('```markdown\n# Memory\n```'), '# Memory');
 });

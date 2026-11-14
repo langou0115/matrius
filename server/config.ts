@@ -34,6 +34,8 @@ const environmentSchema = z.object({
     + '(KHTML, like Gecko) Chrome/124.0 Safari/537.36 Matrius/0.1',
   ),
   WEBTOOL_PROXY_URL: z.string().default(''),
+  // Per network attempt, not the whole page. FETCH_MAX_ATTEMPTS retries ride out transient
+  // proxy stalls, so a page can use up to timeout × attempts before failing.
   FETCH_TIMEOUT_SECONDS: z.coerce.number().int().min(1).default(3),
   FETCH_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(2),
   FETCH_MAX_BYTES: z.coerce.number().int().min(1).default(5 * 1024 * 1024),

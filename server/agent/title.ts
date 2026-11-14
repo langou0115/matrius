@@ -5,10 +5,14 @@ import { createReplyRun } from './runner';
 export const TITLE_SYSTEM_PROMPT = [
   '你负责为一段对话生成简短标题。',
   '只输出标题本身：不要引号、前缀、解释、标点或 Markdown。',
-  '使用与用户消息相同的语言，优先用 6–12 个汉字或 3–6 个英文单词概括主题，不要复述整个问题。',
+  '使用与用户消息相同的语言，优先用 6–12 个汉字或 3–6 个英文单词概括主题，不要复述整个问题；中英混合标题控制在 24 个字符内，并保留具体主题，不要只写产品或公司名。',
 ].join('\n');
 
+// A mixed CJK/Latin title needs a little more room than a pure Chinese one: "Claude
+// Desktop 最近更新" is meaningful at 19 characters, while "Claude Desktop" alone is not.
 const MAX_TITLE_CHARS = 16;
+const MAX_MIXED_TITLE_CHARS = 24;
+const MAX_LATIN_TITLE_CHARS = 32;
 const MAX_CONTENT_CHARS = 4_000;
 const MAX_QUOTE_CHARS = 2_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -25,12 +29,18 @@ export function normalizeConversationTitle(raw: string): string | null {
     .trim();
   if (!text) return null;
   const words = text.split(' ').slice(0, 6).join(' ');
-  const limit = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(words)
-    ? MAX_TITLE_CHARS
-    : 32;
+  const cjk = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(words);
+  const latin = /[A-Za-z]/u.test(words);
+  const limit = cjk ? (latin ? MAX_MIXED_TITLE_CHARS : MAX_TITLE_CHARS) : MAX_LATIN_TITLE_CHARS;
   const characters = [...words];
   let title = characters.slice(0, limit).join('').trim();
-  if (characters.length > limit && /\s/u.test(title)) title = title.replace(/\s+\S*$/u, '');
+  if (characters.length > limit && /\s/u.test(title)) {
+    const trimmed = title.replace(/\s+\S*$/u, '');
+    const trimmedKeepsTopic = !cjk || /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(trimmed);
+    // A word-boundary trim must not leave only the brand prefix behind; keeping a hard cut
+    // is preferable to a title that says just "Claude Desktop".
+    if (trimmedKeepsTopic && [...trimmed].length >= Math.floor(limit * 0.6)) title = trimmed;
+  }
   return title || null;
 }
 

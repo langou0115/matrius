@@ -105,3 +105,17 @@ test('search URL helpers remove tracking and normalize canonical keys', () => {
   assert.equal(canonicalResultKey('https://www.example.com/a/?b=2&a=1'), 'example.com/a?a=1&b=2');
   assert.equal(canonicalResultKey('https://example.com/a?a=1&b=2'), 'example.com/a?a=1&b=2');
 });
+
+test('a CAPTCHA response immediately skips DuckDuckGo for subsequent queries', async () => {
+  let ddgCalls = 0;
+  const service = createSearchService({
+    cache: new MemoryCache(), settings: settings(),
+    http: fakeHttp((url) => {
+      if (url.includes('duckduckgo')) { ddgCalls++; return response(202, 'captcha'); }
+      return response(200, BING_RSS, 'application/rss+xml');
+    }),
+  });
+  await service.searchMany(['first topic'], 5);
+  await service.searchMany(['another topic'], 5);
+  assert.equal(ddgCalls, 1);
+});

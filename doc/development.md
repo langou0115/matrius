@@ -6,6 +6,8 @@
 
 npm ci 安装依赖；npm run dev 常驻启动 Node API 与 Vite，启动时自动迁移开发库。默认 Web 8081、API 8000，通过 .env.local 的 DEV_WEB_PORT / DEV_API_PORT 配置。Vite 将 /api 请求代理到本机 API。开发不连接生产服务器。
 
+Node API 在启动时读取服务端代码与 .env.local，npm run dev 不会热重载 API；修改服务端代码、代理或搜索/抓取限额后需要重启 npm run dev。只改后端时也可以使用 `npm run dev:server`（tsx watch，自动重启）。
+
 npm run dev 支持 --check、--reset-db 与 --clear。重置数据库会删除开发数据。默认数据在 server/.data；npm run db:migrate 单独迁移开发库；npm run dev:server 只启动后端。
 
 ## 验证

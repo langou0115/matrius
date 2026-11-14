@@ -3,8 +3,8 @@ import test from 'node:test';
 
 import { Type } from 'typebox';
 
-import { ToolRegistry } from '../tools/registry';
-import type { FeatureId, ToolActivityAdapter, ToolContext, ToolModule } from '../tools/types';
+import { ToolRegistry } from '../agent/tools/registry';
+import type { FeatureId, ToolActivityAdapter, ToolContext, ToolModule } from '../agent/tools/types';
 
 const context = (features: FeatureId[] = []): ToolContext => ({
   instanceId: 1,

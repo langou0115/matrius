@@ -19,8 +19,7 @@ ui/
 server/
 ├── routes/      REST 路由
 ├── services/    搜索、抓取、文件、文档、PDF
-├── tools/       模型工具模块 + registry
-├── agent/       Agent 循环、上下文、压缩、标题、记忆
+├── agent/       Agent 循环、上下文、压缩、标题、记忆、工具模块
 └── db/          SQLite、codecs、迁移
 ```
 
@@ -51,7 +50,7 @@ Agent Runtime 的目标位置是 `server/agent`；迁移完成前，浏览器实
 UI → features → repository → API / storage。
 路由事实源为 `ui/router/routes.tsx`，页面外壳为 `ui/components/web/app-shell.tsx`。
 模型、聊天、记忆、文件、设置分别位于 `ui/features/`，无 DOM 的客户端协议适配位于 `ui/core/`。
-服务端 Agent 目标位于 `server/agent/`，工具模块位于 `server/tools/`，业务服务位于 `server/services/`，REST 路由位于 `server/routes/`。
+服务端 Agent 目标位于 `server/agent/`，模型工具模块位于 `server/agent/tools/`，业务服务位于 `server/services/`，REST 路由位于 `server/routes/`。
 开发预览只在 `/mock/*`，使用内存数据，生产构建关闭。
 
 不增加微服务、RBAC、组织、租户或多 Agent 编排。接口细节见[后端架构](backend.md)与[server/README.md](../server/README.md)。

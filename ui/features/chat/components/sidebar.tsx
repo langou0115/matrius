@@ -1,7 +1,7 @@
 import { useMobile } from '@/components/web/use-mobile';
 import { Link, router, usePathname, type Href } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FolderOpen, SquarePen } from 'lucide-react';
 
 import { BrandMark } from '@/components/web/brand-mark';
@@ -42,22 +42,28 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const groups = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
     return [
-      { name: '置顶', items: sorted.filter((item) => item.pinned) },
-      { name: '最近', items: sorted.filter((item) => !item.pinned) },
+      { name: '置顶', items: sorted.filter((item) => item.pinned), keepWhenEmpty: false },
+      { name: '最近', items: sorted.filter((item) => !item.pinned), keepWhenEmpty: true },
     ];
   }, [conversations]);
-  // Empty groups render nothing at all: a "置顶" heading with no pinned conversations is
-  // just a label that pushes the list down.
-  const visibleGroups = groups.filter((group) => group.items.length > 0);
-  // A folded group that lost its last conversation must not come back folded, or 置顶 would
-  // reappear as an empty-looking heading the next time something gets pinned.
+  // An empty 置顶 is just a label that pushes the list down, so it renders nothing. 最近 is the
+  // fixed history section and keeps its heading even with no conversations, so the sidebar does
+  // not lose that anchor on a fresh instance.
+  const visibleGroups = groups.filter((group) => group.items.length > 0 || group.keepWhenEmpty);
+  // A folded group must not stay folded while it has nothing to show, and must not come back
+  // folded around its first conversation either: 置顶 is hidden while empty, and the empty 最近
+  // heading has nothing to hide. Clear the leftover state on both edges of the empty transition.
+  const emptyGroups = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const empty = groups.flatMap((group) => group.items.length === 0 ? [group.name] : []);
-    if (empty.length === 0) return;
+    const empty = new Set(groups.filter((group) => group.items.length === 0).map((group) => group.name));
+    const restored = [...emptyGroups.current].filter((name) => !empty.has(name));
+    emptyGroups.current = empty;
+    if (empty.size === 0 && restored.length === 0) return;
     setCollapsed((current) => {
-      if (!empty.some((name) => current[name])) return current;
+      const stale = [...empty, ...restored].filter((name) => current[name]);
+      if (stale.length === 0) return current;
       const next = { ...current };
-      for (const name of empty) delete next[name];
+      for (const name of stale) delete next[name];
       return next;
     });
   }, [groups]);

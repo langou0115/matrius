@@ -5,8 +5,8 @@ import type { AgentTool } from '@mariozechner/pi-agent-core';
 
 import type { FetchedPage, FetchService } from '../services/fetch';
 import type { SearchService } from '../services/search';
-import { toolRegistry } from '../tools';
-import type { ToolContext } from '../tools/types';
+import { toolRegistry } from '../agent/tools';
+import type { ToolContext } from '../agent/tools/types';
 
 const search: SearchService = {
   async searchMany() {
@@ -69,7 +69,7 @@ test('web_search returns source details and a completed activity row', async () 
   assert.equal(ended?.kind === 'search' ? ended.results?.[0].title : undefined, 'Example result');
 });
 
-test('web_fetch accepts one or a batch of URLs and reports content budget', async () => {
+test('web_fetch accepts one or a batch of URLs and reports content size', async () => {
   const tool = toolRegistry.createTools(context).find((item) => item.name === 'web_fetch') as AgentTool;
   assert.ok(tool);
   const result = await tool.execute('call-fetch', { urls: ['https://example.com/page'] });
@@ -85,4 +85,32 @@ test('web_fetch accepts one or a batch of URLs and reports content budget', asyn
   assert.deepEqual(details.urls, ['https://example.com/page']);
   assert.ok(details.contentChars > 0);
   assert.match(details.contentPreview, /Page/u);
+});
+
+test('web_fetch returns every page in full with no per-run or per-batch allowance', async () => {
+  const longFetch: FetchService = {
+    async fetch(url): Promise<FetchedPage> {
+      return { title: 'Long page', url, text: 'x'.repeat(60_000), truncated: false, chars: 60_000 };
+    },
+  };
+  const longContext: ToolContext = { ...context, services: { search, fetch: longFetch } };
+  const makeTool = () => toolRegistry.createTools(longContext).find((item) => item.name === 'web_fetch') as AgentTool;
+  const textOf = (result: Awaited<ReturnType<AgentTool['execute']>>) => result.content
+    .filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+
+  const single = await makeTool().execute('long-single', { urls: ['https://example.com/long'] });
+  assert.equal((single.details as { contentChars: number }).contentChars, 60_000);
+  assert.doesNotMatch(textOf(single), /Warning: the page text is truncated/u);
+
+  const batch = await makeTool().execute('long-batch', {
+    urls: ['https://example.com/a', 'https://example.com/b'],
+  });
+  // A batch keeps each page whole instead of dividing one per-run allowance across it.
+  assert.equal((batch.details as { contentChars: number }).contentChars, 120_000);
+
+  // Later calls in the same reply are not cut off by a per-run budget.
+  const spent = makeTool();
+  await spent.execute('spend', { urls: ['https://example.com/first'] });
+  const second = await spent.execute('over', { urls: ['https://example.com/second'] });
+  assert.equal((second.details as { contentChars: number }).contentChars, 60_000);
 });
