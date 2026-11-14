@@ -81,6 +81,7 @@ export const titleRequestSchema = z.object({
 export const memoryRequestSchema = z.object({
   model: modelSchema,
   apiKey: z.string().max(10_000).optional(),
+  instruction: z.boolean().optional(),
   currentSummary: z.string().max(4_000).default(''),
   userMessage: z.string().min(1).max(6_000),
   assistantMessage: z.string().max(4_000).default(''),

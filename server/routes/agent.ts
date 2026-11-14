@@ -112,6 +112,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       summary: await generateMemorySummary({
         config,
         apiKey: payload.apiKey ?? '',
+        instruction: payload.instruction,
         currentSummary: payload.currentSummary,
         userMessage: payload.userMessage,
         assistantMessage: payload.assistantMessage,

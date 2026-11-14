@@ -6,7 +6,7 @@ import type {
   Message,
   TokenUsage,
 } from '../../../contract/agent-protocol';
-import type { AgentRequest } from './runtime';
+import type { AgentRequest } from './request';
 import type { RuntimeSnapshot, RuntimeRun, SteerOutcome } from './types';
 
 type RuntimeOptions = {

@@ -45,6 +45,7 @@ export async function requestMemorySummary({
   currentSummary,
   userMessage,
   assistantMessage,
+  instruction,
   signal,
 }: {
   config: ModelConfig;
@@ -52,6 +53,7 @@ export async function requestMemorySummary({
   currentSummary: string;
   userMessage: string;
   assistantMessage: string;
+  instruction?: boolean;
   signal?: AbortSignal;
 }): Promise<string | null> {
   const result = await post<{ summary: string | null }>('/api/agent/memory', {
@@ -60,6 +62,7 @@ export async function requestMemorySummary({
     currentSummary,
     userMessage,
     assistantMessage,
+    instruction,
   }, signal);
   return result?.summary ?? null;
 }

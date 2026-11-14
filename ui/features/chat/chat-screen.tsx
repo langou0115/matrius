@@ -5,8 +5,6 @@ import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
 import type { MessageFile, WebActivity } from '@/core/agent/types';
 import { buildSystemPrompt } from '@/core/agent/system-prompt';
-import { createFileTool, fileToolsSystemPrompt } from '@/core/agent/file-tools';
-import { createWebTools, webToolsSystemPrompt } from '@/core/agent/web-tools';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { collectReplySources, webActivitiesOf, type ReplySources } from './citations';
 import { Composer } from './components/composer';
@@ -160,17 +158,12 @@ export default function ChatScreen() {
   // request actually carries. The counts are estimates; the provider remains the authority.
   const systemPrompt = useMemo(() => [
     buildSystemPrompt(preferences),
-    networkTools.ready && networkTools.enabled ? webToolsSystemPrompt() : '',
-    filesEnabled ? fileToolsSystemPrompt() : '',
   ].filter(Boolean).join('\n\n'), [preferences, networkTools.ready, networkTools.enabled, filesEnabled]);
   const contextUsage = useMemo(() => {
     if (!models.selected) return null;
-    const tools = networkTools.ready && networkTools.enabled ? createWebTools(instance.request) : [];
-    if (filesEnabled) tools.push(createFileTool({ request: instance.request, conversationId: activeId ?? undefined,
-      availableFiles: messages.flatMap((message) => message.files ?? []).slice(-30) }).tool);
     const latest = activeId ? runtime.contexts?.[activeId] : undefined;
     return measureContextUsage(messages, systemPrompt, models.selected, {
-      tools, summary: conversation?.contextSummary, memory,
+      summary: conversation?.contextSummary, memory,
       latestCall: latest?.modelId === models.selected.id && latest.contextWindow === models.selected.contextWindow ? latest : undefined,
     });
   }, [messages, models.selected, systemPrompt, memory, networkTools.ready, networkTools.enabled, instance.request, filesEnabled, activeId, runtime.contexts, conversation?.contextSummary]);

@@ -1,6 +1,5 @@
 .git
 .gitignore
-.expo
 dist
 node_modules
 npm-debug.log
@@ -10,11 +9,6 @@ npm-debug.log
 .github
 doc
 docker-compose
-server/.venv
-server/__pycache__
-server/**/__pycache__
-server/.pytest_cache
-server/.ruff_cache
 server/tests
 server/vendor
 server/.data

@@ -199,7 +199,7 @@ export async function main({ args: cliArgs = process.argv.slice(2), env = proces
   const appEnv = appEnvOverrides(sharedEnv);
   const current = await snapshot(root);
   for (const required of ['package.json', 'package-lock.json', 'Dockerfile',
-    'docker-compose/docker-compose.yml', 'docker-compose/Caddyfile', 'server/app/main.py',
+    'docker-compose/docker-compose.yml', 'docker-compose/Caddyfile', 'server/main.ts',
     'server/scripts/entrypoint.sh']) {
     if (!current.has(required)) throw new Error(`Missing sync source: ${required}`);
   }

@@ -5,7 +5,6 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
 import { TokenUsageSection } from '../ui/features/usage/token-usage-section.tsx';
-import { createAgentRuntime } from '../ui/core/agent/runtime.ts';
 import {
   addDays, buildCumulative, buildHeatmap, buildTrendHeatmap, buildWeekly, formatCompactTokens, formatMonthYear,
   localDateKey, summarizeUsage,
@@ -100,43 +99,6 @@ test('trends keep six calendar months ending today and six weeks including this 
   const monthEnd = buildTrendHeatmap([], new Date(2026, 7, 31)).columns.flatMap((column) => column.cells).filter(Boolean);
   assert.equal(monthEnd[0].date, '2026-02-28');
   assert.equal(monthEnd.at(-1).date, '2026-08-31');
-});
-
-test('the shared runtime forwards one summed usage report per finished run', async () => {
-  let finishRun;
-  const completed = new Promise((resolve) => { finishRun = resolve; });
-  let finishedResolve;
-  const settled = new Promise((resolve) => { finishedResolve = resolve; });
-  const usage = [];
-  const runtime = createAgentRuntime({
-    onReply(_conversationId, message) { if (message.status !== 'streaming') finishedResolve(); },
-    onUsage(value) { usage.push(value); },
-    loadRunner: async () => ({ createReplyRun({ onUpdate }) {
-      onUpdate({ content: '', reasoning: '', reasoningActive: false,
-        contextTokens: { input: 90, output: 10, modelId: 'test', contextWindow: 128000 } });
-      return { abort() {}, steer: () => false, start: () => completed };
-    } }),
-    loadCompactor: async () => ({
-      prepareHistory: async ({ messages, systemPrompt }) => ({ messages, systemPrompt, compacted: false }),
-    }),
-  });
-  const config = { id: 'test', name: 'Test model', protocol: 'completion', baseUrl: 'https://test.invalid/v1',
-    modelId: 'test-model', contextWindow: 128000, maxOutput: 4096, requiresApiKey: true };
-  try {
-    assert.equal(runtime.start({
-      conversationId: 'c1', replyId: 'r1', config, apiKey: 'key',
-      messages: [{ id: 'u1', role: 'user', content: '你好' }],
-    }), true);
-    // The runtime loads the runner and compactor before it starts the run.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    finishRun({ status: 'complete', usage: { input: 7, output: 3, cacheRead: 2, cacheWrite: 0 } });
-    await settled;
-    assert.deepEqual(usage, [{ input: 7, output: 3, cacheRead: 2, cacheWrite: 0 }]);
-    assert.equal(runtime.getSnapshot().contexts.c1.input, 90);
-    assert.equal(runtime.getSnapshot().contexts.c1.output, 10);
-  } finally {
-    runtime.dispose();
-  }
 });
 
 function report(overrides = {}) {

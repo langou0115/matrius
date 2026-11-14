@@ -41,6 +41,7 @@ export async function generateMemorySummary({
   config,
   apiKey,
   currentSummary,
+  instruction,
   userMessage,
   assistantMessage,
   signal,
@@ -48,6 +49,7 @@ export async function generateMemorySummary({
   config: ModelConfig;
   apiKey: string;
   currentSummary: string;
+  instruction?: boolean;
   userMessage: string;
   assistantMessage: string;
   signal?: AbortSignal;
@@ -58,7 +60,7 @@ export async function generateMemorySummary({
     const run = createReplyRun({
       config,
       apiKey,
-      systemPrompt: BACKGROUND_MEMORY_PROMPT,
+      systemPrompt: instruction ? 'Apply the user instruction to the current long-term memory. Allow edits and deletion. Return the complete summary inside <memory></memory>, without explanation. Never record secrets or guesses.' : BACKGROUND_MEMORY_PROMPT,
       messages: [{
         id: 'memory-background-request',
         role: 'user',
@@ -82,7 +84,7 @@ export async function generateMemorySummary({
     const match = /<\s*memory\s*>([\s\S]*?)<\s*\/\s*memory\s*>/iu.exec(latest);
     if (!match) return null;
     const summary = normalizeMemorySummary(match[1]);
-    if (!summary || summary.length > MEMORY_SUMMARY_LIMIT) return null;
+    if ((!instruction && !summary) || summary.length > MEMORY_SUMMARY_LIMIT) return null;
     return summary;
   } catch {
     return null;

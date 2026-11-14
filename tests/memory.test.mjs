@@ -3,7 +3,6 @@ import test from 'node:test';
 
 import {
   MEMORY_SUMMARY_LIMIT,
-  createMemoryTool,
   defaultMemoryPreferences,
   memoryPromptBlock,
   normalizeMemorySummary,
@@ -47,19 +46,4 @@ test('memory travels in the trailing request context only while enabled and non-
   assert.equal(message.role, 'user');
   assert.match(message.content, /<user_memory>[\s\S]*用户偏好中文[\s\S]*<\/user_memory>/);
   assert.match(message.content, /<current_context>/);
-});
-
-test('the memory tool replaces the full summary and rejects oversized writes', async () => {
-  let current = '# 旧记忆';
-  const writes = [];
-  const tool = createMemoryTool({
-    getSummary: () => current,
-    onUpdate: (summary) => { current = summary; writes.push(summary); },
-  });
-  assert.equal(tool.name, 'memory');
-  const result = await tool.execute('call-1', { summary: '# 新记忆\n- 喜欢简洁' });
-  assert.equal(current, '# 新记忆\n- 喜欢简洁');
-  assert.deepEqual(writes, ['# 新记忆\n- 喜欢简洁']);
-  assert.match(result.content[0].text, /已更新/);
-  await assert.rejects(() => tool.execute('call-2', { summary: 'x'.repeat(MEMORY_SUMMARY_LIMIT + 1) }), /不能超过/);
 });
