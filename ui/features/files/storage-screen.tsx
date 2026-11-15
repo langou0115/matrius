@@ -52,12 +52,11 @@ export default function StorageScreen() {
     <section className="settings-section" aria-labelledby="storage-heading">
       <h2 id="storage-heading">存储空间</h2>
       {usage ? <>
-        <p className="storage-summary">已使用 <strong>{formatBytes(usage.disk.used)}</strong>，共 {formatBytes(usage.disk.total)}，可用 {formatBytes(usage.disk.free)}</p>
+        <p className="storage-summary">已使用 <strong>{formatBytes(usage.disk.used)}</strong>，共 {formatBytes(usage.disk.total)}</p>
         <div className="storage-meter-track" role="progressbar" aria-label="存储空间"
           aria-valuemin={0} aria-valuemax={usage.disk.total} aria-valuenow={Math.min(usage.disk.used, usage.disk.total)}>
           {hasFiles && <span className="storage-meter-fill" style={{ width: `${ratio * 100}%` }} />}
         </div>
-        <p className="settings-footnote">上传文件总量上限由服务端配置，默认 128 MiB。</p>
       </> : failed ? <div className="storage-retry" role="alert">
         <span>暂时无法获取存储空间。</span>
         <button type="button" className="secondary-button" onClick={() => setReloadKey((value) => value + 1)}>
