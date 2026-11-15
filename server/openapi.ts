@@ -521,7 +521,7 @@ export const openApiDocument = {
     '/api/files/usage': {
       get: {
         tags: ['files'],
-        summary: 'Storage usage split into files and images',
+        summary: 'Configured storage budget and usage split into files and images',
         responses: ok(obj({
           used: int(),
           disk: obj({ total: int(), used: int(), free: int() }),

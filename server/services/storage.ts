@@ -4,7 +4,6 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  statfsSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -12,6 +11,39 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { AppError } from '../errors';
+
+export type StorageUsage = { total: number; used: number; free: number };
+
+function formatStorageSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${bytes} B`;
+  const mib = bytes / (1024 * 1024);
+  return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MiB`;
+}
+
+/**
+ * The configured application storage budget. `used` is the sum of stored file
+ * bytes; `total` comes from STORAGE_LIMIT_BYTES, never from the host filesystem.
+ */
+export function storageUsage(used: number, limit: number): StorageUsage {
+  const total = Math.max(0, Math.trunc(limit));
+  const usedBytes = Math.max(0, Math.trunc(used));
+  return { total, used: usedBytes, free: Math.max(0, total - usedBytes) };
+}
+
+/** Reject a write that would exceed the configured storage budget. */
+export function assertStorageAvailable(
+  used: number,
+  incoming: number,
+  limit: number,
+  replaced = 0,
+): void {
+  if (used - replaced + incoming <= limit) return;
+  throw new AppError(
+    413,
+    'storage_full',
+    `存储空间不足，上限为 ${formatStorageSize(limit)}。`,
+  );
+}
 
 /**
  * Filesystem object storage rooted at `DATA_DIR/files`.
@@ -85,19 +117,7 @@ export class LocalStorage {
     return mkdtempSync(join(tmpdir(), prefix));
   }
 
-  /** Disk capacity of the filesystem behind `DATA_DIR`. */
-  diskUsage(): { total: number; used: number; free: number } {
-    return diskUsage(this.root);
-  }
-
   writeAppError(error: unknown): AppError {
     return new AppError(502, 'storage_error', '文件存储失败，请稍后重试。', { cause: error });
   }
-}
-
-export function diskUsage(path: string): { total: number; used: number; free: number } {
-  const stats = statfsSync(path);
-  const total = Number(stats.blocks) * Number(stats.bsize);
-  const free = Number(stats.bavail) * Number(stats.bsize);
-  return { total, used: total - free, free };
 }

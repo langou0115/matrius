@@ -19,7 +19,6 @@ yarn-error.*
 # local env files
 .env*.local
 server/.env
-docker-compose/.env.production
 
 # Python
 __pycache__/

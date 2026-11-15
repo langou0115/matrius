@@ -23,7 +23,8 @@ export type FileListParams = {
 
 export type FileListPage = { items: LibraryFile[]; nextCursor: string | null };
 export type StorageCategory = { bytes: number; count: number };
-/** `files` is every non-image entry, so `files` and `images` add up to `used`. */
+/** `files` is every non-image entry, so `files` and `images` add up to `used`.
+ *  `disk` is the server's configured storage budget, not the host filesystem. */
 export type StorageUsage = {
   used: number;
   disk: { total: number; used: number; free: number };

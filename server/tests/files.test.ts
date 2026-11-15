@@ -11,12 +11,16 @@ import { loadSettings } from '../config';
 type Json = Record<string, unknown>;
 type Upload = { status: number; body: Json };
 
-async function withServer(fn: (baseUrl: string, app: Awaited<ReturnType<typeof buildApp>>['app']) => Promise<void>): Promise<void> {
+async function withServer(
+  fn: (baseUrl: string, app: Awaited<ReturnType<typeof buildApp>>['app']) => Promise<void>,
+  overrides: NodeJS.ProcessEnv = {},
+): Promise<void> {
   const directory = mkdtempSync(join(tmpdir(), 'matrius-files-'));
   const settings = loadSettings({
     APP_ENV: 'test',
     DATA_DIR: directory,
     LOG_LEVEL: 'silent',
+    ...overrides,
   });
   const { app } = await buildApp({ settings });
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -108,6 +112,10 @@ test('files upload, list, download, rename and delete', async () => {
 
     const usage = await readJson(await fetch(`${baseUrl}/api/files/usage`));
     assert.equal(usage.used, 5);
+    const disk = usage.disk as Json;
+    assert.equal(disk.total, 128 * 1024 * 1024);
+    assert.equal(disk.used, 5);
+    assert.equal(disk.free, 128 * 1024 * 1024 - 5);
     assert.equal((usage.files as Json).count, 1);
     assert.equal((usage.images as Json).count, 0);
 
@@ -149,6 +157,34 @@ test('images are classified separately and invalid files are rejected', async ()
     });
     assert.equal(empty.status, 422);
   });
+});
+
+test('uploads are rejected when the configured storage limit is reached', async () => {
+  await withServer(async (baseUrl) => {
+    const first = await upload(baseUrl, {
+      filename: 'first.txt',
+      content: '12345',
+      type: 'text/plain',
+    });
+    assert.equal(first.status, 201);
+
+    const second = await upload(baseUrl, {
+      filename: 'second.txt',
+      content: '1234',
+      type: 'text/plain',
+    });
+    assert.equal(second.status, 413);
+    assert.equal(((second.body.error as Json).code), 'storage_full');
+
+    // Deleting the first file frees the same bytes for a new upload.
+    await fetch(`${baseUrl}/api/files/${first.body.id}`, { method: 'DELETE' });
+    const third = await upload(baseUrl, {
+      filename: 'third.txt',
+      content: '12345678',
+      type: 'text/plain',
+    });
+    assert.equal(third.status, 201);
+  }, { STORAGE_LIMIT_BYTES: '8' });
 });
 
 test('files attach to a conversation and bulk delete removes only owned rows', async () => {

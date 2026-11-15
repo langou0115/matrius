@@ -144,32 +144,29 @@ ui/
 ├── core/
 │   ├── agent/
 │   │   ├── activity-payload.ts         精简工具活动同步字段
+│   │   ├── aux-api.ts                  标题与记忆摘要请求
 │   │   ├── compaction.ts               上下文压缩、预算与滚动摘要
 │   │   ├── context.ts                  引用、图片、附件与历史上下文组装、请求校验
-│   │   ├── diagnostics.ts              模型回复诊断摘要与有界历史
-│   │   ├── file-tools.ts               通用 file 工具、草稿、删除与生成文件收集
 │   │   ├── history.ts                  过滤失败占位消息
-│   │   ├── memory.ts                   记忆摘要契约、记忆工具与后台整理
-│   │   ├── runner.ts                   pi-agent 实例、流式事件与超时
-│   │   ├── runtime.ts                  跨端运行入口、状态订阅、回复批处理与取消
+│   │   ├── memory.ts                   记忆摘要契约与系统提示注入
+│   │   ├── remote-runtime.ts           提交 Agent 运行、消费 SSE、停止/steer
+│   │   ├── request.ts                  Agent 运行请求类型
 │   │   ├── system-prompt.ts            用户资料与自定义指令的系统提示
 │   │   ├── thinking-budget.ts          思考预算与最小正文输出换算
 │   │   ├── thinking-effort.ts          共享思考强度
 │   │   ├── title.ts                    独立会话标题请求、超时与标题规范化
-│   │   ├── types.ts                    共享消息、用户资料和运行状态契约
-│   │   └── web-tools.ts                web_search / web_fetch 工具定义与活动记录
+│   │   └── types.ts                    共享消息、用户资料和运行状态契约
 │   ├── api/instance-client.ts             实例能力状态与同源 API 请求
-│   ├── database/browser-store.ts       IndexedDB 事务、版本与冲突检查
+│   ├── database/browser-store.ts       IndexedDB 事务与旧数据读取辅助（不存聊天数据）
 │   ├── features/capabilities.ts        按服务端授权判断功能
 │   ├── llm/
-│   │   ├── direct-stream.ts            三协议流式传输
+│   │   ├── direct-stream.ts            旧浏览器三协议流式实现（生产未使用，待清理）
 │   │   ├── model-config.ts             Provider 配置校验与运行时模型映射
 │   │   ├── model-proxy.ts              同源模型中继地址与请求头
 │   │   ├── pi-agent-bridge.ts          pi-ai 浏览器兼容导出
 │   │   ├── pi-browser-credentials.ts   浏览器环境不下发环境密钥
 │   │   └── provider-catalog.ts         从 Provider 获取模型目录
 │   └── platform/
-│       ├── auth-session.ts             实例能力初始化
 │       ├── clipboard.ts                Web 原文复制适配
 │       ├── model-credentials.ts        凭据接口与内存实现
 │       └── run-protection.ts           生成期间的 beforeunload 离开确认
@@ -185,9 +182,9 @@ ui/
 - `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 9 个专项会话。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需在 `ui/router/routes.tsx` 注册一个 `/mock/*` 路由并往清单加一条记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；所有 `/mock/*` 路由由 `routes.tsx` 的 `MockOnly` 统一保护，生产构建直接跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
 - `/mock/process` 通过 `features/mock/process-preview.tsx` 复用思考折叠区、正文和中断提示；阶段切换保留展开状态及连续计时，包含等待、思考、搜索、读取、再次思考、回答和结束，可验证按发生顺序追加步骤及整轮完成状态。模拟数据位于 `dev/fixtures/process-preview.ts`，不调用模型或写入聊天记录。
 - `/mock/library` 直接复用 `features/files/library-screen.tsx`，由 `features/files/mock-library.ts` 提供 500 个内存文件（含 SVG 缩略图）与 `/api/files` 的列表、用量、重命名、删除实现；预览模式下 `enabled` 恒为真、不请求真实接口，侧栏“资料库”入口也指向该路由。`/mock/storage` 复用 `components/web/storage-error-toast.tsx` 预览各种保存失败提示。
-- Web 会话与外观通过实例 REST 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过本地 Runtime 生成真实回复。
+- Web 会话与外观通过实例 REST 持久化，挂载 Provider 前先恢复数据。新建空白对话不创建历史记录，首次发送时创建；配置模型后通过服务端 Agent Runtime 生成真实回复。
 - 新建对话首条消息发送后，`chat-runtime.tsx` 在回复之外并行调用 `core/agent/title.ts` 生成标题；`titleModelId` 已配置时使用该模型，否则跟随会话绑定的模型。生成失败保留首条消息截断标题，并在后续回复成功后重试；`titleSource` 防止迟到的结果覆盖手动重命名或分支标题。每个会话最多一个进行中的标题请求，删除会话或卸载工作区时取消。
-- 发送、置顶、重命名和删除会写回浏览器数据库；读取或保存失败有提示。当前会话、侧栏和外观状态也会恢复，草稿仅在本次页面会话中保留。
+- 发送、置顶、重命名和删除会写回实例后端；读取或保存失败有提示。当前会话、侧栏和外观状态也会恢复，草稿仅在本次页面会话中保留。
 - `/settings` 在根布局中使用独立全页，不包在聊天 Workspace 内；Provider 保持挂载，返回时会话与草稿不丢失。
 - `/` 为新对话，`/c/<conversation-id>` 为已创建对话；首次发送成功后替换为空白页对应的新地址，侧栏、搜索和分支切换通过 Router 写入历史，浏览器前进后退按 URL 选择对话。设置返回当前对话地址；无效 ID 使用弹窗提示并提供返回新对话操作。Mock 使用 `/mock/chat/c/<conversation-id>`，仍受开发守卫保护。URL 在实例仓储加载后解析，不依赖上次保存的 activeId；未知路径重定向到 `/`。
 
@@ -196,15 +193,15 @@ ui/
 | 功能 | 目标位置 |
 | --- | --- |
 | 本地数据库、实体仓储与后续迁移 | `ui/core/database/` |
-| 本地 Agent Runtime、上下文与云端工具调度 | `ui/core/agent/` |
-| 模型直连 / 代理传输、SSE、解码器 | `ui/core/llm/` |
+| 服务端 Agent Runtime、上下文与工具调度 | `server/agent/` |
+| 模型配置、模型目录与同源代理地址 | `ui/core/llm/` |
 | 安全存储、文件、剪贴板等平台适配 | `ui/core/platform/` |
 | 实例 REST 客户端、连接状态、409 冲突与错误映射 | `ui/core/api/` |
 | 更多消息格式适配 | 聊天模块内的消息渲染组件 |
 | 记忆、文件、实例访问 | `ui/features/<module>/` |
 | 移动 Web 响应式布局 | 保持共享状态与契约，后续按窄屏、软键盘与安全区适配 |
 
-其中模型直连与本地 Runtime 已有最小实现，其余目录随功能创建。
+其中模型配置、模型目录与同源代理地址已有实现，其余目录随功能创建。
 
 ## 职责边界
 
@@ -239,8 +236,8 @@ ui/
 ## 模型与 Runtime 入口
 
 - `features/models/model-settings-screen.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型三类对话框；删除 Provider 或模型直接执行，不弹确认框。`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
-- `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/direct-stream.ts`：三协议流式传输；`core/llm/provider-catalog.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/llm/model-proxy.ts`：同源模型中继地址。
-- `core/agent/remote-runtime.ts`：浏览器侧 Agent 通信适配，提交运行、消费 SSE 并更新消息；真正的 Agent 运行时与工具模块位于 server/agent 与 server/agent/tools。
+- `core/llm/model-config.ts`：Provider 配置校验与运行时模型映射；`core/llm/provider-catalog.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/llm/model-proxy.ts`：同源模型中继地址。
+- `core/agent/remote-runtime.ts`：浏览器侧 Agent 通信适配，提交运行、消费 SSE 并更新消息，同时发送停止/steer；Agent 循环与工具模块位于 server/agent 与 server/agent/tools。
 - `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到实例。
 
 - 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部实例所有者入口；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
@@ -248,7 +245,7 @@ ui/
 ## 实例与功能开关
 
 - `core/api/instance-client.ts`：无 DOM / React 的实例能力状态与同源 API 请求；忽略过期的能力刷新请求。
-- `core/agent/diagnostics.ts`：模型回复诊断摘要，记录每次调用的输出上限、HTTP 元数据、结束原因与用量；通过 `matriusDiagnostics.export()` 导出有界内存记录，不保存正文、工具参数或凭据。
+- `server/agent/diagnostics.ts`：模型回复诊断摘要，记录每次调用的输出上限、HTTP 元数据、结束原因与用量，只保留最近运行的内存记录，不保存正文、工具参数或凭据；浏览器侧不再暴露 `matriusDiagnostics`。
 - `core/features/capabilities.ts`：统一判断服务端授予的功能。
 - `features/instance/instance-state.tsx`：Web Provider、useInstance、useFeature 与 FeatureGate。
 - `features/files/storage-screen.tsx`：设置中的“存储”分类（位于实例下方），展示已用/总量、进度条，并按文件与图像分类跳转到资料库。
@@ -256,14 +253,11 @@ ui/
 - `settings-catalog.ts` / `settings-page.tsx`：分类与搜索按功能能力统一过滤。
 - `ui/router/routes.tsx` 中的 `/settings/storage`、`/settings/usage`：存储与用量设置路由组装；存储与用量仅在实例具备对应功能时出现在导航中。
 
-## 开发与发布脚本
+## 开发脚本
 
 - `scripts/dev.mjs`：跨平台本机开发启动器，管理本地 SQLite、Node API 和 Vite 进程及退出清理，不连接服务器。
-- `server/scripts/dev-api.py`：Windows 开发 API 热重载适配，复用 Uvicorn 监听器并定向重启工作进程，避免控制台 Ctrl+C 传播至 npm/Vite；仅监听应用代码。
 - `scripts/dev-api-proxy.cjs`：Vite 开发服务器的同源 `/api/*` 转发，模型中继优先处理。
 - `vite.config.ts`：Vite 开发与构建配置；设置 `DEV_WEB_PORT`（默认 8081，严格端口）、`@/` 与 `@/assets/` 别名、pi-ai 映射、KaTeX 样式注入，以及 `/api/*` 与模型中继中间件。
-- `scripts/deploy.mjs`：单次上传源码和生产镜像发布；服务端协议、初始化及健康检查位于 `scripts/remote/`。
-- `Dockerfile.web`、`server/Dockerfile`：生产 Web/API 镜像，直接包含代码；Compose 不挂载源码。
 
 - `features/workspace/workspace-mode.ts`：按实例连接状态加载工作区或等待重连的工作区身份。
 - `features/workspace/cloud-workspace-repository.ts`：唯一实例的内存 REST 仓储，加载服务端数据并按 revision 保存变化；不访问 IndexedDB，不包含模型配置或凭据。

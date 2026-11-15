@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 
@@ -21,6 +22,10 @@ const environmentSchema = z.object({
   CACHE_MAX_ENTRIES: z.coerce.number().int().min(1).default(10_000),
   CACHE_MAX_BYTES: z.coerce.number().int().min(1).default(64 * 1024 * 1024),
   MAX_UPLOAD_BYTES: z.coerce.number().int().min(1).default(20 * 1024 * 1024),
+  // Logical budget for files under DATA_DIR/files. It is independent of the host
+  // filesystem so the storage screen shows an application limit, not the deployment
+  // machine's disk. Raise it in .env.local (or the production environment) when needed.
+  STORAGE_LIMIT_BYTES: z.coerce.number().int().min(1).default(128 * 1024 * 1024),
   ENABLE_DEBUG_PAGE: z.enum(['true', 'false']).optional(),
   SEARCH_TIMEOUT_SECONDS: z.coerce.number().int().min(1).default(8),
   SEARCH_DDGS_TIMEOUT_SECONDS: z.coerce.number().int().min(1).default(4),
@@ -82,9 +87,13 @@ export function sqlitePathFromUrl(databaseUrl: string): string | null {
 }
 
 function resolveFrom(base: string, value: string): string {
-  const expanded = value.startsWith('~')
-    ? resolve(process.env.HOME ?? process.env.USERPROFILE ?? base, value.slice(1))
-    : value;
+  // `~` must be expanded before path resolution: on Windows resolve(home, '/x')
+  // would leave home and produce C:\x.
+  const expanded = value === '~'
+    ? homedir()
+    : value.startsWith('~/') || value.startsWith('~\\')
+      ? join(homedir(), value.slice(2))
+      : value;
   return isAbsolute(expanded) ? expanded : resolve(base, expanded);
 }
 
@@ -101,7 +110,7 @@ export function loadSettings(processEnv: NodeJS.ProcessEnv = process.env): Setti
 
   const dataDir = parsed.DATA_DIR
     ? resolveFrom(REPO_ROOT, parsed.DATA_DIR)
-    : resolve(SERVER_DIR, '.data');
+    : resolve(homedir(), '.matrius');
   const databaseUrlPath = parsed.DATABASE_URL ? sqlitePathFromUrl(parsed.DATABASE_URL) : null;
   const databasePath = databaseUrlPath
     ? resolveFrom(SERVER_DIR, databaseUrlPath)

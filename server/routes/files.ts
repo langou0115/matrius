@@ -34,7 +34,7 @@ import {
   safeFilename,
 } from '../services/file-types';
 import type { MemoryCache } from '../services/cache';
-import type { LocalStorage } from '../services/storage';
+import { assertStorageAvailable, storageUsage, type LocalStorage } from '../services/storage';
 import type { Settings } from '../config';
 import {
   bulkDeleteFilesSchema,
@@ -142,9 +142,8 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       const buffer = filePart?.data;
       if (!buffer) throw invalid('文件为空。');
       if (!buffer.length) throw invalid('文件为空。');
-      if (buffer.length > storage.diskUsage().free) {
-        throw new AppError(413, 'disk_full', '服务器磁盘空间不足。');
-      }
+      const used = fileUsageStats(db, INSTANCE_ID).used;
+      assertStorageAvailable(used, buffer.length, settings.STORAGE_LIMIT_BYTES);
       return buffer;
     });
 
@@ -184,7 +183,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const stats = fileUsageStats(db, INSTANCE_ID);
     return {
       used: stats.used,
-      disk: storage.diskUsage(),
+      disk: storageUsage(stats.used, settings.STORAGE_LIMIT_BYTES),
       files: { bytes: stats.used - stats.imageBytes, count: stats.total - stats.imageCount },
       images: { bytes: stats.imageBytes, count: stats.imageCount },
     };

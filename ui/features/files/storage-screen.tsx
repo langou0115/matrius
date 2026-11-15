@@ -48,15 +48,16 @@ export default function StorageScreen() {
   const ratio = usage && usage.disk.total > 0 ? Math.min(1, usage.disk.used / usage.disk.total) : 0;
   const hasFiles = Boolean(usage && usage.disk.used > 0);
 
-  return <SettingsPage title="存储" description="查看部署服务器的磁盘容量与可用空间。">
+  return <SettingsPage title="存储" description="查看应用的存储上限与已用空间。">
     <section className="settings-section" aria-labelledby="storage-heading">
-      <h2 id="storage-heading">服务器磁盘</h2>
+      <h2 id="storage-heading">存储空间</h2>
       {usage ? <>
         <p className="storage-summary">已使用 <strong>{formatBytes(usage.disk.used)}</strong>，共 {formatBytes(usage.disk.total)}，可用 {formatBytes(usage.disk.free)}</p>
         <div className="storage-meter-track" role="progressbar" aria-label="存储空间"
-          aria-valuemin={0} aria-valuemax={usage.disk.total} aria-valuenow={usage.disk.used}>
+          aria-valuemin={0} aria-valuemax={usage.disk.total} aria-valuenow={Math.min(usage.disk.used, usage.disk.total)}>
           {hasFiles && <span className="storage-meter-fill" style={{ width: `${ratio * 100}%` }} />}
         </div>
+        <p className="settings-footnote">上传文件总量上限由服务端配置，默认 128 MiB。</p>
       </> : failed ? <div className="storage-retry" role="alert">
         <span>暂时无法获取存储空间。</span>
         <button type="button" className="secondary-button" onClick={() => setReloadKey((value) => value + 1)}>
@@ -67,7 +68,7 @@ export default function StorageScreen() {
 
     <section className="settings-section" aria-labelledby="storage-manage-heading">
       <h2 id="storage-manage-heading">管理存储空间</h2>
-      <p className="storage-section-caption">管理本应用保存的内容，释放磁盘空间</p>
+      <p className="storage-section-caption">管理本应用保存的内容，释放存储空间</p>
       <div className="settings-list storage-categories">
         <CategoryRow href={'/library?kind=file' as Href} label="文件" category={usage?.files} unit="个文件" />
         <CategoryRow href={'/library?kind=image' as Href} label="图像" category={usage?.images} unit="张图像" />

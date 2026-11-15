@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { LocalStorage, diskUsage } from '../services/storage';
+import { LocalStorage, assertStorageAvailable, storageUsage } from '../services/storage';
 
 test('objects are written, read and deleted under the storage root', () => {
   const directory = mkdtempSync(join(tmpdir(), 'matrius-storage-'));
@@ -32,14 +32,12 @@ test('object keys cannot escape the storage root', () => {
   }
 });
 
-test('disk usage is reported for the data filesystem', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'matrius-storage-'));
-  try {
-    const usage = diskUsage(directory);
-    assert.ok(usage.total > 0);
-    assert.ok(usage.free >= 0);
-    assert.equal(usage.used, usage.total - usage.free);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+test('the configured storage budget caps writes and reports the remaining space', () => {
+  assert.deepEqual(storageUsage(10, 100), { total: 100, used: 10, free: 90 });
+  assert.deepEqual(storageUsage(150, 100), { total: 100, used: 150, free: 0 });
+
+  assert.doesNotThrow(() => assertStorageAvailable(10, 5, 20));
+  assert.throws(() => assertStorageAvailable(15, 6, 20), { code: 'storage_full' });
+  // Replacing an existing file only consumes the size difference.
+  assert.doesNotThrow(() => assertStorageAvailable(15, 6, 20, 5));
 });

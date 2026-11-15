@@ -5,7 +5,7 @@ wrappers around them.
 
 | Service | Responsibility | Status |
 | --- | --- | --- |
-| `storage.ts` | `DATA_DIR/files` object storage, atomic writes, disk usage | implemented |
+| `storage.ts` | `DATA_DIR/files` object storage, atomic writes, configured storage quota | implemented |
 | `cache.ts` | in-process TTL cache, sliding-window limits, in-flight caps | implemented |
 | `file-types.ts` | upload allow-list, safe filenames, content types | implemented |
 | `usage-estimate.ts` | historical token estimate | implemented |

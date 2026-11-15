@@ -63,7 +63,7 @@ server/
 
 ```bash
 npm run dev:server        # tsx watch server/main.ts, default http://127.0.0.1:8000
-npm run dev               # Node API + Vite (data in server/.data)
+npm run dev               # Node API + Vite (data in ~/.matrius by default)
 npm run db:migrate        # migrate the local development database
 npm run typecheck:server  # tsc -p tsconfig.server.json --noEmit
 npm run test:server       # node:test via tsx
@@ -74,18 +74,19 @@ useful when Vite is already running separately.
 
 ## Configuration
 
-Development defaults point at `server/.data`. `server/config.ts` also reads the
+Development defaults point at `~/.matrius`. `server/config.ts` also reads the
 repository `.env.local` when `APP_ENV` is not `production`.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `APP_ENV` | `development` | `production` does not read `.env.local` |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | Fastify listen address |
-| `DATA_DIR` | `server/.data` | files, drafts, SQLite |
+| `DATA_DIR` | `~/.matrius` | files, drafts, SQLite |
 | `DATABASE_URL` | empty | accepts `sqlite+aiosqlite:///...` for compatibility |
 | `SQLITE_BUSY_TIMEOUT_MS` | `30000` | busy timeout |
 | `CACHE_MAX_ENTRIES` / `CACHE_MAX_BYTES` | `10000` / 64 MiB | in-process cache |
 | `MAX_UPLOAD_BYTES` | 20 MiB | multipart upload limit |
+| `STORAGE_LIMIT_BYTES` | 128 MiB | application quota for uploaded files; replaces host-disk reporting |
 | `ENABLE_DEBUG_PAGE` | dev only | expose `/debug` and `/api/openapi.json`; production requires `true` |
 | `LOG_LEVEL` | `info` | pino level |
 

@@ -25,7 +25,7 @@ function schemaCheck(db: AppDatabase): void {
 }
 
 /**
- * `GET /api/health` is the deployment/container probe.
+ * `GET /api/health` is the liveness probe.
  * `GET /api/health/ready` reports every in-process check plus document engines.
  *
  * Document engines are optional: missing OfficeCLI or the LibreOffice kit only

@@ -2,14 +2,26 @@ import { spawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-export function devDataDir(directory = root) {
-  return join(directory, 'server', '.data');
+/**
+ * Startup data directory. DATA_DIR from .env.local or the shell wins; otherwise
+ * the API's own default applies: ~/.matrius for SQLite and uploaded files.
+ */
+export function devDataDir(env = {}, directory = root) {
+  const configured = String(env.DATA_DIR ?? '').trim();
+  if (!configured) return join(homedir(), '.matrius');
+  const expanded = configured === '~'
+    ? homedir()
+    : configured.startsWith('~/') || configured.startsWith('~\\')
+      ? join(homedir(), configured.slice(2))
+      : configured;
+  return resolve(directory, expanded);
 }
 
 export function devPorts(env) {
@@ -158,11 +170,11 @@ async function ready(url, signal) {
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
   if (args.includes('--help')) {
     console.log('npm run dev [-- --check | --reset-db | --clear]\n'
-      + 'Runs the Node API + Vite entirely on this machine; no Docker, SSH or WSL required.\n'
-      + 'Data lives in server/.data (SQLite + uploaded files) and is never synced to the server.\n'
+      + 'Runs the Node API + Vite entirely on this machine; no SSH or WSL required.\n'
+      + 'Data lives in ~/.matrius by default (SQLite + uploaded files); set DATA_DIR in .env.local to override.\n'
       + 'Requires Node.js and npm ci; no Python or uv is needed.\n'
       + '--check validates local configuration, tools, ports and paths without starting services.\n'
-      + '--reset-db deletes server/.data/matrius.db* and server/.data/files before migrating; stop the API first.\n'
+      + '--reset-db deletes matrius.db* and files in the active data directory before migrating; stop the API first.\n'
       + '--clear rebuilds Vite\'s dependency pre-bundle from scratch; use it after a dependency change.\n'
       + 'No login is required.\n'
       + 'Production env files are never read.');
@@ -175,7 +187,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   };
   const local = { ...await readEnv(join(root, '.env.local')), ...env };
   const [webPort, apiPort] = devPorts(local);
-  const dataDir = devDataDir();
+  const dataDir = devDataDir(local);
 
   await readFile(join(root, 'node_modules/vite/bin/vite.js')).catch(() => { throw new Error('Run npm ci first.'); });
   await readFile(join(root, 'node_modules/tsx/package.json')).catch(() => { throw new Error('Run npm ci first.'); });
@@ -193,7 +205,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
 
   // Runtime settings stay in .env.local and are read by the Node API. Only
   // startup-only values (data directory, ports) are copied into the child
-  // environment; a production path in .env.local must not leak into development.
+  // environment; DATABASE_URL is cleared so a production URL never leaks.
   const backendEnv = {
     ...devEnvironment({ env, dataDir, webPort }),
     DATABASE_URL: '',
@@ -240,7 +252,6 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     runner.watch(web, 'Vite');
     console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
       + `no login is required. Ctrl+C stops local services only.`);
-
     const code = await runner.finished;
     if (code) throw new Error('Development service stopped unexpectedly.');
   } catch (error) {

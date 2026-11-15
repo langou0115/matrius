@@ -84,7 +84,7 @@ try {
   writeFileSync(new URL('../doc/benchmark-relay-results.json', import.meta.url), JSON.stringify({
     timestamp: new Date().toISOString(), node: process.version, platform: process.platform,
     upstream: 'synthetic local SSE, 50 frames at 100ms intervals plus DONE',
-    scope: 'real relay code, VM network substitution; no TLS, external DNS, Caddy or provider quotas', results,
+    scope: 'real relay code, VM network substitution; no TLS, external DNS, reverse proxy or provider quotas', results,
   }, null, 2));
 } finally {
   agent.destroy();

@@ -5,7 +5,7 @@ import net from 'node:net';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 
@@ -47,7 +47,9 @@ test('development environment is local-only and never inherits production data l
   assert.equal(env.APP_URL, 'http://localhost:8081');
   assert.equal(env.DATABASE_URL, '');
   assert.equal(env.DATA_DIR, dataDir);
-  assert.equal(devDataDir('/repo'), join('/repo', 'server', '.data'));
+  assert.equal(devDataDir({}), join(homedir(), '.matrius'));
+  assert.equal(devDataDir({ DATA_DIR: '~/.matrius-test' }), resolve(homedir(), '.matrius-test'));
+  assert.equal(devDataDir({ DATA_DIR: '/custom/data' }), resolve('/custom/data'));
 });
 
 test('--reset-db only removes the development database and uploaded files', async (t) => {

@@ -4,6 +4,7 @@ import type { AppDatabase } from '../../db/client';
 import { fromDbUuid, toDbUuid } from '../../db/codecs';
 import type { StoredFileRow } from '../../db/repositories/conversations';
 import {
+  fileUsageStats,
   getFileRow,
   insertFileRow,
   replaceFileContent,
@@ -11,7 +12,7 @@ import {
 } from '../../db/repositories/files';
 import { AppError, conflict, invalid, notFound } from '../../errors';
 import type { Settings } from '../../config';
-import type { LocalStorage } from '../storage';
+import { assertStorageAvailable, type LocalStorage } from '../storage';
 import { extensionOf, safeFilename } from '../file-types';
 import { validateOfficeCommands, type OfficeCommand } from './commands';
 import {
@@ -213,6 +214,8 @@ export function createDocumentService(options: {
       }
       const id = fromDbUuid(existing.id);
       const objectKey = `${id}/${filename}`;
+      const used = fileUsageStats(db, draft.instanceId).used;
+      assertStorageAvailable(used, data.length, settings.STORAGE_LIMIT_BYTES, existing.size);
       storage.put(objectKey, data);
       const row = replaceFileContent(db, draft.instanceId, existing.id, {
         filename,
@@ -228,6 +231,8 @@ export function createDocumentService(options: {
 
     const id = randomUUID();
     const objectKey = `${id}/${filename}`;
+    const used = fileUsageStats(db, draft.instanceId).used;
+    assertStorageAvailable(used, data.length, settings.STORAGE_LIMIT_BYTES);
     storage.put(objectKey, data);
     try {
       const row = insertFileRow(db, {

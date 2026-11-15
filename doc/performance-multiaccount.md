@@ -1,8 +1,8 @@
-> 历史记录：本文描述单用户改造前的多账号版本，不代表当前支持多用户，也不作为当前容量承诺。原多账号压测脚本已随架构改造移除，下文复现命令仅为历史记录。
+> **历史存档**：本文测量的是已移除的 Python/FastAPI 多账号后端，不代表当前支持多用户，也不适用于当前 Node 后端。旧压测脚本与结果文件均未保留，文末复现命令已删除。
 
 # 多账户并发压测与容量建议（2026-10-27）
 
-本次压测回答的是「很多账户同时读写时，单机 API 能稳定跑到多少」，不是单账户内多标签页的并发，也不是完整用户旅程。结论只适用于当前部署形态：单 Uvicorn worker、进程内缓存与限流、SQLite WAL、本地文件存储。生产容量必须在目标服务器上复测。
+本次压测回答的是「很多账户同时读写时，单机 API 能稳定跑到多少」，不是单账户内多标签页的并发，也不是完整用户旅程。结论只适用于当时的部署形态：单 Uvicorn worker、进程内缓存与限流、SQLite WAL、本地文件存储。生产容量必须在目标服务器上复测。
 
 ## 结论
 
@@ -132,7 +132,7 @@
 
 ## 服务器配置要求
 
-以下按当前单进程 + SQLite 架构给出。CPU 百分比是「一个核的百分比」；事件循环仍是单线程，因此**单核性能比核数更重要**。多出来的核主要留给 aiosqlite 线程、Caddy、Web 容器、Docker 和操作系统。
+以下按当时的单进程 + SQLite 架构给出。CPU 百分比是「一个核的百分比」；事件循环仍是单线程，因此**单核性能比核数更重要**。多出来的核主要留给 aiosqlite 线程、Web 服务、反向代理和操作系统。
 
 | 规模 | 稳定负载目标 | CPU | 内存 | 磁盘 | 网络 |
 | --- | --- | --- | --- | --- | --- |
@@ -144,12 +144,12 @@
 
 补充说明：
 
-- **内存**：本轮 API 进程 RSS 为 133–161 MiB，另含 64 MiB 进程内缓存上限、上传/抓取缓冲、Caddy 和 Web 容器。2 GB 是下限，4 GB 更稳妥；如果同机还跑模型中继（Node，200 条并行 SSE 时约 83 MiB），建议 4–8 GB。
+- **内存**：本轮 API 进程 RSS 为 133–161 MiB，另含 64 MiB 进程内缓存上限、上传/抓取缓冲、Web 与反向代理进程。2 GB 是下限，4 GB 更稳妥；如果同机还跑模型中继（Node，200 条并行 SSE 时约 83 MiB），建议 4–8 GB。
 - **磁盘**：实测 500 账户、5,000 会话、10,000 条消息的数据库约 17 MB，即约 1.7 KB/条消息。按每用户 1,000 条消息估算约 1.7 MB/用户；10,000 用户约 17 GB。部署脚本保留 10 份 SQLite 全量快照，另有 14 天文件备份，磁盘要按「数据库 × 5–10 + 文件 + 系统」预留，或把备份放独立卷/远端。用户文件配额上限是 512 MiB/账户，这是上限不是均值，必须监控实际用量。
 - **网络**：稳定点 120 读/秒中约一半是会话详情，单条约 20 KB（20 条 1 KB 消息），出口约 1–2 MB/s，即 10–20 Mbps；100 Mbps 端口足够。真实消息更长时应按字节数重算。模型 SSE 是独立的中继进程，本轮未测其带宽，只在模拟条件下验证过 200 条并行流可完成，且没有测出上限。
 - **磁盘 IOPS**：写入稳定点 60 rps、上限约 100–135 rps，任意本地 SSD 都足够；不要用网络文件系统承载 SQLite。
-- **可用性**：单机、单 API 容器、SQLite 意味着没有应用层高可用。故障恢复依赖快照和重启；如需多机热备，必须换 PostgreSQL 并解决进程内状态共享。
-- **系统**：Linux + Docker Compose，一个 API 容器、一个 Caddy、一个 Web 容器；API 不要开多 worker。容器内存建议给 API 留 1 GB 上限，给整机留 25% 余量应对突发和备份。
+- **可用性**：单机、单 API 进程、SQLite 意味着没有应用层高可用。故障恢复依赖快照和重启；如需多机热备，必须换 PostgreSQL 并解决进程内状态共享。
+- **系统**：Linux 单机，API、Web 与反向代理各一个进程；API 不要开多 worker。整机内存建议给 API 留 1 GB 上限，并保留 25% 余量应对突发和备份。
 
 ### 什么时候必须扩容/改架构
 
@@ -160,25 +160,4 @@
 
 ## 复现
 
-```bash
-cd server
-
-# 稳定点：200/500 账户，读 120 / 混合 100 / 写 60 rps
-.venv/bin/python scripts/benchmark.py --mode pinned \
-  --matrix "200:1,5;500:1" --seconds 8 \
-  --target-rates read=120,mixed=100,write=60 \
-  --output ../doc/benchmark-multiaccount-stable.json
-
-# 饱和点：默认 50/200/500 账户，读 200 / 混合 150 / 写 100 rps
-.venv/bin/python scripts/benchmark.py --mode pinned --seconds 8 \
-  --output ../doc/benchmark-multiaccount-results.json
-
-# 只跑 CRUD，不跑同会话/登录等特殊探针
-.venv/bin/python scripts/benchmark.py --mode pinned --no-special
-```
-
-结果文件（本机生成的原始数据，未纳入版本库；按上面的命令可在本机重新生成）：
-
-- `benchmark-multiaccount-stable.json`：200/500 账户稳定点。
-- `benchmark-multiaccount-results.json`：完整饱和矩阵与隔离探测。
-- `benchmark-multiaccount-results.before-pool-fix.json`：修复前的对照数据。
+旧压测脚本（`server/scripts/benchmark.py`）与结果 JSON 均随 Python 后端移除，未纳入版本库，本文数据无法复现。

@@ -11,7 +11,7 @@
 - 导航统一从 `@/router` 导入 `Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href`；功能代码不直接导入 `react-router-dom`。测试通过 `tests/stubs/router.mjs` 替换该模块。
 - `Link asChild` 的锚点使用共享 `LinkAnchor`，由 `@/router` 的 `Link` 注入 `href` 与导航处理。
 - 浏览器差异集中在适配层，不在业务页面散落平台 API 调用。业务契约与 Web 实现分离，便于后续替换底层传输或存储。
-- Agent 业务集中在 `core/agent/`，共享消息类型、上下文、引用、系统提示、运行状态与取消；核心不依赖 React、DOM、路由页面或 `features/`。聊天 React 层负责状态与模型设置的适配，模型传输放在 `core/llm/`，凭据和持久化继续按平台接入。
+- Agent 运行在 `server/agent/`；客户端通过 `core/agent/remote-runtime.ts` 提交运行、消费 SSE，并用 `/api/agent/runs/:conversationId/stop` 与 `/steer` 发送停止/steer，共享类型在 `contract/agent-protocol.ts`。聊天 React 层负责状态与模型设置适配，模型请求经同源 `/api/model-proxy` 转发，凭据只保存在浏览器。
 - 当前只保证桌面浏览器；移动 Web 的窄屏布局、软键盘、安全区与触屏交互在后续阶段单独适配。长会话避免一次挂载全部消息，流式更新避免重绘整个列表。
 - 实现 Vite、React Router 或 React 19 API 前，先查对应版本的官方文档；不要引入 Expo、React Native Web、Metro 或第二套路由。
 
@@ -46,38 +46,23 @@
 
 ## 本地存储与安全存储
 
-- Web 使用 IndexedDB 在浏览器中持久化会话与外观偏好。实现与边界见[存储与同步](data.md)，页面经数据层访问。
+- Web 只用 IndexedDB 持久化模型配置、密钥与设备状态；聊天、记忆与偏好保存在服务端。实现与边界见[存储与数据](data.md)。
 - 密钥不得进入普通业务存储、日志、崩溃上报或同步载荷。
 - 浏览器没有系统级安全存储；`core/platform/model-credentials.ts` 只定义凭据接口与工作区独立的内存实现，正式工作区由 `features/models/model-credential-store.ts` 把密钥单独写入 IndexedDB 的 `model-credentials` 记录，刷新后仍可用；Mock 预览继续使用内存实现，不读写这份记录。
 - 该记录**未加密**，同源脚本与能访问本机浏览器配置的人都能读取，界面上必须如实说明。密钥始终不进入 `model-preferences`、工作区记录、日志、崩溃上报或同步载荷；删除服务商会一并删除对应密钥，清除站点数据会删除全部密钥。
-- 云端模式不接收服务端模型 key，也不直连服务器上的 SQLite 数据库或文件目录，只通过 `/api/*` 访问。
+- 浏览器不直接访问服务器上的 SQLite 数据库或文件目录，只通过 `/api/*`（含 SSE）访问。
 
-## 本地 Agent Runtime 与模型调用
+## Agent 运行与模型调用
 
-两种模式共用客户端本地 Agent Runtime。未登录时只提供纯对话与记忆注入；登录后由同一 Runtime 调度云端工具并推进模型轮次。模型直连与云端单次模型代理通过传输适配接入，传输与协议分层：
+Agent Runtime 在服务端运行。浏览器通过 `POST /api/agent/runs` 的 SSE 提交运行并消费事件（文本、推理、工具、用量、结束），通过 `/api/agent/runs/:conversationId/stop` 与 `/steer` 停止或纠偏；上下文组装、工具执行、压缩、标题与记忆都在 `server/agent`。模型配置与 API key 每次运行临时发送，服务端不落库、不写日志。
 
-```text
-本地 Agent Runtime
-  ↓
-统一流式事件（文本 / 推理 / 工具调用事件 / 用量 / 结束）
-  ↑
-每协议一个解码器
-  ↑
-SSE 分帧（字节流 → 事件）
-  ↑
-浏览器传输适配（fetch + ReadableStream）
-```
-
-Runtime 消费工具调用事件，经云端工具 API 获取结果并回填上下文，然后发起下一次模型调用。未登录时不注册云端工具，不能执行这些工具。职责与运行状态见[Agent Runtime](agent.md)。
-
-- 解码器不得依赖网络库，只消费分帧结果。覆盖 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages，允许自定义 base URL。
-- 分帧处理多行 `data:`、`[DONE]`、CRLF、注释、跨块 UTF-8 字符和缺失尾换行。
-- 传输适配覆盖增量读取、取消、错误和结束。
-- Web 端模型请求统一经本站同源的 `/api/model-proxy` 转发，避免服务商 CORS 预检差异；中继无状态，不保存密钥或对话。开发时由 `vite.config.ts` 注册的中间件处理，生产由 `scripts/server.mjs` 与 Caddy 处理。
+- 服务端负责协议解码、SSE 分帧、工具循环与错误映射；客户端只消费运行事件并按事件更新消息。
+- 模型请求统一经本站同源的 `/api/model-proxy` 转发，避免服务商 CORS 预检差异；中继无状态，不保存密钥或对话。开发时由 `vite.config.ts` 注册的中间件处理，生产由 Web 入口处理（部署方式待重新设计）。
+- 同一会话只允许一个活动运行；运行状态在服务端进程内，刷新页面或重启服务不保证恢复。
 
 ## 依赖与构建
 
 - 使用 React Router 7，不引入第二套路由。优先复用现有依赖；新增第三方状态管理、网络或代码生成库前先与维护者确认。
 - 依赖通过 `npm install <package>` 安装并提交 `package-lock.json`；当前使用 npm，未来如切换 Bun 并存在 `bun.lock`，统一使用 `bunx`。
 - 项目只构建 Web + PWA，不包含 `ios/`、`android/` 工程或原生壳。
-- 生产构建执行 `npm run build`：Vite 输出静态 SPA 到 `dist/`，由 `Dockerfile.web` 与 `scripts/server.mjs` 使用；`index.html` 直接携带 manifest、主题色与 Apple 触摸图标元数据，不再有导出后注入步骤；`public/sw.js` 提供应用外壳离线缓存。
+- 生产构建执行 `npm run build`：Vite 输出静态 SPA 到 `dist/`，由静态服务器提供；`index.html` 直接携带 manifest、主题色与 Apple 触摸图标元数据，不再有导出后注入步骤；`public/sw.js` 提供应用外壳离线缓存。部署方式待重新设计。
