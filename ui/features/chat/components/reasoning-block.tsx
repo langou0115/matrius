@@ -1,7 +1,7 @@
 import { Brain, Check, ChevronRight, ChevronUp, CircleAlert, FilePenLine, FilePlus2, FileText, Save, Square, Trash2 } from 'lucide-react';
 import { memo, useEffect, useId, useRef, useState } from 'react';
 
-import type { ProcessActivity, ThinkingActivity, WebActivity } from '@/core/agent/types';
+import type { ProcessActivity, ThinkingActivity, WebActivity } from '@contract/agent-types';
 import { fileContentUrl } from '@/features/files/files-api';
 import type { Message } from '../chat-state';
 import { formatFileSize } from './attachment-list';

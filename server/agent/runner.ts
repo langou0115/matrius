@@ -1,13 +1,13 @@
 import { Agent, type AgentTool, type StreamFn } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage } from '@mariozechner/pi-ai';
 
-import { createAgentModel, type ModelConfig } from './llm/model-config';
+import { buildContext, buildSteeringMessage, requestContextMessage } from '../../contract/agent-context';
+import { DEFAULT_SYSTEM_PROMPT } from '../../contract/agent-prompt';
+import type { ThinkingEffort } from '../../contract/agent-protocol';
+import { createAgentModel, type ModelConfig } from '../../contract/agent-provider';
+import { thinkingBudgetsFor } from '../../contract/agent-thinking';
+import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from '../../contract/agent-types';
 import { directStream } from './llm/direct-stream';
-import type { ThinkingEffort } from './thinking-effort';
-import { thinkingBudgetsFor } from './thinking-budget';
-import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from './types';
-import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
-import { buildContext, buildSteeringMessage, requestContextMessage } from './context';
 import { createReplyDiagnostics } from './diagnostics';
 import { emptyToolActivity, type ToolActivityResolver } from './tool-activity';
 
@@ -103,7 +103,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   const tokenUsage: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   // The context meter reads the latest provider-reported call, held across call boundaries so a
   // new request never replaces it with a zero-output estimate. It is not persisted and not summed.
-  let contextTokens: import('./types').ReplyUpdate['contextTokens'];
+  let contextTokens: import('../../contract/agent-types').ReplyUpdate['contextTokens'];
   function countUsage(usage: AssistantMessage['usage']) {
     tokenUsage.input += tokenCount(usage.input);
     tokenUsage.output += tokenCount(usage.output);
@@ -165,7 +165,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     if (agent.state.messages.at(-1)?.role === 'assistant') agent.state.messages = agent.state.messages.slice(0, -1);
     const level = agent.state.thinkingLevel;
     agent.state.thinkingLevel = outputRetries > 1 ? 'off'
-      : level === 'high' || level === 'xhigh' ? 'medium'
+      : level === 'high' ? 'medium'
         : level === 'medium' ? 'low' : 'off';
     diagnostics.outputRetry(outputRetries, String(agent.state.thinkingLevel));
     agent.state.messages = [...agent.state.messages, {

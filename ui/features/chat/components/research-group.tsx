@@ -2,7 +2,7 @@ import { CircleAlert, FileText, Search } from 'lucide-react';
 import { memo, useId, useState } from 'react';
 
 import { normalizedUrl } from '../citations';
-import type { ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
+import type { ProcessActivity, WebActivity, WebSearchResult } from '@contract/agent-types';
 
 type ResearchKind = 'search' | 'fetch';
 

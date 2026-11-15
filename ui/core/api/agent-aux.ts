@@ -1,4 +1,4 @@
-import type { ModelConfig } from '../../../contract/agent-protocol';
+import type { ModelConfig } from '@contract/agent-provider';
 
 async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T | null> {
   try {

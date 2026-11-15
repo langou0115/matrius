@@ -1,8 +1,8 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
-import type { ConversationSummary } from '@/core/agent/compaction';
-import type { Message, MessageFeedback } from '@/core/agent/types';
-import { normalizeConversationTitle } from '@/core/agent/title';
-export type { Message, MessageImage } from '@/core/agent/types';
+import type { ConversationSummary } from '@contract/agent-compaction';
+import type { Message, MessageFeedback } from '@contract/agent-types';
+import { normalizeConversationTitle } from '@contract/agent-title';
+export type { Message, MessageImage } from '@contract/agent-types';
 
 export type Conversation = {
   id: string;

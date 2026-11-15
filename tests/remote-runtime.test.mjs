@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createRemoteAgentRuntime } from '../ui/core/agent/remote-runtime.ts';
+import { createRemoteAgentRuntime } from '../ui/core/api/agent-runs.ts';
 
 const MODEL = {
   id: 'model-1',

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 
-import type { ThinkingEffort } from '@/core/agent/thinking-effort';
-import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig, type ProviderModelConfig } from '@/core/llm/model-config';
+import type { ThinkingEffort } from '@contract/agent-thinking';
+import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig, type ProviderModelConfig } from '@contract/agent-provider';
 import { createModelCredentials, type CredentialVault } from '@/core/platform/model-credentials';
 import { createStoredModelCredentials } from './model-credential-store';
 import { loadModelPreferences, saveModelPreferences, type ModelPreferences } from './model-repository';

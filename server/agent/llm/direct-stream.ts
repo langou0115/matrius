@@ -1,6 +1,6 @@
 import type { StreamFn } from '@mariozechner/pi-agent-core';
 
-/** Protocol transport only. Agent lifecycle and conversation state belong to core/agent. */
+/** Protocol transport only. Agent lifecycle and conversation state belong to `server/agent`. */
 export const directStream: StreamFn = async (model, context, options) => {
   if (model.api === 'anthropic-messages') {
     const { streamSimpleAnthropic } = await import('@mariozechner/pi-ai/anthropic');

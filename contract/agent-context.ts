@@ -1,9 +1,21 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 
-import { createAgentModel, type ModelConfig } from './llm/model-config';
-import { withoutFailedReplies } from './history';
-import type { Message, MessageFile, MessageImage } from './types';
-import { currentContextText } from './system-prompt';
+import { createAgentModel, type ModelConfig } from './agent-provider';
+import { currentContextText } from './agent-prompt';
+import type { Message, MessageFile, MessageImage } from './agent-types';
+
+/**
+ * Context assembly and token accounting shared by the browser and the server.
+ *
+ * The server builds model requests from these functions; the browser uses the
+ * same estimates for the context meter and the same retry history, so the numbers
+ * a reader sees match the request that is actually sent.
+ */
+
+/** Exclude empty error placeholders, while retaining partial prose users can continue. */
+export function withoutFailedReplies(messages: Message[]): Message[] {
+  return messages.filter((message) => message.role !== 'assistant' || message.status !== 'error' || Boolean(message.content.trim()));
+}
 
 /**
  * Volatile request context (long-term memory and the current clock) as the final user message.
@@ -133,9 +145,9 @@ export function buildContext(messages: Message[], config: ModelConfig): AgentMes
 
 /** Reserved for output/rounding; compaction keeps the same headroom so its result also validates. */
 export const CONTEXT_SAFETY_TOKENS = 2048;
-const MESSAGE_OVERHEAD_TOKENS = 8;
+export const MESSAGE_OVERHEAD_TOKENS = 8;
 // Provider image tokenization is model-specific. Reserve a full-size image rather than guessing.
-const IMAGE_TOKENS = 4096;
+export const IMAGE_TOKENS = 4096;
 
 /**
  * Conservative estimate: ASCII is about four characters per token, while CJK, emoji and

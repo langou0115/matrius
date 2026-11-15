@@ -1,4 +1,4 @@
-import type { Message, WebActivity } from '@/core/agent/types';
+import type { Message, WebActivity } from '@contract/agent-types';
 
 /** One citation marker in an answer, keyed by its GFM footnote label. */
 export type CitationSource = {

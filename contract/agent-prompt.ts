@@ -1,4 +1,4 @@
-import type { AgentProfile } from './types';
+import type { AgentProfile } from './agent-types';
 
 export const DEFAULT_SYSTEM_PROMPT = 'You are Matrius, a helpful assistant. Respond in the user’s language.';
 

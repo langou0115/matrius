@@ -11,8 +11,8 @@ import { featureIds } from '../features/registry';
 import { toolRegistry } from './tools';
 import type { ToolServices } from './tools/types';
 import { createAgentRuntime } from './runtime';
-import type { ModelConfig } from './llm/model-config';
-import { isThinkingEffort, type ThinkingEffort } from './thinking-effort';
+import type { ModelConfig, ThinkingEffort } from '../../contract/agent-protocol';
+import { isThinkingEffort } from '../../contract/agent-thinking';
 import { createToolActivityResolver } from './tool-activity';
 
 export type AgentRunSink = (event: AgentRunEvent) => void;

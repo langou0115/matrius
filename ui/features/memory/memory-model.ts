@@ -1,4 +1,4 @@
-import type { ModelConfig } from '@/core/llm/model-config';
+import type { ModelConfig } from '@contract/agent-provider';
 import type { useModels } from '@/features/models/model-state';
 
 type ModelsApi = ReturnType<typeof useModels>;

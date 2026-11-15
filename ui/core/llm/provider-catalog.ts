@@ -1,4 +1,4 @@
-import type { ProviderConfig } from './model-config';
+import type { ProviderConfig } from '@contract/agent-provider';
 import { resolveModelProxyRoute } from './model-proxy';
 
 export type CatalogModel = { id: string; name: string };

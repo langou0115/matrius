@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeConversationTitle } from '../ui/core/agent/title.ts';
+import { normalizeConversationTitle } from '../contract/agent-title.ts';
 import { deriveConversationTitle } from '../ui/features/chat/chat-state.tsx';
 
 test('mixed-language titles keep the topic instead of collapsing to the product name', () => {

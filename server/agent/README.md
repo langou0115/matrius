@@ -1,10 +1,12 @@
 # Server agent
 
-This is the new home of the agent runtime. The streaming runner, context
-assembly, compaction and the `web_search` / `web_fetch` / `file` (list, read,
-grep) tools are implemented here; the browser runtime in `ui/core/agent/`
-remains in use until the UI is switched to the SSE client. OfficeCLI editing,
-PDF, title and background memory are the next modules to land.
+This is the home of the agent runtime: the streaming runner, compaction,
+diagnostics, the run registry and the `web_search` / `web_fetch` / `file` (list,
+read, grep) tools. The pure logic both sides share — context assembly, token
+estimates, system and memory prompts, title normalization and provider
+validation — lives in `contract/agent-*.ts`. The browser keeps only the SSE
+client (`ui/core/api/agent-runs.ts`) and the title/memory side requests
+(`ui/core/api/agent-aux.ts`).
 
 ## Target layout
 
@@ -12,14 +14,11 @@ PDF, title and background memory are the next modules to land.
 server/agent/
 ├── runtime.ts        # per-conversation run registry, start/stop/steer
 ├── runner.ts         # pi Agent creation, streaming, retries, cancellation
-├── context.ts        # request history, attachments, steering, token budgets
 ├── compaction.ts     # silent rolling-summary compaction
-├── title.ts          # one-shot title request
-├── memory.ts         # background memory summary
-├── system-prompt.ts  # stable system prompt only
+├── title.ts          # one-shot title request (normalizer lives in contract/)
+├── memory.ts         # background memory summary (shape lives in contract/)
 ├── diagnostics.ts    # structured, secret-free diagnostics
 ├── llm/
-│   ├── model-config.ts
 │   └── direct-stream.ts
 ├── tool-activity.ts  # binds tool registry activity to the runner hooks
 └── tools/            # model-facing tool modules + registry
@@ -29,6 +28,10 @@ server/agent/
 
 - **No UI imports.** The agent must not import React, the router, `ui/features`,
   IndexedDB or browser globals.
+- **Shared logic comes from `contract/`.** Context assembly, token estimates,
+  prompts, title normalization and provider validation are imported from
+  `contract/agent-*.ts`. Do not copy them back into `ui/` or re-implement them
+  here; the two sides must run the same function, not two equal copies.
 - **No HTTP loopback.** Tools call `server/services/*` directly. The browser
   tool adapters' `request('/api/...')` calls do not move here.
 - **No model-proxy.** The server calls providers directly from Node. The

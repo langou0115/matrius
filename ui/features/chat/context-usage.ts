@@ -1,12 +1,9 @@
-import { CONTEXT_SAFETY_TOKENS, estimateMessageTokens, estimateTextTokens } from '@/core/agent/context';
-import { withoutFailedReplies } from '@/core/agent/history';
-import type { ModelConfig } from '@/core/llm/model-config';
-import type { Message } from '@/core/agent/types';
-import type { ReplyUpdate } from '@/core/agent/types';
+import { CONTEXT_SAFETY_TOKENS, estimateMessageTokens, estimateTextTokens, withoutFailedReplies } from '@contract/agent-context';
+import { appendConversationSummary, type ConversationSummary } from '@contract/agent-compaction';
+import { memoryPromptBlock, type MemoryPreferences } from '@contract/agent-memory';
+import type { ModelConfig } from '@contract/agent-provider';
+import type { Message, ReplyUpdate } from '@contract/agent-types';
 import type { AgentTool } from '@mariozechner/pi-agent-core';
-import { appendConversationSummary, type ConversationSummary } from '@/core/agent/compaction';
-import type { MemoryPreferences } from '@/core/agent/memory';
-import { memoryPromptBlock } from '@/core/agent/memory';
 
 /** One call's prompt-side split plus its output, or an estimate of the next request. */
 export type ContextUsage = {

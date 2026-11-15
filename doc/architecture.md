@@ -8,7 +8,7 @@
 根目录三块：
 ui/          React 19 + Vite + React Router 7 + SSE 客户端
 server/      Fastify、SQLite、工具、文档服务
-contract/    前后端共用的类型契约（仅 type，编译后消失）
+contract/    前后端共用的类型与无副作用纯逻辑（不 import Node/DOM/React/数据库）
 
 ui/
 ├── 聊天 UI、会话状态

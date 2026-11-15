@@ -1,5 +1,11 @@
-/** A single summary document, not a list of memory rows. It is rewritten as one text so the
-    assistant's view of the user stays coherent instead of accumulating contradictory notes. */
+/**
+ * Long-term memory contract: one summary document, not a list of memory rows.
+ * It is rewritten as a single text so the assistant's view of the user stays
+ * coherent instead of accumulating contradictory notes.
+ *
+ * The summary itself is generated on the server; the pure shape, sanitizing and
+ * prompt injection live here because both the settings UI and the server need them.
+ */
 export const MEMORY_SUMMARY_LIMIT = 4_000;
 
 export type MemoryPreferences = {
@@ -47,17 +53,17 @@ export function serializeMemoryField(memory: MemoryPreferences): string {
 /** Prompts and tool results may wrap the summary in a fence; the stored value stays plain Markdown. */
 export function normalizeMemorySummary(value: string): string {
   let text = value.trim();
-  const tagged = /^<\s*memory\s*>([\s\S]*?)<\s*\/\s*memory\s*>$/i.exec(text);
+  const tagged = /^<\s*memory\s*>([\s\S]*?)<\s*\/\s*memory\s*>$/iu.exec(text);
   if (tagged) text = tagged[1].trim();
-  const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i.exec(text);
+  const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/iu.exec(text);
   if (fenced) text = fenced[1].trim();
   return text;
 }
 
-const MEMORY_TAG = /<\/?(?:user_memory|user_instructions|user_profile|current_context|current_memory|latest_exchange|memory)>/gi;
+const MEMORY_TAG = /<\/?(?:user_memory|user_instructions|user_profile|current_context|current_memory|latest_exchange|memory)>/giu;
 
 /** Memory is model-written text. Encode wrapper tags so a summary cannot break the prompt. */
-function sanitizeMemoryTags(value: string): string {
+export function sanitizeMemoryTags(value: string): string {
   return value.replace(MEMORY_TAG, (tag) => tag.replace('<', '&lt;').replace('>', '&gt;'));
 }
 

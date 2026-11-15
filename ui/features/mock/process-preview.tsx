@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { processActivities, processAnswer, processReasoning } from './fixtures/process-preview';
-import type { Message, ProcessActivity, WebActivity } from '@/core/agent/types';
+import type { Message, ProcessActivity, WebActivity } from '@contract/agent-types';
 import { useWideViewport } from '@/components/web/use-mobile';
 import { useChatDisplay } from '@/features/chat/display-preferences';
 import { MessageContent } from '@/features/chat/components/message-content';

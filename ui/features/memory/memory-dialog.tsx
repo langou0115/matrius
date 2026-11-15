@@ -1,8 +1,8 @@
 import { AlertCircle, LoaderCircle, Trash2, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 
-import { MEMORY_SUMMARY_LIMIT } from '@/core/agent/memory';
-import { requestMemorySummary } from '@/core/agent/aux-api';
+import { MEMORY_SUMMARY_LIMIT } from '@contract/agent-memory';
+import { requestMemorySummary } from '@/core/api/agent-aux';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';

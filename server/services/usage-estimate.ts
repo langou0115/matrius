@@ -1,3 +1,4 @@
+import { IMAGE_TOKENS, MESSAGE_OVERHEAD_TOKENS, estimateTextTokens } from '../../contract/agent-context';
 import type { MessageRow } from '../db/repositories/conversations';
 import { messageFileIds, messageProcess } from '../db/repositories/conversations';
 import { fromDbTimestamp } from '../db/codecs';
@@ -5,26 +6,14 @@ import { fromDbTimestamp } from '../db/codecs';
 /**
  * Conservative token estimate for historical conversations.
  *
- * Exact provider counters never reached the server for old replies. The formulas
- * mirror `ui/core/agent/context.ts` so historical and live numbers stay on the
- * same scale; the UI labels the result as an estimate.
+ * Exact provider counters never reached the server for old replies, so the same
+ * estimator the live context meter uses is applied to stored rows; the UI labels
+ * the result as an estimate.
  */
 
-export const MESSAGE_OVERHEAD_TOKENS = 8;
+export { IMAGE_TOKENS, MESSAGE_OVERHEAD_TOKENS, estimateTextTokens };
 export const REQUEST_OVERHEAD_TOKENS = 900;
-export const IMAGE_TOKENS = 4_096;
 export const ATTACHMENT_TOKENS = 24;
-
-export function estimateTextTokens(text: string): number {
-  let ascii = 0;
-  let wide = 0;
-  for (const char of text) {
-    const bytes = Buffer.byteLength(char, 'utf8');
-    if (bytes === 1) ascii += 1;
-    else wide += bytes;
-  }
-  return Math.ceil(ascii / 4 + wide / 2);
-}
 
 function userText(message: MessageRow): string {
   const content = message.content ?? '';

@@ -1,11 +1,10 @@
 import type { AgentTool } from '@mariozechner/pi-agent-core';
 
-import type { ModelConfig } from './llm/model-config';
-import { validateAgentRequest, validateContextSize } from './context';
-import type { ConversationSummary } from './compaction';
-import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
-import type { ThinkingEffort } from './thinking-effort';
-import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, TokenUsage, WebActivity } from './types';
+import { validateAgentRequest, validateContextSize } from '../../contract/agent-context';
+import type { ConversationSummary } from '../../contract/agent-compaction';
+import { DEFAULT_SYSTEM_PROMPT } from '../../contract/agent-prompt';
+import type { ModelConfig, ThinkingEffort } from '../../contract/agent-protocol';
+import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, TokenUsage, WebActivity } from '../../contract/agent-types';
 import type { createReplyRun } from './runner';
 import type { ToolActivityResolver } from './tool-activity';
 

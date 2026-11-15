@@ -1,24 +1,10 @@
-import type { ModelConfig } from './llm/model-config';
+import {
+  MEMORY_SUMMARY_LIMIT, normalizeMemorySummary, sanitizeMemoryTags,
+} from '../../contract/agent-memory';
+import type { ModelConfig } from '../../contract/agent-protocol';
 import { createReplyRun } from './runner';
 
-/** A single summary document, rewritten as one coherent text rather than memory rows. */
-export const MEMORY_SUMMARY_LIMIT = 4_000;
-
-export function normalizeMemorySummary(value: string): string {
-  let text = value.trim();
-  const tagged = /^<\s*memory\s*>([\s\S]*?)<\s*\/\s*memory\s*>$/iu.exec(text);
-  if (tagged) text = tagged[1].trim();
-  const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/iu.exec(text);
-  if (fenced) text = fenced[1].trim();
-  return text;
-}
-
-const MEMORY_TAG = /<\/?(?:user_memory|user_instructions|user_profile|current_context|current_memory|latest_exchange|memory)>/giu;
-
-/** Memory is model-written text; encode wrapper tags so a summary cannot break the prompt. */
-function sanitizeMemoryTags(value: string): string {
-  return value.replace(MEMORY_TAG, (tag) => tag.replace('<', '&lt;').replace('>', '&gt;'));
-}
+export { MEMORY_SUMMARY_LIMIT, normalizeMemorySummary };
 
 const BACKGROUND_MEMORY_PROMPT = [
   '你是 Matrius 的后台记忆助手。你维护一份关于用户的长期记忆摘要，用于让主对话更了解用户的稳定偏好。',

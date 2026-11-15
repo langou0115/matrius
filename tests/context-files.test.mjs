@@ -5,7 +5,7 @@ import {
   buildContext,
   buildSteeringMessage,
   isContextMessage,
-} from '../ui/core/agent/context.ts';
+} from '../contract/agent-context.ts';
 
 const config = {
   id: 'test', name: 'Test model', protocol: 'completion', baseUrl: 'https://test.invalid/v1',

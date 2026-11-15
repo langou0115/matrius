@@ -1,4 +1,4 @@
-import type { MessageFile } from '@/core/agent/types';
+import type { MessageFile } from '@contract/agent-types';
 
 type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
 

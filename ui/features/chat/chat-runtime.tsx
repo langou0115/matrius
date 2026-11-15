@@ -1,18 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState, useSyncExternalStore, type PropsWithChildren } from 'react';
 
-import { createRemoteAgentRuntime } from '@/core/agent/remote-runtime';
-import { requestConversationTitle, requestMemorySummary } from '@/core/agent/aux-api';
-import { buildRetryHistory } from '@/core/agent/context';
-import { memoryPromptBlock } from '@/core/agent/memory';
-import type { MessageFile, SteerOutcome } from '@/core/agent/types';
+import { createRemoteAgentRuntime } from '@/core/api/agent-runs';
+import { requestConversationTitle, requestMemorySummary } from '@/core/api/agent-aux';
+import { buildRetryHistory } from '@contract/agent-context';
+import { memoryPromptBlock } from '@contract/agent-memory';
+import type { MessageFile, SteerOutcome } from '@contract/agent-types';
 import { hasFeature } from '@/core/features/capabilities';
-import type { ModelConfig } from '@/core/llm/model-config';
+import type { ModelConfig } from '@contract/agent-provider';
 import { useModels } from '@/features/models/model-state';
 import { useMemory } from '@/features/memory/memory-state';
 import { pickMemoryModel } from '@/features/memory/memory-model';
 import { usePersonalization } from '@/features/settings/personalization-state';
 import { recordTokenUsage } from '@/features/usage/usage-api';
-import { buildSystemPrompt } from '@/core/agent/system-prompt';
+import { buildSystemPrompt } from '@contract/agent-prompt';
 import { protectBrowserRun } from '@/core/platform/run-protection';
 import { useInstance } from '@/features/instance/instance-state';
 import { useNetworkTools } from '@/features/instance/network-tools-state';

@@ -1,4 +1,4 @@
-import type { TokenUsage } from '@/core/agent/types';
+import type { TokenUsage } from '@contract/agent-types';
 
 import { localDateKey } from './usage-stats';
 

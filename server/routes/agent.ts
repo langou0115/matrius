@@ -6,7 +6,7 @@ import type { AgentRunEvent, AgentRunRequest, Message } from '../../contract/age
 import type { AgentRunService } from '../agent/run-service';
 import { generateMemorySummary } from '../agent/memory';
 import { generateConversationTitle } from '../agent/title';
-import { validateModelConfig } from '../agent/llm/model-config';
+import { validateModelConfig } from '../../contract/agent-provider';
 import { invalid } from '../errors';
 import {
   agentRunSchema,

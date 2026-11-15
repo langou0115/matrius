@@ -9,9 +9,9 @@ import {
   parseMemoryField,
   readMemoryPreferences,
   serializeMemoryField,
-} from '../ui/core/agent/memory.ts';
-import { requestContextMessage } from '../ui/core/agent/context.ts';
-import { buildSystemPrompt } from '../ui/core/agent/system-prompt.ts';
+} from '../contract/agent-memory.ts';
+import { requestContextMessage } from '../contract/agent-context.ts';
+import { buildSystemPrompt } from '../contract/agent-prompt.ts';
 
 const profile = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '' };
 

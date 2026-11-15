@@ -4,10 +4,28 @@ import type {
   AgentRunRequest,
   ContextSummary,
   Message,
+  ThinkingEffort,
   TokenUsage,
-} from '../../../contract/agent-protocol';
-import type { AgentRequest } from './request';
-import type { RuntimeSnapshot, RuntimeRun, SteerOutcome } from './types';
+} from '@contract/agent-protocol';
+import type { ModelConfig } from '@contract/agent-provider';
+import type { RuntimeSnapshot, RuntimeRun, SteerOutcome } from '@contract/agent-types';
+
+/** Client view of one run request; `stream()` maps it onto the wire contract. */
+export type AgentRequest = {
+  conversationId: string;
+  replyId: string;
+  messages: Message[];
+  config?: ModelConfig;
+  apiKey: string;
+  thinkingEffort?: ThinkingEffort;
+  systemPrompt?: string;
+  /** Long-term memory text travels in the trailing request context, not the cacheable system prompt. */
+  memoryText?: string;
+  /** Rolling summary persisted with the conversation; empty means no earlier history is summarized. */
+  contextSummary?: ContextSummary;
+  /** Remote-runtime request flags; the server filters its registered tools by these. */
+  enabledTools?: { web?: boolean; files?: boolean };
+};
 
 type RuntimeOptions = {
   onReply: (conversationId: string, message: Message) => void;

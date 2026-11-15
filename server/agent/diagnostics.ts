@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { StreamFn } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage } from '@mariozechner/pi-ai';
 
-import type { ModelConfig } from './llm/model-config';
-import type { ReplyResult } from './types';
+import type { ModelConfig } from '../../contract/agent-protocol';
+import type { ReplyResult } from '../../contract/agent-types';
 
 type Entry = { event: string; at: string; [key: string]: unknown };
 type Trace = { id: string; model: string; protocol: string; thinkingEffort: string; configuredMaxOutput: number; entries: Entry[] };

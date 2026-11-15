@@ -1,5 +1,21 @@
 import type { ThinkingBudgets } from '@mariozechner/pi-ai';
 
+import type { ThinkingEffort } from './agent-protocol';
+
+export type { ThinkingEffort };
+
+/**
+ * Thinking depth is a model setting, not a conversation setting. `xhigh` is not
+ * offered: token-based providers expose no budget for it, so it would silently
+ * fall back to a provider default. `contract/agent-protocol.ts` keeps the same
+ * four values, which is what the wire schema accepts.
+ */
+export const thinkingEffortValues = ['default', 'low', 'medium', 'high'] as const;
+
+export function isThinkingEffort(value: unknown): value is ThinkingEffort {
+  return thinkingEffortValues.includes(value as ThinkingEffort);
+}
+
 /** Keep at least this much of a reply for visible text and tool-call arguments. */
 export const MIN_VISIBLE_OUTPUT_TOKENS = 4096;
 /** Long reasoning rarely improves layout-heavy document work, and can crowd out the writing. */

@@ -1,4 +1,4 @@
-import type { ProcessActivity, WebActivity, WebSearchResult } from './types';
+import type { ProcessActivity, WebActivity, WebSearchResult } from '@contract/agent-types';
 
 const maxResults = 20;
 const maxUrls = 10;

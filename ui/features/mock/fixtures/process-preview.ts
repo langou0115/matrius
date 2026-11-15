@@ -1,4 +1,4 @@
-import type { WebActivity } from '@/core/agent/types';
+import type { WebActivity } from '@contract/agent-types';
 
 const url = 'https://docs.python.org/3/library/asyncio-task.html';
 const url2 = 'https://docs.python.org/3/library/asyncio-task.html#task-groups';

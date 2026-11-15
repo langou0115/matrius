@@ -1,5 +1,5 @@
-import { compactActivities, compactProcess } from '@/core/agent/activity-payload';
-import type { ConversationSummary } from '@/core/agent/compaction';
+import { compactActivities, compactProcess } from '@/features/workspace/activity-payload';
+import type { ConversationSummary } from '@contract/agent-compaction';
 import { ApiError } from '@/core/api/instance-client';
 import type { Conversation, Message } from '@/features/chat/chat-state';
 import { defaultPersonalization } from '@/features/settings/personalization';
@@ -9,7 +9,7 @@ import {
   readMemoryPreferences,
   serializeMemoryField,
   type MemoryPreferences,
-} from '@/core/agent/memory';
+} from '@contract/agent-memory';
 import { parseWorkspace, readProcess, type WorkspaceData } from './workspace-repository';
 
 type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;

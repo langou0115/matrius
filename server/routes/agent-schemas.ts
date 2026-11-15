@@ -12,7 +12,7 @@ export const modelSchema = z.object({
   supportsImage: z.boolean(),
   contextWindow: z.number().int().min(1),
   maxOutput: z.number().int().min(1),
-  thinkingEffort: z.enum(['default', 'low', 'medium', 'high', 'xhigh']).optional(),
+  thinkingEffort: z.enum(['default', 'low', 'medium', 'high']).optional(),
 });
 
 const messageFileSchema = z.object({

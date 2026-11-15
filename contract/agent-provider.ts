@@ -1,26 +1,26 @@
 import type { Api, Model } from '@mariozechner/pi-ai';
 
-import { isThinkingEffort, type ThinkingEffort } from '../thinking-effort';
+import type { ModelConfig, ProviderProtocol, ThinkingEffort } from './agent-protocol';
+import { isThinkingEffort } from './agent-thinking';
+
+/**
+ * Provider and model settings shared by the browser settings screens and the
+ * server runtime. Validation runs on both sides on purpose: the client rejects a
+ * bad form before saving, and the server re-validates whatever a run request
+ * carries. `ModelConfig` itself is part of the wire contract, so it is declared
+ * once in `agent-protocol.ts` and only re-exported here.
+ */
+
+export type { ModelConfig, ProviderProtocol };
 
 export const protocols = [
   { id: 'completion', label: 'OpenAI Chat Completions', baseUrl: 'https://api.openai.com/v1' },
   { id: 'responses', label: 'OpenAI Responses', baseUrl: 'https://api.openai.com/v1' },
   { id: 'message', label: 'Anthropic Messages', baseUrl: 'https://api.anthropic.com' },
-] as const;
+] as const satisfies readonly { id: ProviderProtocol; label: string; baseUrl: string }[];
 
-export type ProviderProtocol = typeof protocols[number]['id'];
-
-export type ProviderModelConfig = {
-  id: string;
-  name: string;
-  modelId: string;
-  /** Whether the model accepts image content. Drives pi-ai's `Model.input`. */
-  supportsImage: boolean;
-  contextWindow: number;
-  maxOutput: number;
-  /** Thinking depth is a property of the model, not of the conversation: each model remembers its own. */
-  thinkingEffort?: ThinkingEffort;
-};
+/** One model as stored inside a provider record; the provider join is added by `flattenProviderModels`. */
+export type ProviderModelConfig = Omit<ModelConfig, 'providerId' | 'providerName' | 'protocol' | 'baseUrl' | 'requiresApiKey'>;
 
 export type ProviderConfig = {
   id: string;
@@ -29,15 +29,6 @@ export type ProviderConfig = {
   baseUrl: string;
   requiresApiKey: boolean;
   models: ProviderModelConfig[];
-};
-
-/** Runtime view of one model, with its provider settings joined for pi-ai. */
-export type ModelConfig = ProviderModelConfig & {
-  providerId: string;
-  providerName: string;
-  protocol: ProviderProtocol;
-  baseUrl: string;
-  requiresApiKey: boolean;
 };
 
 function validateBaseUrl(baseUrl: string) {
@@ -114,9 +105,14 @@ export function flattenProviderModels(providers: ProviderConfig[]): ModelConfig[
   })));
 }
 
+/** Re-exported for callers that keep a thinking level next to a model. */
+export type { ThinkingEffort };
+
 const protocolToApi = { completion: 'openai-completions', responses: 'openai-responses', message: 'anthropic-messages' } as const;
+
+/** Models are only built where requests originate: the server runtime. The browser
+    reaches providers through `/api/model-proxy`, never through a pi-ai model object. */
 export function createAgentModel(config: ModelConfig): Model<Api> {
-  // The server calls providers directly; there is no browser origin to rewrite.
   return {
     api: protocolToApi[config.protocol], baseUrl: config.baseUrl,
     id: config.modelId, name: config.name, provider: `matrius-${config.providerId || config.id}`,

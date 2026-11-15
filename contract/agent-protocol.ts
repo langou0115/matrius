@@ -1,14 +1,18 @@
 /**
  * Agent protocol contract.
  *
- * This root-level `contract/` module is the single source of truth for the
- * browser <-> server agent wire format. Keep it free of Node, DOM, React and
- * database imports; both `ui/` and `server/` may import its types, and the
- * compiler erases them from the browser bundle.
+ * This file is the single source of truth for the browser <-> server agent wire
+ * format. Keep it free of Node, DOM, React and database imports; both `ui/` and
+ * `server/` may import its types, and the compiler erases them from the browser
+ * bundle.
+ *
+ * The sibling `contract/agent-*.ts` modules hold the pure logic both sides share
+ * (context assembly, token estimates, prompts, provider validation). They follow
+ * the same dependency rule: no Node, DOM, React or database imports.
  */
 
 export type ProviderProtocol = 'completion' | 'responses' | 'message';
-export type ThinkingEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ThinkingEffort = 'default' | 'low' | 'medium' | 'high';
 
 export type ModelConfig = {
   id: string;

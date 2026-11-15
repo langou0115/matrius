@@ -1,12 +1,12 @@
 import { readWorkspace } from '@/core/database/browser-store';
-import type { ConversationSummary } from '@/core/agent/compaction';
-import type { MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@/core/agent/types';
+import type { ConversationSummary } from '@contract/agent-compaction';
+import type { MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@contract/agent-types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
 import { orderSteeringMessages } from '@/features/chat/message-order';
 import type { AppearancePreferences } from '@/theme/appearance';
 import { themePresets, type ThemeId } from '@/theme/presets';
 import { readPersonalization, type PersonalizationPreferences } from '@/features/settings/personalization';
-import { defaultMemoryPreferences, readMemoryPreferences, type MemoryPreferences } from '@/core/agent/memory';
+import { defaultMemoryPreferences, readMemoryPreferences, type MemoryPreferences } from '@contract/agent-memory';
 
 export type WorkspaceData = { schemaVersion: 1; chat: PersistedChatState; appearance: AppearancePreferences; personalization?: PersonalizationPreferences; memory?: MemoryPreferences };
 export type LoadedWorkspace = { data: WorkspaceData; revision: number };

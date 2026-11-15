@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
-import type { WebActivity } from '@/core/agent/types';
+import type { WebActivity } from '@contract/agent-types';
 import { prepareCitations, type CitationSource } from '../citations';
 import { normalizeMarkdown } from '../markdown/normalize-markdown';
 import { CitationMarker } from './citation-marker';

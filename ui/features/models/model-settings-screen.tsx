@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { Dialog } from '@/components/web/dialog';
 import { SelectField } from '@/components/web/select-field';
 import { fetchProviderCatalog, type CatalogModel } from '@/core/llm/provider-catalog';
-import { protocols, type ProviderConfig, type ProviderModelConfig } from '@/core/llm/model-config';
+import { protocols, type ProviderConfig, type ProviderModelConfig } from '@contract/agent-provider';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { useChatRuntime } from '@/features/chat/chat-runtime';
 import { useModels } from './model-state';

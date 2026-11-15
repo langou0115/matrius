@@ -3,8 +3,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
-import type { MessageFile, WebActivity } from '@/core/agent/types';
-import { buildSystemPrompt } from '@/core/agent/system-prompt';
+import type { MessageFile, WebActivity } from '@contract/agent-types';
+import { buildSystemPrompt } from '@contract/agent-prompt';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { collectReplySources, webActivitiesOf, type ReplySources } from './citations';
 import { Composer } from './components/composer';

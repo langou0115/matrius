@@ -1,5 +1,5 @@
 import { readLocalValue, writeLocalValue } from '@/core/database/browser-store';
-import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig } from '@/core/llm/model-config';
+import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig } from '@contract/agent-provider';
 
 export type ModelPreferences = { providers: ProviderConfig[]; selectedId: string | null; titleModelId: string | null; memoryModelId: string | null };
 type LegacyModelPreferences = { models: ModelConfig[]; selectedId: string | null };

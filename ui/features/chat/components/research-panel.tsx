@@ -1,4 +1,4 @@
-import type { WebActivity, WebSearchResult } from '@/core/agent/types';
+import type { WebActivity, WebSearchResult } from '@contract/agent-types';
 import { readPages, researchNotes, researchPanelTitle, uniqueSearchResults,
   type FetchedPage, type ResearchGroup } from './research-group';
 import { SourceCard } from './source-card';

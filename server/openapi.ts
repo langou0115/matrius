@@ -119,7 +119,7 @@ const agentModel = obj({
   supportsImage: bool(),
   contextWindow: int(),
   maxOutput: int(),
-  thinkingEffort: { type: 'string', enum: ['default', 'low', 'medium', 'high', 'xhigh'] },
+  thinkingEffort: { type: 'string', enum: ['default', 'low', 'medium', 'high'] },
 }, ['id', 'name', 'modelId', 'providerId', 'providerName', 'protocol', 'baseUrl', 'requiresApiKey', 'supportsImage', 'contextWindow', 'maxOutput']);
 
 const agentMessage = obj({
