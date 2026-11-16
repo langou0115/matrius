@@ -6,6 +6,7 @@ import type { Settings } from '../config';
 import { AppError } from '../errors';
 import type { MemoryCache } from './cache';
 import { decodeBody, type HttpClient } from './http';
+import { discoverOfficialNews, isUpdateIntent } from './search-official';
 
 export type SearchResult = {
   title: string;
@@ -27,6 +28,9 @@ const MAX_PER_DOMAIN = 2;
 const MAX_TITLE_CHARS = 280;
 const MAX_SNIPPET_CHARS = 640;
 const CACHE_TTL_SECONDS = 300;
+const NEWS_PATH = /\/(?:news|blog|changelog|changes|updates?|releases?|announcements?|press|whats-new|release-notes)(?:\/|$)/iu;
+const NEWS_TITLE = /(?:发布|更新|公告|上线|推出|版本|升级|release|announcement|changelog|update)/iu;
+const GENERIC_PATH = /^\/(?:|en\/?|zh-cn\/?|zh\/?|platform\/?|en\/platform\/?|download\/?|pricing\/?|api\/?|docs\/?)$/iu;
 
 type RawResult = { url: string; title: string; snippet: string; engine: string; rank: number };
 type ProviderOutcome = {
@@ -206,15 +210,30 @@ export function queryTerms(query: string): string[] {
   return [...new Set(terms)].slice(0, 32);
 }
 
+function intentScore(result: SearchResult): number {
+  let score = result.engine.split(',').includes('official') ? 100 : 0;
+  try {
+    const path = new URL(result.url).pathname;
+    if (NEWS_PATH.test(path)) score += 30;
+    if (GENERIC_PATH.test(path)) score -= 25;
+  } catch {
+    // A malformed URL is already excluded by normalizeResult; keep the term score.
+  }
+  if (NEWS_TITLE.test(result.title)) score += 15;
+  return score;
+}
+
 export function rankRelevant(query: string, results: SearchResult[]): SearchResult[] {
   const terms = queryTerms(query);
-  if (!terms.length) return results;
+  const updateIntent = isUpdateIntent(query);
+  if (!terms.length && !updateIntent) return results;
   const score = (result: SearchResult): number => {
     const title = result.title.normalize('NFKC').toLowerCase();
     const domain = result.domain.normalize('NFKC').toLowerCase();
     const snippet = result.snippet.normalize('NFKC').toLowerCase();
-    return terms.reduce((sum, term) => sum
+    const termScore = terms.reduce((sum, term) => sum
       + (title.includes(term) ? 3 : domain.includes(term) ? 2 : snippet.includes(term) ? 1 : 0), 0);
+    return updateIntent ? termScore * 10 + intentScore(result) : termScore;
   };
   return [...results].sort((left, right) => score(right) - score(left));
 }
@@ -372,6 +391,28 @@ export function createSearchService(options: {
       const fallback = await bing(query, deadline, signal);
       outcomes.push(fallback);
       if (fallback.status === 'ok') results = prepare(query, fallback.results, limit);
+    }
+    if (results.length && isUpdateIntent(query)) {
+      const official = await discoverOfficialNews({
+        cache,
+        settings,
+        http,
+        results,
+        deadline,
+        ...(signal ? { signal } : {}),
+        normalizeUrl: normalizeSearchUrl,
+      });
+      if (official.length) {
+        const seen = new Set<string>();
+        const merged: SearchResult[] = [];
+        for (const result of [...official, ...results]) {
+          const key = canonicalResultKey(result.url);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(result);
+        }
+        results = merged.slice(0, limit);
+      }
     }
     if (!results.length) {
       if (outcomes.some((outcome) => outcome.status === 'ok' || outcome.status === 'empty')) return [];

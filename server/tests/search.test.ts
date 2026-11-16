@@ -119,3 +119,55 @@ test('a CAPTCHA response immediately skips DuckDuckGo for subsequent queries', a
   await service.searchMany(['another topic'], 5);
   assert.equal(ddgCalls, 1);
 });
+
+test('an update query adds the official news page revealed by the results', async () => {
+  const officialHome = `
+    <html><head><title>DeepSeek</title></head><body>
+      <a href="/news/">更多</a>
+      <a href="/news/deepseek-v4-1-flash/">DeepSeek V4.1 Flash 发布</a>
+      <a href="https://api-docs.deepseek.com/">API</a>
+    </body></html>`;
+  const officialSitemap = `<?xml version="1.0"?><urlset>
+    <url><loc>https://www.deepseek.com/news/deepseek-v4-1-flash/</loc><lastmod>2026-10-17</lastmod></url>
+  </urlset>`;
+  const officialNews = `
+    <html><body>
+      <a href="/news/deepseek-v4-1-flash/">DeepSeek V4.1 Flash 发布</a>
+    </body></html>`;
+  const docsHome = `<html><body><a href="/news/news261113/">News</a></body></html>`;
+  const docsSitemap = `<?xml version="1.0"?><urlset>
+    <url><loc>https://api-docs.deepseek.com/news/news261113/</loc><lastmod>2026-11-13</lastmod></url>
+  </urlset>`;
+  const service = createSearchService({
+    cache: new MemoryCache(),
+    settings: settings(),
+    http: fakeHttp((url) => {
+      if (url.includes('duckduckgo')) {
+        return response(200, `
+          <a class="result__a" href="https://www.deepseek.com/en/platform/">DeepSeek | API Platform</a>
+          <a class="result__a" href="https://download.deepseek.com/">DeepSeek App</a>
+          <a class="result__a" href="https://baike.baidu.com/item/DeepSeek">DeepSeek 百科</a>
+        `);
+      }
+      if (url === 'https://deepseek.com/') return response(200, officialHome);
+      if (url === 'https://deepseek.com/sitemap.xml') return response(200, officialSitemap, 'application/xml');
+      if (url === 'https://deepseek.com/news/') return response(200, officialNews);
+      if (url === 'https://api-docs.deepseek.com/') return response(200, docsHome);
+      if (url === 'https://api-docs.deepseek.com/sitemap.xml') return response(200, docsSitemap, 'application/xml');
+      return response(404, 'not found');
+    }),
+  });
+
+  const results = await service.searchMany(['DeepSeek 官网更新'], 10);
+  const official = results.filter((result) => result.engine === 'official');
+  assert.ok(official.length > 0, 'expected official news candidates');
+  assert.equal(results[0].engine, 'official');
+  assert.ok(
+    official.some((result) => result.url.includes('news261113')),
+    'expected the docs subdomain sitemap to be discovered from the homepage',
+  );
+  assert.ok(
+    results.some((result) => result.url === 'https://www.deepseek.com/en/platform/'),
+    'the original search results should be preserved',
+  );
+});

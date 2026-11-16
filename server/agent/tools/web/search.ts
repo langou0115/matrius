@@ -3,6 +3,7 @@ import type { Static } from 'typebox';
 
 import type { WebSearchResult } from '../../../../contract/agent-protocol';
 import { AppError } from '../../../errors';
+import { canonicalResultKey } from '../../../services/search';
 import type { ToolModule } from '../types';
 import {
   getWebActivityEnd,
@@ -51,12 +52,13 @@ function searchResultText(queries: string[], results: WebSearchResult[]): string
 function createWebSearchTool(context: Parameters<ToolModule['create']>[0]): AgentTool<typeof webSearchParameters, Details> {
   const services = context.services;
   if (!services) throw new Error('联网工具不可用。');
+  const previousUrls = new Set<string>();
 
   return {
     name: WEB_SEARCH_TOOL_NAME,
     label: 'Web search',
     description:
-      'Search the web for current or externally verifiable information. Prefer searching over answering from memory whenever facts may have changed or the user asks you to look up, verify or find sources; answer directly only for simple tasks that need no outside facts. Respect an explicit request not to browse. Keep the exact subject, entity names, locations and stated dates; do not guess an answer or broaden to unrelated topics, and never repeat near-identical queries. Write software, product, release, science and international-news queries in English and keep official names and versions verbatim; write Chinese local policy, place and China-specific queries in Chinese. If you need several angles, languages or facets, put up to four queries in the queries array in one call instead of repeating web_search. Snippets are leads, not verified facts: read the most relevant pages before citing details, but do not try to verify every claim separately. Empty or failed results mean the evidence is insufficient, not that the subject does not exist. Before fetching, discover complementary primary sources covering the question. Additional search calls are useful during this discovery phase when important angles or sources are still missing. Once the source set is sufficient, batch-read the selected URLs instead of alternating search and fetch.',
+      'Search the web for current or externally verifiable information. Put the first pass’s 1–4 specific queries in one call: entity plus version, event, or release/changelog/news terms; avoid generic words and near-identical paraphrases. For official updates, the result set may include the product’s own news or changelog pages marked (official). After searching, read the 1–3 most relevant URLs in one web_fetch batch; do not alternate search and fetch for angles you can already foresee. Empty or failed results mean the evidence is insufficient, not that the subject does not exist.',
     parameters: webSearchParameters,
     execute: async (_toolCallId, params: Params, signal) => {
       const rawQueries = params.queries ?? (params.query ? [params.query] : []);
@@ -75,6 +77,24 @@ function createWebSearchTool(context: Parameters<ToolModule['create']>[0]): Agen
       } catch (error) {
         throw describeToolError(error);
       }
+      const resultKeys = results.map((result) => {
+        try {
+          return canonicalResultKey(result.url);
+        } catch {
+          return result.url;
+        }
+      });
+      const repeated = previousUrls.size > 0
+        && resultKeys.length > 0
+        && resultKeys.filter((key) => previousUrls.has(key)).length / resultKeys.length >= 0.8;
+      for (const key of resultKeys) previousUrls.add(key);
+      const hasOfficial = results.some((result) => result.engine.split(',').includes('official'));
+      const nextStep = repeated
+        ? 'These results are nearly identical to your previous search. Do not search again; fetch one of these URLs or answer with the evidence you already have.'
+        : 'These are candidate URLs. Pick the 1–3 most relevant and read them together in one web_fetch call. Search again only if none of these results is relevant or the pages failed to load.';
+      const officialNote = hasOfficial
+        ? ' Pages marked (official) are the product’s own news or changelog; prefer them for official-update questions.'
+        : '';
       const details: Details = {
         kind: 'search',
         query: queries[0],
@@ -85,7 +105,7 @@ function createWebSearchTool(context: Parameters<ToolModule['create']>[0]): Agen
       return {
         content: [{
           type: 'text',
-          text: `${searchResultText(queries, results)}\n\nSearch results are leads, not verified facts. These results are one part of source discovery. Before fetching, check whether the full question has enough relevant primary sources; if not, search the missing angles now. Once the source set is sufficient, put the selected distinct URLs into one web_fetch urls batch. Avoid fetching one page now and searching a foreseeable related angle afterward.`,
+          text: `${searchResultText(queries, results)}\n\n${nextStep}${officialNote}`,
         }],
         details,
       };

@@ -9,7 +9,8 @@ wrappers around them.
 | `cache.ts` | in-process TTL cache, sliding-window limits, in-flight caps | implemented |
 | `file-types.ts` | upload allow-list, safe filenames, content types | implemented |
 | `usage-estimate.ts` | historical token estimate | implemented |
-| `search.ts` | DuckDuckGo HTML + Bing RSS fallback, dedupe/rank/cache | implemented |
+| `search.ts` | DuckDuckGo HTML + Bing RSS fallback, intent-aware ranking, dedupe/cache | implemented |
+| `search-official.ts` | official news/changelog discovery from the domain revealed by search results | implemented |
 | `fetch/` | SSRF validation, redirects, compression, MIME/charset detection, Readability HTML extraction | implemented |
 | `documents/extract.ts` | docx/xlsx/pptx/PDF text extraction | implemented |
 | `documents/file-service.ts` | file list/read/grep and extraction cache | implemented |

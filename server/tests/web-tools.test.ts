@@ -43,6 +43,7 @@ test('the registry exposes the web tools with prompt and activity adapters', () 
   const tools = toolRegistry.createTools(context);
   assert.deepEqual(tools.map((tool) => tool.name).sort(), ['web_fetch', 'web_search']);
   assert.ok(toolRegistry.prompts(context.features).some((prompt) => prompt.includes('Web tools are available')));
+  assert.ok(toolRegistry.prompts(context.features).some((prompt) => prompt.includes('nearly identical')));
   assert.ok(toolRegistry.activityFor('web_search'));
   assert.ok(toolRegistry.activityFor('web_fetch'));
 });
@@ -67,6 +68,18 @@ test('web_search returns source details and a completed activity row', async () 
   const ended = adapter?.end('call-search', result, false, started ?? undefined);
   assert.equal(ended?.status, 'complete');
   assert.equal(ended?.kind === 'search' ? ended.results?.[0].title : undefined, 'Example result');
+});
+
+test('web_search warns when consecutive searches return the same results', async () => {
+  const tool = toolRegistry.createTools(context).find((item) => item.name === 'web_search') as AgentTool;
+  assert.ok(tool);
+  await tool.execute('first-search', { query: 'hello' });
+  const second = await tool.execute('second-search', { query: 'hello again' });
+  const text = second.content
+    .filter((item) => item.type === 'text')
+    .map((item) => item.text)
+    .join('\n');
+  assert.match(text, /nearly identical/u);
 });
 
 test('web_fetch accepts one or a batch of URLs and reports content size', async () => {

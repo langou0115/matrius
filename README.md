@@ -27,7 +27,7 @@
 | 客户端 | React 19、TypeScript、Vite 8 |
 | 路由 | React Router 7（`ui/router/routes.tsx`） |
 | 后端 | Node 24、TypeScript、Fastify、SQLite |
-| 运行时能力 | 进程内缓存/限流、本地文件存储、DuckDuckGo 优先（Bing 回退）搜索、Node 正文提取；旧版 Office 用 `@deepseek-ai/libreoffice-kit`，现代 Office 用 OfficeCLI，PDF 用 `pdf-lib` + `unpdf` |
+| 运行时能力 | 进程内缓存/限流、本地文件存储、DuckDuckGo 优先（Bing 回退）搜索与官网 news/sitemap 补全、Node 正文提取；旧版 Office 用 `@deepseek-ai/libreoffice-kit`，现代 Office 用 OfficeCLI，PDF 用 `pdf-lib` + `unpdf` |
 
 部署方式待重新设计，当前以本机 `npm run dev` 为准。
 
