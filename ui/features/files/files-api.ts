@@ -128,3 +128,8 @@ export async function deleteFile(request: ApiRequest, id: string): Promise<{ ok:
 export function fileContentUrl(id: string): string {
   return `/api/files/${encodeURIComponent(id)}/content`;
 }
+
+/** Server file ids are UUIDs; mock fixtures and legacy local ids are not deletable by batch. */
+export function isServerFileId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}

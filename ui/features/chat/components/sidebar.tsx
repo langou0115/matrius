@@ -2,13 +2,15 @@ import { useMobile } from '@/components/web/use-mobile';
 import { Link, router, usePathname, type Href } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderOpen, SquarePen } from 'lucide-react';
+import { FolderOpen, LayoutTemplate, SquarePen } from 'lucide-react';
 
 import { BrandMark } from '@/components/web/brand-mark';
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
 import { useInstance, useFeature } from '@/features/instance/instance-state';
+import { bulkDeleteFiles, isServerFileId } from '@/features/files/files-api';
 import { useChat, type Conversation } from '../chat-state';
+import { conversationFileIds } from '../conversation-files';
 import { ConversationMenu } from './conversation-menu';
 import { ConversationSelect } from './conversation-select';
 import { useIsPreview } from '@/features/workspace/preview-context';
@@ -26,16 +28,30 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const preview = useIsPreview();
   const instance = useInstance();
   const filesEnabled = useFeature('files');
+  const uiWorkshopEnabled = useFeature('ui_workshop');
   // Removing the entry while the instance check is unreachable makes the library look deleted
   // after a backend reload. Keep it; the library page owns the retry and the explanation.
   const showLibrary = preview || filesEnabled || instance.status === 'unavailable';
+  const showUiWorkshop = uiWorkshopEnabled || instance.status === 'unavailable';
   const pathname = usePathname().replace(/\/$/, '');
   const libraryHref = preview ? '/mock/library' : '/library';
   const onLibrary = pathname === libraryHref;
+  const workshopHref = '/ui';
+  const onWorkshop = pathname === workshopHref || pathname.startsWith(`${workshopHref}/`);
   const homeHref = preview ? '/mock/chat' : '/';
   const [editing, setEditing] = useState<Conversation | null>(null);
   const [title, setTitle] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The delete dialog offers the Library cleanup as an extra step, never by default.
+  const [deleteAttachedFiles, setDeleteAttachedFiles] = useState(false);
+  // The dialog's conversation can keep receiving messages, so read its live copy. Mock and
+  // legacy ids still offer the option; only ids the server knows are sent to bulk delete.
+  const attachedFiles = useMemo(() => {
+    if (!editing) return [];
+    const current = conversations.find((item) => item.id === editing.id) ?? editing;
+    return conversationFileIds(current, conversations);
+  }, [conversations, editing]);
+  const deletableFiles = useMemo(() => attachedFiles.filter(isServerFileId), [attachedFiles]);
   const [menu, setMenu] = useState<{ conversation: Conversation; anchor: HTMLButtonElement } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -73,6 +89,29 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
     if (!preview) writeLastRoute(id);
     router.push(conversationHref(id, preview));
   }
+  /** Deletes the conversation, and optionally the Library files only it still references. */
+  function removeConversation(conversation: Conversation, fileIds: string[]) {
+    // Cleanup happens beside the deletion: a failed request leaves the files in the Library.
+    if (fileIds.length && !preview) {
+      // Bulk delete takes at most 100 ids, so an attachment-heavy conversation is split up.
+      for (let index = 0; index < fileIds.length; index += 100) {
+        void bulkDeleteFiles(instance.request, fileIds.slice(index, index + 100)).catch(() => {});
+      }
+    }
+    dispatch({ type: 'delete', id: conversation.id });
+    forgetScrollPosition(conversation.id);
+    if (activeId === conversation.id) {
+      if (!preview) writeLastRoute(null);
+      router.replace(conversationHref(null, preview));
+    }
+    setEditing(null);
+    setDeleteAttachedFiles(false);
+  }
+  function openDeleteDialog(conversation: Conversation) {
+    setEditing(conversation);
+    setConfirmDelete(true);
+    setDeleteAttachedFiles(false);
+  }
 
   return (
     <aside className="sidebar" aria-label="对话导航" inert={sidebarCollapsed || undefined}>
@@ -84,11 +123,17 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
         </div>
       </div>
       <nav className="sidebar-primary" aria-label="工作区">
-        <button className={`new-conversation ${activeId === null && !onLibrary ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
+        <button className={`new-conversation ${activeId === null && !onLibrary && !onWorkshop ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
         {showLibrary && <Link href={libraryHref as Href} asChild>
           <LinkAnchor className={`new-conversation ${onLibrary ? 'is-active' : ''}`}
             aria-current={onLibrary ? 'page' : undefined} aria-label="打开资料库">
             <FolderOpen size={19} strokeWidth={1.75} aria-hidden="true" /><span>资料库</span>
+          </LinkAnchor>
+        </Link>}
+        {showUiWorkshop && <Link href={workshopHref as Href} asChild>
+          <LinkAnchor className={`new-conversation ${onWorkshop ? 'is-active' : ''}`}
+            aria-current={onWorkshop ? 'page' : undefined} aria-label="打开 UI 工坊">
+            <LayoutTemplate size={19} strokeWidth={1.75} aria-hidden="true" /><span>UI 工坊</span>
           </LinkAnchor>
         </Link>}
       </nav>
@@ -123,13 +168,23 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
       </LinkAnchor></Link>
       {menu && <ConversationMenu conversation={menu.conversation} anchor={menu.anchor} onClose={closeMenu}
         onPin={() => { dispatch({ type: 'pin', id: menu.conversation.id }); closeMenu(); }}
-        onRename={() => { menu.anchor.focus(); setEditing(menu.conversation); setTitle(menu.conversation.title); setConfirmDelete(false); closeMenu(); }}
-        onDelete={() => { menu.anchor.focus(); setEditing(menu.conversation); setConfirmDelete(true); closeMenu(); }}
+        onRename={() => { menu.anchor.focus(); setEditing(menu.conversation); setTitle(menu.conversation.title); setConfirmDelete(false); setDeleteAttachedFiles(false); closeMenu(); }}
+        onDelete={() => { menu.anchor.focus(); openDeleteDialog(menu.conversation); closeMenu(); }}
       />}
-      {editing && <Dialog title={confirmDelete ? '删除这段对话？' : '重命名对话'} onClose={() => setEditing(null)} className="compact-dialog">
+      {editing && <Dialog title={confirmDelete ? '删除这段对话？' : '重命名对话'}
+        onClose={() => { setEditing(null); setDeleteAttachedFiles(false); }} className="compact-dialog">
         {confirmDelete ? <>
           <p className="dialog-description">“{editing.title}”及其消息将被删除，此操作无法撤销。</p>
-          <div className="dialog-footer"><button className="secondary-button" onClick={() => setEditing(null)}>取消</button><button className="danger-button" onClick={() => { dispatch({ type: 'delete', id: editing.id }); forgetScrollPosition(editing.id); if (activeId === editing.id) { if (!preview) writeLastRoute(null); router.replace(conversationHref(null, preview)); } setEditing(null); }}>删除对话</button></div>
+          {attachedFiles.length > 0 && <label className="model-key-toggle dialog-checkbox">
+            <input className="model-checkbox-input" type="checkbox" checked={deleteAttachedFiles}
+              onChange={(event) => setDeleteAttachedFiles(event.target.checked)} />
+            <span className="model-checkbox" aria-hidden="true" />
+            同时删除在此聊天中上传或创建的文件
+          </label>}
+          <div className="dialog-footer">
+            <button type="button" className="secondary-button" data-autofocus onClick={() => setEditing(null)}>取消</button>
+            <button type="button" className="danger-button" onClick={() => removeConversation(editing, deleteAttachedFiles ? deletableFiles : [])}>删除对话</button>
+          </div>
         </> : <>
           <form onSubmit={(event) => { event.preventDefault(); if (title.trim()) { dispatch({ type: 'rename', id: editing.id, title }); setEditing(null); } }}>
             <label className="field-label" htmlFor="conversation-title">对话标题</label>

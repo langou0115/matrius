@@ -59,8 +59,20 @@ function attachmentNote(message: Pick<Message, 'role' | 'fileIds' | 'files'>): s
   return '';
 }
 
+/**
+ * A rendered component is a tool result on the wire, but the persisted history
+ * carries only messages. Without this note the model would forget that it
+ * already put a board or a dashboard on screen and would re-render it.
+ */
+function uiComponentNote(message: Pick<Message, 'uiComponents'>): string {
+  const artifacts = message.uiComponents ?? [];
+  if (!artifacts.length) return '';
+  const lines = artifacts.map((artifact) => `- ${artifact.name}（componentId: ${artifact.componentId}, 第 ${artifact.version} 版${artifact.bindingId ? `, bindingId: ${artifact.bindingId}` : ''}）`);
+  return `[本轮已向用户渲染的 UI 组件]\n${lines.join('\n')}`;
+}
+
 function withAttachments(message: Message, text: string): string {
-  const note = attachmentNote(message);
+  const note = [attachmentNote(message), uiComponentNote(message)].filter(Boolean).join('\n\n');
   if (!note) return text;
   return text.trim() ? `${text}\n\n${note}` : note;
 }
@@ -115,7 +127,7 @@ export function isContextMessage(message: Message): boolean {
   }
   return Boolean(
     message.content.trim() || message.quote?.trim() || message.images?.length
-      || message.fileIds?.length || message.files?.length,
+      || message.fileIds?.length || message.files?.length || message.uiComponents?.length,
   );
 }
 
@@ -171,7 +183,7 @@ export function estimateMessageTokens(message: Message): number {
   const body = message.role === 'user' ? getRequestText(message) : message.content;
   const incomplete = message.role === 'assistant' && (message.status === 'stopped' || message.status === 'error') ? 40 : 0;
   return MESSAGE_OVERHEAD_TOKENS + estimateTextTokens(body) + estimateTextTokens(getFeedbackText(message)) + incomplete
-    + estimateTextTokens(attachmentNote(message)) + (message.images?.length ?? 0) * IMAGE_TOKENS;
+    + estimateTextTokens(attachmentNote(message)) + estimateTextTokens(uiComponentNote(message)) + (message.images?.length ?? 0) * IMAGE_TOKENS;
 }
 
 export function estimateContextTokens(messages: Message[], systemPrompt: string): number {

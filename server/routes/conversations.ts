@@ -48,6 +48,7 @@ import {
   messagePatchSchema,
   normalizeActivities,
   normalizeProcess,
+  normalizeUiComponents,
 } from './conversation-schemas';
 
 export type ConversationRouteDeps = { db: AppDatabase };
@@ -234,6 +235,7 @@ export function registerConversationRoutes(
           fileIds: storedFiles.map((file) => fromDbUuid(file.id)),
           activities: normalizeActivities(payload.activities),
           process: normalizeProcess(payload.process),
+          uiComponents: normalizeUiComponents(payload.uiComponents),
         });
         setConversationAfterAppend(db, INSTANCE_ID, conversationId, payload.role, row.status);
         return {
@@ -300,6 +302,9 @@ export function registerConversationRoutes(
         const files = attachFiles(db, INSTANCE_ID, current.conversation_id, payload.fileIds ?? []);
         patch.fileIds = files.map((file) => fromDbUuid(file.id));
         attached = new Map(files.map((file) => [fromDbUuid(file.id), file]));
+      }
+      if (Object.hasOwn(payload, 'uiComponents')) {
+        patch.uiComponents = normalizeUiComponents(payload.uiComponents);
       }
 
       const row = applyMessagePatch(db, INSTANCE_ID, messageId, patch);

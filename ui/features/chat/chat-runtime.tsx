@@ -195,6 +195,7 @@ function useRuntime(
     const config = pickModel(models, modelId);
     const useWebTools = networkTools.ready && networkTools.enabled;
     const useFileTools = hasFeature(instance.status === 'ready' ? instance.info : null, 'files');
+    const useUiComponents = hasFeature(instance.status === 'ready' ? instance.info : null, 'ui_workshop');
     const started = agent.start({
       conversationId, replyId, messages: history, config,
       ...(contextSummary ? { contextSummary } : {}),
@@ -203,7 +204,7 @@ function useRuntime(
       thinkingEffort: config?.thinkingEffort ?? 'low',
       memoryText: memoryPromptBlock(memoryRef.current),
       systemPrompt: buildSystemPrompt(preferences),
-      enabledTools: { web: useWebTools, files: useFileTools },
+      enabledTools: { web: useWebTools, files: useFileTools, ui: useUiComponents },
     });
     return started ? config : undefined;
   }, [agent, instance, models, networkTools, preferences]);

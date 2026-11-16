@@ -20,7 +20,8 @@ import { EffortPicker } from './effort-picker';
 type Props = {
   value: string;
   onChange: (value: string) => void;
-  onSend: (images: MessageImage[], files: MessageFile[]) => boolean;
+  /** The workshop awaits persistence; chat resolves synchronously. */
+  onSend: (images: MessageImage[], files: MessageFile[]) => boolean | Promise<boolean>;
   thinkingEffort: ThinkingEffort;
   onThinkingEffortChange: (value: ThinkingEffort) => void;
   /** Called after the model switch is stored, so the conversation can remember it. */
@@ -28,6 +29,12 @@ type Props = {
   quote?: string;
   onRemoveQuote?: () => void;
   onNotice: (message: string | null) => void;
+  /** Overrides the chat runtime state when the composer belongs to another surface. */
+  running?: boolean;
+  onStop?: () => void;
+  /** Uploads belong to this conversation; defaults to the active chat. */
+  conversationId?: string | null;
+  hint?: string;
 };
 
 // Validate only on send; selecting an attachment never depends on the current model.
@@ -51,7 +58,7 @@ const PICKER_CARD_MAX_HEIGHT = 294;
 // only adds empty space beside short names.
 const PICKER_CARD_WIDTH = 248;
 
-export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, onModelChange, quote, onRemoveQuote, onNotice }: Props) {
+export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEffortChange, onModelChange, quote, onRemoveQuote, onNotice, running: runningOverride, onStop, conversationId, hint }: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // Tracks an open native picker so the focus it returns can be handed back to the editor.
@@ -126,8 +133,11 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
   const runtime = useChatRuntime();
   const { activeId } = useChat();
   // Only this conversation is blocked: another chat may keep generating in the background.
-  const running = runtime.isRunning(activeId);
+  const chatRunning = runtime.isRunning(activeId);
+  const running = runningOverride ?? chatRunning;
   const blocked = running;
+  // Attachments belong to the conversation that owns this composer.
+  const uploadConversationId = conversationId === undefined ? activeId : conversationId;
 
   // The current model is what people come back for, so its provider group and its own row
   // move to the front; the remaining order is untouched.
@@ -209,7 +219,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       ? { ...item, status: 'uploading', controller } : item));
     void uploadFile(requestRef.current, attachment.file, {
       clientId: attachment.id,
-      ...(activeId ? { conversationId: activeId } : {}),
+      ...(uploadConversationId ? { conversationId: uploadConversationId } : {}),
       signal: controller.signal,
     }).then((server) => {
       if (!mounted.current || controller.signal.aborted) return;
@@ -298,7 +308,8 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       if (!mounted.current) return;
       const files = documentAttachments.flatMap(({ serverFile }) => serverFile ? [toMessageFile(serverFile)] : []);
       if (documentAttachments.length !== files.length) { onNotice('部分附件尚未上传完成，请重试。'); return; }
-      if (!onSend(images, files)) return;
+      const sent = await onSend(images, files);
+      if (!sent) return;
       // `onSend` took ownership; dropping the ref first keeps unmount cleanup from deleting them.
       attachmentsRef.current = [];
       attachments.forEach(({ preview }) => { if (preview) { URL.revokeObjectURL(preview); previewUrls.current.delete(preview); } });
@@ -407,7 +418,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
       {attachments.length > 0 && <AttachmentList attachments={attachments} removingDisabled={sending}
         onRemove={removeAttachment} onRetry={(attachment) => startUpload(attachment)} />}
       <div className="composer-editor">
-        {showHint && <div className="composer-hint" aria-hidden="true">发消息，探索更多可能…</div>}
+        {showHint && <div className="composer-hint" aria-hidden="true">{hint ?? '发消息，探索更多可能…'}</div>}
         <textarea
           ref={input}
           aria-label="消息内容"
@@ -453,7 +464,7 @@ export function Composer({ value, onChange, onSend, thinkingEffort, onThinkingEf
           <Icon name="chevron" size={18} className="model-picker-chevron" />
         </button>
         {running && !value.trim() && !attachments.length && !quote?.trim()
-          ? <button type="button" className="send-button" onClick={() => runtime.stop(activeId ?? undefined)} aria-label="停止生成"><span className="stop-generation-icon" /></button>
+          ? <button type="button" className="send-button" onClick={() => (onStop ? onStop() : runtime.stop(activeId ?? undefined))} aria-label="停止生成"><span className="stop-generation-icon" /></button>
           : <button type="submit" className="send-button" disabled={(!value.trim() && !attachments.length && !quote?.trim())
             || sending || attachments.some(({ status }) => status === 'uploading' || status === 'error')}
             aria-label={running ? '发送补充或纠正' : '发送消息'} title={running ? '发送补充或纠正' : undefined}><Icon name="arrow" size={21} /></button>}

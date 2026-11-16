@@ -8,4 +8,6 @@
 
 迁移由 server/db/migrate.ts 与 server/db/migrations 的 SQL 执行，保留 alembic_version 修订表兼容旧数据库，无需 Python 或 Alembic CLI。数据格式使用 server/db/codecs.ts。草稿元数据、缓存与限流在进程内，必须保持单 Node 进程。
 
+UI 工坊使用 `0002_ui_workshop` 迁移：`ui_components`、`ui_component_versions`、`ui_component_bindings`、`ui_binding_commands`，以及 `messages.ui_components` 与 `conversations.kind`；`0003_ui_component_mode` 增加创建时的设计模式 `stateful`，并按已有版本的 `state_schema` 回填。接口在 `server/routes/ui-components.ts`，业务规则在 `server/services/ui-components.ts`，模型工具为 `server/agent/tools/ui`。
+
 Office 使用受控 OfficeCLI 子进程，旧格式转换使用 LibreOffice kit，PDF 使用 pdf-lib 与 unpdf。配置与目录详见 [server/README](../server/README.md)。

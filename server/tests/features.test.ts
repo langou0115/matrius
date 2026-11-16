@@ -21,7 +21,7 @@ test('the features endpoint is public and uncached', async () => {
     assert.equal(response.statusCode, 200);
     assert.equal(response.headers['cache-control'], 'no-store');
     assert.deepEqual(response.json(), { features: FEATURES });
-    assert.deepEqual(featureIds(), ['files', 'usage']);
+    assert.deepEqual(featureIds(), ['files', 'usage', 'ui_workshop']);
   } finally {
     await app.close();
     rmSync(directory, { recursive: true, force: true });

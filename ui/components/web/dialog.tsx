@@ -18,7 +18,10 @@ export function Dialog({ title, onClose, className = '', hideHeader = false, chi
     const previousFocus = document.activeElement;
     const dialog = ref.current;
     dialog?.showModal();
-    dialog?.querySelector<HTMLInputElement>('input, textarea')?.focus();
+    // A destructive dialog points the initial focus at its safe action instead of the first
+    // field, which may be an extra option the reader did not come for.
+    (dialog?.querySelector<HTMLElement>('[data-autofocus]')
+      ?? dialog?.querySelector<HTMLInputElement>('input, textarea'))?.focus();
     return () => {
       dialog?.close();
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();

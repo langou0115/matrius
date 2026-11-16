@@ -12,6 +12,7 @@
 - **单用户实例**：访问唯一工作区，对话和文件统一保存到实例后端
 - **自带模型**：支持 OpenAI Chat Completions、Responses、Anthropic Messages 及兼容服务，密钥只保存在本机
 - **完整渲染**：Markdown / GFM、KaTeX 公式、代码高亮、复制与折叠
+- **UI 工坊**：用对话生成真正可交互的组件，发布后可在任意对话中由 AI 调用渲染；组件运行在 sandbox iframe 中，版本与有状态绑定持久化在实例
 - **无登录**：所有客户端共享唯一实例，没有账户或管理员控制台
 - **自部署后端**：Node 24 + Fastify + SQLite + 本地文件存储 + 进程内缓存
 - **可安装 Web 应用**：提供 PWA manifest 与 service worker，安装后可离线打开应用外壳

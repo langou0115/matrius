@@ -17,6 +17,7 @@ export type Feature = {
 export const FEATURES: readonly Feature[] = [
   { id: 'files', name: '文件与资料库', description: '上传文档、让模型读取或生成 Office/PDF 文件。' },
   { id: 'usage', name: 'Token 用量', description: '查看实例的模型 token 使用量与每日趋势。' },
+  { id: 'ui_workshop', name: 'UI 工坊', description: '用对话生成可交互 UI 组件，并在普通对话中渲染与复用。' },
 ];
 
 export function enabledFeatures(): Feature[] {

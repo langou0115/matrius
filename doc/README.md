@@ -20,6 +20,7 @@
 | [存储与数据同步](data.md) | SQLite、文件目录、浏览器模型配置、迁移与冲突 |
 | [实例访问与资源](instance.md) | 无需登录的实例、资源统计与数据迁移 |
 | [Agent Runtime、模型与工具](agent.md) | 服务端 Runtime、模型代理与工具边界 |
+| [UI 工坊](ui-workshop.md) | 对话生成组件、版本与发布、沙箱运行时、对话内调用与有状态绑定 |
 | [文件读取与个人记忆](files-and-memory.md) | 文档解析、记忆提炼与注入 |
 | [开发、验证与交付](development.md) | 环境、启动命令、代码规则和完成检查 |
 | [后端架构与云端数据契约](backend.md) | Node/Fastify 边界、接口、并发、文件与工具 |

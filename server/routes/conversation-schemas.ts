@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import {
+  UI_COMPONENT_MAX_ARTIFACTS,
+  UI_COMPONENT_MAX_PROPS_CHARS,
+} from '../../contract/ui-component';
 import type {
   StoredProcessActivity,
   StoredWebActivity,
@@ -73,6 +77,33 @@ export const readStateSchema = z.object({
   error: readMarkerSchema.nullable().optional(),
 });
 
+const uiComponentArtifactSchema = z
+  .object({
+    componentId: z.string().min(1).max(80),
+    version: z.number().int().min(1).max(100_000),
+    name: z.string().min(1).max(200),
+    bindingId: z.string().max(80).nullable().optional(),
+    props: z.unknown().optional(),
+    commandIds: z.array(z.string().max(80)).max(20).nullable().optional(),
+  })
+  .refine((value) => value.props === undefined || JSON.stringify(value.props).length <= UI_COMPONENT_MAX_PROPS_CHARS, {
+    message: '组件数据超出体积上限。',
+  });
+
+export function normalizeUiComponents(
+  values: Array<z.infer<typeof uiComponentArtifactSchema>> | null | undefined,
+): Array<Record<string, unknown>> | null {
+  if (!values?.length) return null;
+  return values.map((value) => ({
+    componentId: value.componentId,
+    version: value.version,
+    name: value.name,
+    ...(value.bindingId ? { bindingId: value.bindingId } : {}),
+    ...(value.props !== undefined ? { props: value.props } : {}),
+    ...(value.commandIds?.length ? { commandIds: value.commandIds } : {}),
+  }));
+}
+
 export const conversationCreateSchema = z.object({
   id: z.uuid().nullable().optional(),
   clientId: z.string().max(200).nullable().optional(),
@@ -82,6 +113,7 @@ export const conversationCreateSchema = z.object({
   titleSource: z.enum(['auto', 'ai', 'manual']).nullable().optional(),
   contextSummary: contextSummarySchema.nullable().optional(),
   updatedAt: z.number().int().nullable().optional(),
+  kind: z.enum(['chat', 'workshop']).default('chat'),
 });
 
 export const conversationPatchSchema = z.object({
@@ -109,6 +141,7 @@ export const messageCreateSchema = z.object({
   fileIds: z.array(z.uuid()).max(20).default([]),
   activities: z.array(webActivitySchema).max(50).default([]),
   process: processSchema.nullable().optional(),
+  uiComponents: z.array(uiComponentArtifactSchema).max(UI_COMPONENT_MAX_ARTIFACTS).default([]),
 });
 
 export const messagePatchSchema = z.object({
@@ -123,6 +156,7 @@ export const messagePatchSchema = z.object({
   fileIds: z.array(z.uuid()).max(20).nullable().optional(),
   activities: z.array(webActivitySchema).max(50).nullable().optional(),
   process: processSchema.nullable().optional(),
+  uiComponents: z.array(uiComponentArtifactSchema).max(UI_COMPONENT_MAX_ARTIFACTS).nullable().optional(),
 });
 
 export const listConversationsQuerySchema = z.object({

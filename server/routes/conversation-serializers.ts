@@ -10,7 +10,7 @@ import type {
   MessageRow,
   StoredFileRow,
 } from '../db/repositories/conversations';
-import { messageActivities, messageFileIds, messageProcess } from '../db/repositories/conversations';
+import { messageActivities, messageFileIds, messageProcess, messageUiComponents } from '../db/repositories/conversations';
 
 export function readState(state: string, readAtMs: number | null): Record<string, unknown> {
   if (state === 'read') return { state: 'read', readAt: readAtMs };
@@ -27,6 +27,7 @@ export function conversationOut(row: ConversationRow): Record<string, unknown> {
     titleSource: row.title_source,
     contextSummary: fromDbJson<ContextSummary>(row.context_summary),
     clientUpdatedAt: row.client_updated_at_ms,
+    kind: row.kind,
     readState: {
       completed: readState(row.completed_state, row.completed_read_at_ms),
       error: readState(row.error_state, row.error_read_at_ms),
@@ -77,6 +78,7 @@ export function messageOut(
     error: row.error,
     fileIds,
     files,
+    uiComponents: messageUiComponents(row),
     revision: row.revision,
     createdAt: toMs(row.created_at),
     updatedAt: toMs(row.updated_at),

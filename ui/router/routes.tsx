@@ -15,6 +15,8 @@ const LibraryScreen = lazy(() => import('@/features/files/library-screen'));
 const StorageScreen = lazy(() => import('@/features/files/storage-screen'));
 const ModelSettingsScreen = lazy(() => import('@/features/models/model-settings-screen'));
 const PersonalizationScreen = lazy(() => import('@/features/settings/personalization-screen'));
+const UiWorkshopScreen = lazy(() => import('@/features/ui-workshop/ui-workshop-screen'));
+const UiComponentWorkspace = lazy(() => import('@/features/ui-workshop/ui-component-workspace'));
 const UsageScreen = lazy(() => import('@/features/usage/usage-screen'));
 const MockIndexScreen = lazy(() => import('@/features/mock/mock-index-screen'));
 const ProcessPreview = lazy(() => import('@/features/mock/process-preview'));
@@ -37,6 +39,8 @@ export function AppRoutes() {
         <Route index element={<ChatRoute />} />
         <Route path="c/:conversationId" element={<ChatRoute />} />
         <Route path="library" element={<LibraryScreen />} />
+        <Route path="ui" element={<UiWorkshopScreen />} />
+        <Route path="ui/:componentId" element={<UiComponentWorkspace />} />
 
         <Route path="settings" element={<SettingsRootRedirect />} />
         <Route path="settings/appearance" element={<AppearanceScreen />} />

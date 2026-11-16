@@ -156,15 +156,22 @@ export function supervise() {
 }
 
 async function ready(url, signal) {
-  for (let attempt = 0; attempt < 90; attempt++) {
+  const startedAt = Date.now();
+  let announced = false;
+  // A cold tsx compile after a large change can take well over 45 seconds on Windows.
+  for (let attempt = 0; attempt < 240; attempt++) {
     signal.throwIfAborted();
     try {
       const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) });
       if (response.ok) return;
     } catch { /* The API may still be importing the app. */ }
+    if (!announced && Date.now() - startedAt > 20_000) {
+      announced = true;
+      console.log('Node API is still starting (the first run compiles TypeScript); waiting up to two minutes...');
+    }
     await new Promise((accept) => setTimeout(accept, 500));
   }
-  throw new Error('Local API readiness failed. Check the Node API output above.');
+  throw new Error('Local API readiness failed after two minutes. Check the Node API output above.');
 }
 
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {

@@ -7,6 +7,7 @@ import type { ThinkingEffort } from '../../contract/agent-protocol';
 import { createAgentModel, type ModelConfig } from '../../contract/agent-provider';
 import { thinkingBudgetsFor } from '../../contract/agent-thinking';
 import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from '../../contract/agent-types';
+import type { UiComponentArtifact, UiComponentChange } from '../../contract/ui-component';
 import { directStream } from './llm/direct-stream';
 import { createReplyDiagnostics } from './diagnostics';
 import { emptyToolActivity, type ToolActivityResolver } from './tool-activity';
@@ -58,6 +59,21 @@ export function describeModelError(reason: unknown) {
     return '服务商拒绝了请求，请检查模型协议、Base URL 和模型配置。';
   }
   return '模型回复失败，请检查模型配置和服务商状态后重试。';
+}
+
+/** Components are keyed by binding when stateful, otherwise by component id + version. */
+function mergeUiArtifact(list: UiComponentArtifact[], artifact: UiComponentArtifact): UiComponentArtifact[] {
+  const key = (item: UiComponentArtifact) => item.bindingId ?? `${item.componentId}@${item.version}`;
+  const index = list.findIndex((item) => key(item) === key(artifact));
+  if (index < 0) return [...list, artifact];
+  const previous = list[index];
+  const commandIds = [...new Set([...(previous.commandIds ?? []), ...(artifact.commandIds ?? [])])];
+  const merged: UiComponentArtifact = {
+    ...previous,
+    ...artifact,
+    ...(commandIds.length ? { commandIds } : {}),
+  };
+  return list.map((item, position) => (position === index ? merged : item));
 }
 
 /** Providers occasionally omit counters; never let NaN reach the reported total. */
@@ -188,6 +204,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   let activities: WebActivity[] = [];
   let process: ProcessActivity[] = [];
   let generatedFiles: MessageFile[] = [];
+  let uiComponents: UiComponentArtifact[] = [];
+  let uiComponentChange: UiComponentChange | undefined;
   let assistantIndex = 0;
 
   function setLast(target: string[], value: string) {
@@ -214,6 +232,10 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     return [...answers, ...(draft ? [draft] : [])].join('\n\n');
   }
   function emit() {
+    // A workshop change is a one-shot notification: sending it on every later delta would
+    // make the client refetch the preview on every token.
+    const change = uiComponentChange;
+    uiComponentChange = undefined;
     onUpdate({
       ...(contextTokens ? { contextTokens } : {}),
       reasoningActive,
@@ -222,6 +244,8 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       activities,
       process,
       ...(generatedFiles.length ? { files: generatedFiles } : {}),
+      ...(uiComponents.length ? { uiComponents } : {}),
+      ...(change ? { uiComponentChange: change } : {}),
     });
   }
 
@@ -244,6 +268,11 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       for (const file of toolActivity.files(event.result)) {
         if (!generatedFiles.some((item) => item.id === file.id)) generatedFiles = [...generatedFiles, file];
       }
+      for (const artifact of toolActivity.uiComponents(event.result)) {
+        uiComponents = mergeUiArtifact(uiComponents, artifact);
+      }
+      const change = toolActivity.uiComponentChange(event.result);
+      if (change) uiComponentChange = change;
     }
     const endedAt = Date.now();
     activities = activities.map((activity) => {

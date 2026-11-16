@@ -2,7 +2,7 @@ import {
   cloneElement, isValidElement, useEffect,
   type AnchorHTMLAttributes, type MouseEvent, type ReactElement,
 } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 /**
  * The app's navigation surface. It mirrors the handful of Expo Router primitives the
@@ -49,10 +49,17 @@ export function usePathname(): string {
   return useLocation().pathname;
 }
 
-/** Query string values for the current page, matching Expo Router's object form. */
+/**
+ * Path parameters and query string values for the current page, matching Expo
+ * Router's object form. Query values win when a name collides.
+ */
 export function useLocalSearchParams<T extends Record<string, string | undefined> = Record<string, string | undefined>>(): T {
+  const pathParams = useParams();
   const [params] = useSearchParams();
   const values: Record<string, string> = {};
+  for (const [key, value] of Object.entries(pathParams)) {
+    if (typeof value === 'string' && value) values[key] = value;
+  }
   params.forEach((value, key) => { values[key] = value; });
   return values as T;
 }

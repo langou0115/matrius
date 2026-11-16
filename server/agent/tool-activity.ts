@@ -1,10 +1,11 @@
 import type { MessageFile, WebActivity } from '../../contract/agent-protocol';
+import { isUiComponentArtifact, type UiComponentArtifact, type UiComponentChange } from '../../contract/ui-component';
 
 /**
- * The agent loop only needs four operations from the tool layer:
- * start/end activity rows, generated-file collection and (later) prompt text.
- * Tool modules and the registry own the concrete implementation; the runner
- * stays independent of web/file-tool imports.
+ * The agent loop only needs a few operations from the tool layer:
+ * start/end activity rows, generated-file collection, UI component artifacts and
+ * (later) prompt text. Tool modules and the registry own the concrete
+ * implementation; the runner stays independent of web/file/UI-tool imports.
  */
 export type ToolActivityResolver = {
   start(toolName: string, toolCallId: string, args: unknown): WebActivity | null;
@@ -16,6 +17,10 @@ export type ToolActivityResolver = {
     previous?: WebActivity,
   ): WebActivity | null;
   files(result: unknown): MessageFile[];
+  /** Components a reply rendered; the runner accumulates them into the message. */
+  uiComponents(result: unknown): UiComponentArtifact[];
+  /** A workshop run wrote a new component version. */
+  uiComponentChange(result: unknown): UiComponentChange | null;
 };
 
 /** A text-only run has no tools, so every hook is a no-op. */
@@ -23,9 +28,17 @@ export const emptyToolActivity: ToolActivityResolver = {
   start: () => null,
   end: () => null,
   files: () => [],
+  uiComponents: () => [],
+  uiComponentChange: () => null,
 };
 
 import type { ToolRegistry } from './tools/registry';
+
+function detailsOf(result: unknown): Record<string, unknown> | null {
+  if (!result || typeof result !== 'object') return null;
+  const details = (result as { details?: unknown }).details;
+  return details && typeof details === 'object' ? details as Record<string, unknown> : null;
+}
 
 /** Bind the registry's activity adapters to the runner's tool-agnostic hooks. */
 export function createToolActivityResolver(registry: ToolRegistry): ToolActivityResolver {
@@ -39,13 +52,25 @@ export function createToolActivityResolver(registry: ToolRegistry): ToolActivity
       return adapter ? adapter.end(toolCallId, result, isError, previous) : null;
     },
     files: (result) => {
-      if (!result || typeof result !== 'object') return [];
-      const details = (result as { details?: Record<string, unknown> }).details;
+      const details = detailsOf(result);
       const file = details?.file as Partial<MessageFile> | undefined;
       if (!file || typeof file.id !== 'string' || typeof file.filename !== 'string'
         || typeof file.contentType !== 'string' || typeof file.size !== 'number') return [];
       return [{ id: file.id, filename: file.filename, contentType: file.contentType, size: file.size,
         ...(typeof file.revision === 'number' ? { revision: file.revision } : {}) }];
+    },
+    uiComponents: (result) => {
+      const artifact = detailsOf(result)?.artifact;
+      return isUiComponentArtifact(artifact) ? [artifact] : [];
+    },
+    uiComponentChange: (result) => {
+      const change = detailsOf(result)?.change;
+      if (!change || typeof change !== 'object') return null;
+      const record = change as Record<string, unknown>;
+      if (typeof record.componentId !== 'string' || typeof record.version !== 'number'
+        || typeof record.name !== 'string') return null;
+      const action = record.action === 'create' || record.action === 'publish' ? record.action : 'update';
+      return { componentId: record.componentId, version: record.version, name: record.name, action };
     },
   };
 }
