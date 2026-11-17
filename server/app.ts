@@ -16,6 +16,7 @@ import { registerDebugRoutes } from './routes/debug';
 import { registerFeatureRoutes } from './routes/features';
 import { registerFileRoutes } from './routes/files';
 import { registerHealthRoutes } from './routes/health';
+import { registerTaskRoutes } from './routes/tasks';
 import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { MemoryCache } from './services/cache';
@@ -25,6 +26,7 @@ import { createFetchService } from './services/fetch';
 import { createHttpClient } from './services/http';
 import { createSearchService } from './services/search';
 import { LocalStorage } from './services/storage';
+import { createScheduledTaskService } from './services/tasks';
 
 export type AppDependencies = {
   settings: Settings;
@@ -88,8 +90,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
       return (await documentService).run(instanceId, request);
     },
   };
+  const taskService = createScheduledTaskService(db);
   const runs = options.runs ?? createAgentRunService({
-    services: { search, fetch, files: documents },
+    services: { search, fetch, files: documents, tasks: taskService },
   });
 
   const app = Fastify({
@@ -118,7 +121,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   await app.register(multipart, {
     limits: { fileSize: settings.MAX_UPLOAD_BYTES, files: 1 },
   });
-  await registerDebugRoutes(app, settings);
+  await registerDebugRoutes(app, { settings, search, fetch });
 
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header('X-Request-ID', request.id);
@@ -160,6 +163,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   registerConversationRoutes(app, { db });
   registerWorkspaceRoutes(app, { db });
   registerUsageRoutes(app, { db });
+  registerTaskRoutes(app, { db });
   registerFileRoutes(app, { db, storage, cache, settings });
   registerAgentRoutes(app, { runs });
 

@@ -14,7 +14,7 @@
 
 - 所有前端文件使用普通 `X.tsx` / `X.ts` 后缀，不再有 `.web.tsx` / `.web.ts`、`.native.*` 或 fallback 兄弟文件；项目只维护 Web + PWA 目标。
 - 路由由 `ui/router/routes.tsx` 中的显式 `<Routes>` 定义，是唯一路由表。页面模块放在哪个目录不会自动成为路由。
-- 除聊天路由外，页面都用 `React.lazy` 按需加载；`/mock/*` 统一包在 `MockOnly` 中，生产构建直接 `<Navigate to="/" replace />`；未知 URL 也重定向到 `/`。
+- 除聊天路由外，页面都用 `React.lazy` 按需加载；`/debug` 与 `/mock/*` 统一包在 `DevOnly` 中，生产构建直接 `<Navigate to="/" replace />`；未知 URL 也重定向到 `/`。
 - 导航 API 只从 `@/router` 导入：`Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href` 类型。功能代码不要直接导入 `react-router-dom`；测试通过 `tests/stubs/router.mjs` 替换该模块。
 - 新增页面时在 `ui/router/routes.tsx` 注册路径，再把页面组件放进对应的 `features/` 模块；如需开发预览，在 `/mock/*` 路由中复用该组件，并往 `features/mock/mock-items.ts` 增加一条清单记录。
 
@@ -26,7 +26,7 @@ ui/
 ├── main.tsx                            createRoot + BrowserRouter + RouterNavigationBridge + AppRoutes
 ├── router/
 │   ├── index.tsx                       Link、router.push/replace/back、Redirect、usePathname、useLocalSearchParams、RouterNavigationBridge、Href
-│   └── routes.tsx                      唯一路由表，React.lazy、MockOnly 与未知路径重定向
+│   └── routes.tsx                      唯一路由表，React.lazy、DevOnly 与未知路径重定向
 ├── components/web/
 │   ├── app-shell.tsx                   主题/实例/工作区/通知 Provider、整页与聊天布局、Service Worker 注册
 │   ├── app-frame.tsx                   配色变量、系统明暗模式与开发预览工具栏
@@ -136,15 +136,18 @@ ui/
 │   │   ├── change-password-dialog.tsx  首次改密与主动改密
 │   │   ├── network-tools-preference.ts 保存在实例画像字段的网络工具开关
 │   │   ├── network-tools-state.tsx     网络工具开关状态
+│   ├── debug/
+│   │   ├── debug-screen.tsx            开发调试页（Mock 预览与工具测试栏目）
+│   │   └── tools-panel.tsx             Search / Fetch 等工具连通性测试面板
 │   └── mock/
 │       ├── mock-items.ts               预览项清单与按路径反查
-│       ├── mock-index-screen.tsx       独立全页预览索引
 │       ├── process-preview.tsx         思考/工具/中断状态预览
 │       └── storage-preview.tsx         保存失败提示预览
 ├── core/
 │   ├── api/
 │   │   ├── agent-aux.ts                标题与记忆摘要请求
 │   │   ├── agent-runs.ts               提交 Agent 运行、消费 SSE、停止/steer
+│   │   ├── debug-tools.ts              开发调试工具测试请求（Search / Fetch）
 │   │   └── instance-client.ts          实例能力状态与同源 API 请求
 │   ├── database/browser-store.ts       IndexedDB 事务与旧数据读取辅助（不存聊天数据）
 │   ├── features/capabilities.ts        按服务端授权判断功能

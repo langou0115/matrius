@@ -6,7 +6,8 @@ import { DEFAULT_SYSTEM_PROMPT } from '../../contract/agent-prompt';
 import type { ThinkingEffort } from '../../contract/agent-protocol';
 import { createAgentModel, type ModelConfig } from '../../contract/agent-provider';
 import { thinkingBudgetsFor } from '../../contract/agent-thinking';
-import type { Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from '../../contract/agent-types';
+import { formatUiBlockMarker } from '../../contract/intelligent-ui';
+import type { IntelligentUiBlock, Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from '../../contract/agent-types';
 import { directStream } from './llm/direct-stream';
 import { createReplyDiagnostics } from './diagnostics';
 import { emptyToolActivity, type ToolActivityResolver } from './tool-activity';
@@ -183,11 +184,12 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   // tool is a transition ("let me check…"), not part of the answer: the next message overwrites
   // it instead of letting every preamble pile up in the final reply. Messages without a tool
   // call are answers, so a supplement that legitimately continues the reply stays cumulative.
-  const contentTurns: { text: string; answer: boolean }[] = [];
+  const contentTurns: { text: string; answer: boolean; uiBlockIds: string[] }[] = [];
   const reasoningTurns: string[] = [];
   let activities: WebActivity[] = [];
   let process: ProcessActivity[] = [];
   let generatedFiles: MessageFile[] = [];
+  let uiBlocks: IntelligentUiBlock[] = [];
   let assistantIndex = 0;
 
   function setLast(target: string[], value: string) {
@@ -197,10 +199,16 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   function setLastContent(value: string) {
     const last = contentTurns.at(-1);
     if (last) last.text = value;
-    else contentTurns.push({ text: value, answer: false });
+    else contentTurns.push({ text: value, answer: false, uiBlockIds: [] });
   }
   /** Answers stay joined; the newest transition text is only a draft until replaced. */
   function visibleContent(): string {
+    const explicitMarkers = new Set<string>();
+    for (const turn of contentTurns) {
+      for (const match of turn.text.matchAll(/\[\[ui:([a-zA-Z0-9_-]+)\]\]/gu)) {
+        explicitMarkers.add(match[1]);
+      }
+    }
     const answers: string[] = [];
     let draft = '';
     for (const turn of contentTurns) {
@@ -209,6 +217,12 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         continue;
       }
       if (turn.text) answers.push(turn.text);
+      for (const id of turn.uiBlockIds) {
+        if (!explicitMarkers.has(id)) {
+          explicitMarkers.add(id);
+          answers.push(formatUiBlockMarker(id));
+        }
+      }
       draft = '';
     }
     return [...answers, ...(draft ? [draft] : [])].join('\n\n');
@@ -222,6 +236,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       activities,
       process,
       ...(generatedFiles.length ? { files: generatedFiles } : {}),
+      ...(uiBlocks.length ? { uiBlocks } : {}),
     });
   }
 
@@ -243,6 +258,20 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     if (!event.isError) {
       for (const file of toolActivity.files(event.result)) {
         if (!generatedFiles.some((item) => item.id === file.id)) generatedFiles = [...generatedFiles, file];
+      }
+      const addedBlockIds: string[] = [];
+      for (const block of toolActivity.uiBlocks(event.result)) {
+        if (!uiBlocks.some((item) => item.id === block.id)) {
+          uiBlocks = [...uiBlocks, block];
+          addedBlockIds.push(block.id);
+        }
+      }
+      if (addedBlockIds.length) {
+        const lastTurn = contentTurns.at(-1);
+        if (lastTurn) {
+          lastTurn.answer = true;
+          lastTurn.uiBlockIds.push(...addedBlockIds);
+        }
       }
     }
     const endedAt = Date.now();
@@ -283,7 +312,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       const message = event.message;
       if (event.type === 'message_start') {
         assistantIndex++;
-        contentTurns.push({ text: '', answer: false });
+        contentTurns.push({ text: '', answer: false, uiBlockIds: [] });
         reasoningTurns.push('');
       }
       if (event.type === 'message_update') {
@@ -315,9 +344,13 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
       setLastContent(message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''));
       setLast(reasoningTurns, message.content.filter((block) => block.type === 'thinking').map((block) => block.thinking).join(''));
       if (event.type === 'message_end') {
-        // A message that requested a tool is a transition; only a tool-free message is an answer.
+        // A message that requested a tool is a transition; only a tool-free message (or one
+        // that emitted an inline UI card) is kept as part of the answer.
         const lastContent = contentTurns.at(-1);
-        if (lastContent) lastContent.answer = !message.content.some((block) => block.type === 'toolCall');
+        if (lastContent) {
+          lastContent.answer = !message.content.some((block) => block.type === 'toolCall')
+            || lastContent.uiBlockIds.length > 0;
+        }
       }
       if (event.type === 'message_end') countUsage(message.usage);
       emit();

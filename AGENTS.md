@@ -24,8 +24,8 @@ npm run dev                 # 本机 Node API + Vite，数据默认在 ~/.matriu
 npm run dev:server          # 只启动 TypeScript/Fastify 后端（tsx watch）
 npm run build               # Vite 生产构建到 dist/
 npm run db:migrate          # 只迁移本机开发库
-npm run test                # UI/共享测试，按文件串行执行
-npm run test:server         # 后端测试（node:test + tsx）
+npm run test                # UI/共享测试，按文件并发执行
+npm run test:server         # 后端测试（node:test + tsx），按文件并发执行
 npm run typecheck:server    # 后端类型检查
 npx tsc --noEmit            # UI 类型检查
 npx eslint .                # 使用 eslint.config.mjs 检查，可选
@@ -36,7 +36,7 @@ npx eslint .                # 使用 eslint.config.mjs 检查，可选
 ## 前端约定
 
 - 前端是 React 19 + TypeScript 的普通 Web 应用，Vite 8 构建、React Router 7 路由；入口是根目录 `index.html` 与 `ui/main.tsx`。
-- 路由只有一个事实源：`ui/router/routes.tsx`。新增页面必须在其中注册；除聊天路由外页面使用 `React.lazy`；`/mock/*` 由 `MockOnly` 保护，生产构建直接回到 `/`，未知 URL 也重定向到 `/`。
+- 路由只有一个事实源：`ui/router/routes.tsx`。新增页面必须在其中注册；除聊天路由外页面使用 `React.lazy`；`/debug` 与 `/mock/*` 由 `DevOnly` 保护，生产构建直接回到 `/`，未知 URL 也重定向到 `/`。
 - 导航统一从 `@/router` 导入 `Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href`；功能代码不要直接导入 `react-router-dom`。
 - 不再有 `.web.tsx` / `.web.ts` 后缀、平台 fallback 兄弟文件或 `ui/app/`；所有页面与组件都是普通 `X.tsx` / `X.ts`，只维护 Web + PWA 目标。
 - 页面外壳在 `ui/components/web/app-shell.tsx`；只在 Web 端运行，不添加原生工程、移动端壳或第二套路由。

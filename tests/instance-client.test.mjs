@@ -40,6 +40,12 @@ test('API cancellation and Retry-After preserve error details', async () => {
   await assert.rejects(busy.request('/api/tools/search'), e => e instanceof ApiError && e.retryAfterMs === 2000);
 });
 
+test('204 No Content responses resolve cleanly without JSON parse error', async () => {
+  const client = createInstanceClient(async () => new Response(null, { status: 204 }));
+  const result = await client.request('/api/tasks/task-1', { method: 'DELETE' });
+  assert.equal(result, undefined);
+});
+
 test('resource settings contain storage and usage without an account category', () => {
   const items = visibleSettings(['files', 'usage'], false, true);
   assert.equal(items.find(i => i.id === 'storage').group, '资源');

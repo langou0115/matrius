@@ -94,6 +94,12 @@ export const conversationPatchSchema = z.object({
   readState: readStateSchema.nullable().optional(),
 });
 
+import type { IntelligentUiBlock } from '../../contract/intelligent-ui';
+
+const uiBlocksSchema = z.array(
+  z.custom<IntelligentUiBlock>((value) => typeof value === 'object' && value !== null),
+).max(10);
+
 export const messageCreateSchema = z.object({
   id: z.uuid().nullable().optional(),
   clientId: z.string().max(200).nullable().optional(),
@@ -109,6 +115,7 @@ export const messageCreateSchema = z.object({
   fileIds: z.array(z.uuid()).max(20).default([]),
   activities: z.array(webActivitySchema).max(50).default([]),
   process: processSchema.nullable().optional(),
+  uiBlocks: uiBlocksSchema.nullable().optional(),
 });
 
 export const messagePatchSchema = z.object({
@@ -123,6 +130,7 @@ export const messagePatchSchema = z.object({
   fileIds: z.array(z.uuid()).max(20).nullable().optional(),
   activities: z.array(webActivitySchema).max(50).nullable().optional(),
   process: processSchema.nullable().optional(),
+  uiBlocks: uiBlocksSchema.nullable().optional(),
 });
 
 export const listConversationsQuerySchema = z.object({

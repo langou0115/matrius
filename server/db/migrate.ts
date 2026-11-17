@@ -18,6 +18,8 @@ export type Migration = {
  */
 export const MIGRATIONS: readonly Migration[] = [
   { id: '0001_initial', file: '0001_initial.sql' },
+  { id: '0002_scheduled_tasks', file: '0002_scheduled_tasks.sql' },
+  { id: '0003_ui_blocks', file: '0003_ui_blocks.sql' },
 ];
 
 export const HEAD_REVISION = MIGRATIONS[MIGRATIONS.length - 1].id;

@@ -10,7 +10,7 @@ export function DemoToolbar() {
   if (!item) return null;
   return <div className="demo-toolbar" aria-label="开发示例预览">
     <span>{item.title}</span>
-    <Link href="/mock" asChild><LinkAnchor>索引</LinkAnchor></Link>
+    <Link href="/debug" asChild><LinkAnchor>Debug</LinkAnchor></Link>
     <button onClick={() => window.location.reload()}>重置</button>
     <Link href="/" asChild><LinkAnchor>退出</LinkAnchor></Link>
   </div>;

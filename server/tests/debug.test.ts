@@ -59,5 +59,43 @@ test('the debug page can be disabled explicitly', async () => {
   await withApp({ ENABLE_DEBUG_PAGE: 'false' }, async (app) => {
     assert.equal((await app.inject({ method: 'GET', url: '/debug' })).statusCode, 404);
     assert.equal((await app.inject({ method: 'GET', url: '/api/openapi.json' })).statusCode, 404);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/debug/tools/search', payload: { query: 'test' } })).statusCode, 404);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/debug/tools/fetch', payload: { url: 'https://example.com' } })).statusCode, 404);
+  });
+});
+
+test('the debug tool test endpoints validate inputs and report tool errors cleanly', async () => {
+  await withApp({}, async (app) => {
+    const emptySearch = await app.inject({
+      method: 'POST',
+      url: '/api/debug/tools/search',
+      payload: { query: '   ' },
+    });
+    assert.equal(emptySearch.statusCode, 422);
+
+    const emptyFetch = await app.inject({
+      method: 'POST',
+      url: '/api/debug/tools/fetch',
+      payload: { url: '' },
+    });
+    assert.equal(emptyFetch.statusCode, 422);
+
+    const blockedFetch = await app.inject({
+      method: 'POST',
+      url: '/api/debug/tools/fetch',
+      payload: { url: 'http://127.0.0.1:8080/secret', mode: 'fast' },
+    });
+    assert.equal(blockedFetch.statusCode, 200);
+    const body = blockedFetch.json() as {
+      ok: boolean;
+      tool: string;
+      tookMs: number;
+      error?: { code: string; message: string };
+    };
+    assert.equal(body.ok, false);
+    assert.equal(body.tool, 'fetch');
+    assert.equal(typeof body.tookMs, 'number');
+    assert.ok(body.error?.code);
+    assert.ok(body.error?.message);
   });
 });

@@ -9,24 +9,26 @@ import SettingsRootRedirect from '@/features/settings/settings-root-redirect';
 /**
  * Every screen is loaded on demand except the chat page, so the first paint only
  * carries the shell and the conversation view. Paths mirror the address bar exactly;
- * `/mock/*` renders the same screens with local preview data during development.
+ * `/debug` and `/mock/*` exist only during development.
  */
 const LibraryScreen = lazy(() => import('@/features/files/library-screen'));
+const TasksScreen = lazy(() => import('@/features/tasks/tasks-screen'));
 const StorageScreen = lazy(() => import('@/features/files/storage-screen'));
 const ModelSettingsScreen = lazy(() => import('@/features/models/model-settings-screen'));
 const PersonalizationScreen = lazy(() => import('@/features/settings/personalization-screen'));
 const UsageScreen = lazy(() => import('@/features/usage/usage-screen'));
-const MockIndexScreen = lazy(() => import('@/features/mock/mock-index-screen'));
+const DebugScreen = lazy(() => import('@/features/debug/debug-screen'));
 const ProcessPreview = lazy(() => import('@/features/mock/process-preview'));
 const StoragePreview = lazy(() => import('@/features/mock/storage-preview'));
+const IntelligentUiPreview = lazy(() => import('@/features/mock/intelligent-ui-preview'));
 
 const AboutScreen = lazy(() => import('@/features/settings/settings-detail-screen')
   .then((module) => ({ default: module.AboutSettingsScreen })));
 const AppearanceScreen = lazy(() => import('@/features/settings/settings-detail-screen')
   .then((module) => ({ default: module.AppearanceSettingsScreen })));
 
-/** Preview routes exist only in development; a production build drops them entirely. */
-function MockOnly({ children }: { children: ReactNode }) {
+/** Development-only routes; a production build redirects them back to `/`. */
+function DevOnly({ children }: { children: ReactNode }) {
   return import.meta.env.DEV ? <>{children}</> : <Navigate to="/" replace />;
 }
 
@@ -37,6 +39,7 @@ export function AppRoutes() {
         <Route index element={<ChatRoute />} />
         <Route path="c/:conversationId" element={<ChatRoute />} />
         <Route path="library" element={<LibraryScreen />} />
+        <Route path="tasks" element={<TasksScreen />} />
 
         <Route path="settings" element={<SettingsRootRedirect />} />
         <Route path="settings/appearance" element={<AppearanceScreen />} />
@@ -48,19 +51,23 @@ export function AppRoutes() {
         <Route path="settings/usage" element={<UsageScreen />} />
         <Route path="settings/about" element={<AboutScreen />} />
 
-        <Route path="mock" element={<MockOnly><MockIndexScreen /></MockOnly>} />
-        <Route path="mock/chat" element={<MockOnly><ChatRoute /></MockOnly>} />
-        <Route path="mock/chat/c/:conversationId" element={<MockOnly><ChatRoute /></MockOnly>} />
-        <Route path="mock/chat/settings" element={<MockOnly><SettingsRootRedirect /></MockOnly>} />
-        <Route path="mock/chat/settings/appearance" element={<MockOnly><AppearanceScreen /></MockOnly>} />
-        <Route path="mock/chat/settings/theme" element={<MockOnly><AppearanceRedirect /></MockOnly>} />
-        <Route path="mock/chat/settings/display" element={<MockOnly><AppearanceRedirect /></MockOnly>} />
-        <Route path="mock/chat/settings/models" element={<MockOnly><ModelSettingsScreen /></MockOnly>} />
-        <Route path="mock/chat/settings/personalization" element={<MockOnly><PersonalizationScreen /></MockOnly>} />
-        <Route path="mock/chat/settings/about" element={<MockOnly><AboutScreen /></MockOnly>} />
-        <Route path="mock/library" element={<MockOnly><LibraryScreen /></MockOnly>} />
-        <Route path="mock/process" element={<MockOnly><ProcessPreview /></MockOnly>} />
-        <Route path="mock/storage" element={<MockOnly><StoragePreview /></MockOnly>} />
+        <Route path="debug" element={<DevOnly><DebugScreen /></DevOnly>} />
+        <Route path="debug/mock" element={<DevOnly><DebugScreen /></DevOnly>} />
+        <Route path="debug/mock/intelligent-ui" element={<DevOnly><IntelligentUiPreview /></DevOnly>} />
+        <Route path="mock/chat" element={<DevOnly><ChatRoute /></DevOnly>} />
+        <Route path="mock/chat/c/:conversationId" element={<DevOnly><ChatRoute /></DevOnly>} />
+        <Route path="mock/chat/settings" element={<DevOnly><SettingsRootRedirect /></DevOnly>} />
+        <Route path="mock/chat/settings/appearance" element={<DevOnly><AppearanceScreen /></DevOnly>} />
+        <Route path="mock/chat/settings/theme" element={<DevOnly><AppearanceRedirect /></DevOnly>} />
+        <Route path="mock/chat/settings/display" element={<DevOnly><AppearanceRedirect /></DevOnly>} />
+        <Route path="mock/chat/settings/models" element={<DevOnly><ModelSettingsScreen /></DevOnly>} />
+        <Route path="mock/chat/settings/personalization" element={<DevOnly><PersonalizationScreen /></DevOnly>} />
+        <Route path="mock/chat/settings/about" element={<DevOnly><AboutScreen /></DevOnly>} />
+        <Route path="mock/library" element={<DevOnly><LibraryScreen /></DevOnly>} />
+        <Route path="mock/tasks" element={<DevOnly><TasksScreen /></DevOnly>} />
+        <Route path="mock/process" element={<DevOnly><ProcessPreview /></DevOnly>} />
+        <Route path="mock/storage" element={<DevOnly><StoragePreview /></DevOnly>} />
+        <Route path="mock/intelligent-ui" element={<DevOnly><IntelligentUiPreview /></DevOnly>} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

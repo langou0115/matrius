@@ -41,7 +41,7 @@ const context: ToolContext = {
 
 test('the registry exposes the web tools with prompt and activity adapters', () => {
   const tools = toolRegistry.createTools(context);
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['web_fetch', 'web_search']);
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['ask_question', 'show_weather', 'web_fetch', 'web_search']);
   assert.ok(toolRegistry.prompts(context.features).some((prompt) => prompt.includes('Web tools are available')));
   assert.ok(toolRegistry.prompts(context.features).some((prompt) => prompt.includes('nearly identical')));
   assert.ok(toolRegistry.activityFor('web_search'));

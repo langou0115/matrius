@@ -5,6 +5,7 @@ import type { WebActivity } from '../../../contract/agent-protocol';
 import type { DocumentToolService } from '../../services/documents/service';
 import type { FetchService } from '../../services/fetch';
 import type { SearchService } from '../../services/search';
+import type { ScheduledTaskService } from '../../services/tasks';
 
 export type { FeatureId } from '../../features/types';
 
@@ -12,6 +13,7 @@ export type ToolServices = {
   search: SearchService;
   fetch: FetchService;
   files?: DocumentToolService;
+  tasks?: ScheduledTaskService;
 };
 
 /**

@@ -1,0 +1,1021 @@
+/* Intelligent UI shared card shell */
+.reply-ui-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.iui-card {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--foreground);
+  overflow: hidden;
+  font-family: var(--font-display);
+}
+
+/* ==================== Weather Card ==================== */
+.iui-weather-card {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--primary) 7%, var(--card)) 0%,
+    var(--card) 58%
+  );
+}
+
+.iui-weather-card.is-rain,
+.iui-weather-card.is-storm {
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--primary) 10%, var(--card)) 0%,
+    var(--card) 60%
+  );
+}
+
+.iui-weather-card.is-sunny {
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--primary) 9%, var(--card)) 0%,
+    var(--card) 60%
+  );
+}
+
+.iui-weather-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iui-weather-location {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--foreground);
+}
+
+.iui-weather-location strong {
+  font-family: var(--font-medium);
+  font-weight: 500;
+  font-size: var(--text-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iui-weather-observed {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+  white-space: nowrap;
+}
+
+.iui-unit-toggle {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--soft);
+  flex-shrink: 0;
+}
+
+.iui-unit-toggle button {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--text-caption);
+  font-family: var(--font-medium);
+  color: var(--muted-text);
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.iui-unit-toggle button[aria-pressed='true'] {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.iui-weather-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.iui-weather-temp-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.iui-weather-glyph.is-sunny { color: #f59e0b; }
+.iui-weather-glyph.is-partly-cloudy { color: #eab308; }
+.iui-weather-glyph.is-cloudy { color: var(--muted-text); }
+.iui-weather-glyph.is-rain { color: #3b82f6; }
+.iui-weather-glyph.is-storm { color: #6366f1; }
+.iui-weather-glyph.is-snow { color: #38bdf8; }
+.iui-weather-glyph.is-fog { color: var(--muted-text); }
+
+.iui-weather-temp {
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-family: var(--font-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.iui-weather-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.iui-weather-condition {
+  font-size: var(--text-ui);
+  font-family: var(--font-medium);
+}
+
+.iui-weather-range {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.iui-weather-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  gap: 8px;
+}
+
+.iui-weather-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: var(--soft);
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.iui-weather-metric span {
+  font-size: 11px;
+  color: var(--muted-text);
+}
+
+.iui-weather-metric strong {
+  font-size: var(--text-small);
+  font-family: var(--font-medium);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.iui-weather-forecast {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.iui-weather-forecast-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.iui-weather-forecast-title {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+  font-family: var(--font-medium);
+}
+
+.iui-weather-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.iui-weather-tabs button {
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+}
+
+.iui-weather-tabs button[aria-selected='true'] {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-medium);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+
+.iui-hourly-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.iui-hourly-item {
+  flex: 0 0 auto;
+  min-width: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 11px;
+  background: var(--soft);
+}
+
+.iui-hourly-time {
+  font-size: 11px;
+  color: var(--muted-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.iui-hourly-temp {
+  font-size: var(--text-small);
+  font-family: var(--font-medium);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.iui-daily-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 310px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.iui-daily-row {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.iui-daily-day {
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.iui-daily-cond {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-text);
+  font-size: var(--text-caption);
+  white-space: nowrap;
+}
+
+.iui-daily-temps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.iui-daily-low {
+  min-width: 30px;
+  text-align: right;
+  color: var(--muted-text);
+}
+
+.iui-daily-high {
+  min-width: 30px;
+  text-align: right;
+  font-family: var(--font-medium);
+  font-weight: 500;
+}
+
+.iui-daily-bar-track {
+  position: relative;
+  width: 96px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--soft);
+  overflow: hidden;
+}
+
+.iui-daily-bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--primary) 50%, var(--soft)), var(--primary));
+}
+
+/* ==================== Map Card ==================== */
+.iui-map-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.iui-map-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.iui-map-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.iui-map-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.iui-map-title-row strong {
+  font-size: var(--text-ui);
+  font-family: var(--font-medium);
+  font-weight: 500;
+}
+
+.iui-map-route-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 13%, var(--background));
+  color: var(--primary);
+  font-family: var(--font-medium);
+}
+
+.iui-map-subtitle {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+}
+
+.iui-map-coords {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted-text);
+  white-space: nowrap;
+}
+
+.iui-map-viewport {
+  position: relative;
+  height: 250px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--foreground) 3%, var(--background));
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.iui-map-viewport:active {
+  cursor: grabbing;
+}
+
+.iui-map-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-origin: center center;
+  transition: transform 90ms ease-out;
+}
+
+.iui-map-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.iui-map-park {
+  fill: color-mix(in srgb, #22c55e 14%, var(--background));
+}
+
+.iui-map-water {
+  stroke: color-mix(in srgb, #3b82f6 28%, var(--background));
+  stroke-width: 14;
+  stroke-linecap: round;
+}
+
+.iui-map-streets-minor path {
+  stroke: color-mix(in srgb, var(--foreground) 8%, var(--background));
+  stroke-width: 3;
+}
+
+.iui-map-streets-major path {
+  stroke: var(--background);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.iui-map-blocks rect {
+  fill: color-mix(in srgb, var(--foreground) 7%, var(--background));
+}
+
+.iui-map-route-casing {
+  stroke: var(--background);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.iui-map-route-line {
+  stroke: var(--primary);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 6 5;
+}
+
+.iui-map-pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 4px;
+  border-radius: 999px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  box-shadow: 0 3px 10px rgb(0 0 0 / 12%);
+  font-size: 11px;
+  color: var(--foreground);
+  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.iui-map-pin:hover {
+  transform: translate(-50%, -56%) scale(1.04);
+  border-color: var(--primary);
+}
+
+.iui-map-pin.is-active {
+  z-index: 3;
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  transform: translate(-50%, -58%) scale(1.06);
+}
+
+.iui-map-pin-badge {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 16%, var(--background));
+  color: var(--primary);
+  font-family: var(--font-semibold);
+  font-size: 10px;
+}
+
+.iui-map-pin.is-active .iui-map-pin-badge {
+  background: rgb(255 255 255 / 22%);
+  color: var(--primary-foreground);
+}
+
+.iui-map-pin-label {
+  max-width: 105px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-medium);
+}
+
+.iui-map-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
+}
+
+.iui-map-controls button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  color: var(--foreground);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.iui-map-controls button + button {
+  border-top: 1px solid var(--border);
+}
+
+.iui-map-controls button:hover {
+  background: var(--soft);
+  color: var(--primary);
+}
+
+.iui-map-overlay-card {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.iui-map-overlay-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.iui-map-overlay-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.iui-map-overlay-title strong {
+  font-size: var(--text-small);
+  font-family: var(--font-medium);
+  font-weight: 500;
+}
+
+.iui-map-category,
+.iui-map-rating {
+  font-size: 11px;
+  color: var(--muted-text);
+}
+
+.iui-map-overlay-meta {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iui-map-copy-btn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--soft);
+  font-size: var(--text-caption);
+  font-family: var(--font-medium);
+}
+
+.iui-map-copy-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.iui-map-place-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+}
+
+.iui-map-place-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  text-align: left;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.iui-map-place-item:hover {
+  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+}
+
+.iui-map-place-item.is-active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, var(--background));
+}
+
+.iui-map-place-index {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: var(--font-semibold);
+  background: var(--soft);
+  color: var(--muted-text);
+}
+
+.iui-map-place-item.is-active .iui-map-place-index {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.iui-map-place-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.iui-map-place-info strong {
+  font-size: var(--text-small);
+  font-family: var(--font-medium);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iui-map-place-info span {
+  font-size: 11px;
+  color: var(--muted-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iui-map-place-rating {
+  font-size: 11px;
+  color: var(--muted-text);
+  flex-shrink: 0;
+}
+
+/* ==================== Ask Question Card ==================== */
+.iui-ask-card {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.iui-ask-card.is-submitted {
+  background: color-mix(in srgb, var(--soft) 80%, var(--card));
+}
+
+.iui-ask-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.iui-ask-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.iui-ask-title-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.iui-ask-title-left strong {
+  font-size: var(--text-body);
+  font-family: var(--font-semibold);
+  font-weight: 600;
+}
+
+.iui-ask-badge {
+  font-size: 11px;
+  font-family: var(--font-medium);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted-text);
+  background: var(--soft);
+  flex-shrink: 0;
+}
+
+.iui-ask-badge.is-done {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, var(--background));
+}
+
+.iui-ask-description {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+}
+
+.iui-ask-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.iui-ask-question {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.iui-ask-question + .iui-ask-question {
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.iui-ask-prompt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--text-ui);
+  font-family: var(--font-medium);
+  color: var(--foreground);
+  padding: 0;
+}
+
+.iui-ask-kind {
+  font-size: var(--text-caption);
+  font-family: var(--font-display);
+  color: var(--muted-text);
+}
+
+.iui-ask-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.iui-ask-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 8px;
+  text-align: left;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.iui-ask-list-item:hover:not(:disabled) {
+  background: var(--soft);
+}
+
+.iui-ask-list-item.is-custom {
+  align-items: flex-start;
+}
+
+.iui-ask-custom-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.iui-ask-custom-toggle .iui-ask-indicator {
+  margin-top: 0;
+}
+
+.iui-ask-custom-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: var(--text-small);
+  line-height: 1.5;
+  resize: none;
+  overflow-y: hidden;
+  transition: border-color 140ms ease;
+}
+
+.iui-ask-custom-input:focus,
+.iui-ask-custom-input:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.iui-ask-custom-input::placeholder {
+  color: var(--muted-text);
+}
+
+.iui-ask-indicator {
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid color-mix(in srgb, var(--muted-text) 55%, transparent);
+  border-radius: 999px;
+  color: var(--primary-foreground);
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.iui-ask-list-item.is-selected .iui-ask-indicator {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.iui-ask-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--primary-foreground);
+}
+
+.iui-ask-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.iui-ask-option-text strong {
+  font-size: var(--text-ui);
+  font-family: var(--font-display);
+  font-weight: 400;
+}
+
+.iui-ask-option-text span {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+  line-height: 1.45;
+}
+
+.iui-ask-custom textarea {
+  width: 100%;
+  min-height: 40px;
+  max-height: 160px;
+  resize: none;
+  overflow-y: hidden;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+  font-size: var(--text-small);
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 140ms ease;
+}
+
+.iui-ask-custom textarea:focus,
+.iui-ask-custom textarea:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.iui-ask-custom textarea::placeholder {
+  color: var(--muted-text);
+}
+
+/* ==================== Skeleton / Pending Data State ==================== */
+.iui-skeleton-card {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.iui-skeleton-line {
+  height: 14px;
+  border-radius: 7px;
+  background: var(--soft);
+}
+
+.iui-skeleton-line.h-lg { height: 34px; }
+.iui-skeleton-line.w-40 { width: 40%; }
+.iui-skeleton-line.w-45 { width: 45%; }
+.iui-skeleton-line.w-55 { width: 55%; }
+
+.iui-skeleton-box {
+  height: 46px;
+  border-radius: 12px;
+  background: var(--soft);
+}
+
+.iui-skeleton-map {
+  height: 180px;
+  border-radius: 12px;
+  background: var(--soft);
+}
+
+.iui-empty-hint {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+}
+
+.iui-ask-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.iui-ask-status {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+}
+
+.iui-ask-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: var(--text-small);
+  font-family: var(--font-medium);
+  transition: opacity 140ms ease, transform 120ms ease;
+}
+
+.iui-ask-submit-btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.iui-ask-submit-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.iui-ask-submit-btn:disabled {
+  opacity: 0.35;
+}
+
+.iui-ask-card.is-submitted .iui-ask-submit-btn {
+  background: var(--soft);
+  color: var(--muted-text);
+  opacity: 1;
+}
+
+.iui-preview-sent-log {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.iui-preview-sent-label {
+  font-size: var(--text-caption);
+  color: var(--muted-text);
+}
+
+@media (max-width: 600px) {
+  .iui-weather-summary {
+    align-items: flex-start;
+  }
+
+  .iui-map-viewport {
+    height: 220px;
+  }
+}

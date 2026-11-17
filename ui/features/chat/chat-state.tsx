@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, type PropsWithChildren } from 'react';
 import type { ConversationSummary } from '@contract/agent-compaction';
-import type { Message, MessageFeedback } from '@contract/agent-types';
+import type { AskQuestionSubmission, Message, MessageFeedback } from '@contract/agent-types';
 import { normalizeConversationTitle } from '@contract/agent-title';
 export type { Message, MessageImage } from '@contract/agent-types';
 
@@ -31,13 +31,14 @@ export type ChatState = { conversations: Conversation[]; deletedConversationIds?
 export type PersistedChatState = Omit<ChatState, 'chatVisible'>;
 type Action =
   | { type: 'select'; id: string | null }
-  | { type: 'send'; conversationId: string; message: Message; modelId?: string }
+  | { type: 'send'; conversationId: string; message: Message; modelId?: string; background?: boolean }
   | { type: 'steer'; conversationId: string; message: Message; replyId?: string }
   | { type: 'append-user'; conversationId: string; message: Message }
   | { type: 'bind-model'; conversationId: string; modelId: string }
   | { type: 'reply'; conversationId: string; message: Message }
   | { type: 'context-summary'; conversationId: string; summary?: ConversationSummary }
   | { type: 'feedback'; conversationId: string; messageId: string; feedback?: MessageFeedback }
+  | { type: 'submit-ui-block'; conversationId: string; messageId: string; blockId: string; submission: AskQuestionSubmission }
   | { type: 'rename'; id: string; title: string }
   | { type: 'auto-title'; conversationId: string; title: string; from: string }
   | { type: 'pin'; id: string }
@@ -68,6 +69,21 @@ export function chatReducer(state: ChatState, action: Action): ChatState {
           if (message.id !== action.messageId || message.role !== 'assistant' || message.status === 'streaming') return message;
           const { feedback, ...rest } = message;
           return action.feedback ? { ...rest, feedback: action.feedback } : rest;
+        }),
+      }) };
+    case 'submit-ui-block':
+      return { ...state, conversations: state.conversations.map((conversation) => conversation.id !== action.conversationId ? conversation : {
+        ...conversation,
+        messages: conversation.messages.map((message) => {
+          if (message.id !== action.messageId || message.role !== 'assistant' || !message.uiBlocks?.length) return message;
+          return {
+            ...message,
+            uiBlocks: message.uiBlocks.map((block) => (
+              block.id === action.blockId && block.kind === 'ask_question'
+                ? { ...block, submission: action.submission }
+                : block
+            )),
+          };
         }),
       }) };
     case 'reply':
@@ -245,7 +261,7 @@ export function chatReducer(state: ChatState, action: Action): ChatState {
       delete conversation.completedReadAt;
       return {
         ...state,
-        activeId: conversation.id,
+        activeId: action.background ? state.activeId : conversation.id,
         conversations: [conversation, ...state.conversations.filter((item) => item.id !== conversation.id)],
       };
     }

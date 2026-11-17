@@ -15,9 +15,10 @@ import '@/global.css';
 /** The single page shell: theme, instance, workspace and the notification layer around every route. */
 export function AppShell() {
   const pathname = usePathname().replace(/\/$/, '');
-  const preview = import.meta.env.DEV && (pathname === '/mock' || pathname.startsWith('/mock/'));
+  const preview = import.meta.env.DEV && (pathname.startsWith('/mock/') || pathname.startsWith('/debug/mock/'));
   const fullPage = pathname === '/settings' || pathname.startsWith('/settings/')
-    || pathname === '/mock' || pathname === '/mock/chat/settings'
+    || (import.meta.env.DEV && pathname === '/debug')
+    || pathname === '/mock/chat/settings'
     || pathname.startsWith('/mock/chat/settings/');
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import type { MessageFile, WebActivity } from '../../contract/agent-protocol';
+import type { IntelligentUiBlock, MessageFile, WebActivity } from '../../contract/agent-protocol';
 
 /**
  * The agent loop only needs four operations from the tool layer:
@@ -16,6 +16,7 @@ export type ToolActivityResolver = {
     previous?: WebActivity,
   ): WebActivity | null;
   files(result: unknown): MessageFile[];
+  uiBlocks(result: unknown): IntelligentUiBlock[];
 };
 
 /** A text-only run has no tools, so every hook is a no-op. */
@@ -23,6 +24,7 @@ export const emptyToolActivity: ToolActivityResolver = {
   start: () => null,
   end: () => null,
   files: () => [],
+  uiBlocks: () => [],
 };
 
 import type { ToolRegistry } from './tools/registry';
@@ -46,6 +48,13 @@ export function createToolActivityResolver(registry: ToolRegistry): ToolActivity
         || typeof file.contentType !== 'string' || typeof file.size !== 'number') return [];
       return [{ id: file.id, filename: file.filename, contentType: file.contentType, size: file.size,
         ...(typeof file.revision === 'number' ? { revision: file.revision } : {}) }];
+    },
+    uiBlocks: (result) => {
+      if (!result || typeof result !== 'object') return [];
+      const details = (result as { details?: Record<string, unknown> }).details;
+      const block = details?.uiBlock as Partial<IntelligentUiBlock> | undefined;
+      if (!block || typeof block.id !== 'string' || (block.kind !== 'weather' && block.kind !== 'ask_question')) return [];
+      return [block as IntelligentUiBlock];
     },
   };
 }

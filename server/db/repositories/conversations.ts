@@ -5,6 +5,7 @@ import type {
   StoredProcessActivity,
   StoredWebActivity,
 } from '../../../contract/agent-protocol';
+import type { IntelligentUiBlock } from '../../../contract/intelligent-ui';
 import { conflict, invalid, notFound } from '../../errors';
 import {
   fromDbJson,
@@ -50,6 +51,7 @@ export type MessageRow = {
   reasoning: string | null;
   activities: string | null;
   process: string | null;
+  ui_blocks: string | null;
   thinking_ms: number | null;
   status: string;
   error: string | null;
@@ -111,6 +113,7 @@ export type MessageCreateInput = {
   reasoning?: string | null;
   activities?: StoredWebActivity[] | null;
   process?: StoredProcessActivity[] | null;
+  uiBlocks?: IntelligentUiBlock[] | null;
   thinkingMs?: number | null;
   status: 'complete' | 'stopped' | 'error';
   error?: string | null;
@@ -127,6 +130,7 @@ export type MessagePatch = {
   feedback?: 'good' | 'bad' | null;
   activities?: StoredWebActivity[] | null;
   process?: StoredProcessActivity[] | null;
+  uiBlocks?: IntelligentUiBlock[] | null;
   fileIds?: string[];
 };
 
@@ -420,9 +424,9 @@ export function insertMessage(
   db.prepare(
     `INSERT INTO messages (
       id, instance_id, conversation_id, client_id, position, role, content, steering, quote,
-      feedback, reasoning, activities, process, thinking_ms, status, error, file_ids, created_at,
+      feedback, reasoning, activities, process, ui_blocks, thinking_ms, status, error, file_ids, created_at,
       updated_at, revision
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
   ).run(
     id,
     instanceId,
@@ -437,6 +441,7 @@ export function insertMessage(
     payload.reasoning ?? null,
     toDbJson(payload.activities ?? null),
     toDbJson(payload.process ?? null),
+    toDbJson(payload.uiBlocks ?? null),
     payload.thinkingMs ?? null,
     payload.role === 'user' ? 'complete' : payload.status,
     payload.error ?? null,
@@ -500,6 +505,7 @@ export function applyMessagePatch(
   if (patch.feedback !== undefined) set('feedback = ?', patch.feedback);
   if (patch.activities !== undefined) set('activities = ?', toDbJson(patch.activities));
   if (patch.process !== undefined) set('process = ?', toDbJson(patch.process));
+  if (patch.uiBlocks !== undefined) set('ui_blocks = ?', toDbJson(patch.uiBlocks));
   if (patch.fileIds !== undefined) set('file_ids = ?', toDbJson(patch.fileIds));
 
   if (sets.length) {
@@ -533,4 +539,8 @@ export function messageActivities(row: MessageRow): StoredWebActivity[] | null {
 
 export function messageProcess(row: MessageRow): StoredProcessActivity[] | null {
   return fromDbJson<StoredProcessActivity[]>(row.process);
+}
+
+export function messageUiBlocks(row: MessageRow): IntelligentUiBlock[] | null {
+  return fromDbJson<IntelligentUiBlock[]>(row.ui_blocks);
 }

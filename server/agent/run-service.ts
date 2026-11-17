@@ -76,6 +76,7 @@ export function createAgentRunService(options: {
         ...(message.activities ? { activities: message.activities } : {}),
         ...(message.process ? { process: message.process } : {}),
         ...(message.files ? { files: message.files } : {}),
+        ...(message.uiBlocks?.length ? { uiBlocks: message.uiBlocks } : {}),
         ...(contextTokens ? { contextTokens } : {}),
       };
       emit(entry, { type: 'update', update });

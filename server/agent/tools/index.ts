@@ -1,5 +1,6 @@
 import { fileTool } from './file';
 import { ToolRegistry } from './registry';
+import { askQuestionTool, showWeatherTool } from './ui';
 import { webFetchTool, webSearchTool } from './web';
 
 /**
@@ -9,15 +10,17 @@ import { webFetchTool, webSearchTool } from './web';
  * a test. Keep the registration order intentional: it is the order the model sees.
  *
  * Planned modules:
- *   - web_search  (server/services/search.ts)
- *   - web_fetch   (server/services/fetch/index.ts)
- *   - file        (server/services/documents/*)
- *   - memory      (server/agent/memory.ts)
+ *   - web_search     (server/services/search.ts)
+ *   - web_fetch      (server/services/fetch/index.ts)
+ *   - file           (server/services/documents/*)
+ *   - memory         (server/agent/memory.ts)
  */
 export const toolRegistry = new ToolRegistry([
   webSearchTool,
   webFetchTool,
   fileTool,
+  showWeatherTool,
+  askQuestionTool,
 ]);
 
 export { ToolRegistry } from './registry';

@@ -4,6 +4,7 @@ import { createRemoteAgentRuntime } from '@/core/api/agent-runs';
 import { requestConversationTitle, requestMemorySummary } from '@/core/api/agent-aux';
 import { buildRetryHistory } from '@contract/agent-context';
 import { memoryPromptBlock } from '@contract/agent-memory';
+import { stripUiBlockMarkers } from '@contract/intelligent-ui';
 import type { MessageFile, SteerOutcome } from '@contract/agent-types';
 import { hasFeature } from '@/core/features/capabilities';
 import type { ModelConfig } from '@contract/agent-provider';
@@ -94,7 +95,8 @@ function useRuntime(
   function scheduleMemoryUpdate(conversation: Conversation, reply: Message) {
     const state = memoryRef.current;
     if (!state.enabled) return;
-    if (!reply.content.trim()) return;
+    const cleanReply = stripUiBlockMarkers(reply.content);
+    if (!cleanReply) return;
     const now = Date.now();
     if (now - (lastMemoryUpdateAt.current.get(conversation.id) ?? 0) < 60_000) return;
     const messages = [...conversation.messages];
@@ -109,7 +111,7 @@ function useRuntime(
       conversationId: conversation.id,
       modelId: conversation.modelId,
       userMessage,
-      assistantMessage: reply.content,
+      assistantMessage: cleanReply,
     };
     memoryChain.current = memoryChain.current.then(async () => {
       const current = memoryRef.current;
@@ -172,7 +174,7 @@ function useRuntime(
       if (conversationId === activeIdRef.current && chatVisibleRef.current) return;
       const conversation = conversationsRef.current.find((item) => item.id === conversationId);
       if (!conversation) return;
-      const preview = message.content.replace(/\s+/g, ' ').trim().slice(0, 120);
+      const preview = stripUiBlockMarkers(message.content).replace(/\s+/g, ' ').trim().slice(0, 120);
       const notification: BackgroundNotification = {
         id: `${conversationId}-${message.id}`,
         conversationId,
@@ -298,7 +300,7 @@ function useRuntime(
     stop: agent.stop,
     notifications, dismissNotification,
     send(content: string, existingId: string | null, images: MessageImage[] = [], quote?: string,
-      files: MessageFile[] = []) {
+      files: MessageFile[] = [], options?: { background?: boolean }) {
       if (existingId === null && newConversationLock.current) return false;
       const conversationId = existingId ?? createId();
       const current = conversations.find((item) => item.id === conversationId);
@@ -316,7 +318,7 @@ function useRuntime(
       const config = start(conversationId, [...(current?.messages ?? []), ...queued, message], createId(),
         current?.modelId, current?.contextSummary);
       if (!config) return false;
-      if (existingId === null) newConversationLock.current = true;
+      if (existingId === null && !options?.background) newConversationLock.current = true;
       if (queued.length) {
         pendingSends.current.delete(conversationId);
         // Append in send order before the new message, which the `send` action adds last.
@@ -325,7 +327,7 @@ function useRuntime(
       }
       // Record the model on the conversation, so reopening it restores the same one. New
       // conversations bind to whichever model was used most recently.
-      dispatch({ type: 'send', conversationId, message, modelId: config.id });
+      dispatch({ type: 'send', conversationId, message, modelId: config.id, background: options?.background });
       if (isFirstMessage) {
         // Generate in parallel with the reply. A failure keeps the derived title and is retried
         // after the next successful reply (see onReply).

@@ -31,6 +31,9 @@ export function createInstanceClient(fetcher: typeof fetch = fetch) {
       if (init.signal?.aborted) throw error;
       throw new ApiError(0, 'unavailable', '无法连接服务器，请稍后重试。');
     }
+    if (response.status === 204 || response.status === 205) {
+      return undefined as T;
+    }
     let data: unknown;
     try { data = await response.json(); } catch (error) {
       if (init.signal?.aborted) throw error;

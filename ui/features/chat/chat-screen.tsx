@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
-import type { MessageFile, WebActivity } from '@contract/agent-types';
+import type { AskQuestionSubmission, MessageFile, WebActivity } from '@contract/agent-types';
 import { buildSystemPrompt } from '@contract/agent-prompt';
 import { useChat, type Message, type MessageImage } from './chat-state';
 import { collectReplySources, webActivitiesOf, type ReplySources } from './citations';
@@ -25,6 +25,8 @@ import { useChatDisplay } from './display-preferences';
 import { ResearchPanel } from './components/research-panel';
 import { SourcesPanel } from './components/sources-panel';
 import { ReplyStatus } from './components/reply-status';
+import { splitReplyUiSegments, stripUiBlockMarkers } from '@contract/intelligent-ui';
+import { ReplyUiBlockItem } from './components/reply-ui-blocks';
 import { useChatRuntime } from './chat-runtime';
 import { useModels } from '@/features/models/model-state';
 import { usePersonalization } from '@/features/settings/personalization-state';
@@ -219,17 +221,20 @@ export default function ChatScreen() {
     // showNotice only sets state; depending on it would re-run this once-per-switch restore.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation, models]);
-  function send(images: MessageImage[], files: MessageFile[] = []) {
-    const content = draft.trim();
-    if (!content && !images.length && !files.length && !quote.trim()) return false;
+  function submitMessage(
+    rawContent: string,
+    images: MessageImage[] = [],
+    files: MessageFile[] = [],
+    quoteText = '',
+  ) {
+    const content = rawContent.trim();
+    if (!content && !images.length && !files.length && !quoteText.trim()) return false;
     const conversationId = activeId ?? createId();
     // Thinking/tool phases take the message as a correction; after the answer text starts it
     // is deferred to a new turn; otherwise this starts an ordinary new run.
-    const outcome = runtime.steer(content, conversationId, images, quote, files);
-    const sent = outcome === false ? runtime.send(content, conversationId, images, quote, files) : true;
+    const outcome = runtime.steer(content, conversationId, images, quoteText, files);
+    const sent = outcome === false ? runtime.send(content, conversationId, images, quoteText, files) : true;
     if (sent) {
-      setDraft(draftKey, '');
-      setQuote(draftKey, '');
       if (outcome === 'deferred') showNotice('回复已开始，这条消息将在本轮结束后发送。');
       // Sending is an explicit request to see the conversation continue, so bring
       // the reader back even when they had scrolled up to read older messages.
@@ -237,6 +242,20 @@ export default function ChatScreen() {
       if (!activeId) router.replace(conversationHref(conversationId, preview));
     }
     return sent;
+  }
+  function send(images: MessageImage[], files: MessageFile[] = []) {
+    const sent = submitMessage(draft, images, files, quote);
+    if (sent) {
+      setDraft(draftKey, '');
+      setQuote(draftKey, '');
+    }
+    return sent;
+  }
+  function submitAskQuestion(messageId: string, blockId: string, submission: AskQuestionSubmission) {
+    if (!conversation) return;
+    if (submitMessage(submission.formattedText)) {
+      dispatch({ type: 'submit-ui-block', conversationId: conversation.id, messageId, blockId, submission });
+    }
   }
   function updateThinkingEffort(value: typeof thinkingEffort) {
     if (!models.selected) return;
@@ -265,11 +284,36 @@ export default function ChatScreen() {
             const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length || !!message.process?.length
               || reasoningOpen[message.id] === true
               || (live && message.status === 'streaming' && !message.content.trim());
+            const replySegments = message.role === 'assistant'
+              ? splitReplyUiSegments(message.content, message.uiBlocks, {
+                streaming: message.status === 'streaming',
+                isLatest: message.id === lastMessage?.id,
+              })
+              : [];
+            const hasVisibleText = message.role === 'assistant' && stripUiBlockMarkers(message.content).length > 0;
             const block = message.role === 'user'
               ? <UserMessage key={message.id} message={message} />
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} process={message.process} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} open={reasoningOpen[message.id] ?? false} onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [message.id]: open }))} openResearchId={panel?.type === 'research' && panel.messageId === message.id ? panel.groupId : null} onOpenResearch={(group, opener) => openResearch(message.id, group, opener)} showThinking={display.showThinking} thinkingExpanded={display.thinkingExpanded} />}
-              <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} webActivities={cites ? webActivities : undefined} /></div>
+              {replySegments.map((segment, index) => (
+                segment.kind === 'block' ? (
+                  <div key={`ui-${segment.block.id}`} className="reply-ui-blocks">
+                    <ReplyUiBlockItem
+                      block={segment.block}
+                      streaming={message.status === 'streaming'}
+                      onSubmitAskQuestion={(blockId, submission) => submitAskQuestion(message.id, blockId, submission)}
+                    />
+                  </div>
+                ) : (
+                  <div key={`text-${index}`} data-quote-source>
+                    <MessageContent
+                      content={segment.text}
+                      streaming={message.status === 'streaming' && index === replySegments.length - 1}
+                      webActivities={cites ? webActivities : undefined}
+                    />
+                  </div>
+                )
+              ))}
               <ReplyStatus message={message} onRetry={message.status === 'error' && message.id === lastMessage?.id && !generating
                 ? () => runtime.retry(conversation.id) : undefined} />
               {/* Saved files wait for the reply to finish, so the answer is not pushed down mid-stream. */}
@@ -277,7 +321,7 @@ export default function ChatScreen() {
               {message.status !== 'streaming' && !!replySources?.total && <SourceBadge count={replySources.total}
                 open={panel?.type === 'sources' && panel.messageId === message.id}
                 onOpen={(opener) => openSources(message.id, opener)} />}
-              {message.status !== 'streaming' && message.content.trim() && <MessageActions message={message}
+              {message.status !== 'streaming' && hasVisibleText && <MessageActions message={message}
                 onFeedback={(feedback) => dispatch({ type: 'feedback', conversationId: conversation.id, messageId: message.id, feedback })} onFork={() => {
                 const forkId = createId();
                 dispatch({ type: 'fork', conversationId: conversation.id, messageId: message.id, forkId, updatedAt: Date.now() });

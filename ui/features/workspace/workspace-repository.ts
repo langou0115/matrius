@@ -1,6 +1,6 @@
 import { readWorkspace } from '@/core/database/browser-store';
 import type { ConversationSummary } from '@contract/agent-compaction';
-import type { MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@contract/agent-types';
+import type { IntelligentUiBlock, MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@contract/agent-types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
 import { orderSteeringMessages } from '@/features/chat/message-order';
 import type { AppearancePreferences } from '@/theme/appearance';
@@ -114,11 +114,23 @@ export function readFileIds(value: unknown): string[] | undefined {
   const ids = [...new Set(value.filter((id): id is string => typeof id === 'string' && !!id))].slice(0, 20);
   return ids.length ? ids : undefined;
 }
+export function readUiBlocks(value: unknown): IntelligentUiBlock[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const blocks: IntelligentUiBlock[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.id !== 'string' || !item.id) continue;
+    if (item.kind === 'weather' || item.kind === 'ask_question') {
+      blocks.push(item as IntelligentUiBlock);
+    }
+  }
+  return blocks.length ? blocks : undefined;
+}
 function readMessage(value: unknown): Message {
   if (!isRecord(value) || typeof value.id !== 'string' || (value.role !== 'user' && value.role !== 'assistant') || typeof value.content !== 'string') throw new Error('Invalid stored message');
   const status = value.status === 'streaming' ? 'stopped' : ['complete', 'stopped', 'error'].includes(String(value.status)) ? value.status as Message['status'] : undefined;
   const activities = value.role === 'assistant' ? readActivities(value.activities) : undefined;
   const process = value.role === 'assistant' ? readProcess(value.process) : undefined;
+  const uiBlocks = value.role === 'assistant' ? readUiBlocks(value.uiBlocks) : undefined;
   const fileIds = readFileIds(value.fileIds);
   const files = readMessageFiles(value.files);
   return { id: value.id, role: value.role, content: value.content,
@@ -130,6 +142,7 @@ function readMessage(value: unknown): Message {
     ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
     ...(activities ? { activities } : {}),
     ...(process ? { process } : {}),
+    ...(uiBlocks ? { uiBlocks } : {}),
     ...(typeof value.thinkingMs === 'number' && Number.isFinite(value.thinkingMs) ? { thinkingMs: value.thinkingMs } : {}),
     ...(status ? { status } : {}),
     ...(value.status === 'streaming' ? { error: '页面重新加载，回答已中断。已生成内容已保留。' }

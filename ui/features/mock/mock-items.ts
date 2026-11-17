@@ -15,6 +15,12 @@ export type MockItem = {
 /** 每项对应 ui/router/routes.tsx 中的一个 /mock/* 路由，该路由复用真实页面组件而不是另写一套。 */
 export const mockItems: readonly MockItem[] = [
   {
+    href: '/debug/mock/intelligent-ui',
+    title: 'Intelligent UI',
+    description: '预览天气、地图与 Ask Question 交互组件的设计，支持直接选择并点击组件按钮发送。',
+    icon: 'model',
+  },
+  {
     href: '/mock/process',
     title: '回复过程预览',
     description: '切换等待、思考、搜索、完成、主动停止与连接中断，检查真实组件的展示。',
@@ -38,9 +44,18 @@ export const mockItems: readonly MockItem[] = [
     description: '500 个生成文件，覆盖搜索、图片/文件筛选、排序、分页、重命名与批量删除。',
     icon: 'folder',
   },
+  {
+    href: '/mock/tasks',
+    title: '定时任务测试',
+    description: '包含运行中、已暂停、已完成（循环与单次）定时任务，支持在内存中创建、编辑、暂停、立即执行与删除。',
+    icon: 'refresh',
+  },
 ];
 
 /** 由当前路径反查所属测试项，子路径（如分支、滚动锚点）也算在该项内。 */
 export function mockItemForPath(pathname: string): MockItem | undefined {
+  if (pathname === '/mock/intelligent-ui' || pathname.startsWith('/mock/intelligent-ui/')) {
+    return mockItems.find((item) => item.href === '/debug/mock/intelligent-ui');
+  }
   return mockItems.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
 }

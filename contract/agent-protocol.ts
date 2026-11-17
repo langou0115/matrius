@@ -11,6 +11,9 @@
  * the same dependency rule: no Node, DOM, React or database imports.
  */
 
+import type { IntelligentUiBlock } from './intelligent-ui';
+export type { IntelligentUiBlock } from './intelligent-ui';
+
 export type ProviderProtocol = 'completion' | 'responses' | 'message';
 export type ThinkingEffort = 'default' | 'low' | 'medium' | 'high';
 
@@ -121,6 +124,7 @@ export type Message = {
   activities?: WebActivity[];
   process?: ProcessActivity[];
   thinkingMs?: number;
+  uiBlocks?: IntelligentUiBlock[];
   status?: 'streaming' | 'complete' | 'stopped' | 'error';
   error?: string;
 };
@@ -147,6 +151,7 @@ export type ReplyUpdate = {
   activities?: WebActivity[];
   process?: ProcessActivity[];
   files?: MessageFile[];
+  uiBlocks?: IntelligentUiBlock[];
 };
 
 export type AgentRunRequest = {

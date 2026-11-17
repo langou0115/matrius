@@ -10,7 +10,7 @@ import type {
   MessageRow,
   StoredFileRow,
 } from '../db/repositories/conversations';
-import { messageActivities, messageFileIds, messageProcess } from '../db/repositories/conversations';
+import { messageActivities, messageFileIds, messageProcess, messageUiBlocks } from '../db/repositories/conversations';
 
 export function readState(state: string, readAtMs: number | null): Record<string, unknown> {
   if (state === 'read') return { state: 'read', readAt: readAtMs };
@@ -72,6 +72,7 @@ export function messageOut(
     reasoning: row.reasoning,
     activities: messageActivities(row) as StoredWebActivity[] | null,
     process: messageProcess(row) as StoredProcessActivity[] | null,
+    uiBlocks: messageUiBlocks(row),
     thinkingMs: row.thinking_ms,
     status: row.status,
     error: row.error,

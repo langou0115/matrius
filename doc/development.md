@@ -24,12 +24,22 @@ Vite 的依赖扫描固定从 `index.html` 开始，不再通过全仓库 HTML g
 
 - npx tsc --noEmit：前端类型检查。
 - npm run typecheck:server：后端类型检查。
-- npm run test：UI 与共享测试，按文件串行。
-- npm run test:server：后端测试。
+- npm run test：UI 与共享测试，按文件并发执行。
+- npm run test:server：后端测试，按文件并发执行。
 - npm run build：生产构建到 dist。
 - npx eslint .：可选风格检查。
 
 共享逻辑、协议、持久化或跨模块修改运行全量测试。模拟模型测试不能代替真实浏览器验收。真实模型需验证流式回复、stop/steer、文件上传读取、标题、记忆与刷新持久化。
+
+## 新增测试规范
+
+为保证全量测试在数秒级完成、避免单测膨胀拖慢开发节奏，新增测试需遵守以下约定：
+
+1. **保持文件级并发安全**：`npm run test` 与 `npm run test:server` 按文件并发执行。每个测试文件必须使用独立的临时目录（`mkdtempSync`）、内存数据库或 `app.inject()`，禁止使用固定端口、固定本地文件路径或跨文件共享可变状态。
+2. **禁止真实长睡眠**：涉及超时、重试、防抖、节流或定时器的测试，优先使用 `t.mock.timers` 或注入毫秒级短超时参数，禁止 `setTimeout` 等待秒级时间。
+3. **重型依赖与外部进程隔离**：单元测试默认使用内存 stub / fake（如假 HTTP 客户端、假 SSE 响应），不发真实外网请求；OfficeCLI、LibreOffice 等重型子进程只保留在对应集成测试文件中，不在无关测试里重复创建文档或启动子进程。
+4. **控制单测构造开销**：需要批量数据时优先构造最小可用数据集，避免在每个用例里重复生成数百条富文本或全量渲染。
+5. **按范围运行单测**：日常开发优先运行受影响的单个测试文件（`npx tsx --test server/tests/<name>.test.ts` 或 `node --import ./tests/register.mjs --test tests/<name>.test.mjs`），跨模块或底层改动再跑全量。
 
 ## 调试与交付
 

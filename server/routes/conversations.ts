@@ -294,6 +294,9 @@ export function registerConversationRoutes(
       if (Object.hasOwn(payload, 'process')) {
         patch.process = normalizeProcess(payload.process);
       }
+      if (Object.hasOwn(payload, 'uiBlocks')) {
+        patch.uiBlocks = payload.uiBlocks ?? null;
+      }
 
       let attached = new Map<string, StoredFileRow>();
       if (Object.hasOwn(payload, 'fileIds')) {

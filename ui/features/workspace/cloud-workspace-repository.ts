@@ -42,6 +42,7 @@ const messageBody = (value: Message) => ({
   status: value.status === 'streaming' ? 'stopped' : value.status ?? 'complete', error: value.error ?? null,
   ...(value.role === 'user' && value.steering ? { steering: true } : {}),
   ...(value.role === 'assistant' ? { activities: compactActivities(value.activities) } : {}),
+  ...(value.role === 'assistant' && value.uiBlocks?.length ? { uiBlocks: value.uiBlocks } : {}),
   // Image attachments contribute their cloud ids while only documents have metadata here.
   // The server takes UUIDs only; a local placeholder would reject the whole message.
   fileIds: (value.fileIds ?? value.files?.map((file) => file.id) ?? [])
@@ -115,6 +116,7 @@ export function createCloudWorkspaceRepository(request: ApiRequest) {
             const process = readProcess(item.process);
             const value: Message = { ...messageBody(item), id: item.clientId || item.id,
               ...(process ? { process } : {}),
+              ...(item.uiBlocks?.length ? { uiBlocks: item.uiBlocks } : {}),
               ...(item.files?.length ? { files: item.files } : {}) } as Message;
             messages.set(JSON.stringify([id, value.id]), { remote: item, value });
             return value;

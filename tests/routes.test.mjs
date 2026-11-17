@@ -24,7 +24,7 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   globalThis.fetch = async (url) => {
     const path = String(url);
     let data = { items: [], nextCursor: null };
-    if (path === '/api/features') data = { features: [{ id: 'files' }, { id: 'usage' }] };
+    if (path === '/api/features') data = { features: [{ id: 'files' }, { id: 'usage' }, { id: 'tasks' }] };
     if (path === '/api/preferences') data = { themeId: 'twitter', mode: 'system', revision: 1 };
     if (path === '/api/profile') data = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '', revision: 1 };
     if (path.startsWith('/api/profile/fields/')) data = { value: '{}', revision: 1 };
@@ -38,9 +38,9 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   const { MemoryRouter } = await import('react-router-dom');
   const { AppRoutes } = await import('../ui/router/routes.tsx');
 
-  for (const path of ['/', '/c/example', '/library', '/settings', '/settings/appearance', '/settings/models',
+  for (const path of ['/', '/c/example', '/library', '/tasks', '/settings', '/settings/appearance', '/settings/models',
     '/settings/personalization', '/settings/account', '/settings/storage', '/settings/usage', '/settings/about',
-    '/admin', '/mock', '/mock/chat', '/mock/chat/settings/appearance', '/mock/library', '/mock/process', '/mock/storage']) {
+    '/admin', '/debug', '/debug?tab=tools', '/mock/chat', '/mock/chat/settings/appearance', '/mock/library', '/mock/tasks', '/mock/process', '/mock/storage']) {
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);

@@ -13,6 +13,7 @@ import { ModelProvider } from '@/features/models/model-state';
 import { ChatRuntimeProvider } from '@/features/chat/chat-runtime';
 import { PersonalizationProvider, usePersonalization } from '@/features/settings/personalization-state';
 import { MemoryProvider, useMemory } from '@/features/memory/memory-state';
+import { TasksProvider } from '@/features/tasks/tasks-state';
 import { useInstance } from '@/features/instance/instance-state';
 import { createCloudWorkspaceRepository } from '@/features/workspace/cloud-workspace-repository';
 import { workspaceScope } from '@/features/workspace/workspace-mode';
@@ -204,7 +205,7 @@ function ScopedWorkspace({ children, preview, scope }: PropsWithChildren<{ previ
   return <AppearanceProvider initialPreferences={loaded.data.appearance}>
     <PersonalizationProvider initialPreferences={loaded.data.personalization}><MemoryProvider initialPreferences={loaded.data.memory}><ChatProvider initialState={loaded.data.chat}><DraftProvider>
       <RememberLastConversation scope={scope} />
-      <PreviewContext value={loaded.preview}><NetworkToolsProvider><ChatRuntimeProvider><WorkspacePersistence initial={loaded} preview={loaded.preview} cloud={cloud}>{children}</WorkspacePersistence></ChatRuntimeProvider></NetworkToolsProvider></PreviewContext>
+      <PreviewContext value={loaded.preview}><NetworkToolsProvider><ChatRuntimeProvider><TasksProvider><WorkspacePersistence initial={loaded} preview={loaded.preview} cloud={cloud}>{children}</WorkspacePersistence></TasksProvider></ChatRuntimeProvider></NetworkToolsProvider></PreviewContext>
     </DraftProvider></ChatProvider></MemoryProvider></PersonalizationProvider>
   </AppearanceProvider>;
 }

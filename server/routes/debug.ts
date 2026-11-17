@@ -3,9 +3,13 @@ import { dirname } from 'node:path';
 
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
 import type { Settings } from '../config';
+import { AppError } from '../errors';
 import { openApiDocument } from '../openapi';
+import type { FetchService } from '../services/fetch';
+import type { SearchProviderStatus, SearchService } from '../services/search';
 
 /**
  * Add a section here to grow `/debug`. Only `api` and `health` are implemented
@@ -138,6 +142,33 @@ function debugHtml(): string {
 </html>`;
 }
 
+const searchDebugSchema = z.object({
+  query: z.string().trim().min(1, '请输入搜索关键词。').max(500),
+  limit: z.number().int().min(1).max(30).default(10),
+});
+
+const fetchDebugSchema = z.object({
+  url: z.string().trim().min(1, '请输入网页地址。').max(2000),
+  mode: z.enum(['fast', 'full']).default('fast'),
+});
+
+function serializeToolError(reason: unknown): { code: string; message: string } {
+  if (reason instanceof AppError) return { code: reason.code, message: reason.message };
+  if (reason instanceof Error) {
+    return {
+      code: reason.name || 'tool_error',
+      message: reason.message.replace(/\s+/gu, ' ').trim().slice(0, 500) || '工具调用失败。',
+    };
+  }
+  return { code: 'tool_error', message: '工具调用失败。' };
+}
+
+export type DebugRouteDeps = {
+  settings: Settings;
+  search: SearchService;
+  fetch: FetchService;
+};
+
 /**
  * `/debug` is a small development dashboard. API exploration is one section;
  * add entries to `DEBUG_SECTIONS` for future tools instead of creating another
@@ -145,9 +176,9 @@ function debugHtml(): string {
  */
 export async function registerDebugRoutes(
   app: FastifyInstance,
-  settings: Settings,
+  deps: DebugRouteDeps,
 ): Promise<void> {
-  if (!settings.enableDebugPage) return;
+  if (!deps.settings.enableDebugPage) return;
 
   const require = createRequire(import.meta.url);
   const swaggerRoot = dirname(require.resolve('swagger-ui-dist/package.json'));
@@ -167,5 +198,58 @@ export async function registerDebugRoutes(
     reply.header('Cache-Control', 'no-store');
     reply.type('text/html; charset=utf-8');
     return debugHtml();
+  });
+
+  app.post('/api/debug/tools/search', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { query, limit } = searchDebugSchema.parse(request.body ?? {});
+    const startedAt = Date.now();
+    try {
+      const diagnostic = deps.search.diagnose
+        ? await deps.search.diagnose(query, limit)
+        : { results: await deps.search.searchMany([query], limit), providers: [] as SearchProviderStatus[] };
+      return {
+        ok: true,
+        tool: 'search',
+        tookMs: Math.max(0, Date.now() - startedAt),
+        query,
+        count: diagnostic.results.length,
+        providers: diagnostic.providers,
+        results: diagnostic.results,
+      };
+    } catch (error) {
+      const providers = (error as { providers?: SearchProviderStatus[] } | null)?.providers;
+      return {
+        ok: false,
+        tool: 'search',
+        tookMs: Math.max(0, Date.now() - startedAt),
+        query,
+        ...(providers ? { providers } : {}),
+        error: serializeToolError(error),
+      };
+    }
+  });
+
+  app.post('/api/debug/tools/fetch', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { url, mode } = fetchDebugSchema.parse(request.body ?? {});
+    const startedAt = Date.now();
+    try {
+      const page = await deps.fetch.fetch(url, mode);
+      return {
+        ok: true,
+        tool: 'fetch',
+        tookMs: Math.max(0, Date.now() - startedAt),
+        page,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        tool: 'fetch',
+        tookMs: Math.max(0, Date.now() - startedAt),
+        url,
+        error: serializeToolError(error),
+      };
+    }
   });
 }

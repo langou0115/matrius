@@ -170,7 +170,7 @@ test('the run service exposes web tools and their prompt to the runner', async (
       });
       assert.equal(started.accepted, true);
     });
-    assert.deepEqual(tools.sort(), ['file', 'web_fetch', 'web_search']);
+    assert.deepEqual(tools.sort(), ['ask_question', 'file', 'show_weather', 'web_fetch', 'web_search']);
     assert.match(systemPrompt, /Web tools are available/u);
     assert.equal(hasActivity, true);
   } finally {

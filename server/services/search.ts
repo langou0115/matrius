@@ -19,8 +19,22 @@ export type SearchResult = {
 
 export type SearchOptions = { signal?: AbortSignal };
 
+export type SearchProviderStatus = {
+  name: 'duckduckgo' | 'bing';
+  status: 'ok' | 'empty' | 'blocked' | 'timeout' | 'error' | 'skipped';
+  attempts: number;
+  count: number;
+  error?: string;
+};
+
+export type SearchDiagnostic = {
+  results: SearchResult[];
+  providers: SearchProviderStatus[];
+};
+
 export type SearchService = {
   searchMany(queries: string[], limit: number, options?: SearchOptions): Promise<SearchResult[]>;
+  diagnose?(query: string, limit: number, options?: SearchOptions): Promise<SearchDiagnostic>;
 };
 
 const CANDIDATE_LIMIT = 20;
@@ -380,7 +394,11 @@ export function createSearchService(options: {
     return { name: 'bing', status, results: [], attempts, error };
   }
 
-  async function uncached(query: string, limit: number, cacheKey: string | null, signal?: AbortSignal): Promise<SearchResult[]> {
+  async function executeUncached(
+    query: string,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<{ results: SearchResult[]; outcomes: ProviderOutcome[] }> {
     const deadline = Date.now() + settings.SEARCH_TIMEOUT_SECONDS * 1000;
     const outcomes: ProviderOutcome[] = [];
     let results: SearchResult[] = [];
@@ -414,6 +432,11 @@ export function createSearchService(options: {
         results = merged.slice(0, limit);
       }
     }
+    return { results, outcomes };
+  }
+
+  async function uncached(query: string, limit: number, cacheKey: string | null, signal?: AbortSignal): Promise<SearchResult[]> {
+    const { results, outcomes } = await executeUncached(query, limit, signal);
     if (!results.length) {
       if (outcomes.some((outcome) => outcome.status === 'ok' || outcome.status === 'empty')) return [];
       throw new AppError(502, 'upstream_error', '联网服务暂时不可用，请稍后重试。');
@@ -466,6 +489,26 @@ export function createSearchService(options: {
       }
       return selectDiverse(dedupeResults(merged).sort((a, b) =>
         (scores.get(canonicalResultKey(b.url)) ?? 0) - (scores.get(canonicalResultKey(a.url)) ?? 0)), limit);
+    },
+    async diagnose(query, limit, options = {}) {
+      const normalized = query.trim();
+      if (!normalized) return { results: [], providers: [] };
+      const { results, outcomes } = await executeUncached(normalized, limit, options.signal);
+      const providers: SearchProviderStatus[] = outcomes.map((outcome) => ({
+        name: outcome.name,
+        status: outcome.status,
+        attempts: outcome.attempts,
+        count: outcome.results.length,
+        ...(outcome.error ? { error: outcome.error } : {}),
+      }));
+      if (!results.length && !outcomes.some((outcome) => outcome.status === 'ok' || outcome.status === 'empty')) {
+        const error = new AppError(502, 'upstream_error', '联网服务暂时不可用，请稍后重试。') as AppError & {
+          providers?: SearchProviderStatus[];
+        };
+        error.providers = providers;
+        throw error;
+      }
+      return { results, providers };
     },
   };
 }

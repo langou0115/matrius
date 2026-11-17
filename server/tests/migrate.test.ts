@@ -7,6 +7,7 @@ import test from 'node:test';
 import { openDatabase } from '../db/client';
 import {
   HEAD_REVISION,
+  MIGRATIONS,
   currentRevision,
   ensureVersionTable,
   migrate,
@@ -24,7 +25,7 @@ test('a fresh database gets the baseline and the singleton instance', () => {
     const result = migrate(db);
     assert.equal(result.from, null);
     assert.equal(result.to, HEAD_REVISION);
-    assert.deepEqual(result.applied, [HEAD_REVISION]);
+    assert.deepEqual(result.applied, MIGRATIONS.map((migration) => migration.id));
     assert.equal(currentRevision(db), HEAD_REVISION);
     assert.deepEqual(schemaStatus(db), { ok: true, current: HEAD_REVISION, expected: HEAD_REVISION });
     const instance = db.prepare('SELECT id FROM instance').get() as { id: number } | undefined;
@@ -32,7 +33,7 @@ test('a fresh database gets the baseline and the singleton instance', () => {
 
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
       .map((row) => row.name);
-    for (const table of ['conversations', 'messages', 'files', 'profiles', 'preferences', 'token_usage_daily']) {
+    for (const table of ['conversations', 'messages', 'files', 'profiles', 'preferences', 'token_usage_daily', 'scheduled_tasks']) {
       assert.ok(tables.includes(table), `missing table ${table}`);
     }
 

@@ -31,9 +31,9 @@ export function workspaceReturnHref(activeId: string | null, preview: boolean): 
 }
 
 export function workspaceReturnLabel(): string {
-  return lastWorkspacePath === '/library' || lastWorkspacePath === '/mock/library'
-    ? '返回资料库'
-    : '返回对话';
+  if (lastWorkspacePath === '/library' || lastWorkspacePath === '/mock/library') return '返回资料库';
+  if (lastWorkspacePath === '/tasks' || lastWorkspacePath === '/mock/tasks') return '返回定时任务';
+  return '返回对话';
 }
 
 /** The tracker is process-wide; tests reset it between cases. */

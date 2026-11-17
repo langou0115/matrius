@@ -9,6 +9,11 @@ import type { ReplyUpdate, TokenUsage } from './agent-protocol';
  */
 
 export type {
+  AskQuestionSubmission,
+  IntelligentUiBlock,
+} from './intelligent-ui';
+
+export type {
   Message,
   MessageFile,
   MessageImage,
