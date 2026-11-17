@@ -1,9 +1,4 @@
 import { readWorkspace } from '@/core/database/browser-store';
-import {
-  UI_COMPONENT_MAX_ARTIFACTS,
-  isUiComponentArtifact,
-  type UiComponentArtifact,
-} from '@contract/ui-component';
 import type { ConversationSummary } from '@contract/agent-compaction';
 import type { MessageFile, ProcessActivity, WebActivity, WebSearchResult } from '@contract/agent-types';
 import type { Conversation, Message, PersistedChatState } from '@/features/chat/chat-state';
@@ -119,23 +114,6 @@ export function readFileIds(value: unknown): string[] | undefined {
   const ids = [...new Set(value.filter((id): id is string => typeof id === 'string' && !!id))].slice(0, 20);
   return ids.length ? ids : undefined;
 }
-/** Component references are display metadata; a malformed entry is dropped like a bad file. */
-export function readUiComponents(value: unknown): UiComponentArtifact[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const artifacts: UiComponentArtifact[] = [];
-  for (const item of value.slice(0, UI_COMPONENT_MAX_ARTIFACTS)) {
-    if (!isUiComponentArtifact(item)) continue;
-    artifacts.push({
-      componentId: item.componentId,
-      version: item.version,
-      name: item.name,
-      ...(item.bindingId ? { bindingId: item.bindingId } : {}),
-      ...(item.props !== undefined ? { props: item.props } : {}),
-      ...(item.commandIds?.length ? { commandIds: item.commandIds } : {}),
-    });
-  }
-  return artifacts.length ? artifacts : undefined;
-}
 function readMessage(value: unknown): Message {
   if (!isRecord(value) || typeof value.id !== 'string' || (value.role !== 'user' && value.role !== 'assistant') || typeof value.content !== 'string') throw new Error('Invalid stored message');
   const status = value.status === 'streaming' ? 'stopped' : ['complete', 'stopped', 'error'].includes(String(value.status)) ? value.status as Message['status'] : undefined;
@@ -143,11 +121,9 @@ function readMessage(value: unknown): Message {
   const process = value.role === 'assistant' ? readProcess(value.process) : undefined;
   const fileIds = readFileIds(value.fileIds);
   const files = readMessageFiles(value.files);
-  const uiComponents = value.role === 'assistant' ? readUiComponents(value.uiComponents) : undefined;
   return { id: value.id, role: value.role, content: value.content,
     ...(fileIds ? { fileIds } : {}),
     ...(files ? { files } : {}),
-    ...(uiComponents ? { uiComponents } : {}),
     ...(value.role === 'user' && value.steering === true ? { steering: true as const } : {}),
     ...(typeof value.quote === 'string' ? { quote: value.quote } : {}),
     ...(value.role === 'assistant' && (value.feedback === 'good' || value.feedback === 'bad') ? { feedback: value.feedback } : {}),

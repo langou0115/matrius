@@ -14,7 +14,6 @@ import { ConversationTitle } from './components/conversation-title';
 import { ScrollToBottomButton, useChatAutoScroll } from './components/scroll-to-bottom';
 import { useDrafts } from './draft-state';
 import { MessageContent } from './components/message-content';
-import { UiComponentCard } from './components/ui-component-card';
 import { MessageAttachments } from './components/message-attachments';
 import { GeneratedFiles } from './components/generated-files';
 import { CollapsibleMessageContent } from './components/collapsible-message-content';
@@ -271,16 +270,6 @@ export default function ChatScreen() {
               : <article className="assistant-message" key={message.id} aria-label="助手回复">
               {showReasoning && <ReasoningBlock reasoning={message.reasoning} activities={message.activities} process={message.process} state={getReasoningState(message)} elapsedMs={message.thinkingMs ?? null} startedAt={live && message.status === 'streaming' ? liveStartedAt : null} open={reasoningOpen[message.id] ?? false} onOpenChange={(open) => setReasoningOpen((current) => ({ ...current, [message.id]: open }))} openResearchId={panel?.type === 'research' && panel.messageId === message.id ? panel.groupId : null} onOpenResearch={(group, opener) => openResearch(message.id, group, opener)} showThinking={display.showThinking} thinkingExpanded={display.thinkingExpanded} />}
               <div data-quote-source><MessageContent content={message.content} streaming={message.status === 'streaming'} webActivities={cites ? webActivities : undefined} /></div>
-              {!!message.uiComponents?.length && <div className="ui-component-list">
-                {message.uiComponents.map((artifact) => <UiComponentCard
-                  key={artifact.bindingId ?? `${artifact.componentId}@${artifact.version}`}
-                  artifact={artifact}
-                  onSendToAgent={(text) => {
-                    if (generating || !activeId) return;
-                    runtime.send(text, activeId);
-                  }}
-                />)}
-              </div>}
               <ReplyStatus message={message} onRetry={message.status === 'error' && message.id === lastMessage?.id && !generating
                 ? () => runtime.retry(conversation.id) : undefined} />
               {/* Saved files wait for the reply to finish, so the answer is not pushed down mid-stream. */}

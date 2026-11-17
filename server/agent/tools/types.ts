@@ -5,7 +5,6 @@ import type { WebActivity } from '../../../contract/agent-protocol';
 import type { DocumentToolService } from '../../services/documents/service';
 import type { FetchService } from '../../services/fetch';
 import type { SearchService } from '../../services/search';
-import type { UiComponentService } from '../../services/ui-components';
 
 export type { FeatureId } from '../../features/types';
 
@@ -13,7 +12,6 @@ export type ToolServices = {
   search: SearchService;
   fetch: FetchService;
   files?: DocumentToolService;
-  ui?: UiComponentService;
 };
 
 /**
@@ -27,10 +25,6 @@ export type ToolContext = {
   features: ReadonlySet<FeatureId>;
   /** Provided by the agent run service; tools fail clearly when omitted. */
   services?: ToolServices;
-  /** `workshop` runs may write component versions; `chat` runs only render them. */
-  scope?: 'chat' | 'workshop';
-  /** The component a workshop run is editing. */
-  uiComponentId?: string;
 };
 
 /** Maps a tool execution event to the thinking/research row rendered by the UI. */
@@ -48,8 +42,6 @@ export type ToolModule = {
   readonly feature?: FeatureId;
   /** Appended to the system prompt only while this tool is enabled. */
   readonly prompt?: string;
-  /** Per-run prompt: the catalog, the component being edited, and the scope. */
-  readonly dynamicPrompt?: (context: ToolContext) => string;
   readonly activity?: ToolActivityAdapter;
   create(context: ToolContext): AgentTool;
 };

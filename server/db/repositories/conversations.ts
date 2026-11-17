@@ -31,7 +31,6 @@ export type ConversationRow = {
   completed_read_at_ms: number | null;
   error_state: string;
   error_read_at_ms: number | null;
-  kind: string;
   updated_at: string;
   revision: number;
   created_at: string;
@@ -55,7 +54,6 @@ export type MessageRow = {
   status: string;
   error: string | null;
   file_ids: string;
-  ui_components: string | null;
   created_at: string;
   updated_at: string;
   revision: number;
@@ -88,8 +86,6 @@ export type ConversationCreateInput = {
   titleSource?: 'auto' | 'ai' | 'manual' | null;
   contextSummary?: ContextSummary | null;
   updatedAt?: number | null;
-  /** `workshop` sessions belong to a UI component and never appear in the chat sidebar. */
-  kind?: 'chat' | 'workshop';
 };
 
 export type ConversationPatch = {
@@ -119,7 +115,6 @@ export type MessageCreateInput = {
   status: 'complete' | 'stopped' | 'error';
   error?: string | null;
   fileIds: string[];
-  uiComponents?: unknown[] | null;
 };
 
 export type MessagePatch = {
@@ -133,7 +128,6 @@ export type MessagePatch = {
   activities?: StoredWebActivity[] | null;
   process?: StoredProcessActivity[] | null;
   fileIds?: string[];
-  uiComponents?: unknown[] | null;
 };
 
 export type ConversationCursor = { pinned: number; updatedAt: string; idHex: string };
@@ -216,8 +210,8 @@ export function insertConversation(
     `INSERT INTO conversations (
       id, instance_id, client_id, title, pinned, model_id, title_source, context_summary,
       client_updated_at_ms, completed_state, completed_read_at_ms, error_state, error_read_at_ms,
-      kind, updated_at, revision, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'absent', NULL, 'absent', NULL, ?, ?, 1, ?)`,
+      updated_at, revision, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'absent', NULL, 'absent', NULL, ?, 1, ?)`,
   ).run(
     id,
     instanceId,
@@ -228,7 +222,6 @@ export function insertConversation(
     payload.titleSource ?? null,
     toDbJson(payload.contextSummary ?? null),
     payload.updatedAt ?? null,
-    payload.kind ?? 'chat',
     now,
     now,
   );
@@ -242,10 +235,9 @@ export function listConversationRows(
   instanceId: number,
   limit: number,
   cursor?: ConversationCursor,
-  kind = 'chat',
 ): ConversationRow[] {
-  let sql = 'SELECT * FROM conversations WHERE instance_id = ? AND kind = ?';
-  const params: SQLInputValue[] = [instanceId, kind];
+  let sql = 'SELECT * FROM conversations WHERE instance_id = ?';
+  const params: SQLInputValue[] = [instanceId];
   if (cursor) {
     sql += ` AND (
       pinned < ? OR
@@ -428,9 +420,9 @@ export function insertMessage(
   db.prepare(
     `INSERT INTO messages (
       id, instance_id, conversation_id, client_id, position, role, content, steering, quote,
-      feedback, reasoning, activities, process, thinking_ms, status, error, file_ids, ui_components,
-      created_at, updated_at, revision
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      feedback, reasoning, activities, process, thinking_ms, status, error, file_ids, created_at,
+      updated_at, revision
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
   ).run(
     id,
     instanceId,
@@ -449,7 +441,6 @@ export function insertMessage(
     payload.role === 'user' ? 'complete' : payload.status,
     payload.error ?? null,
     toDbJson(payload.fileIds),
-    payload.uiComponents?.length ? toDbJson(payload.uiComponents) : null,
     now,
     now,
   );
@@ -510,7 +501,6 @@ export function applyMessagePatch(
   if (patch.activities !== undefined) set('activities = ?', toDbJson(patch.activities));
   if (patch.process !== undefined) set('process = ?', toDbJson(patch.process));
   if (patch.fileIds !== undefined) set('file_ids = ?', toDbJson(patch.fileIds));
-  if (patch.uiComponents !== undefined) set('ui_components = ?', toDbJson(patch.uiComponents));
 
   if (sets.length) {
     sets.push('revision = revision + 1', 'updated_at = ?');
@@ -543,8 +533,4 @@ export function messageActivities(row: MessageRow): StoredWebActivity[] | null {
 
 export function messageProcess(row: MessageRow): StoredProcessActivity[] | null {
   return fromDbJson<StoredProcessActivity[]>(row.process);
-}
-
-export function messageUiComponents(row: MessageRow): unknown[] | null {
-  return fromDbJson<unknown[]>(row.ui_components);
 }

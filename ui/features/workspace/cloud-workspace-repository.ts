@@ -46,7 +46,6 @@ const messageBody = (value: Message) => ({
   // The server takes UUIDs only; a local placeholder would reject the whole message.
   fileIds: (value.fileIds ?? value.files?.map((file) => file.id) ?? [])
     .filter((id) => uuidPattern.test(id)).slice(0, 20),
-  ...(value.uiComponents?.length ? { uiComponents: value.uiComponents } : {}),
 });
 
 /** The server puts the conflicting record in the error body so the caller can resync. */

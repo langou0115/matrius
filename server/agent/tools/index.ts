@@ -1,6 +1,5 @@
 import { fileTool } from './file';
 import { ToolRegistry } from './registry';
-import { uiComponentTool } from './ui';
 import { webFetchTool, webSearchTool } from './web';
 
 /**
@@ -19,7 +18,6 @@ export const toolRegistry = new ToolRegistry([
   webSearchTool,
   webFetchTool,
   fileTool,
-  uiComponentTool,
 ]);
 
 export { ToolRegistry } from './registry';

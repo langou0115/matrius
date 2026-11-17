@@ -33,15 +33,6 @@ const messageImageSchema = z.object({
   fileId: z.string().max(80).optional(),
 });
 
-const uiArtifactSchema = z.object({
-  componentId: z.string().min(1).max(80),
-  version: z.number().int().min(1),
-  name: z.string().min(1).max(200),
-  bindingId: z.string().max(80).optional(),
-  props: z.unknown().optional(),
-  commandIds: z.array(z.string().max(80)).max(20).optional(),
-});
-
 export const agentMessageSchema = z.object({
   id: z.string().min(1).max(128),
   role: z.enum(['user', 'assistant']),
@@ -59,7 +50,6 @@ export const agentMessageSchema = z.object({
   thinkingMs: z.number().int().min(0).optional(),
   status: z.enum(['streaming', 'complete', 'stopped', 'error']).optional(),
   error: z.string().max(10_000).optional(),
-  uiComponents: z.array(uiArtifactSchema).max(8).optional(),
 });
 
 export const agentRunSchema = z.object({
@@ -75,12 +65,9 @@ export const agentRunSchema = z.object({
     coveredUntilMessageId: z.string().min(1).max(128),
     summary: z.string().min(1).max(100_000),
   }).optional(),
-  scope: z.enum(['chat', 'workshop']).optional(),
-  uiComponentId: z.uuid().optional(),
   tools: z.object({
     web: z.boolean().optional(),
     files: z.boolean().optional(),
-    ui: z.boolean().optional(),
   }).optional(),
 });
 

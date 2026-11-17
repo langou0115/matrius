@@ -2,7 +2,7 @@ import { useMobile } from '@/components/web/use-mobile';
 import { Link, router, usePathname, type Href } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderOpen, LayoutTemplate, SquarePen } from 'lucide-react';
+import { FolderOpen, SquarePen } from 'lucide-react';
 
 import { BrandMark } from '@/components/web/brand-mark';
 import { Dialog } from '@/components/web/dialog';
@@ -28,16 +28,12 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const preview = useIsPreview();
   const instance = useInstance();
   const filesEnabled = useFeature('files');
-  const uiWorkshopEnabled = useFeature('ui_workshop');
   // Removing the entry while the instance check is unreachable makes the library look deleted
   // after a backend reload. Keep it; the library page owns the retry and the explanation.
   const showLibrary = preview || filesEnabled || instance.status === 'unavailable';
-  const showUiWorkshop = uiWorkshopEnabled || instance.status === 'unavailable';
   const pathname = usePathname().replace(/\/$/, '');
   const libraryHref = preview ? '/mock/library' : '/library';
   const onLibrary = pathname === libraryHref;
-  const workshopHref = '/ui';
-  const onWorkshop = pathname === workshopHref || pathname.startsWith(`${workshopHref}/`);
   const homeHref = preview ? '/mock/chat' : '/';
   const [editing, setEditing] = useState<Conversation | null>(null);
   const [title, setTitle] = useState('');
@@ -123,17 +119,11 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
         </div>
       </div>
       <nav className="sidebar-primary" aria-label="工作区">
-        <button className={`new-conversation ${activeId === null && !onLibrary && !onWorkshop ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
+        <button className={`new-conversation ${activeId === null && !onLibrary ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
         {showLibrary && <Link href={libraryHref as Href} asChild>
           <LinkAnchor className={`new-conversation ${onLibrary ? 'is-active' : ''}`}
             aria-current={onLibrary ? 'page' : undefined} aria-label="打开资料库">
             <FolderOpen size={19} strokeWidth={1.75} aria-hidden="true" /><span>资料库</span>
-          </LinkAnchor>
-        </Link>}
-        {showUiWorkshop && <Link href={workshopHref as Href} asChild>
-          <LinkAnchor className={`new-conversation ${onWorkshop ? 'is-active' : ''}`}
-            aria-current={onWorkshop ? 'page' : undefined} aria-label="打开 UI 工坊">
-            <LayoutTemplate size={19} strokeWidth={1.75} aria-hidden="true" /><span>UI 工坊</span>
           </LinkAnchor>
         </Link>}
       </nav>

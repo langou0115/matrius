@@ -54,7 +54,6 @@ ui/
 │   │   ├── document-title.ts           会话页使用对话名作为标签标题，其余页面回退 Matrius
 │   │   ├── conversation-route-state.ts URL 对话选择与有效性状态
 │   │   ├── conversation-search.ts      搜索匹配、命中片段、高亮分段与相对时间
-│   │   ├── conversation-files.ts       对话引用文件收集、跨对话共享判断与删除范围
 │   │   ├── last-conversation.ts        本机记住的最近对话与地址
 │   │   ├── location-pathname.ts        监听 history 变化，把地址栏作为页面事实源
 │   │   ├── message-order.ts            重新加载后还原 steering 消息顺序
@@ -253,15 +252,3 @@ ui/
 - `components/web/instance-workspace.tsx`：生产只加载后端工作区并用 REST 保存；连接不可用时等待重连。开发预览使用内存，不加载正式业务数据。
 
 上下文占用与计费用量分开：运行期间按会话和模型保存最近一次服务商报告的调用输入（含缓存读取/写入）与输出，不累加各轮调用；面板把输入拆成未缓存输入和缓存输入，并与输出一起展示。新调用开始时保留上一次报告的读数，等本次调用返回用量后再替换，不用估算值覆盖（避免输出短暂显示为 0）；只有会话还没有报告（新对话或刷新后）才按当前工具定义、保留正文、记忆与滚动摘要估算。运行时数据仅在内存中，不从当天累计用量反推。历史思考与工具结果只在实际请求携带时计入，不把展示用的完整过程重复加到下一轮历史。
-
-## UI 工坊
-
-- 路由 `/ui` 在 `ui/router/routes.tsx` 用 `React.lazy` 注册；侧栏入口位于 `features/chat/components/sidebar.tsx`，按 `ui_workshop` 能力显示。
-- `ui/features/ui-workshop/ui-workshop-screen.tsx`：组件库（`/ui`）。进入页面直接是组件列表、搜索与「新建组件」；新建弹窗只填写名称并选择是否与对话绑定（有状态），创建后进入构建工作台，不自动发送消息。
-- `ui/features/ui-workshop/ui-component-workspace.tsx`：构建工作台（`/ui/:componentId`）。左侧工坊对话、右侧实时预览；顶部返回组件库并集中重命名、删除、发布；移动端切换「对话 / 预览」。对话输入框直接复用 `features/chat/components/composer.tsx`，附件、模型、思考强度、停止与生成中追加都与普通对话一致。
-- `ui/features/ui-workshop/use-workshop.ts`：工坊对话状态。复用 `ui/core/api/agent-runs.ts` 的 `createRemoteAgentRuntime` 与服务端 SSE，请求带 `scope: 'workshop'`、`uiComponentId` 与 `tools.ui`；消息写回同一个 `/api/conversations/:id/messages`。
-- `ui/core/api/ui-components.ts`：组件、版本、发布、绑定与命令结果的前端接口。
-- `ui/features/chat/components/ui-component-frame.tsx`：预览与对话共用的沙箱宿主。iframe 使用 `sandbox="allow-scripts"`，文档由 `contract/ui-component.ts` 拼装（CSP、`#root`、bridge），只通过 `postMessage` 收发。
-- `ui/features/chat/components/ui-component-card.tsx`：助手消息里的组件卡片。无状态组件取 `componentId@version`，有状态组件取 `bindingId` 的当前状态与待执行命令；状态写入串行化并按 `baseRevision` 冲突恢复。
-- `features/chat/chat-screen.tsx` 在正文之后渲染 `message.uiComponents`；`features/workspace/cloud-workspace-repository.ts` 的 `messageBody` 负责把引用随消息持久化。
-- 组件数据、版本与绑定规则见 [UI 工坊](ui-workshop.md)。

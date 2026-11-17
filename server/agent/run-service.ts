@@ -9,7 +9,7 @@ import type {
 } from '../../contract/agent-protocol';
 import { featureIds } from '../features/registry';
 import { toolRegistry } from './tools';
-import type { ToolContext, ToolServices } from './tools/types';
+import type { ToolServices } from './tools/types';
 import { createAgentRuntime } from './runtime';
 import type { ModelConfig, ThinkingEffort } from '../../contract/agent-protocol';
 import { isThinkingEffort } from '../../contract/agent-thinking';
@@ -76,8 +76,6 @@ export function createAgentRunService(options: {
         ...(message.activities ? { activities: message.activities } : {}),
         ...(message.process ? { process: message.process } : {}),
         ...(message.files ? { files: message.files } : {}),
-        ...(message.uiComponents ? { uiComponents: message.uiComponents } : {}),
-        ...(message.uiComponentChange ? { uiComponentChange: message.uiComponentChange } : {}),
         ...(contextTokens ? { contextTokens } : {}),
       };
       emit(entry, { type: 'update', update });
@@ -134,46 +132,22 @@ export function createAgentRunService(options: {
         replyId: request.replyId,
       });
 
-      const scope = request.scope === 'workshop' ? 'workshop' as const : 'chat' as const;
       const features = new Set(featureIds());
-      const uiService = options.services?.ui;
       const modules = options.services
         ? toolRegistry.enabled(features).filter((module) => {
           if (module.id === 'web_search' || module.id === 'web_fetch') return request.tools?.web !== false;
           if (module.id === 'file') return request.tools?.files !== false;
-          if (module.id === 'ui_component') {
-            if (request.tools?.ui === false || !uiService) return false;
-            // A chat run only needs the tool when there is something published to render.
-            return scope === 'workshop' ? true : uiService.hasPublished();
-          }
           return true;
         })
         : [];
-      const contexts = new Map<string, ToolContext>();
-      const tools = modules.map((module) => {
-        const context: ToolContext = {
-          instanceId: 1,
-          conversationId: request.conversationId,
-          features,
-          ...(options.services ? { services: options.services } : {}),
-          scope,
-          ...(scope === 'workshop' && request.uiComponentId ? { uiComponentId: request.uiComponentId } : {}),
-        };
-        contexts.set(module.id, context);
-        return module.create(context);
-      });
+      const tools = modules.map((module) => module.create({
+        instanceId: 1,
+        conversationId: request.conversationId,
+        features,
+        services: options.services!,
+      }));
       const prompts = modules
-        .map((module) => {
-          const context = contexts.get(module.id);
-          if (module.dynamicPrompt && context) {
-            try {
-              return module.dynamicPrompt(context).trim();
-            } catch {
-              return '';
-            }
-          }
-          return module.prompt?.trim() ?? '';
-        })
+        .map((module) => module.prompt?.trim())
         .filter((prompt): prompt is string => Boolean(prompt));
       const systemPrompt = [request.systemPrompt, ...prompts].filter(Boolean).join('\n\n');
 

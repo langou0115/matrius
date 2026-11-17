@@ -24,11 +24,7 @@ export type AgentRequest = {
   /** Rolling summary persisted with the conversation; empty means no earlier history is summarized. */
   contextSummary?: ContextSummary;
   /** Remote-runtime request flags; the server filters its registered tools by these. */
-  enabledTools?: { web?: boolean; files?: boolean; ui?: boolean };
-  /** `workshop` runs may write component versions; ordinary chat only renders published ones. */
-  scope?: 'chat' | 'workshop';
-  /** The component a workshop run is editing. */
-  uiComponentId?: string;
+  enabledTools?: { web?: boolean; files?: boolean };
 };
 
 type RuntimeOptions = {
@@ -171,8 +167,6 @@ export function createRemoteAgentRuntime({ onReply, onSummary, onUsage }: Runtim
       ...(request.memoryText ? { memoryText: request.memoryText } : {}),
       ...(request.contextSummary ? { contextSummary: request.contextSummary } : {}),
       ...(request.enabledTools ? { tools: request.enabledTools } : {}),
-      ...(request.scope ? { scope: request.scope } : {}),
-      ...(request.uiComponentId ? { uiComponentId: request.uiComponentId } : {}),
     };
     try {
       const response = await fetch('/api/agent/runs', {

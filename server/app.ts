@@ -16,7 +16,6 @@ import { registerDebugRoutes } from './routes/debug';
 import { registerFeatureRoutes } from './routes/features';
 import { registerFileRoutes } from './routes/files';
 import { registerHealthRoutes } from './routes/health';
-import { registerUiComponentRoutes } from './routes/ui-components';
 import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { MemoryCache } from './services/cache';
@@ -26,7 +25,6 @@ import { createFetchService } from './services/fetch';
 import { createHttpClient } from './services/http';
 import { createSearchService } from './services/search';
 import { LocalStorage } from './services/storage';
-import { createUiComponentService, type UiComponentService } from './services/ui-components';
 
 export type AppDependencies = {
   settings: Settings;
@@ -34,7 +32,6 @@ export type AppDependencies = {
   storage: LocalStorage;
   cache: MemoryCache;
   documents: DocumentToolService;
-  ui: UiComponentService;
   runs: AgentRunService;
 };
 
@@ -81,9 +78,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   const drafts = new DraftStore(settings);
   await drafts.resetOnStartup();
   const documents = createDocumentService({ db, storage, settings, cache, drafts });
-  const ui = createUiComponentService(db);
   const runs = options.runs ?? createAgentRunService({
-    services: { search, fetch, files: documents, ui },
+    services: { search, fetch, files: documents },
   });
 
   const app = Fastify({
@@ -155,7 +151,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   registerWorkspaceRoutes(app, { db });
   registerUsageRoutes(app, { db });
   registerFileRoutes(app, { db, storage, cache, settings });
-  registerUiComponentRoutes(app, { ui });
   registerAgentRoutes(app, { runs });
 
   app.addHook('onClose', async () => {
@@ -167,7 +162,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
     });
   }
 
-  return { app, deps: { settings, db, storage, cache, documents, ui, runs } };
+  return { app, deps: { settings, db, storage, cache, documents, runs } };
 }
 
 export async function start(): Promise<FastifyInstance> {

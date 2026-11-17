@@ -11,8 +11,6 @@
  * the same dependency rule: no Node, DOM, React or database imports.
  */
 
-import type { UiComponentArtifact, UiComponentChange } from './ui-component';
-
 export type ProviderProtocol = 'completion' | 'responses' | 'message';
 export type ThinkingEffort = 'default' | 'low' | 'medium' | 'high';
 
@@ -125,10 +123,6 @@ export type Message = {
   thinkingMs?: number;
   status?: 'streaming' | 'complete' | 'stopped' | 'error';
   error?: string;
-  /** Components this reply rendered. Persisted so a reload restores the cards. */
-  uiComponents?: UiComponentArtifact[];
-  /** Transient during a workshop run: the AI wrote a new component version. */
-  uiComponentChange?: UiComponentChange;
 };
 
 export type TokenUsage = {
@@ -153,8 +147,6 @@ export type ReplyUpdate = {
   activities?: WebActivity[];
   process?: ProcessActivity[];
   files?: MessageFile[];
-  uiComponents?: UiComponentArtifact[];
-  uiComponentChange?: UiComponentChange;
 };
 
 export type AgentRunRequest = {
@@ -169,14 +161,9 @@ export type AgentRunRequest = {
   systemPrompt?: string;
   memoryText?: string;
   contextSummary?: ContextSummary;
-  /** `chat` renders published components; `workshop` also lets the model write versions. */
-  scope?: 'chat' | 'workshop';
-  /** Workshop editing target. The server validates that the component belongs to the instance. */
-  uiComponentId?: string;
   tools?: {
     web?: boolean;
     files?: boolean;
-    ui?: boolean;
   };
 };
 
