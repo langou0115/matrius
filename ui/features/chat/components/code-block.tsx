@@ -33,16 +33,16 @@ export const CodeBlock = memo(function CodeBlock({ code, language }: Props) {
 
   return <div className="message-code">
     <div className="message-code-header">
-      <span className="message-code-language">{language || 'text'}</span>
+      <span className="message-code-language"><Icon name="code" size={15} /><span>{language || 'text'}</span></span>
       <div className="message-code-actions">
         <span className="sr-only" role="status">{copyStatus}</span>
         <button type="button" onClick={copy} aria-label="复制代码"><Icon name={copyStatus === '已复制' ? 'check' : 'copy'} size={16} /></button>
         <button type="button" onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed} aria-controls={codeId} aria-label={collapsed ? '展开代码' : '收起代码'}><Icon name={collapsed ? 'expand' : 'collapse'} size={16} /></button>
       </div>
     </div>
-    <pre id={codeId} hidden={collapsed}>{html === null
+    <pre id={codeId} hidden={collapsed} tabIndex={0} role="region" aria-label={`${language || '纯文本'}代码，可横向滚动`}>{html === null
       ? <code>{code}</code>
-      // Only highlight.js output enters this sink; it escapes the original code.
+      // Only escaped source text and bundled highlighter theme styles enter this sink.
       : <code dangerouslySetInnerHTML={{ __html: html }} />}</pre>
   </div>;
 });

@@ -72,6 +72,14 @@ npm run test:server       # node:test via tsx
 `npm run dev` now launches the Node API, not Python. `npm run dev:server` is
 useful when Vite is already running separately.
 
+`npm run dev` uses `scripts/dev-server.mjs` to cache a Vite SSR build in
+`node_modules/.cache/matrius-server`. Source metadata, lockfile, Node version,
+and builder changes invalidate the cache automatically. Resource paths still
+point to the original source directories. The schema dependency graphs are
+bundled to reduce small-file I/O on Windows; native and asset-bearing packages
+remain external. Documents and the title/memory model runner load on demand.
+`npm run dev:server` continues to use tsx watch without this build cache.
+
 ## Configuration
 
 Development defaults point at `~/.matrius`. `server/config.ts` also reads the

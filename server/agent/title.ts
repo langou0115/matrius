@@ -1,6 +1,5 @@
 import { normalizeConversationTitle } from '../../contract/agent-title';
 import type { ModelConfig } from '../../contract/agent-protocol';
-import { createReplyRun } from './runner';
 
 export { normalizeConversationTitle };
 
@@ -42,6 +41,7 @@ export async function generateConversationTitle({
 
   let latest = '';
   try {
+    const { createReplyRun } = await import('./runner');
     const run = createReplyRun({
       config,
       apiKey,

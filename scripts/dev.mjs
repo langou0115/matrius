@@ -5,6 +5,7 @@ import net from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import { parseEnv } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -155,23 +156,28 @@ export function supervise() {
   return { start, watch, stop, finished, get stopping() { return stopping; }, get failure() { return failure; } };
 }
 
-async function ready(url, signal) {
+export async function ready(url, signal, label = 'Node API') {
   const startedAt = Date.now();
   let announced = false;
-  // A cold tsx compile after a large change can take well over 45 seconds on Windows.
-  for (let attempt = 0; attempt < 240; attempt++) {
+  // Use elapsed time: connection timeouts must count toward the deadline too.
+  const deadline = startedAt + 120_000;
+  while (Date.now() < deadline) {
     signal.throwIfAborted();
     try {
-      const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) });
-      if (response.ok) return;
+      const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, Math.min(2000, deadline - Date.now())))]) });
+      await response.body?.cancel();
+      if (response.ok) {
+        console.log(`${label} ready in ${((Date.now() - startedAt) / 1000).toFixed(2)}s.`);
+        return;
+      }
     } catch { /* The API may still be importing the app. */ }
     if (!announced && Date.now() - startedAt > 20_000) {
       announced = true;
-      console.log('Node API is still starting (the first run compiles TypeScript); waiting up to two minutes...');
+      console.log(`${label} is still starting; waiting up to two minutes...`);
     }
-    await new Promise((accept) => setTimeout(accept, 500));
+    await delay(Math.max(1, Math.min(500, deadline - Date.now())), undefined, { signal });
   }
-  throw new Error('Local API readiness failed after two minutes. Check the Node API output above.');
+  throw new Error(`${label} readiness failed after two minutes. Check its output above.`);
 }
 
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
@@ -237,19 +243,13 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     await mkdir(join(dataDir, 'files'), { recursive: true });
 
     abort.signal.throwIfAborted();
-    const api = runner.start(process.execPath, ['--import', 'tsx', 'server/main.ts'], {
+    const api = runner.start(process.execPath, ['--enable-source-maps', 'scripts/dev-server.mjs'], {
       cwd: root,
       env: backendEnv,
     });
     runner.watch(api, 'Node API');
-    await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal);
-    abort.signal.throwIfAborted();
-
-    // Vite starts in under a second, serves modules on demand and hot-replaces a
-    // changed module without rebuilding the graph, so the development server needs
-    // no worker or cache tuning of its own. The first run after `npm ci`, and the
-    // first run after the lockfile or vite config changes, pre-bundles the frontend
-    // dependencies; page requests wait for that pass, which is why it gets called out.
+    // Start Vite while the API imports/migrates so dependency optimization and
+    // first-screen warmup overlap backend startup, especially on cold Windows runs.
     if (!existsSync(join(root, 'node_modules', '.vite', 'deps', '_metadata.json'))) {
       console.log('Pre-bundling frontend dependencies (first run only; the page opens once it finishes)...');
     }
@@ -257,6 +257,11 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
       [join(root, 'node_modules/vite/bin/vite.js'), ...devWebArgs(webPort, { clear: args.includes('--clear') })],
       { cwd: root, env: devWebEnv({ env, apiPort }) });
     runner.watch(web, 'Vite');
+    await Promise.all([
+      ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal),
+      ready(`http://127.0.0.1:${webPort}/`, abort.signal, 'Vite'),
+    ]);
+    abort.signal.throwIfAborted();
     console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
       + `no login is required. Ctrl+C stops local services only.`);
     const code = await runner.finished;

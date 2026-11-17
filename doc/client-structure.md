@@ -58,7 +58,7 @@ ui/
 │   │   ├── location-pathname.ts        监听 history 变化，把地址栏作为页面事实源
 │   │   ├── message-order.ts            重新加载后还原 steering 消息顺序
 │   │   ├── scroll-position.ts          按会话记住滚动位置，防抖写入 localStorage
-│   │   ├── markdown/                   公式/货币规范化与高亮语言按需加载
+│   │   ├── markdown/                   公式/货币规范化与 Shiki/TextMate 语法、WASM 引擎、明暗主题按需加载
 │   │   ├── citations.ts                脚注来源解析、引用链接重写与已引用来源汇总
 │   │   └── components/
 │   │       ├── sidebar.tsx             侧栏、会话管理与设置入口

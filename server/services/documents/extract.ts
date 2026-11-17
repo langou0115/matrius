@@ -1,7 +1,5 @@
-import ExcelJS from 'exceljs';
+import type ExcelJS from 'exceljs';
 import { unzipSync } from 'fflate';
-import * as mammoth from 'mammoth';
-import { extractText as extractPdfText } from 'unpdf';
 
 import { AppError } from '../../errors';
 import { extensionOf } from '../file-types';
@@ -27,11 +25,13 @@ function decodeText(data: Uint8Array): string {
 }
 
 async function extractDocx(data: Uint8Array): Promise<string> {
+  const mammoth = await import('mammoth');
   const result = await mammoth.extractRawText({ buffer: Buffer.from(data) });
   return result.value;
 }
 
 async function extractXlsx(data: Uint8Array): Promise<string> {
+  const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(Buffer.from(data) as unknown as ExcelJS.Buffer);
   const parts: string[] = [];
@@ -68,6 +68,7 @@ function extractPptx(data: Uint8Array): string {
 }
 
 async function extractPdf(data: Uint8Array): Promise<string> {
+  const { extractText: extractPdfText } = await import('unpdf');
   const result = await extractPdfText(new Uint8Array(data), { mergePages: true });
   return result.text;
 }

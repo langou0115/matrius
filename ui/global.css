@@ -715,7 +715,7 @@ input[type='password']::-ms-clear { display: none; }
    formula it was meant to protect. Normal text wrapping already moves a formula that does not fit
    onto the next line; only a single formula wider than the whole viewport is uncontained, and that
    one cannot be broken without changing what it says. */
-.message-markdown { min-width: 0; }
+.message-markdown { min-width: 0; line-height: 1.75; }
 .message-markdown > :first-child { margin-top: 0; }
 .message-markdown > :last-child { margin-bottom: 0; }
 /* A replaced body (an interim preamble yielding to the answer) fades in instead of mutating in
@@ -734,25 +734,31 @@ input[type='password']::-ms-clear { display: none; }
 .message-markdown h2 { font-size: 21px; }
 .message-markdown h3 { font-size: 18px; }
 .message-markdown h4, .message-markdown h5, .message-markdown h6 { font-size: var(--text-body); }
+.message-markdown h1, .message-markdown h2 { letter-spacing: -.015em; }
 .message-markdown ul, .message-markdown ol { padding-left: 24px; margin: 0 0 16px; }
 .message-markdown li { margin: 6px 0; padding-left: 3px; }
+.message-markdown li::marker { color: var(--muted-text); font-variant-numeric: tabular-nums; }
 .message-markdown li > p { margin-bottom: 8px; }
 .message-markdown li > ul, .message-markdown li > ol { margin-block: 6px; }
 .message-markdown .contains-task-list { list-style: none; padding-left: 4px; }
 .message-markdown .task-list-item input { margin-right: 8px; accent-color: var(--primary); opacity: 1; }
-.message-markdown blockquote { margin: 16px 0; padding: 2px 0 2px 16px; border-left: 3px solid var(--border); color: var(--muted-text); }
+.message-markdown blockquote { margin: 18px 0; padding: 12px 16px; border-left: 3px solid color-mix(in srgb, var(--foreground) 22%, var(--background)); border-radius: 0 10px 10px 0; background: var(--soft); color: var(--muted-text); }
+.message-markdown blockquote blockquote { margin-block: 10px; }
 .message-markdown blockquote > :last-child { margin-bottom: 0; }
 .message-markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
 .message-markdown hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
 .message-markdown img { display: block; max-width: 100%; height: auto; margin-block: 16px; border-radius: var(--radius-sm); }
 .message-markdown code { font-family: var(--font-mono); font-size: var(--text-small); }
 .message-markdown :not(pre) > code { padding: 0 2px; overflow-wrap: anywhere; }
-.message-table-scroll { max-width: 100%; overflow-x: auto; margin: 18px 0; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.message-markdown table { width: 100%; border-collapse: collapse; font-size: var(--text-ui); }
-.message-markdown th, .message-markdown td { padding: 10px 14px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); min-width: 100px; }
-.message-markdown th { background: var(--soft); font-family: var(--font-semibold); font-weight: 400; }
+.message-table-scroll { min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin: 20px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--background); }
+.message-table-scroll:focus-visible { outline-offset: 2px; }
+.message-markdown table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-ui); line-height: 1.65; text-align: left; }
+.message-markdown th, .message-markdown td { min-width: 112px; max-width: 360px; padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.message-markdown th { background: var(--soft); color: var(--foreground); font-family: var(--font-semibold); font-weight: 400; }
+.message-markdown tbody tr:nth-child(even) { background: color-mix(in srgb, var(--foreground) 2%, var(--background)); }
+.message-markdown tbody tr:hover { background: color-mix(in srgb, var(--foreground) 4%, var(--background)); }
 .message-markdown tr:last-child td { border-bottom: 0; }
-.message-markdown th:last-child, .message-markdown td:last-child { border-right: 0; }
+.message-markdown td > :last-child, .message-markdown th > :last-child { margin-bottom: 0; }
 .message-markdown .footnotes { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted-text); font-size: var(--text-small); }
 /* A citation marker reads as a small raised number, not as an underlined paragraph link. The
    marker keeps its own pill because several of them often sit next to each other in one sentence. */
@@ -781,31 +787,32 @@ input[type='password']::-ms-clear { display: none; }
    colour before it can outrank this rule. A half-written formula reads as its source until the
    reply completes it. */
 .message-markdown .katex-source { color: var(--muted-text); font-family: var(--font-mono); font-size: var(--text-small); white-space: pre-wrap; overflow-wrap: anywhere; }
-.message-code { max-width: 100%; margin: 18px 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--soft); overflow: hidden; }
-.message-code-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; min-height: 42px; padding: 4px 10px 4px 16px; color: var(--muted-text); font-size: var(--text-caption); user-select: none; }
-.message-code-language { font-family: var(--font-mono); font-size: var(--text-caption); overflow-wrap: anywhere; }
-.message-code-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+.message-code { min-width: 0; max-width: 100%; margin: 20px 0; border: 1px solid var(--border); border-radius: 14px; background: #fafafa; overflow: hidden; }
+.message-code-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; padding: 5px 8px 5px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--foreground) 5%, var(--background)); color: var(--muted-text); font-size: var(--text-caption); user-select: none; }
+.message-code-language { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: var(--font-mono); font-size: var(--text-caption); white-space: nowrap; }
+.message-code-language > span { overflow: hidden; text-overflow: ellipsis; }
+.message-code-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
 .message-code-actions button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 8px; font-size: var(--text-caption); color: var(--muted-text); }
 .message-code-actions button:hover { background: var(--sidebar-selected); color: var(--foreground); }
 .message-code-actions button:focus-visible { outline-offset: 0; }
-.message-code pre { margin: 0; padding: 16px; overflow-x: auto; border-top: 1px solid var(--border); line-height: 1.55; tab-size: 2; white-space: pre; overflow-wrap: normal; }
+.message-code pre { margin: 0; padding: 18px 20px; overflow-x: auto; overscroll-behavior-x: contain; color: #383a42; font-size: var(--text-small); line-height: 1.65; tab-size: 2; white-space: pre; overflow-wrap: normal; }
+.message-code pre:focus-visible { outline-offset: -3px; }
 .message-code pre[hidden] { display: none; }
-.message-code pre code { padding: 0; font-family: var(--font-mono); font-size: var(--text-small); }
-/* Fixed syntax palettes remain independent of the selected accent theme. */
-.message-code .hljs-comment, .message-code .hljs-quote { color: #65717e; font-style: italic; }
-.message-code .hljs-keyword, .message-code .hljs-selector-tag, .message-code .hljs-literal { color: #a02588; }
-.message-code .hljs-string, .message-code .hljs-regexp, .message-code .hljs-addition { color: #17683b; }
-.message-code .hljs-number, .message-code .hljs-symbol, .message-code .hljs-attr { color: #9a4d11; }
-.message-code .hljs-title, .message-code .hljs-built_in, .message-code .hljs-section { color: #195fa8; }
-.message-code .hljs-type, .message-code .hljs-attribute, .message-code .hljs-tag { color: #8b3b18; }
-.message-code .hljs-meta, .message-code .hljs-deletion { color: #ac263c; }
-.matrius-app[data-color-mode='dark'] .message-code .hljs-comment, .matrius-app[data-color-mode='dark'] .message-code .hljs-quote { color: #a3b0bf; }
-.matrius-app[data-color-mode='dark'] .message-code .hljs-keyword, .matrius-app[data-color-mode='dark'] .message-code .hljs-selector-tag, .matrius-app[data-color-mode='dark'] .message-code .hljs-literal { color: #d6a4ef; }
-.matrius-app[data-color-mode='dark'] .message-code .hljs-string, .matrius-app[data-color-mode='dark'] .message-code .hljs-regexp, .matrius-app[data-color-mode='dark'] .message-code .hljs-addition { color: #a5d6a7; }
-.matrius-app[data-color-mode='dark'] .message-code .hljs-number, .matrius-app[data-color-mode='dark'] .message-code .hljs-symbol, .matrius-app[data-color-mode='dark'] .message-code .hljs-attr { color: #f2c38f; }
-.matrius-app[data-color-mode='dark'] .message-code .hljs-title, .matrius-app[data-color-mode='dark'] .message-code .hljs-built_in, .matrius-app[data-color-mode='dark'] .message-code .hljs-section { color: #96c5f7; }
-.matrius-app[data-color-mode='dark'] .message-code .hljs-type, .matrius-app[data-color-mode='dark'] .message-code .hljs-attribute, .matrius-app[data-color-mode='dark'] .message-code .hljs-tag { color: #efb79f; }
-.matrius-app[data-color-mode='dark'] .message-code .hljs-meta, .matrius-app[data-color-mode='dark'] .message-code .hljs-deletion { color: #f49da7; }
+.message-code pre code { display: block; width: max-content; min-width: 100%; padding: 0; font-family: var(--font-mono); font-size: var(--text-small); line-height: inherit; }
+.matrius-app .message-code pre, .matrius-app .message-table-scroll { scrollbar-width: thin; }
+.matrius-app .message-code pre::-webkit-scrollbar, .matrius-app .message-table-scroll::-webkit-scrollbar { height: 8px; }
+@media (max-width: 767px) {
+  .message-code, .message-table-scroll { margin-block: 16px; border-radius: 10px; }
+  .message-code-header { padding-left: 14px; }
+  .message-code pre { padding: 14px; }
+  .message-markdown th, .message-markdown td { min-width: 104px; padding: 10px 12px; }
+}
+/* Complete One Light / One Dark Pro token styles emitted by Shiki.
+   Theme switching only changes CSS; code does not need to be tokenized again. */
+.message-code .line > span { color: var(--syntax-light, inherit); font-style: var(--syntax-light-font-style, normal); font-weight: var(--syntax-light-font-weight, inherit); text-decoration: var(--syntax-light-text-decoration, none); }
+.matrius-app[data-color-mode='dark'] .message-code { background: #23272e; }
+.matrius-app[data-color-mode='dark'] .message-code pre { color: #abb2bf; }
+.matrius-app[data-color-mode='dark'] .message-code .line > span { color: var(--syntax-dark, inherit); font-style: var(--syntax-dark-font-style, normal); font-weight: var(--syntax-dark-font-weight, inherit); text-decoration: var(--syntax-dark-text-decoration, none); }
 @media (pointer: coarse) { .message-code-actions button { min-width: 44px; min-height: 44px; } }
 .demo-toolbar { position: fixed; right: 16px; bottom: 6px; z-index: 40; display: flex; align-items: center; gap: 10px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--popover); color: var(--muted-text); font-size: var(--text-caption); }
 .demo-toolbar button { padding: 1px 3px; color: var(--foreground); }

@@ -90,12 +90,16 @@ export default defineConfig({
       { find: /^@\//u, replacement: fromRoot('./ui/') },
     ],
   },
+  // The app has one HTML entry. Avoid walking the whole repository (including
+  // OfficeCLI binaries and backend fixtures) to discover HTML on a cold cache.
+  optimizeDeps: { entries: ['index.html'] },
   server: {
     host: '127.0.0.1',
     port: Number(process.env.DEV_WEB_PORT ?? 8081),
     // A stale server on the configured port must fail loudly instead of moving to
     // another port that the API origin and the browser tab do not know about.
     strictPort: true,
+    watch: { ignored: ['**/server/**'] },
     // Transform the first screen right after startup, so the browser's first load
     // does not pay for the whole module graph one request at a time.
     warmup: { clientFiles: ['./ui/main.tsx', './ui/router/routes.tsx'] },

@@ -2,7 +2,6 @@ import {
   MEMORY_SUMMARY_LIMIT, normalizeMemorySummary, sanitizeMemoryTags,
 } from '../../contract/agent-memory';
 import type { ModelConfig } from '../../contract/agent-protocol';
-import { createReplyRun } from './runner';
 
 export { MEMORY_SUMMARY_LIMIT, normalizeMemorySummary };
 
@@ -43,6 +42,7 @@ export async function generateMemorySummary({
   if (!userMessage.trim() || (config.requiresApiKey && !apiKey)) return null;
   let latest = '';
   try {
+    const { createReplyRun } = await import('./runner');
     const run = createReplyRun({
       config,
       apiKey,

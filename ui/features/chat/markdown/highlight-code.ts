@@ -1,52 +1,51 @@
-import hljs from 'highlight.js/lib/core';
-import type { LanguageFn } from 'highlight.js';
-
-const loaders: Record<string, () => Promise<{ default: LanguageFn }>> = {
-  javascript: () => import('highlight.js/lib/languages/javascript'),
-  typescript: () => import('highlight.js/lib/languages/typescript'),
-  python: () => import('highlight.js/lib/languages/python'),
-  json: () => import('highlight.js/lib/languages/json'),
-  bash: () => import('highlight.js/lib/languages/bash'),
-  sql: () => import('highlight.js/lib/languages/sql'),
-  xml: () => import('highlight.js/lib/languages/xml'),
-  css: () => import('highlight.js/lib/languages/css'),
-  yaml: () => import('highlight.js/lib/languages/yaml'),
-  rust: () => import('highlight.js/lib/languages/rust'),
-  go: () => import('highlight.js/lib/languages/go'),
-  java: () => import('highlight.js/lib/languages/java'),
-  c: () => import('highlight.js/lib/languages/c'),
-  cpp: () => import('highlight.js/lib/languages/cpp'),
-  csharp: () => import('highlight.js/lib/languages/csharp'),
-  php: () => import('highlight.js/lib/languages/php'),
-  ruby: () => import('highlight.js/lib/languages/ruby'),
-  swift: () => import('highlight.js/lib/languages/swift'),
-  kotlin: () => import('highlight.js/lib/languages/kotlin'),
-  diff: () => import('highlight.js/lib/languages/diff'),
-  markdown: () => import('highlight.js/lib/languages/markdown'),
-};
-const aliases: Record<string, string> = {
-  js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
-  py: 'python', sh: 'bash', shell: 'bash', zsh: 'bash', html: 'xml', svg: 'xml',
-  yml: 'yaml', rs: 'rust', golang: 'go', cs: 'csharp', 'c#': 'csharp',
-  'c++': 'cpp', rb: 'ruby', kt: 'kotlin', md: 'markdown',
-};
-const loading = new Map<string, Promise<void>>();
-
-function loadLanguage(language: string): Promise<void> {
-  let pending = loading.get(language);
-  if (!pending) {
-    pending = loaders[language]().then((grammar) => { hljs.registerLanguage(language, grammar.default); });
-    loading.set(language, pending);
-    void pending.catch(() => { loading.delete(language); });
-  }
-  return pending;
+// Use Shiki's official tokenizer and HTML renderer; no local grammar or token renderer.
+async function loadEngine() {
+  const [{ createHighlighterCore }, { createOnigurumaEngine }, { bundledLanguages }, light, dark] = await Promise.all([
+    import('shiki/core'),
+    import('shiki/engine/oniguruma'),
+    import('shiki/langs'),
+    import('shiki/themes/one-light.mjs'),
+    import('shiki/themes/one-dark-pro.mjs'),
+  ]);
+  const highlighter = await createHighlighterCore({
+    engine: createOnigurumaEngine(import('shiki/wasm')),
+    themes: [light, dark],
+    langs: [],
+  });
+  return { highlighter, languages: bundledLanguages };
 }
 
+let enginePromise: ReturnType<typeof loadEngine> | undefined;
+const loading = new Map<string, Promise<void>>();
+const aliases: Record<string, string> = {
+  psm1: 'powershell', psd1: 'powershell', cmd: 'bat', batch: 'bat', dos: 'bat',
+  shell: 'shellscript', zsh: 'shellscript',
+};
+
 export async function highlightCode(code: string, label: string): Promise<string | null> {
-  const language = aliases[label.toLowerCase()] ?? label.toLowerCase();
-  // Keep unknown languages and oversized blocks readable without auto-detection.
-  if (!Object.hasOwn(loaders, language) || code.length > 50_000) return null;
-  await loadLanguage(language);
-  if (language === 'typescript' || language === 'javascript') await loadLanguage('xml');
-  return hljs.highlight(code, { language, ignoreIllegals: true }).value;
+  const normalized = label.trim().toLowerCase();
+  const language = Object.hasOwn(aliases, normalized) ? aliases[normalized] : normalized;
+  if (!language || ['text', 'txt', 'plain', 'plaintext'].includes(language) || code.length > 50_000) return null;
+  enginePromise ??= loadEngine().catch((error: unknown) => { enginePromise = undefined; throw error; });
+  const { highlighter, languages } = await enginePromise;
+  if (!Object.hasOwn(languages, language)) return null;
+  const loader = languages[language as keyof typeof languages];
+  let pending = loading.get(language);
+  if (!pending) {
+    pending = highlighter.loadLanguage(loader).catch((error: unknown) => { loading.delete(language); throw error; });
+    loading.set(language, pending);
+  }
+  await pending;
+  const html = highlighter.codeToHtml(code, {
+    lang: language,
+    themes: { light: 'one-light', dark: 'one-dark-pro' },
+    defaultColor: false,
+    cssVariablePrefix: '--syntax-',
+    tokenizeMaxLineLength: 4000,
+  });
+  // Keep our accessible scroll container and toolbar; the code subtree is emitted
+  // entirely by Shiki, including source escaping and theme styles.
+  const start = html.indexOf('<code>');
+  const end = html.lastIndexOf('</code>');
+  return start >= 0 && end >= start ? html.slice(start + '<code>'.length, end) : null;
 }

@@ -11,7 +11,7 @@ import test from 'node:test';
 
 import {
   availablePort, devDataDir, devEnvironment, devWebArgs,
-  devWebEnv, devPorts, resetDatabase, resetTargets, supervise,
+  devWebEnv, devPorts, ready, resetDatabase, resetTargets, supervise,
 } from '../scripts/dev.mjs';
 const { handleDevApi } = createRequire(import.meta.url)('../scripts/dev-api-proxy.cjs');
 
@@ -104,6 +104,25 @@ async function listen(server) {
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   return `http://127.0.0.1:${server.address().port}`;
 }
+
+test('readiness retries non-success responses and can be cancelled while waiting', async (t) => {
+  let requests = 0;
+  const server = createServer((_req, res) => {
+    res.writeHead(++requests === 1 ? 503 : 200);
+    res.end('ready');
+  });
+  const origin = await listen(server);
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  await ready(origin, new AbortController().signal, 'fixture');
+  assert.equal(requests, 2);
+  const pending = createServer((_req, res) => { res.writeHead(503); res.end(); });
+  const unavailable = await listen(pending);
+  t.after(() => { pending.closeAllConnections(); pending.close(); });
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 50);
+  t.after(() => clearTimeout(timer));
+  await assert.rejects(ready(unavailable, abort.signal), { name: 'AbortError' });
+});
 
 test('same-origin API proxy preserves POST body, auth, query, status and streamed response', async (t) => {
   const upstream = createServer(async (req, res) => {

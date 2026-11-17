@@ -20,7 +20,7 @@ import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { MemoryCache } from './services/cache';
 import { DraftStore } from './services/documents/drafts';
-import { createDocumentService, type DocumentToolService } from './services/documents/service';
+import type { DocumentToolService } from './services/documents/service';
 import { createFetchService } from './services/fetch';
 import { createHttpClient } from './services/http';
 import { createSearchService } from './services/search';
@@ -77,7 +77,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   const fetch = createFetchService({ cache, settings, http });
   const drafts = new DraftStore(settings);
   await drafts.resetOnStartup();
-  const documents = createDocumentService({ db, storage, settings, cache, drafts });
+  // Keep Office/PDF engines off the startup path. Share one service (and one
+  // in-flight import) across concurrent tool calls; allow retry after a failure.
+  let documentService: Promise<DocumentToolService> | undefined;
+  const documents: DocumentToolService = {
+    async run(instanceId, request) {
+      documentService ??= import('./services/documents/service')
+        .then(({ createDocumentService }) => createDocumentService({ db, storage, settings, cache, drafts }))
+        .catch((error: unknown) => { documentService = undefined; throw error; });
+      return (await documentService).run(instanceId, request);
+    },
+  };
   const runs = options.runs ?? createAgentRunService({
     services: { search, fetch, files: documents },
   });

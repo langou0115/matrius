@@ -934,7 +934,7 @@ test('untrusted HTML, URLs and KaTeX commands cannot become active content', () 
 
 test('highlighting loads requested languages, escapes code and falls back safely', async () => {
   for (const [language, code] of [['tsx', 'const App = () => <p>Hello</p>;'], ['python', 'def greet():\n    return "hello"'], ['sql', 'SELECT * FROM messages;'], ['json', '{"ok": true}'], ['bash', 'echo "hello"']]) {
-    assert.match(await highlightCode(code, language), /class="hljs-/);
+    assert.match(await highlightCode(code, language), /class="line"/);
   }
   assert.equal(await highlightCode('hello', 'not-a-language'), null);
   assert.equal(await highlightCode('hello', 'constructor'), null);
@@ -942,6 +942,41 @@ test('highlighting loads requested languages, escapes code and falls back safely
   const html = await highlightCode('<script>alert(1)</script>', 'html');
   assert.ok(!html.includes('<script>'));
   assert.equal(parseHTML(`<div>${html}</div>`).document.querySelector('div').textContent, '<script>alert(1)</script>');
+});
+
+test('PowerShell proxy commands highlight variables and strings without changing copyable text', async () => {
+  const code = '$env:HTTP_PROXY = "http://127.0.0.1:7890"\n$env:HTTPS_PROXY = "http://127.0.0.1:7890"\n$env:ALL_PROXY = "socks5://127.0.0.1:7890"\n$env:NO_PROXY = "localhost,127.0.0.1,::1,.local"';
+  for (const label of ['powershell', 'PowerShell', 'pwsh', 'ps1', 'psm1', 'psd1']) {
+    const html = await highlightCode(code, label);
+    assert.match(html, /--syntax-light:/);
+    assert.match(html, /--syntax-dark:/);
+    const colors = new Set([...html.matchAll(/--syntax-light:([^;"&]+)/gu)].map((match) => match[1]));
+    assert.ok(colors.size >= 3, 'variables, strings and operators have distinct theme colors');
+    assert.equal(parseHTML(`<div>${html}</div>`).document.querySelector('div').textContent, code);
+  }
+  for (const label of ['cmd', 'bat', 'batch']) {
+    assert.match(await highlightCode('@echo off\nset HTTP_PROXY=http://127.0.0.1:7890', label), /class="line"/);
+  }
+});
+
+test('complete syntax themes support more languages and preserve whitespace and hostile source', async () => {
+  for (const [language, code] of [
+    ['vue', '<template><h1>{{ title }}</h1></template>'],
+    ['dockerfile', 'FROM node:24\nWORKDIR /app'],
+    ['toml', '[server]\nport = 8000'],
+    ['graphql', 'query { user { name } }'],
+  ]) {
+    const html = await highlightCode(code, language);
+    assert.match(html, /--syntax-light:/);
+    assert.match(html, /--syntax-dark:/);
+    assert.equal(parseHTML(`<div>${html}</div>`).document.querySelector('div').textContent, code);
+  }
+  const source = '  // 中文 🙂\r\n\tconst source = "<img src=x onerror=alert(1)>";  \r\n\r\n';
+  const html = await highlightCode(source, 'typescript');
+  const { document } = parseHTML(`<div>${html}</div>`);
+  assert.equal(document.querySelector('div').textContent, source.replaceAll('\r\n', '\n'));
+  assert.equal(document.querySelector('img'), null);
+  assert.equal(await highlightCode('ordinary text', 'plaintext'), null);
 });
 
 test('all Mock replies render without a KaTeX parse error except the intentional truncated formula', () => {
@@ -965,10 +1000,12 @@ test('code block supports collapse, expand, raw copying and clipboard failures',
   let copied;
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async (text) => { copied = text; } } } });
   const root = createRoot(document.getElementById('root'));
-  const source = 'const price = "$20";\n';
+  const source = 'const price = "$20";\r\n';
   try {
     await act(async () => { root.render(createElement(CodeBlock, { code: source, language: 'js' })); });
-    assert.ok(document.querySelector('pre code .hljs-keyword'));
+    const token = document.querySelector('pre code .line > span');
+    assert.ok(token?.getAttribute('style')?.includes('--syntax-light:'));
+    assert.ok(token?.getAttribute('style')?.includes('--syntax-dark:'));
     const toggle = () => document.querySelector('button[aria-expanded]');
     await act(async () => { toggle().click(); });
     assert.equal(toggle().getAttribute('aria-expanded'), 'false');
@@ -978,7 +1015,7 @@ test('code block supports collapse, expand, raw copying and clipboard failures',
     assert.equal(document.querySelector('[role=status]').textContent, '已复制');
     await act(async () => { toggle().click(); });
     assert.equal(document.querySelector('pre').hidden, false);
-    assert.equal(document.querySelector('pre code').textContent, source);
+    assert.equal(document.querySelector('pre code').textContent, source.replaceAll('\r\n', '\n'));
     navigator.clipboard.writeText = async () => { throw new Error('denied'); };
     await act(async () => { document.querySelector('button[aria-label="复制代码"]').click(); });
     assert.match(document.querySelector('[role=status]').textContent, /复制失败/);

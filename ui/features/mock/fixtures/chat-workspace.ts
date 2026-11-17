@@ -8,13 +8,15 @@ type Turn = string | { content: string; files?: MessageFile[] };
 type Thread = { id: string; title: string; pinned?: boolean; turns: Turn[] };
 
 const markdownReply = [
-  '# Markdown 综合格式测试',
+  '# Markdown 综合格式测试 ✨',
+  '这是一份排版预览：先看重点，再按需展开细节。🙂',
   '正文同时包含 **粗体**、*斜体*、***粗斜体***、~~删除线~~、`inlineCode()` 和 [示例链接](https://example.com)。',
   '## 二级标题\n### 三级标题\n#### 四级标题\n##### 五级标题\n###### 六级标题',
   '> 一级引用：观察引用缩进。\n>\n> > 二级引用：观察嵌套层级。',
   '- 无序列表\n  - 嵌套项目\n- [x] 已完成任务\n- [ ] 未完成任务\n\n1. 第一项\n2. 第二项\n   1. 嵌套有序项',
-  '| 类型 | 示例 | 说明 |\n| :--- | :---: | ---: |\n| 中文 | 你好 | 15 |\n| English | Hello | 200 |\n| 行内代码 | `const value = 1` | 1024 |',
+  '| 类型 | 示例 | 说明 |\n| :--- | :---: | ---: |\n| 中文 | 你好 | 15 |\n| English | Hello | 200 |\n| 行内代码 | `const value = 1` | 1024 |\n| 长文本 | 单元格中的说明会自然换行，保持内容顶对齐；窄屏可横向滚动查看完整表格。 | 4096 |',
   '```typescript\ntype Reply = { content: string; done: boolean };\nconst reply: Reply = { content: "你好，Matrius", done: true };\nconsole.log(reply.content);\n```',
+  '```powershell\n$env:HTTP_PROXY = "http://127.0.0.1:7890"\n$env:HTTPS_PROXY = "http://127.0.0.1:7890"\n$env:ALL_PROXY = "socks5://127.0.0.1:7890"\n$env:NO_PROXY = "localhost,127.0.0.1,::1,.local"\n```',
   '---',
   '脚注示例[^note]。\n\n[^note]: 这是一段脚注说明。',
   '结尾段落：检查从第一段连续选择到这里时，正文与代码是否保持完整。',

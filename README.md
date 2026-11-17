@@ -45,6 +45,8 @@ npm run dev:server    # 只启动 TypeScript/Fastify 后端
 
 打开 `http://localhost:8081`，在「设置 → 模型服务」添加服务商和模型后即可对话。
 
+开发时 API 与 Vite 并行启动，并分别输出就绪耗时。后端构建缓存位于 `node_modules/.cache/matrius-server`，源码或依赖变化时自动重建；日常重启复用缓存，减少 Windows 冷启动的小文件读取。`npm run dev:server` 仍使用 tsx watch。详见[开发与验证](doc/development.md)。
+
 
 开发模式可访问 `/mock`，其中 `/mock/process` 可预览思考过程、工具步骤和中断状态，`/mock/storage` 可预览保存失败提示，均不调用模型；回答末尾的来源区留待后续实现。Vite 的 HMR 会自行重连，模型回复生成期间不再暂停热更新；刷新或离开页面时仍保留 `beforeunload` 确认，避免误丢正在进行的回复。正式 Web 使用静态生产构建。
 
