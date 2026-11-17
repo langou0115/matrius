@@ -804,7 +804,10 @@ input[type='password']::-ms-clear { display: none; }
   display: inline-grid; place-content: center; flex: none;
   width: 15px; height: 15px; margin: 0 8px 0 0; padding: 0;
   border: 1.5px solid var(--foreground); border-radius: 4px;
-  background: transparent; vertical-align: -2px; opacity: 1; cursor: default;
+  background: transparent; vertical-align: middle; opacity: 1; cursor: default;
+  /* `vertical-align: middle` aligns to the font's x-height, which still leaves the box a pixel or
+     two below the text's optical centre in this font; nudge it back. */
+  position: relative; top: -1.5px;
 }
 .message-markdown .task-list-item input[type='checkbox']:checked { background: var(--foreground); }
 .message-markdown .task-list-item input[type='checkbox']:checked::after {
@@ -860,9 +863,11 @@ input[type='password']::-ms-clear { display: none; }
   min-width: 0; max-width: 100%; padding: 0; gap: 0;
   border: 1px solid var(--border); border-radius: 14px; background: var(--soft); overflow: hidden;
 }
+/* The header is a row inside the card rather than a separate strip: no divider, no second
+   surface, so the whole code block reads as one box. */
 .message-markdown [data-streamdown='code-block-header'] {
-  display: flex; align-items: center; height: auto; min-height: 42px; padding: 5px 8px 5px 18px;
-  border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--foreground) 4%, var(--background));
+  display: flex; align-items: center; height: auto; min-height: 30px; padding: 8px 8px 0 18px;
+  border-bottom: 0; background: transparent;
   color: var(--muted-text); font-size: var(--text-caption); user-select: none;
 }
 .message-markdown [data-streamdown='code-block-header'] > span { margin-left: 0; font-family: var(--font-mono); font-size: var(--text-caption); }
@@ -879,7 +884,7 @@ input[type='password']::-ms-clear { display: none; }
   padding: 0; border: 0; border-radius: 0; background: transparent; overflow-x: auto; overscroll-behavior-x: contain;
 }
 .message-markdown [data-streamdown='code-block'] pre {
-  margin: 0; padding: 18px 20px; overflow-x: auto; overscroll-behavior-x: contain;
+  margin: 0; padding: 6px 20px 16px; overflow-x: auto; overscroll-behavior-x: contain;
   color: var(--foreground); font-size: var(--text-small); line-height: 1.65; tab-size: 2; white-space: pre; overflow-wrap: normal;
 }
 .message-markdown [data-streamdown='code-block'] pre:focus-visible { outline-offset: -3px; }
@@ -892,7 +897,7 @@ input[type='password']::-ms-clear { display: none; }
   .message-markdown [data-streamdown='code-block'],
   .message-markdown [data-streamdown='table-wrapper'] { border-radius: 10px; }
   .message-markdown [data-streamdown='code-block-header'] { padding-left: 14px; }
-  .message-markdown [data-streamdown='code-block'] pre { padding: 14px; }
+  .message-markdown [data-streamdown='code-block'] pre { padding: 6px 14px 14px; }
   .message-markdown [data-streamdown='table-header-cell'],
   .message-markdown [data-streamdown='table-cell'] { min-width: 104px; padding: 10px 12px; }
 }
