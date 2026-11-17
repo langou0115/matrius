@@ -54,7 +54,7 @@ test('formulas stay inline in lists, tables and bold text', () => {
   assert.equal(page.querySelectorAll('.katex-display').length, 0, 'nothing is promoted to a block');
   assert.ok(page.querySelector('li .katex'), 'in a list item');
   assert.ok(page.querySelector('td .katex'), 'in a table cell');
-  assert.ok(page.querySelector('strong .katex'), 'inside bold text');
+  assert.ok(page.querySelector('[data-streamdown="strong"] .katex'), 'inside bold text');
   for (const formula of page.querySelectorAll('.katex')) assert.equal(formula.tagName, 'SPAN');
 });
 

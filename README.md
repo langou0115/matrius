@@ -11,7 +11,7 @@
 - **多轮对话**：流式回复、停止、引用、分支、搜索与置顶；思考、工具与后续思考按事件顺序展示，整轮连续计时，中断保留内容和上下文
 - **单用户实例**：访问唯一工作区，对话和文件统一保存到实例后端
 - **自带模型**：支持 OpenAI Chat Completions、Responses、Anthropic Messages 及兼容服务，密钥只保存在本机
-- **完整渲染**：Markdown / GFM、KaTeX 公式、代码高亮、复制与折叠
+- **完整渲染**：Markdown / GFM、KaTeX 公式、代码高亮与复制、表格、Mermaid 图表（Streamdown）
 - **无登录**：所有客户端共享唯一实例，没有账户或管理员控制台
 - **自部署后端**：Node 24 + Fastify + SQLite + 本地文件存储 + 进程内缓存
 - **可安装 Web 应用**：提供 PWA manifest 与 service worker，安装后可离线打开应用外壳

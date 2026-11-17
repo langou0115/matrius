@@ -58,7 +58,7 @@ ui/
 │   │   ├── location-pathname.ts        监听 history 变化，把地址栏作为页面事实源
 │   │   ├── message-order.ts            重新加载后还原 steering 消息顺序
 │   │   ├── scroll-position.ts          按会话记住滚动位置，防抖写入 localStorage
-│   │   ├── markdown/                   公式/货币规范化与 Shiki/TextMate 语法、WASM 引擎、明暗主题按需加载
+│   │   ├── markdown/                   公式/货币与裸 LaTeX 规范化（渲染前重写，不改代码块）
 │   │   ├── citations.ts                脚注来源解析、引用链接重写与已引用来源汇总
 │   │   └── components/
 │   │       ├── sidebar.tsx             侧栏、会话管理与设置入口
@@ -71,13 +71,12 @@ ui/
 │   │       ├── source-card.tsx         来源站点图标与可复用来源卡片
 │   │       ├── sources-panel.tsx       已引用来源侧栏，序号与正文上角标一致
 │   │       ├── side-panel.tsx          来源列与窄屏底部弹层共用的面板外壳
-│   │       ├── message-content.tsx     用户与助手 Markdown/GFM、KaTeX 渲染与引用改写
+│   │       ├── message-content.tsx     用户与助手 Markdown/GFM、KaTeX、代码高亮、Mermaid 与引用改写（Streamdown）
 │   │       ├── collapsible-message-content.tsx 长用户消息按渲染高度折叠
 │   │       ├── reasoning-block.tsx     等待与思考共用的状态行及折叠正文
 │   │       ├── research-group.tsx      搜索/读取分组合并、行状态与来源去重
 │   │       ├── research-panel.tsx      单次搜索/读取批次的来源侧栏与窄屏底部弹层
 │   │       ├── reply-status.tsx        停止/失败提示及末条失败回复的重试操作
-│   │       ├── code-block.tsx          代码高亮、复制与折叠
 │   │       ├── model-icon.tsx          theSVG 彩色模型品牌与通用 SVG 标记
 │   │       ├── composer.tsx            输入法、Enter/Shift+Enter、模型提示
 │   │       ├── context-meter.tsx       已有对话输入框下方的上下文入口与容量分段弹层
@@ -160,7 +159,7 @@ ui/
 │   ├── appearance.tsx                  共享外观状态，默认 Twitter / 跟随系统
 │   ├── presets.ts                      旧版 tweakcn 原始配色变量
 │   └── resolve-theme.ts                暗色表面与前景明度适配，保留原始预设
-└── global.css                          @font-face、样式、布局、焦点与选区
+└── global.css                          Tailwind 主题/工具类导入、@font-face、样式、布局、焦点与选区
 ```
 
 - 路径别名 `@/` 指向 `ui/`，`@/assets/` 指向 `assets/`，`@contract/` 指向根目录 `contract/`（`tsconfig.json` 与 `vite.config.ts` 各登记一次，测试加载器 `tests/typescript-loader.mjs` 同步支持）。字体在 `assets/fonts/`，由 `ui/global.css` 顶部的 `@font-face` 引用 `../assets/fonts/*.ttf`，Vite 负责哈希并输出到构建产物。品牌标志文件是 `public/brand/matrius-sailboat.png`，favicon 使用透明底彩色 PNG（`public/favicon.png`，由 `assets/images/favicon.png` 复制，不再提供 `/favicon.ico`），PWA/Apple 图标使用同一帆船图案（`public/icons/`）；Apple 图标使用深蓝底，可遮罩图标使用深蓝底并保留安全边距。
@@ -202,7 +201,7 @@ ui/
 ## 消息渲染资源与回归
 
 - `scripts/sync-katex.mjs` 从已安装的 KaTeX 生成同版本 CSS、WOFF2 字体与许可证到 `public/vendor/katex/<版本>/`，由 `vite.config.ts` 在 `index.html` 注入样式链接，不依赖 CDN；资源由 postinstall 生成并忽略，不手工编辑。
-- `tests/message-content.test.mjs` 通过 Node/LinkeDOM 验证 Markdown、公式、代码边界、安全链接、高亮、折叠和复制；`tests/typescript-loader.mjs` 把 `@/router` 解析为 `tests/stubs/router.mjs`，并把 `import.meta.env.DEV` 改写为 `globalThis.__DEV__ === true`，组件测试不加载 React Router，默认按生产模式运行。TypeScript 测试加载器只服务于测试，不进入客户端。
+- `tests/message-content.test.mjs` 通过 Node/LinkeDOM 验证 Markdown、公式、代码块、表格、安全链接与引用改写；`tests/typescript-loader.mjs` 把 `@/router` 解析为 `tests/stubs/router.mjs`，并把 `import.meta.env.DEV` 改写为 `globalThis.__DEV__ === true`，组件测试不加载 React Router，默认按生产模式运行。TypeScript 测试加载器只服务于测试，不进入客户端。
 
 ## 网页搜索引用
 

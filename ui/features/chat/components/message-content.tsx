@@ -1,15 +1,16 @@
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import Markdown, { type Components } from 'react-markdown';
-import remarkCjkFriendly from 'remark-cjk-friendly/parseOnly';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
+import {
+  Streamdown, type CodeHighlighterPlugin, type Components, type DiagramPlugin, type PluginConfig,
+  type StreamdownTranslations,
+} from 'streamdown';
+import { cjk } from '@streamdown/cjk';
+import { createMathPlugin, type MathPlugin } from '@streamdown/math';
 import rehypeKatex from 'rehype-katex';
 
 import type { WebActivity } from '@contract/agent-types';
 import { prepareCitations, type CitationSource } from '../citations';
 import { normalizeMarkdown } from '../markdown/normalize-markdown';
 import { CitationMarker } from './citation-marker';
-import { CodeBlock } from './code-block';
 
 function citationLabel(href: string | undefined): string | null {
   if (!href?.startsWith('#citation-')) return null;
@@ -20,24 +21,42 @@ function citationLabel(href: string | undefined): string | null {
   }
 }
 
+/**
+ * Streamdown's own sanitiser allows a small set of harmless protocols but still lets a
+ * `javascript:` URL reach the DOM. React refuses it at render time, but the check belongs here:
+ * only http(s), mailto, anchors and relative links survive, everything else is dropped so no
+ * protocol handler can be smuggled into an answer.
+ */
+const SAFE_PROTOCOLS = /^(?:https?:|mailto:|tel:)/iu;
+
+function safeHref(href: string | undefined): string | undefined {
+  if (!href) return undefined;
+  const value = href.trim();
+  if (!value) return undefined;
+  if (value.startsWith('#') || value.startsWith('/') || value.startsWith('./') || value.startsWith('../')) return value;
+  return SAFE_PROTOCOLS.test(value) ? value : undefined;
+}
+
+/**
+ * GFM footnotes are the one thing in a reply that links to itself: `[^1]` renders as a raised
+ * number pointing at the definition list at the end of the same message, and the `↩` beside a
+ * definition points back. Following either one makes the browser scroll the nearest scroll
+ * container to the target — including the document, whose `overflow: hidden` still permits
+ * programmatic scrolling — and the whole app shell ends up shifted with no way to scroll back.
+ * Answers about the web use the citation markers instead, so these two are rendered as inert
+ * text: the number stays readable, nothing navigates.
+ */
 function createComponents(byLabel: Map<string, CitationSource> | null): Components {
   return {
-    pre({ node, children }) {
-      const code = node?.children[0];
-      if (code?.type !== 'element' || code.tagName !== 'code') return <pre>{children}</pre>;
-      const text = code.children.map((child) => child.type === 'text' ? child.value : '').join('').replace(/\n$/, '');
-      const classes = Array.isArray(code.properties.className) ? code.properties.className.join(' ') : '';
-      const language = /(?:^|\s)language-([^\s]+)/.exec(classes)?.[1] ?? '';
-      return <CodeBlock code={text} language={language} />;
-    },
-    table({ children }) { return <div className="message-table-scroll" tabIndex={0} role="region" aria-label="表格，可横向滚动"><table>{children}</table></div>; },
-    a({ node: _node, children, href, ...props }) {
+    a({ node, children, href, ...props }) {
+      if ((node?.properties as Record<string, unknown> | undefined)?.['data-footnote-backref'] !== undefined) return null;
       const label = byLabel ? citationLabel(href) : null;
       const source = label ? byLabel?.get(label) : undefined;
       if (source) return <CitationMarker source={source} />;
-      return <a {...props} href={href} target={href?.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">{children}</a>;
+      const target = safeHref(href);
+      if (target?.startsWith('#')) return <span className="message-footnote-ref">{children}</span>;
+      return <a {...props} href={target} target={target && /^https?:/iu.test(target) ? '_blank' : undefined} rel="noreferrer noopener">{children}</a>;
     },
-    img({ node: _node, alt, ...props }) { return <img {...props} alt={alt ?? ''} loading="lazy" />; },
   };
 }
 
@@ -68,9 +87,20 @@ function reportFormula(title: string) {
  * Only the completed reply is logged. Every prefix of a reply passes through here while it streams,
  * and each one ends mid-formula, so logging those would be a dozen lines of noise per reply — the
  * console would be full of the normal case and silent about the one worth reading.
+ *
+ * Streamdown runs the math plugin's rehype step after the caller's own rehype plugins, so this runs
+ * KaTeX itself and then downgrades, rather than being registered as a separate plugin that would
+ * see the tree before any formula was rendered.
  */
-function rehypeFormulaSource(options?: { streaming?: boolean }) {
+function katexWithFormulaSource(options?: { streaming?: boolean }) {
   const streaming = options?.streaming ?? false;
+  const renderMath = rehypeKatex({
+    trust: false,
+    strict: 'ignore',
+    maxExpand: 1000,
+    maxSize: 20,
+    errorColor: 'var(--muted-foreground)',
+  });
   const downgrade = (node: HastNode) => {
     if (!node.children) return;
     for (const child of node.children) {
@@ -82,8 +112,58 @@ function rehypeFormulaSource(options?: { streaming?: boolean }) {
       } else downgrade(child);
     }
   };
-  return (tree: HastNode) => { downgrade(tree); };
+  return (tree: HastNode, file: unknown) => {
+    renderMath(tree as never, file as never);
+    downgrade(tree);
+  };
 }
+
+/**
+ * Streamdown's math plugin is remark-math + rehype-katex. `singleDollarTextMath` is on because the
+ * normalizer has already escaped every `$` that was currency; the rehype step is ours so a formula
+ * KaTeX rejects is downgraded after it has been rendered, not before.
+ */
+function mathPluginFor(streaming: boolean): MathPlugin {
+  const base = createMathPlugin({ singleDollarTextMath: true });
+  return { ...base, rehypePlugin: [katexWithFormulaSource, { streaming }] as unknown as MathPlugin['rehypePlugin'] };
+}
+
+const translations: Partial<StreamdownTranslations> = {
+  close: '关闭',
+  copied: '已复制',
+  copyCode: '复制代码',
+  copyLink: '复制链接',
+  copyTable: '复制表格',
+  copyTableAsCsv: '复制为 CSV',
+  copyTableAsMarkdown: '复制为 Markdown',
+  copyTableAsTsv: '复制为 TSV',
+  downloadDiagram: '下载图表',
+  downloadDiagramAsMmd: '下载为 MMD',
+  downloadDiagramAsPng: '下载为 PNG',
+  downloadDiagramAsSvg: '下载为 SVG',
+  downloadFile: '下载文件',
+  downloadImage: '下载图片',
+  downloadTable: '下载表格',
+  downloadTableAsCsv: '下载为 CSV',
+  downloadTableAsMarkdown: '下载为 Markdown',
+  errorMermaid: 'Mermaid 图表渲染失败',
+  exitFullscreen: '退出全屏',
+  externalLinkWarning: '即将离开 Matrius',
+  imageNotAvailable: '图片不可用',
+  mermaidAriaLabel: 'Mermaid 图表',
+  mermaidFormatMmd: 'MMD',
+  mermaidFormatPng: 'PNG',
+  mermaidFormatSvg: 'SVG',
+  openExternalLink: '打开外部链接',
+  openLink: '打开链接',
+  resetView: '重置视图',
+  tableFormatCsv: 'CSV',
+  tableFormatMarkdown: 'Markdown',
+  tableFormatTsv: 'TSV',
+  viewFullscreen: '全屏查看',
+  zoomIn: '放大',
+  zoomOut: '缩小',
+};
 
 /**
  * Token-by-token replies arrive every ~50 ms. Parsing Markdown for every intermediate string makes
@@ -148,11 +228,53 @@ export const MessageContent = memo(function MessageContent({ content, streaming 
       : prepareCitations(normalized, webActivities);
   }, [rendered, webActivities]);
   const components = useMemo(() => createComponents(prepared.byLabel), [prepared.byLabel]);
-  const body = useMemo(() => <Markdown
+
+  // The Shiki engine (Oniguruma grammar bundle) and the Mermaid runtime are both large, so each
+  // loads only when a reply actually needs it: a fence for the first, a ```mermaid block for the
+  // second. Until then a code block renders as plain text, which is what it was before.
+  const hasFence = useMemo(() => /(?:^|\n)\s{0,3}(?:`{3,}|~{3,})/u.test(prepared.markdown), [prepared.markdown]);
+  const hasMermaid = useMemo(() => /(?:^|\n)\s{0,3}```mermaid\b/u.test(prepared.markdown), [prepared.markdown]);
+  const [codePlugin, setCodePlugin] = useState<CodeHighlighterPlugin>();
+  const [mermaidPlugin, setMermaidPlugin] = useState<DiagramPlugin>();
+  useEffect(() => {
+    if (!hasFence || codePlugin) return;
+    let active = true;
+    void import('@streamdown/code')
+      .then((module) => { if (active) setCodePlugin(module.code); })
+      .catch(() => { /* A fence keeps its source text if the highlighter fails to load. */ });
+    return () => { active = false; };
+  }, [hasFence, codePlugin]);
+  useEffect(() => {
+    if (!hasMermaid || mermaidPlugin) return;
+    let active = true;
+    void import('@streamdown/mermaid')
+      .then((module) => { if (active) setMermaidPlugin(module.mermaid); })
+      .catch(() => { /* The fence stays a plain code block if the diagram runtime fails. */ });
+    return () => { active = false; };
+  }, [hasMermaid, mermaidPlugin]);
+
+  const plugins = useMemo<PluginConfig>(() => ({
+    cjk,
+    math: mathPluginFor(streaming),
+    ...(codePlugin ? { code: codePlugin } : {}),
+    ...(mermaidPlugin ? { mermaid: mermaidPlugin } : {}),
+  }), [codePlugin, mermaidPlugin, streaming]);
+
+  const body = useMemo(() => <Streamdown
     components={components}
-    remarkPlugins={[remarkGfm, remarkCjkFriendly, remarkMath]}
+    mode={streaming ? 'streaming' : 'static'}
+    isAnimating={streaming}
+    plugins={plugins}
+    controls={{ table: { fullscreen: false } }}
     remarkRehypeOptions={{ clobberPrefix: `message-${id}-`, footnoteLabel: '注释' }}
-    rehypePlugins={[[rehypeKatex, { trust: false, strict: 'ignore', maxExpand: 1000, maxSize: 20 }], [rehypeFormulaSource, { streaming }]]}
-  >{prepared.markdown}</Markdown>, [prepared.markdown, components, streaming, id]);
+    skipHtml
+    linkSafety={{ enabled: false }}
+    shikiTheme={['one-light', 'one-dark-pro']}
+    codeBlockMaxHeight={0}
+    tableMaxHeight={0}
+    lineNumbers={false}
+    translations={translations}
+  >{prepared.markdown}</Streamdown>, [prepared.markdown, components, plugins, streaming, id]);
+
   return <div className={`message-markdown${replacing ? ' is-replacing' : ''}`}>{body}</div>;
 });

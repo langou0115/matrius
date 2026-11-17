@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type Plugin } from 'vite';
 
 import devApiProxy from './scripts/dev-api-proxy.cjs';
@@ -82,7 +83,7 @@ function offlineShell(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [offlineShell(), react(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
+  plugins: [offlineShell(), react(), tailwindcss(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
   resolve: {
     alias: [
       { find: /^@contract\//u, replacement: fromRoot('./contract/') },

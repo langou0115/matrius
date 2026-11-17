@@ -8,10 +8,8 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
 import { MessageContent } from '../ui/features/chat/components/message-content.tsx';
-import { CodeBlock } from '../ui/features/chat/components/code-block.tsx';
 import { ModelIcon } from '../ui/features/chat/components/model-icon.tsx';
 import { normalizeMarkdown } from '../ui/features/chat/markdown/normalize-markdown.ts';
-import { highlightCode } from '../ui/features/chat/markdown/highlight-code.ts';
 import { createDemoWorkspace } from '../ui/features/mock/fixtures/chat-workspace.ts';
 import { ReasoningBlock } from '../ui/features/chat/components/reasoning-block.tsx';
 import { groupResearchSteps } from '../ui/features/chat/components/research-group.tsx';
@@ -692,10 +690,14 @@ test('the local KaTeX stylesheet and every referenced font match the renderer ve
 test('CommonMark and GFM render real headings, lists, quotes, tables, tasks and footnotes', () => {
   const content = '# Heading\n\n**bold** *italic* ~~removed~~ `inline`\n\n> Quote\n\n- [x] Done\n- [ ] Pending\n\n1. One\n2. Two\n\n| A | B |\n| --- | --- |\n| x | y |\n\nFootnote[^a]\n\n[^a]: The note';
   const doc = documentFor(content);
-  for (const tag of ['h1', 'strong', 'em', 'del', 'code', 'blockquote', 'ul', 'ol', 'table', 'th', 'td']) assert.ok(doc.querySelector(tag), tag);
+  for (const tag of ['h1', '[data-streamdown="strong"]', 'em', 'del', 'code', 'blockquote', 'ul', 'ol', 'table', 'th', 'td']) assert.ok(doc.querySelector(tag), tag);
   assert.equal(doc.querySelectorAll('input[type=checkbox]').length, 2);
-  const reference = doc.querySelector('a[data-footnote-ref]');
-  assert.ok(doc.getElementById(reference.getAttribute('href').slice(1)));
+  // Footnotes render, but their markers are inert: a self-link inside an answer would scroll the
+  // document and leave the app shell shifted, so the number is plain text.
+  assert.equal(doc.querySelector('a[data-footnote-ref]'), null, 'footnote markers do not link');
+  assert.ok(doc.querySelector('.message-footnote-ref'), 'the marker is still shown');
+  assert.equal(doc.querySelector('a[data-footnote-backref]'), null, 'the back arrow is dropped');
+  assert.match(doc.querySelector('.footnotes').textContent, /The note/);
 });
 
 test('web footnotes become superscript source links and their definition list leaves the answer', () => {
@@ -808,10 +810,10 @@ test('emphasis delimited by CJK punctuation still renders as emphasis', () => {
   // CommonMark's delimiter rules only count Unicode punctuation and whitespace, so `**` next to a
   // Chinese quotation mark fails the left-flanking test and the markers are shown as literal text.
   const doc = documentFor('是两只**“还不算完全是鸡的原鸡祖先”进行了交配，孵出了第一只鸡**。');
-  assert.equal(doc.querySelector('strong').textContent, '“还不算完全是鸡的原鸡祖先”进行了交配，孵出了第一只鸡');
+  assert.equal(doc.querySelector('[data-streamdown="strong"]').textContent, '“还不算完全是鸡的原鸡祖先”进行了交配，孵出了第一只鸡');
   assert.ok(!doc.body.textContent.includes('**'));
   // Ordinary emphasis and literal asterisks keep their existing meaning.
-  assert.equal(documentFor('**加粗**').querySelector('strong').textContent, '加粗');
+  assert.equal(documentFor('**加粗**').querySelector('[data-streamdown="strong"]').textContent, '加粗');
   assert.equal(documentFor('2 * 3 * 4').querySelector('em'), null);
 });
 
@@ -894,7 +896,7 @@ test('a $$ pair left open across prose does not swallow that prose into one KaTe
   const content = '求交点：\n\n$$\n\\begin{cases} y = x \\\\ y = x^2 \\end{cases} \\implies x^2 - x = 0\n\n**选择积分次序并限定：**\n该区域是 $X$-型。\n$$';
   const doc = documentFor(content);
   assert.equal(doc.querySelector('.katex-source'), null);
-  assert.ok(doc.querySelector('strong'), 'markdown inside the body still renders as markdown');
+  assert.ok(doc.querySelector('[data-streamdown="strong"]'), 'markdown inside the body still renders as markdown');
   assert.ok(doc.querySelector('.katex-display'), 'the environment inside the body still renders as math');
   assert.ok(!body(content).includes('**'), 'the bold markers do not reach the screen');
   assert.ok(!body(content).includes('\\implies'), 'the derivation joins the formula instead of leaking');
@@ -923,8 +925,8 @@ test('currency stays text alongside real math and code', () => {
 test('code is preserved across alternate fences, code spans and unclosed blocks', () => {
   for (const content of ['```js\nconst price = "$20";\n\\(x\\)\n```', '~~~text\n$20 and $30\n~~~', '`` `$20` and $30 ``', '```text\n$20 and $30', '````md\n```text\n$20\n```\n````']) assert.equal(normalizeMarkdown(content), content);
   const doc = documentFor('```js\nconst price = "$20";\n\n');
-  assert.ok(doc.querySelector('.message-code'));
-  assert.equal(doc.querySelector('pre code').textContent, 'const price = "$20";\n');
+  assert.ok(doc.querySelector('[data-streamdown="code-block"]'));
+  assert.equal(doc.querySelector('pre code').textContent, 'const price = "$20";');
 });
 
 test('untrusted HTML, URLs and KaTeX commands cannot become active content', () => {
@@ -932,51 +934,45 @@ test('untrusted HTML, URLs and KaTeX commands cannot become active content', () 
   assert.equal(doc.querySelector('script, img[onerror], [href^="javascript:"]'), null);
 });
 
-test('highlighting loads requested languages, escapes code and falls back safely', async () => {
-  for (const [language, code] of [['tsx', 'const App = () => <p>Hello</p>;'], ['python', 'def greet():\n    return "hello"'], ['sql', 'SELECT * FROM messages;'], ['json', '{"ok": true}'], ['bash', 'echo "hello"']]) {
-    assert.match(await highlightCode(code, language), /class="line"/);
-  }
-  assert.equal(await highlightCode('hello', 'not-a-language'), null);
-  assert.equal(await highlightCode('hello', 'constructor'), null);
-  assert.equal(await highlightCode('x'.repeat(50_001), 'js'), null);
-  const html = await highlightCode('<script>alert(1)</script>', 'html');
-  assert.ok(!html.includes('<script>'));
-  assert.equal(parseHTML(`<div>${html}</div>`).document.querySelector('div').textContent, '<script>alert(1)</script>');
+test('code blocks keep their source, escape hostile markup and expose copy controls', () => {
+  const doc = documentFor('```html\n<img src=x onerror=alert(1)>\n```');
+  const block = doc.querySelector('[data-streamdown="code-block"]');
+  assert.ok(block, 'the fence renders as a Streamdown code block');
+  assert.equal(block.getAttribute('data-language'), 'html');
+  assert.equal(doc.querySelector('pre code').textContent, '<img src=x onerror=alert(1)>', 'copyable text is the original source');
+  assert.equal(doc.querySelector('img'), null, 'the source stays escaped text, not an element');
+  const labels = [...doc.querySelectorAll('[data-streamdown="code-block-actions"] button')].map((button) => button.getAttribute('aria-label'));
+  assert.deepEqual(labels, ['下载文件', '复制代码']);
 });
 
-test('PowerShell proxy commands highlight variables and strings without changing copyable text', async () => {
-  const code = '$env:HTTP_PROXY = "http://127.0.0.1:7890"\n$env:HTTPS_PROXY = "http://127.0.0.1:7890"\n$env:ALL_PROXY = "socks5://127.0.0.1:7890"\n$env:NO_PROXY = "localhost,127.0.0.1,::1,.local"';
-  for (const label of ['powershell', 'PowerShell', 'pwsh', 'ps1', 'psm1', 'psd1']) {
-    const html = await highlightCode(code, label);
-    assert.match(html, /--syntax-light:/);
-    assert.match(html, /--syntax-dark:/);
-    const colors = new Set([...html.matchAll(/--syntax-light:([^;"&]+)/gu)].map((match) => match[1]));
-    assert.ok(colors.size >= 3, 'variables, strings and operators have distinct theme colors');
-    assert.equal(parseHTML(`<div>${html}</div>`).document.querySelector('div').textContent, code);
-  }
-  for (const label of ['cmd', 'bat', 'batch']) {
-    assert.match(await highlightCode('@echo off\nset HTTP_PROXY=http://127.0.0.1:7890', label), /class="line"/);
-  }
+test('tables, quotes and tasks render through Streamdown with their own controls', () => {
+  const doc = documentFor('> 引用\n\n- [x] 完成\n- [ ] 待办\n\n| A | B |\n| --- | --- |\n| 1 | 2 |');
+  assert.ok(doc.querySelector('[data-streamdown="blockquote"]'));
+  assert.equal(doc.querySelectorAll('input[type=checkbox]').length, 2);
+  assert.ok(doc.querySelector('[data-streamdown="table-wrapper"]'), 'tables get their scroll/controls wrapper');
+  assert.equal(doc.querySelectorAll('[data-streamdown="table-cell"]').length, 2);
+  assert.ok(doc.querySelector('[data-streamdown="table-wrapper"] button[title="复制表格"]'));
 });
 
-test('complete syntax themes support more languages and preserve whitespace and hostile source', async () => {
-  for (const [language, code] of [
-    ['vue', '<template><h1>{{ title }}</h1></template>'],
-    ['dockerfile', 'FROM node:24\nWORKDIR /app'],
-    ['toml', '[server]\nport = 8000'],
-    ['graphql', 'query { user { name } }'],
-  ]) {
-    const html = await highlightCode(code, language);
-    assert.match(html, /--syntax-light:/);
-    assert.match(html, /--syntax-dark:/);
-    assert.equal(parseHTML(`<div>${html}</div>`).document.querySelector('div').textContent, code);
-  }
-  const source = '  // 中文 🙂\r\n\tconst source = "<img src=x onerror=alert(1)>";  \r\n\r\n';
-  const html = await highlightCode(source, 'typescript');
-  const { document } = parseHTML(`<div>${html}</div>`);
-  assert.equal(document.querySelector('div').textContent, source.replaceAll('\r\n', '\n'));
-  assert.equal(document.querySelector('img'), null);
-  assert.equal(await highlightCode('ordinary text', 'plaintext'), null);
+test('external links open safely and non-http protocols never reach the DOM', () => {
+  const doc = documentFor('[ext](https://example.com/a) [mail](mailto:a@b.c) [js](javascript:alert(1)) [anchor](#note)');
+  const links = [...doc.querySelectorAll('a')];
+  const byText = (text) => links.find((link) => link.textContent === text);
+  const external = byText('ext');
+  assert.equal(external.getAttribute('href'), 'https://example.com/a');
+  assert.equal(external.getAttribute('target'), '_blank');
+  assert.equal(external.getAttribute('rel'), 'noreferrer noopener');
+  const mail = byText('mail');
+  assert.equal(mail.getAttribute('href'), 'mailto:a@b.c');
+  assert.equal(mail.getAttribute('target'), null, 'a mailto link opens the mail client in place');
+  const anchor = byText('anchor');
+  assert.equal(anchor, undefined, 'in-message anchors stay inert instead of scrolling the document');
+  assert.ok(doc.querySelector('.message-footnote-ref') || doc.querySelector('span:not([href])'), 'the anchor text is still rendered');
+  assert.doesNotMatch(doc.body.innerHTML, /href="#note"/u);
+  // The sanitizer drops the link entirely: no anchor without a safe protocol survives, so a
+  // `javascript:` href can never reach React, which would otherwise refuse it at render time.
+  assert.equal(byText('js'), undefined, 'javascript: links are removed');
+  assert.doesNotMatch(doc.body.innerHTML, /javascript:/u);
 });
 
 test('all Mock replies render without a KaTeX parse error except the intentional truncated formula', () => {
@@ -988,44 +984,6 @@ test('all Mock replies render without a KaTeX parse error except the intentional
       assert.ok(html.length > 0);
       if (conversation.id !== 'dev-render-partial') assert.ok(!html.includes('katex-source'), conversation.id);
     }
-  }
-});
-
-test('code block supports collapse, expand, raw copying and clipboard failures', async () => {
-  const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
-  const previous = { window: globalThis.window, document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator') };
-  globalThis.window = window;
-  globalThis.document = document;
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-  let copied;
-  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async (text) => { copied = text; } } } });
-  const root = createRoot(document.getElementById('root'));
-  const source = 'const price = "$20";\r\n';
-  try {
-    await act(async () => { root.render(createElement(CodeBlock, { code: source, language: 'js' })); });
-    const token = document.querySelector('pre code .line > span');
-    assert.ok(token?.getAttribute('style')?.includes('--syntax-light:'));
-    assert.ok(token?.getAttribute('style')?.includes('--syntax-dark:'));
-    const toggle = () => document.querySelector('button[aria-expanded]');
-    await act(async () => { toggle().click(); });
-    assert.equal(toggle().getAttribute('aria-expanded'), 'false');
-    assert.equal(document.querySelector('pre').hidden, true);
-    await act(async () => { document.querySelector('button[aria-label="复制代码"]').click(); });
-    assert.equal(copied, source);
-    assert.equal(document.querySelector('[role=status]').textContent, '已复制');
-    await act(async () => { toggle().click(); });
-    assert.equal(document.querySelector('pre').hidden, false);
-    assert.equal(document.querySelector('pre code').textContent, source.replaceAll('\r\n', '\n'));
-    navigator.clipboard.writeText = async () => { throw new Error('denied'); };
-    await act(async () => { document.querySelector('button[aria-label="复制代码"]').click(); });
-    assert.match(document.querySelector('[role=status]').textContent, /复制失败/);
-  } finally {
-    await act(async () => { root.unmount(); });
-    globalThis.window = previous.window;
-    globalThis.document = previous.document;
-    if (previous.navigator) Object.defineProperty(globalThis, 'navigator', previous.navigator);
-    else delete globalThis.navigator;
-    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
   }
 });
 

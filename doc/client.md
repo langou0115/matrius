@@ -33,14 +33,15 @@
 
 ## 消息、代码块与选区
 
-- Web 用户与助手消息共用 `react-markdown` 渲染；`remark-gfm` 提供表格、任务列表、脚注与删除线，`remark-math` + `rehype-katex` 处理公式。解析与渲染分层。
-- `normalize-markdown.ts` 在代码范围外规范化 `\(…\)` / `\[…\]` 公式并保护货币美元符号，保留代码和未闭合围栏原文。KaTeX 的渲染器、CSS 和本地字体使用同一版本；CSS 和字体通过 postinstall 生成到 `public/vendor/katex/<版本>/`，由 `vite.config.ts` 在 `index.html` 注入样式链接，不依赖 CDN，也不做 CSS 相对资源导入；不开启受信任 HTML 命令，不重写公式内部布局。
-- 代码高亮使用 Shiki 官方的 TextMate/Oniguruma 分词与 HTML 渲染，WASM 引擎、语言语法和 One Light / One Dark Pro 两套完整主题按需加载；不维护本地语法规则或 token 渲染器。未知语言、加载失败或超过 50000 字符的块回退纯文本；超长单行限制 token 数量。语法颜色、字重与斜体通过明暗 CSS 变量切换，不随主题主色旋转，不因切主题重新分词。所有资源随构建本地打包，不访问 CDN。
-- 代码块默认展开，提供仅图标的复制与收起/展开操作，保留无障碍名称和状态反馈；复制经 Web 平台适配读取代码原文，失败显示反馈。工具栏不参与正文选区；折叠保留代码原文与复制能力。
-- Markdown 不启用原始 HTML 解析，保留默认安全 URL 过滤。高亮 HTML 仅接受 Shiki 官方渲染器输出的代码子树，不启用不受信任的 HTML transformer；显示时换行规范为 LF，复制始终使用原文（包括 CRLF 和末尾空白）。
+- Web 用户与助手消息共用 `streamdown` 渲染（`react-markdown` 的流式替代品）：GFM 表格、任务列表、脚注与删除线由 `remark-gfm` 提供，公式由 `@streamdown/math`（remark-math + rehype-katex）处理，CJK 断行与强调由 `@streamdown/cjk` 处理。Streamdown 按块解析并修补未闭合的围栏、表格与强调，流式输出不会出现半截结构。
+- `normalize-markdown.ts` 在代码范围外规范化 `\(…\)` / `\[…\]` 公式并保护货币美元符号，保留代码和未闭合围栏原文；它在交给 Streamdown 之前执行，仍是我们自己的逻辑。KaTeX 的渲染器、CSS 和本地字体使用同一版本；CSS 和字体通过 postinstall 生成到 `public/vendor/katex/<版本>/`，由 `vite.config.ts` 在 `index.html` 注入样式链接，不依赖 CDN，也不做 CSS 相对资源导入；不开启受信任 HTML 命令，不重写公式内部布局。KaTeX 的 rehype 步骤由 `message-content.tsx` 自己执行，以便在渲染后把解析失败的公式降级为原文。
+- 代码高亮使用 `@streamdown/code`（Shiki 官方的 TextMate 分词）与 One Light / One Dark Pro 两套完整主题；语言语法和 Shiki 引擎在首次出现代码块时按需加载，不维护本地语法规则或 token 渲染器。语法颜色通过 Shiki 写出的 CSS 变量随明暗模式切换，不随主题主色旋转，不因切主题重新分词。所有资源随构建本地打包，不访问 CDN。
+- 代码块、表格与 Mermaid 使用 Streamdown 自带组件：代码块提供语言标签、复制与下载，表格提供复制/下载/全屏，Mermaid 图表提供缩放、下载与全屏。Mermaid 运行时体积较大，只有回复出现 ```mermaid 围栏时才动态加载。
+- Markdown 不启用原始 HTML：`skipHtml` 与 Streamdown 内置的 sanitize/harden 一起把 `<script>`、`<img onerror>` 之类的内容退化为文本。链接另经 `message-content.tsx` 的协议白名单过滤，只保留 http(s)、mailto、tel、锚点与相对路径，其余（如 `javascript:`）直接丢弃，且外链固定 `target="_blank"` 与 `rel="noreferrer noopener"`。
+- 样式：Tailwind v4 只导入 `theme` 与 `utilities` 两层、不导入 preflight，避免重写既有 UI；`@theme inline` 把 shadcn 语义色映射到应用自己的主题变量，`@custom-variant dark` 对应 `[data-color-mode='dark']`。正文排版（块间距、标题阶梯、列表、引用、表格与代码块外观）写在 `global.css` 的 `.message-markdown [data-streamdown=…]` 规则里，覆盖 Streamdown 的默认工具类。
 - `message-actions.tsx` 负责整条消息复制与赞/踩操作，评分通过 Chat State 更新对应助手消息的 `feedback` 并沿现有仓储保存。反馈在下一次模型请求时由共享 Agent 核心传给所选服务商，点击评分本身不触发请求；再次点击取消。分支动作创建独立会话和消息 ID，保留原文与反馈，原会话及草稿保留。
 - 语法颜色保持清晰可辨，不随主题主色旋转；复制使用原始消息或代码文本，不读取带工具栏的展示内容。
-- 行内代码保留在文本流中，复制内容不能丢失；代码标签、复制和折叠按钮不进入正文复制结果。
+- 行内代码保留在文本流中，复制内容不能丢失；代码语言标签、复制与下载按钮不进入正文复制结果。
 - Web 目标是同一回答跨段落连续选中；跨独立组件连续选区需要单独验证，不能直接套用旧版选区实现。
 - 停止或出错时保留已生成文本与模型实际返回的推理/工具活动。供应商隐藏的思考内容不展示，也不重新注入上下文。
 

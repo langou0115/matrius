@@ -1,3 +1,42 @@
+/* Tailwind provides the utility classes used by the Streamdown renderer. Preflight is
+   deliberately not imported: the app already owns its base resets below, and a global
+   preflight would rewrite the bespoke UI. Only theme + utilities are loaded. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../node_modules/@streamdown/cjk/dist/*.js";
+/* Streamdown ships shadcn-style utilities. Map them onto the app's theme variables so the
+   markdown body follows the selected theme and colour mode without a second palette. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+}
+/* The app switches colour mode with a data attribute on the root, not a `.dark` class. */
+@custom-variant dark (&:where([data-color-mode='dark'], [data-color-mode='dark'] *));
+
 /* Fonts are bundled from assets/fonts; the family names below are the ones the UI
    references through --font-display / --font-medium / --font-semibold / --font-mono. */
 @font-face { font-family: Inter; src: url('../assets/fonts/Inter-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
@@ -8,21 +47,29 @@
 @font-face { font-family: JetBrainsMono; src: url('../assets/fonts/JetBrainsMono-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
 
 :root { --font-display: Inter, NotoSansSC, sans-serif; --font-medium: InterMedium, NotoSansSC, sans-serif; --font-semibold: InterSemiBold, NotoSansSCSemiBold, sans-serif; --font-mono: JetBrainsMono, NotoSansSC, monospace; }
-html, body, #root { width: 100%; height: 100%; margin: 0; }
-body { overflow: hidden; }
-* { box-sizing: border-box; }
-button, input, textarea { font: inherit; }
-button, a { -webkit-tap-highlight-color: transparent; }
-button { cursor: pointer; }
-button { color: inherit; border: 0; background: none; }
-button:disabled { cursor: default; }
-a { color: inherit; text-decoration: none; }
-button, a, input, textarea { outline: none; }
-:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
-button:disabled { opacity: .45; }
-svg { flex-shrink: 0; vertical-align: middle; }
-h1, h2, h3, p { margin: 0; }
-::selection { color: var(--foreground); background: var(--selection); }
+/* Base resets live in the base layer so Streamdown's utility classes can override them
+   (for example its heading margins and link colours) while the rest of the app keeps
+   the same resets it had before Tailwind was added. */
+@layer base {
+  html, body, #root { width: 100%; height: 100%; margin: 0; }
+  body { overflow: hidden; }
+  * { box-sizing: border-box; }
+  button, input, textarea { font: inherit; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; }
+  button { color: inherit; border: 0; background: none; }
+  button:disabled { cursor: default; }
+  a { color: inherit; text-decoration: none; }
+  button, a, input, textarea { outline: none; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+  button:disabled { opacity: .45; }
+  svg { flex-shrink: 0; vertical-align: middle; }
+  h1, h2, h3, h4, h5, h6, p { margin: 0; }
+  /* Markdown element margins are reset in this lower layer so the transcript's own vertical
+     rhythm, declared outside any layer further down, always wins. */
+  .message-markdown :is(p, h1, h2, h3, h4, h5, h6, ul, ol, pre, blockquote, table, hr, figure) { margin: 0; }
+  ::selection { color: var(--foreground); background: var(--selection); }
+}
 
 .matrius-app {
   --header-height: 52px;
@@ -716,8 +763,121 @@ input[type='password']::-ms-clear { display: none; }
    onto the next line; only a single formula wider than the whole viewport is uncontained, and that
    one cannot be broken without changing what it says. */
 .message-markdown { min-width: 0; line-height: 1.75; }
-.message-markdown > :first-child { margin-top: 0; }
-.message-markdown > :last-child { margin-bottom: 0; }
+/* Streamdown renders one wrapper per Markdown block and puts the vertical rhythm on the
+   parent. Its per-block wrapper zeroes the first and last child's margins, and the element
+   resets below live in the base layer, so the once-per-element rhythm declared here is what
+   actually spaces the transcript. */
+.message-markdown p { white-space: normal; }
+.message-markdown [data-streamdown='strong'] { font-family: var(--font-semibold); font-weight: 400; }
+.message-markdown > div > * + * { margin-top: 16px; }
+.message-markdown > div > div + div { margin-top: 16px; }
+.message-markdown h1, .message-markdown h2, .message-markdown h3,
+.message-markdown h4, .message-markdown h5, .message-markdown h6 {
+  margin-block: 0; font-family: var(--font-semibold); font-weight: 400; line-height: 1.4;
+}
+.message-markdown > div > h1 + *, .message-markdown > div > h2 + *,
+.message-markdown > div > h3 + *, .message-markdown > div > h4 + *,
+.message-markdown > div > h5 + *, .message-markdown > div > h6 + * { margin-top: 12px; }
+.message-markdown > div > * + h1, .message-markdown > div > * + h2,
+.message-markdown > div > * + h3, .message-markdown > div > * + h4,
+.message-markdown > div > * + h5, .message-markdown > div > * + h6 { margin-top: 28px; }
+.message-markdown > div > :first-child { margin-top: 0; }
+.message-markdown h1 { font-size: 25px; }
+.message-markdown h2 { font-size: 21px; }
+.message-markdown h3 { font-size: 18px; }
+.message-markdown h4, .message-markdown h5, .message-markdown h6 { font-size: var(--text-body); }
+.message-markdown h1, .message-markdown h2 { letter-spacing: -.015em; }
+.message-markdown ul, .message-markdown ol { margin: 0; padding-left: 24px; }
+.message-markdown ul { list-style: disc outside; }
+.message-markdown ol { list-style: decimal outside; }
+.message-markdown .contains-task-list { list-style: none; padding-left: 4px; }
+.message-markdown li { margin: 6px 0; padding-left: 3px; }
+.message-markdown li::marker { color: var(--muted-text); font-variant-numeric: tabular-nums; }
+.message-markdown li > p { margin-bottom: 8px; }
+.message-markdown li > ul, .message-markdown li > ol { margin-block: 6px; }
+.message-markdown .task-list-item { list-style: none; }
+.message-markdown .task-list-item input { margin-right: 8px; accent-color: var(--primary); opacity: 1; }
+.message-markdown [data-streamdown='blockquote'] {
+  padding: 12px 16px; border-left: 3px solid color-mix(in srgb, var(--foreground) 22%, var(--background));
+  border-radius: 0 10px 10px 0; background: var(--soft); color: var(--muted-text);
+}
+.message-markdown [data-streamdown='blockquote'] [data-streamdown='blockquote'] { margin-block: 10px; }
+.message-markdown [data-streamdown='blockquote'] > :last-child { margin-bottom: 0; }
+.message-markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+.message-markdown hr { border: 0; border-top: 1px solid var(--border); }
+.message-markdown img { display: block; max-width: 100%; height: auto; border-radius: var(--radius-sm); }
+.message-markdown code { font-family: var(--font-mono); font-size: var(--text-small); }
+.message-markdown :not(pre) > code { padding: 0 2px; overflow-wrap: anywhere; }
+.message-markdown [data-streamdown='superscript'] { font-size: .75em; line-height: 0; }
+.message-markdown [data-streamdown='superscript'] a { font-family: var(--font-medium); text-decoration: none; }
+/* GFM footnote markers are inert text (see message-content.tsx); they must not look clickable. */
+.message-markdown .message-footnote-ref { font-family: var(--font-medium); color: var(--muted-text); }
+.message-markdown [data-footnotes] { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted-text); font-size: var(--text-small); }
+/* Tables: Streamdown adds a toolbar row and an inner scroll box. The app keeps one bordered
+   surface with a pinned toolbar instead of a border around a border. */
+.message-markdown [data-streamdown='table-wrapper'] {
+  min-width: 0; max-width: 100%; padding: 0; gap: 0;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--background); overflow: hidden;
+}
+/* The toolbar is its own row above the grid, so the table itself stays flush with the card. */
+.message-markdown [data-streamdown='table-wrapper'] > div:first-child { padding: 4px 6px 2px; }
+.message-markdown [data-streamdown='table-wrapper'] > div:last-child {
+  border: 0; border-radius: 0; background: transparent;
+  overflow-x: auto; overscroll-behavior-x: contain;
+}
+.message-markdown [data-streamdown='table-wrapper']:focus-within { outline-offset: 2px; }
+.message-markdown [data-streamdown='table'] { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-ui); line-height: 1.65; text-align: left; }
+.message-markdown [data-streamdown='table-header'] { background: var(--soft); }
+.message-markdown [data-streamdown='table-header-cell'], .message-markdown [data-streamdown='table-cell'] { min-width: 112px; max-width: 360px; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.message-markdown [data-streamdown='table-header-cell'] { color: var(--foreground); font-family: var(--font-semibold); font-size: var(--text-ui); font-weight: 400; }
+.message-markdown [data-streamdown='table-cell'] { font-size: var(--text-ui); }
+.message-markdown [data-streamdown='table-body'] tr:last-child [data-streamdown='table-cell'] { border-bottom: 0; }
+.message-markdown [data-streamdown='table-cell'] > :last-child, .message-markdown [data-streamdown='table-header-cell'] > :last-child { margin-bottom: 0; }
+/* Code blocks: one bordered card with a header strip. Shiki's per-token colours arrive as the
+   `--sdm-c` / `--shiki-dark` custom properties, so colour mode switches without re-tokenizing. */
+.message-markdown [data-streamdown='code-block'] {
+  min-width: 0; max-width: 100%; padding: 0; gap: 0;
+  border: 1px solid var(--border); border-radius: 14px; background: #fafafa; overflow: hidden;
+}
+.message-markdown [data-streamdown='code-block-header'] {
+  display: flex; align-items: center; height: auto; min-height: 42px; padding: 5px 8px 5px 18px;
+  border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--foreground) 5%, var(--background));
+  color: var(--muted-text); font-size: var(--text-caption); user-select: none;
+}
+.message-markdown [data-streamdown='code-block-header'] > span { margin-left: 0; font-family: var(--font-mono); font-size: var(--text-caption); }
+.message-markdown [data-streamdown='code-block-actions'] {
+  top: 5px; right: 8px; gap: 4px; padding: 0; border: 0; background: none; backdrop-filter: none;
+}
+.message-markdown [data-streamdown='code-block-actions'] button {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0;
+  border-radius: 8px; color: var(--muted-text);
+}
+.message-markdown [data-streamdown='code-block-actions'] button:hover { background: var(--sidebar-selected); color: var(--foreground); }
+.message-markdown [data-streamdown='code-block-actions'] button:focus-visible { outline-offset: 0; }
+.message-markdown [data-streamdown='code-block-body'] {
+  padding: 0; border: 0; border-radius: 0; background: transparent; overflow-x: auto; overscroll-behavior-x: contain;
+}
+.message-markdown [data-streamdown='code-block'] pre {
+  margin: 0; padding: 18px 20px; overflow-x: auto; overscroll-behavior-x: contain;
+  color: #383a42; font-size: var(--text-small); line-height: 1.65; tab-size: 2; white-space: pre; overflow-wrap: normal;
+}
+.message-markdown [data-streamdown='code-block'] pre:focus-visible { outline-offset: -3px; }
+.message-markdown [data-streamdown='code-block'] pre code { display: block; width: max-content; min-width: 100%; padding: 0; font-family: var(--font-mono); font-size: var(--text-small); line-height: inherit; }
+.matrius-app .message-markdown [data-streamdown='code-block'] pre,
+.matrius-app .message-markdown [data-streamdown='table-wrapper'] > div:last-child { scrollbar-width: thin; }
+.matrius-app .message-markdown [data-streamdown='code-block'] pre::-webkit-scrollbar,
+.matrius-app .message-markdown [data-streamdown='table-wrapper'] > div:last-child::-webkit-scrollbar { height: 8px; }
+.matrius-app[data-color-mode='dark'] .message-markdown [data-streamdown='code-block'] { background: #23272e; }
+.matrius-app[data-color-mode='dark'] .message-markdown [data-streamdown='code-block'] pre { color: #abb2bf; }
+@media (max-width: 767px) {
+  .message-markdown [data-streamdown='code-block'],
+  .message-markdown [data-streamdown='table-wrapper'] { border-radius: 10px; }
+  .message-markdown [data-streamdown='code-block-header'] { padding-left: 14px; }
+  .message-markdown [data-streamdown='code-block'] pre { padding: 14px; }
+  .message-markdown [data-streamdown='table-header-cell'],
+  .message-markdown [data-streamdown='table-cell'] { min-width: 104px; padding: 10px 12px; }
+}
+@media (pointer: coarse) { .message-markdown [data-streamdown='code-block-actions'] button { min-width: 44px; min-height: 44px; } }
 /* A replaced body (an interim preamble yielding to the answer) fades in instead of mutating in
    place. The class is only held for the animation, so ordinary token-by-token growth never
    re-runs it. */
@@ -727,39 +887,6 @@ input[type='password']::-ms-clear { display: none; }
 }
 .message-markdown.is-replacing { animation: message-body-replace 320ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .message-markdown.is-replacing { animation: none; } }
-.message-markdown p { margin: 0 0 16px; white-space: normal; }
-.message-markdown strong { font-family: var(--font-semibold); font-weight: 400; }
-.message-markdown h1, .message-markdown h2, .message-markdown h3, .message-markdown h4, .message-markdown h5, .message-markdown h6 { margin: 28px 0 12px; line-height: 1.4; font-family: var(--font-semibold); font-weight: 400; }
-.message-markdown h1 { font-size: 25px; }
-.message-markdown h2 { font-size: 21px; }
-.message-markdown h3 { font-size: 18px; }
-.message-markdown h4, .message-markdown h5, .message-markdown h6 { font-size: var(--text-body); }
-.message-markdown h1, .message-markdown h2 { letter-spacing: -.015em; }
-.message-markdown ul, .message-markdown ol { padding-left: 24px; margin: 0 0 16px; }
-.message-markdown li { margin: 6px 0; padding-left: 3px; }
-.message-markdown li::marker { color: var(--muted-text); font-variant-numeric: tabular-nums; }
-.message-markdown li > p { margin-bottom: 8px; }
-.message-markdown li > ul, .message-markdown li > ol { margin-block: 6px; }
-.message-markdown .contains-task-list { list-style: none; padding-left: 4px; }
-.message-markdown .task-list-item input { margin-right: 8px; accent-color: var(--primary); opacity: 1; }
-.message-markdown blockquote { margin: 18px 0; padding: 12px 16px; border-left: 3px solid color-mix(in srgb, var(--foreground) 22%, var(--background)); border-radius: 0 10px 10px 0; background: var(--soft); color: var(--muted-text); }
-.message-markdown blockquote blockquote { margin-block: 10px; }
-.message-markdown blockquote > :last-child { margin-bottom: 0; }
-.message-markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
-.message-markdown hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
-.message-markdown img { display: block; max-width: 100%; height: auto; margin-block: 16px; border-radius: var(--radius-sm); }
-.message-markdown code { font-family: var(--font-mono); font-size: var(--text-small); }
-.message-markdown :not(pre) > code { padding: 0 2px; overflow-wrap: anywhere; }
-.message-table-scroll { min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin: 20px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--background); }
-.message-table-scroll:focus-visible { outline-offset: 2px; }
-.message-markdown table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-ui); line-height: 1.65; text-align: left; }
-.message-markdown th, .message-markdown td { min-width: 112px; max-width: 360px; padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
-.message-markdown th { background: var(--soft); color: var(--foreground); font-family: var(--font-semibold); font-weight: 400; }
-.message-markdown tbody tr:nth-child(even) { background: color-mix(in srgb, var(--foreground) 2%, var(--background)); }
-.message-markdown tbody tr:hover { background: color-mix(in srgb, var(--foreground) 4%, var(--background)); }
-.message-markdown tr:last-child td { border-bottom: 0; }
-.message-markdown td > :last-child, .message-markdown th > :last-child { margin-bottom: 0; }
-.message-markdown .footnotes { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted-text); font-size: var(--text-small); }
 /* A citation marker reads as a small raised number, not as an underlined paragraph link. The
    marker keeps its own pill because several of them often sit next to each other in one sentence. */
 .message-markdown .message-citation-wrap { display: inline; font-size: inherit; vertical-align: baseline; }
@@ -787,33 +914,7 @@ input[type='password']::-ms-clear { display: none; }
    colour before it can outrank this rule. A half-written formula reads as its source until the
    reply completes it. */
 .message-markdown .katex-source { color: var(--muted-text); font-family: var(--font-mono); font-size: var(--text-small); white-space: pre-wrap; overflow-wrap: anywhere; }
-.message-code { min-width: 0; max-width: 100%; margin: 20px 0; border: 1px solid var(--border); border-radius: 14px; background: #fafafa; overflow: hidden; }
-.message-code-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; padding: 5px 8px 5px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--foreground) 5%, var(--background)); color: var(--muted-text); font-size: var(--text-caption); user-select: none; }
-.message-code-language { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: var(--font-mono); font-size: var(--text-caption); white-space: nowrap; }
-.message-code-language > span { overflow: hidden; text-overflow: ellipsis; }
-.message-code-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
-.message-code-actions button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 8px; font-size: var(--text-caption); color: var(--muted-text); }
-.message-code-actions button:hover { background: var(--sidebar-selected); color: var(--foreground); }
-.message-code-actions button:focus-visible { outline-offset: 0; }
-.message-code pre { margin: 0; padding: 18px 20px; overflow-x: auto; overscroll-behavior-x: contain; color: #383a42; font-size: var(--text-small); line-height: 1.65; tab-size: 2; white-space: pre; overflow-wrap: normal; }
-.message-code pre:focus-visible { outline-offset: -3px; }
-.message-code pre[hidden] { display: none; }
-.message-code pre code { display: block; width: max-content; min-width: 100%; padding: 0; font-family: var(--font-mono); font-size: var(--text-small); line-height: inherit; }
-.matrius-app .message-code pre, .matrius-app .message-table-scroll { scrollbar-width: thin; }
-.matrius-app .message-code pre::-webkit-scrollbar, .matrius-app .message-table-scroll::-webkit-scrollbar { height: 8px; }
-@media (max-width: 767px) {
-  .message-code, .message-table-scroll { margin-block: 16px; border-radius: 10px; }
-  .message-code-header { padding-left: 14px; }
-  .message-code pre { padding: 14px; }
-  .message-markdown th, .message-markdown td { min-width: 104px; padding: 10px 12px; }
-}
-/* Complete One Light / One Dark Pro token styles emitted by Shiki.
-   Theme switching only changes CSS; code does not need to be tokenized again. */
-.message-code .line > span { color: var(--syntax-light, inherit); font-style: var(--syntax-light-font-style, normal); font-weight: var(--syntax-light-font-weight, inherit); text-decoration: var(--syntax-light-text-decoration, none); }
-.matrius-app[data-color-mode='dark'] .message-code { background: #23272e; }
-.matrius-app[data-color-mode='dark'] .message-code pre { color: #abb2bf; }
-.matrius-app[data-color-mode='dark'] .message-code .line > span { color: var(--syntax-dark, inherit); font-style: var(--syntax-dark-font-style, normal); font-weight: var(--syntax-dark-font-weight, inherit); text-decoration: var(--syntax-dark-text-decoration, none); }
-@media (pointer: coarse) { .message-code-actions button { min-width: 44px; min-height: 44px; } }
+
 .demo-toolbar { position: fixed; right: 16px; bottom: 6px; z-index: 40; display: flex; align-items: center; gap: 10px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--popover); color: var(--muted-text); font-size: var(--text-caption); }
 .demo-toolbar button { padding: 1px 3px; color: var(--foreground); }
 .demo-toolbar button:hover { text-decoration: underline; }
@@ -1234,12 +1335,13 @@ input[type='password']::-ms-clear { display: none; }
 .reasoning-body .message-markdown li { margin: 3px 0; }
 .reasoning-body .message-markdown blockquote { margin: 8px 0; padding-left: 12px; }
 .reasoning-body .message-markdown hr { margin: 12px 0; }
-.reasoning-body .message-markdown code, .reasoning-body .message-code pre code { font-size: var(--text-caption); }
-.reasoning-body .message-code { margin: 8px 0; }
-.reasoning-body .message-code pre { padding: 12px; }
-.reasoning-body .message-table-scroll { margin: 8px 0; }
-.reasoning-body .message-markdown table { font-size: var(--text-caption); }
-.reasoning-body .message-markdown th, .reasoning-body .message-markdown td { padding: 6px 10px; }
+.reasoning-body .message-markdown code { font-size: var(--text-caption); }
+.reasoning-body .message-markdown [data-streamdown='code-block'] { margin: 8px 0; }
+.reasoning-body .message-markdown [data-streamdown='code-block'] pre { padding: 12px; }
+.reasoning-body .message-markdown [data-streamdown='table-wrapper'] { margin: 8px 0; }
+.reasoning-body .message-markdown [data-streamdown='table'] { font-size: var(--text-caption); }
+.reasoning-body .message-markdown [data-streamdown='table-header-cell'],
+.reasoning-body .message-markdown [data-streamdown='table-cell'] { padding: 6px 10px; }
 @keyframes reasoning-breathe { 50% { opacity: 0.45; } }
 /* The toggle stays quiet until it is wanted; touch and reduced-motion users always see it. */
 @media (hover: hover) {

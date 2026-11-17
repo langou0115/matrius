@@ -18,6 +18,8 @@ Windows 偶发慢启动可先根据就绪耗时区分 API 和 Vite。首次安�
 
 Vite 的依赖扫描固定从 `index.html` 开始，不再通过全仓库 HTML glob 发现入口；前端文件监听忽略 `server/`，避免扫描或监听 OfficeCLI 二进制与后端测试资源。共享前端逻辑 `contract/` 仍被监听。
 
+前端样式由 `ui/global.css` 直接导入 Tailwind v4（`@tailwindcss/vite`）：只加载 `theme` 与 `utilities` 两层，不加载 preflight，`@source` 指向 `node_modules/streamdown` 与各 `@streamdown/*` 插件，`@theme inline` 把 shadcn 语义色映射到应用主题变量。改动 Streamdown 版本后要确认这几个 `@source` 路径仍然匹配 `dist/*.js`，否则插件新增的工具类不会进入构建。
+
 ## 验证
 
 - npx tsc --noEmit：前端类型检查。

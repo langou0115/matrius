@@ -108,7 +108,7 @@ test('every prefix of a streamed reply stays readable', () => {
   // Markers that are complete long before the end of their reply, with the element each must have
   // become by the time the prefix has carried them. A formula that swallowed the prose takes them
   // with it, which is exactly the failure this guards against.
-  const markers = [['**求交点：**', '<strong'], ['**选择积分次序并限定：**', '<strong'], ['#### 【示例 1：直角坐标系】', '<h4']];
+  const markers = [['**求交点：**', 'data-streamdown="strong"'], ['**选择积分次序并限定：**', 'data-streamdown="strong"'], ['#### 【示例 1：直角坐标系】', '<h4']];
   for (const conversation of createDemoWorkspace().chat.conversations) {
     if (!ids.includes(conversation.id)) continue;
     for (const message of conversation.messages.filter((item) => item.role === 'assistant')) {
@@ -177,7 +177,7 @@ test('markdown and math survive together in one reply', () => {
     '约去公因式后得 $\\frac{\\pi^2}{6}$。',
   ].join('\n');
   const doc = parseHTML(render(content)).document;
-  for (const tag of ['h4', 'strong', 'ol', 'li']) assert.ok(doc.querySelector(tag), tag);
+  for (const tag of ['h4', '[data-streamdown="strong"]', 'ol', 'li']) assert.ok(doc.querySelector(tag), tag);
   assert.ok(doc.querySelectorAll('.katex-display').length >= 1, 'a display formula');
   assert.ok(doc.querySelectorAll('.katex').length >= 3, 'the inline formulas');
   assert.deepEqual(visibleLatex(content), []);
