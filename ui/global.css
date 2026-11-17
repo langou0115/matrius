@@ -852,15 +852,17 @@ input[type='password']::-ms-clear { display: none; }
 .message-markdown [data-streamdown='table-cell'] { font-size: var(--text-ui); }
 .message-markdown [data-streamdown='table-body'] tr:last-child [data-streamdown='table-cell'] { border-bottom: 0; }
 .message-markdown [data-streamdown='table-cell'] > :last-child, .message-markdown [data-streamdown='table-header-cell'] > :last-child { margin-bottom: 0; }
-/* Code blocks: one bordered card with a header strip. Shiki's per-token colours arrive as the
-   `--sdm-c` / `--shiki-dark` custom properties, so colour mode switches without re-tokenizing. */
+/* Code blocks: one bordered card with a header strip. The surface comes from the theme's own
+   variables (soft card + a slightly stronger header mix), so switching theme re-tints the block
+   with the rest of the UI. Shiki's per-token colours stay on One Light / One Dark Pro and arrive as
+   the `--sdm-c` / `--shiki-dark` custom properties, so colour mode switches without re-tokenizing. */
 .message-markdown [data-streamdown='code-block'] {
   min-width: 0; max-width: 100%; padding: 0; gap: 0;
-  border: 1px solid var(--border); border-radius: 14px; background: #fafafa; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--soft); overflow: hidden;
 }
 .message-markdown [data-streamdown='code-block-header'] {
   display: flex; align-items: center; height: auto; min-height: 42px; padding: 5px 8px 5px 18px;
-  border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--foreground) 5%, var(--background));
+  border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--foreground) 4%, var(--background));
   color: var(--muted-text); font-size: var(--text-caption); user-select: none;
 }
 .message-markdown [data-streamdown='code-block-header'] > span { margin-left: 0; font-family: var(--font-mono); font-size: var(--text-caption); }
@@ -878,7 +880,7 @@ input[type='password']::-ms-clear { display: none; }
 }
 .message-markdown [data-streamdown='code-block'] pre {
   margin: 0; padding: 18px 20px; overflow-x: auto; overscroll-behavior-x: contain;
-  color: #383a42; font-size: var(--text-small); line-height: 1.65; tab-size: 2; white-space: pre; overflow-wrap: normal;
+  color: var(--foreground); font-size: var(--text-small); line-height: 1.65; tab-size: 2; white-space: pre; overflow-wrap: normal;
 }
 .message-markdown [data-streamdown='code-block'] pre:focus-visible { outline-offset: -3px; }
 .message-markdown [data-streamdown='code-block'] pre code { display: block; width: max-content; min-width: 100%; padding: 0; font-family: var(--font-mono); font-size: var(--text-small); line-height: inherit; }
@@ -886,8 +888,6 @@ input[type='password']::-ms-clear { display: none; }
 .matrius-app .message-markdown [data-streamdown='table-wrapper'] > div:last-child { scrollbar-width: thin; }
 .matrius-app .message-markdown [data-streamdown='code-block'] pre::-webkit-scrollbar,
 .matrius-app .message-markdown [data-streamdown='table-wrapper'] > div:last-child::-webkit-scrollbar { height: 8px; }
-.matrius-app[data-color-mode='dark'] .message-markdown [data-streamdown='code-block'] { background: #23272e; }
-.matrius-app[data-color-mode='dark'] .message-markdown [data-streamdown='code-block'] pre { color: #abb2bf; }
 @media (max-width: 767px) {
   .message-markdown [data-streamdown='code-block'],
   .message-markdown [data-streamdown='table-wrapper'] { border-radius: 10px; }

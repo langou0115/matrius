@@ -35,8 +35,8 @@
 
 - Web 用户与助手消息共用 `streamdown` 渲染（`react-markdown` 的流式替代品）：GFM 表格、任务列表、脚注与删除线由 `remark-gfm` 提供，公式由 `@streamdown/math`（remark-math + rehype-katex）处理，CJK 断行与强调由 `@streamdown/cjk` 处理。Streamdown 按块解析并修补未闭合的围栏、表格与强调，流式输出不会出现半截结构。
 - `normalize-markdown.ts` 在代码范围外规范化 `\(…\)` / `\[…\]` 公式并保护货币美元符号，保留代码和未闭合围栏原文；它在交给 Streamdown 之前执行，仍是我们自己的逻辑。KaTeX 的渲染器、CSS 和本地字体使用同一版本；CSS 和字体通过 postinstall 生成到 `public/vendor/katex/<版本>/`，由 `vite.config.ts` 在 `index.html` 注入样式链接，不依赖 CDN，也不做 CSS 相对资源导入；不开启受信任 HTML 命令，不重写公式内部布局。KaTeX 的 rehype 步骤由 `message-content.tsx` 自己执行，以便在渲染后把解析失败的公式降级为原文。
-- 代码高亮使用 `@streamdown/code`（Shiki 官方的 TextMate 分词）与 One Light / One Dark Pro 两套完整主题；语言语法和 Shiki 引擎在首次出现代码块时按需加载，不维护本地语法规则或 token 渲染器。语法颜色通过 Shiki 写出的 CSS 变量随明暗模式切换，不随主题主色旋转，不因切主题重新分词。所有资源随构建本地打包，不访问 CDN。
-- 代码块、表格与 Mermaid 使用 Streamdown 自带组件：代码块提供语言标签、复制与下载，表格提供复制/下载/全屏，Mermaid 图表提供缩放、下载与全屏。Mermaid 运行时体积较大，只有回复出现 ```mermaid 围栏时才动态加载。
+- 代码高亮使用 `@streamdown/code`（Shiki 官方的 TextMate 分词）与 One Light / One Dark Pro 两套完整主题；语言语法和 Shiki 引擎在首次出现代码块时按需加载，不维护本地语法规则或 token 渲染器。代码块的表面色、表头色与默认正文色取自主题变量（`--soft`、`--foreground` 混合），因此换主题或明暗模式时会和界面一起变化；只有语法 token 颜色固定为两套 Shiki 主题，通过其写出的 CSS 变量随明暗切换，不随主题主色旋转，也不因切主题重新分词。所有资源随构建本地打包，不访问 CDN。
+- 代码块、表格与 Mermaid 使用 Streamdown 自带组件：代码块提供语言标签、复制与下载，表格不显示工具条（按纯内容排版），Mermaid 图表提供缩放、下载与全屏。Mermaid 运行时体积较大，只有回复出现 ```mermaid 围栏时才动态加载。
 - Markdown 不启用原始 HTML：`skipHtml` 与 Streamdown 内置的 sanitize/harden 一起把 `<script>`、`<img onerror>` 之类的内容退化为文本。链接另经 `message-content.tsx` 的协议白名单过滤，只保留 http(s)、mailto、tel、锚点与相对路径，其余（如 `javascript:`）直接丢弃，且外链固定 `target="_blank"` 与 `rel="noreferrer noopener"`。
 - 样式：Tailwind v4 只导入 `theme` 与 `utilities` 两层、不导入 preflight，避免重写既有 UI；`@theme inline` 把 shadcn 语义色映射到应用自己的主题变量，`@custom-variant dark` 对应 `[data-color-mode='dark']`。正文排版（块间距、标题阶梯、列表、引用、表格与代码块外观）写在 `global.css` 的 `.message-markdown [data-streamdown=…]` 规则里，覆盖 Streamdown 的默认工具类。
 - `message-actions.tsx` 负责整条消息复制与赞/踩操作，评分通过 Chat State 更新对应助手消息的 `feedback` 并沿现有仓储保存。反馈在下一次模型请求时由共享 Agent 核心传给所选服务商，点击评分本身不触发请求；再次点击取消。分支动作创建独立会话和消息 ID，保留原文与反馈，原会话及草稿保留。
