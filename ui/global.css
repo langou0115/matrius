@@ -792,11 +792,26 @@ input[type='password']::-ms-clear { display: none; }
 .message-markdown ol { list-style: decimal outside; }
 .message-markdown .contains-task-list { list-style: none; padding-left: 4px; }
 .message-markdown li { margin: 6px 0; padding-left: 3px; }
-.message-markdown li::marker { color: var(--muted-text); font-variant-numeric: tabular-nums; }
+.message-markdown li::marker { color: var(--foreground); font-variant-numeric: tabular-nums; }
 .message-markdown li > p { margin-bottom: 8px; }
 .message-markdown li > ul, .message-markdown li > ol { margin-block: 6px; }
 .message-markdown .task-list-item { list-style: none; }
-.message-markdown .task-list-item input { margin-right: 8px; accent-color: var(--primary); opacity: 1; }
+/* The native checkbox draws a grey border in every browser and ignores the text colour. Drawing it
+   from the foreground colour instead keeps the task list looking like the prose around it: a black
+   outline when open, and a filled box with a cut-out tick when done. */
+.message-markdown .task-list-item input[type='checkbox'] {
+  appearance: none; -webkit-appearance: none;
+  display: inline-grid; place-content: center; flex: none;
+  width: 15px; height: 15px; margin: 0 8px 0 0; padding: 0;
+  border: 1.5px solid var(--foreground); border-radius: 4px;
+  background: transparent; vertical-align: -2px; opacity: 1; cursor: default;
+}
+.message-markdown .task-list-item input[type='checkbox']:checked { background: var(--foreground); }
+.message-markdown .task-list-item input[type='checkbox']:checked::after {
+  content: ''; width: 8px; height: 4px; margin-top: -2px;
+  border-left: 2px solid var(--background); border-bottom: 2px solid var(--background);
+  transform: rotate(-45deg);
+}
 .message-markdown [data-streamdown='blockquote'] {
   padding: 12px 16px; border-left: 3px solid color-mix(in srgb, var(--foreground) 22%, var(--background));
   border-radius: 0 10px 10px 0; background: var(--soft); color: var(--muted-text);
@@ -813,22 +828,26 @@ input[type='password']::-ms-clear { display: none; }
 /* GFM footnote markers are inert text (see message-content.tsx); they must not look clickable. */
 .message-markdown .message-footnote-ref { font-family: var(--font-medium); color: var(--muted-text); }
 .message-markdown [data-footnotes] { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted-text); font-size: var(--text-small); }
-/* Tables: Streamdown adds a toolbar row and an inner scroll box. The app keeps one bordered
-   surface with a pinned toolbar instead of a border around a border. */
+/* Tables follow the reading column instead of sitting in their own card: no outer border, no
+   toolbar, no zebra rows — just a bold header and a hairline between rows, the way a chat reply
+   states a comparison. The inner box still scrolls sideways when a table is wider than the reply. */
 .message-markdown [data-streamdown='table-wrapper'] {
   min-width: 0; max-width: 100%; padding: 0; gap: 0;
-  border: 1px solid var(--border); border-radius: 12px; background: var(--background); overflow: hidden;
+  border: 0; border-radius: 0; background: transparent; overflow: visible;
 }
-/* The toolbar is its own row above the grid, so the table itself stays flush with the card. */
-.message-markdown [data-streamdown='table-wrapper'] > div:first-child { padding: 4px 6px 2px; }
+/* The toolbar div is the only direct child that holds buttons; with table controls off there is no
+   toolbar at all, so hiding "the first child" would hide the table itself. */
+.message-markdown [data-streamdown='table-wrapper'] > div:has(> button) { display: none; }
 .message-markdown [data-streamdown='table-wrapper'] > div:last-child {
   border: 0; border-radius: 0; background: transparent;
   overflow-x: auto; overscroll-behavior-x: contain;
 }
-.message-markdown [data-streamdown='table-wrapper']:focus-within { outline-offset: 2px; }
-.message-markdown [data-streamdown='table'] { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-ui); line-height: 1.65; text-align: left; }
-.message-markdown [data-streamdown='table-header'] { background: var(--soft); }
-.message-markdown [data-streamdown='table-header-cell'], .message-markdown [data-streamdown='table-cell'] { min-width: 112px; max-width: 360px; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.message-markdown [data-streamdown='table'] { width: 100%; border-collapse: collapse; font-size: var(--text-ui); line-height: 1.6; text-align: left; }
+.message-markdown [data-streamdown='table-header'] { background: transparent; }
+.message-markdown [data-streamdown='table-header-cell'], .message-markdown [data-streamdown='table-cell'] {
+  min-width: 96px; max-width: 360px; padding: 10px 16px 10px 0; border: 0; border-bottom: 1px solid var(--border);
+  vertical-align: top; overflow-wrap: anywhere;
+}
 .message-markdown [data-streamdown='table-header-cell'] { color: var(--foreground); font-family: var(--font-semibold); font-size: var(--text-ui); font-weight: 400; }
 .message-markdown [data-streamdown='table-cell'] { font-size: var(--text-ui); }
 .message-markdown [data-streamdown='table-body'] tr:last-child [data-streamdown='table-cell'] { border-bottom: 0; }

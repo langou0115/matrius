@@ -945,13 +945,13 @@ test('code blocks keep their source, escape hostile markup and expose copy contr
   assert.deepEqual(labels, ['下载文件', '复制代码']);
 });
 
-test('tables, quotes and tasks render through Streamdown with their own controls', () => {
+test('tables, quotes and tasks render through Streamdown without a table toolbar', () => {
   const doc = documentFor('> 引用\n\n- [x] 完成\n- [ ] 待办\n\n| A | B |\n| --- | --- |\n| 1 | 2 |');
   assert.ok(doc.querySelector('[data-streamdown="blockquote"]'));
   assert.equal(doc.querySelectorAll('input[type=checkbox]').length, 2);
-  assert.ok(doc.querySelector('[data-streamdown="table-wrapper"]'), 'tables get their scroll/controls wrapper');
+  assert.ok(doc.querySelector('[data-streamdown="table-wrapper"]'), 'tables keep their own scroll wrapper');
   assert.equal(doc.querySelectorAll('[data-streamdown="table-cell"]').length, 2);
-  assert.ok(doc.querySelector('[data-streamdown="table-wrapper"] button[title="复制表格"]'));
+  assert.equal(doc.querySelectorAll('[data-streamdown="table-wrapper"] button').length, 0, 'the table is plain content, not a widget');
 });
 
 test('external links open safely and non-http protocols never reach the DOM', () => {

@@ -49,7 +49,9 @@ function safeHref(href: string | undefined): string | undefined {
 function createComponents(byLabel: Map<string, CitationSource> | null): Components {
   return {
     a({ node, children, href, ...props }) {
-      if ((node?.properties as Record<string, unknown> | undefined)?.['data-footnote-backref'] !== undefined) return null;
+      const classes = node?.properties?.className;
+      const isBackref = Array.isArray(classes) && classes.includes('data-footnote-backref');
+      if (isBackref || (node?.properties as Record<string, unknown> | undefined)?.['data-footnote-backref'] !== undefined) return null;
       const label = byLabel ? citationLabel(href) : null;
       const source = label ? byLabel?.get(label) : undefined;
       if (source) return <CitationMarker source={source} />;
@@ -265,7 +267,7 @@ export const MessageContent = memo(function MessageContent({ content, streaming 
     mode={streaming ? 'streaming' : 'static'}
     isAnimating={streaming}
     plugins={plugins}
-    controls={{ table: { fullscreen: false } }}
+    controls={{ table: false }}
     remarkRehypeOptions={{ clobberPrefix: `message-${id}-`, footnoteLabel: '注释' }}
     skipHtml
     linkSafety={{ enabled: false }}
