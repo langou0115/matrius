@@ -7,18 +7,40 @@ import type { WorkspaceData } from '@/features/workspace/workspace-repository';
 type Turn = string | { content: string; files?: MessageFile[] };
 type Thread = { id: string; title: string; pinned?: boolean; turns: Turn[] };
 
+// Everything a model commonly emits, in one reply: this screen is how the renderer is judged, so it
+// carries every Markdown shape the app claims to support instead of a couple of examples.
 const markdownReply = [
   '# Markdown 综合格式测试 ✨',
   '这是一份排版预览：先看重点，再按需展开细节。🙂',
   '正文同时包含 **粗体**、*斜体*、***粗斜体***、~~删除线~~、`inlineCode()` 和 [示例链接](https://example.com)。',
+  '行内格式组合：**加粗里的 *斜体* 与 `code`**、*斜体里的 **加粗***、~~删除线里的 **加粗**~~、`a * b = c` 里的星号不生效。',
   '## 二级标题\n### 三级标题\n#### 四级标题\n##### 五级标题\n###### 六级标题',
-  '> 一级引用：观察引用缩进。\n>\n> > 二级引用：观察嵌套层级。',
+  '转义字符：\\*不是斜体\\*、\\_不是强调\\_、\\`不是代码\\`、\\\\ 是反斜杠。HTML 实体：&copy; &mdash; &bull; &hearts;。',
+  '软换行：这一行结尾有两个空格，  \n下一行接着显示而不是另起段落。',
+  '> 一级引用：观察引用缩进。\n>\n> > 二级引用：观察嵌套层级。\n>\n> - 引用里的列表\n> - 引用里的第二项\n>\n> ```text\n> 引用里的代码块\n> ```',
+  '> > > 三层嵌套引用，检查边框与左内边距是否逐层递进。',
   '- 无序列表\n  - 嵌套项目\n- [x] 已完成任务\n- [ ] 未完成任务\n\n1. 第一项\n2. 第二项\n   1. 嵌套有序项',
-  '| 类型 | 示例 | 说明 |\n| :--- | :---: | ---: |\n| 中文 | 你好 | 15 |\n| English | Hello | 200 |\n| 行内代码 | `const value = 1` | 1024 |\n| 长文本 | 单元格中的说明会自然换行，保持内容顶对齐；窄屏可横向滚动查看完整表格。 | 4096 |',
-  '```typescript\ntype Reply = { content: string; done: boolean };\nconst reply: Reply = { content: "你好，Matrius", done: true };\nconsole.log(reply.content);\n```',
-  '```powershell\n$env:HTTP_PROXY = "http://127.0.0.1:7890"\n$env:HTTPS_PROXY = "http://127.0.0.1:7890"\n$env:ALL_PROXY = "socks5://127.0.0.1:7890"\n$env:NO_PROXY = "localhost,127.0.0.1,::1,.local"\n```',
+  '1. 第一层有序\n   1. 第二层有序\n      1. 第三层有序\n         - 第四层无序\n2. 回到第一层',
+  '- 列表项里的代码块：\n\n  ```js\n  const nested = true;\n  ```\n\n- 列表项里的引用：\n\n  > 引用嵌在列表项里',
   '---',
-  '脚注示例[^note]。\n\n[^note]: 这是一段脚注说明。',
+  '分隔线前后各有固定间距，用来观察块间距是否稳定。',
+  '| 类型 | 示例 | 说明 |\n| :--- | :---: | ---: |\n| 中文 | 你好 | 15 |\n| English | Hello | 200 |\n| 行内代码 | `const value = 1` | 1024 |\n| 长文本 | 单元格中的说明会自然换行，保持内容顶对齐；窄屏可横向滚动查看完整表格。 | 4096 |',
+  '| 序号 | 名称 | 类型 | 默认值 | 说明 | 性能 | 兼容 | 备注 |\n| ---: | :--- | :---: | --- | :---: | --- | --- | --- |\n| 1 | alpha | string | `"a"` | 短说明 | 快 | 全平台 | |\n| 2 | beta-with-a-very-long-name | number | 0 | 这一格的说明比较长，用来检查列宽与换行策略是否按预期工作。 | 中 | iOS 与 Android | 需要手动配置 |\n| 3 | gamma | boolean | `true` | | 慢 | 仅桌面 | 可省略 |',
+  '| 格式 | 渲染 |\n| --- | --- |\n| 加粗 | **B** |\n| 斜体 | *I* |\n| 删除线 | ~~S~~ |\n| 行内代码 | `code` |\n| 链接 | [link](https://example.com) |',
+  '```typescript\ntype Reply = { content: string; done: boolean };\nconst reply: Reply = { content: "你好，Matrius", done: true };\nconsole.log(reply.content);\n```',
+  '```python\ndef summarize(items: list[dict[str, str]]) -> dict[str, object]:\n    """统计条目数量与标题。"""\n    return {"total": len(items), "labels": [item["title"] for item in items]}\n\n\nprint(summarize([{"title": "中文标题"}, {"title": "English title"}]))\n```',
+  '```sql\nSELECT conversation_id,\n       COUNT(*) AS message_count\nFROM messages\nWHERE created_at >= \'2026-01-01\'\nGROUP BY conversation_id\nORDER BY message_count DESC\nLIMIT 20;\n```',
+  '```json\n{"title":"渲染测试","enabled":true,"items":[1,2,3],"nested":{"text":"中文与 English","list":["a","b"]}}\n```',
+  '```yaml\nserver:\n  host: 127.0.0.1\n  port: 8081\nfeatures:\n  markdown: true\n  mermaid: false\n```',
+  '```bash\nprintf \'%s\\n\' "hello world"\nfor file in *.md; do echo "处理 $file"; done\n```',
+  '```html\n<article class="card">\n  <h2>标题</h2>\n  <p>正文 &amp; 转义</p>\n</article>\n```',
+  '```css\n.card {\n  display: grid;\n  gap: 12px;\n  border-radius: 14px;\n}\n```',
+  '```diff\n- const timeout = 3000;\n+ const timeout = 5000;\n  export { timeout };\n```',
+  '```\n没有语言标签的纯文本代码块。\n保留空格：    A    B    C\n\t制表符缩进\n\n空行之后的第二段。\n```',
+  '```powershell\n$env:HTTP_PROXY = "http://127.0.0.1:7890"\n$env:HTTPS_PROXY = "http://127.0.0.1:7890"\n$env:ALL_PROXY = "socks5://127.0.0.1:7890"\n$env:NO_PROXY = "localhost,127.0.0.1,::1,.local"\n```',
+  '长行代码块，检查横向滚动：\n\n```js\nconst veryLongIdentifier = "' + 'x'.repeat(120) + '"; // ' + '长注释用于压测横向滚动'.repeat(6) + '\n```',
+  '多个脚注：第一个[^a]、第二个[^b]，再引用一次第一个[^a]。\n\n[^a]: 脚注 A 的说明，带 [链接](https://example.com)。\n[^b]: 脚注 B 的说明。',
+  '单个脚注示例[^note]。\n\n[^note]: 这是一段脚注说明。',
   '结尾段落：检查从第一段连续选择到这里时，正文与代码是否保持完整。',
 ].join('\n\n');
 
@@ -124,6 +146,36 @@ const codeReply = [
 ].join('\n\n');
 
 const longParagraph = '在长文本阅读过程中，段落宽度、换行位置和行距会共同影响阅读体验。这里保留连续的中文描述，同时穿插 English words、数字 1234567890 和标点（括号）、逗号，观察不同字体之间的基线是否一致。回复内容应始终留在消息区域内，切换会话和展开侧栏后仍然能够完整阅读。';
+
+// A generated reply for render/scroll stress: each section mixes the block types that cost the most
+// (long paragraphs, nested lists, tables, highlighted code, quotes) so the transcript is long enough
+// to expose slow first paints, layout thrash and selection across hundreds of blocks.
+const stressReply = Array.from({ length: 20 }, (_, index) => {
+  const section = index + 1;
+  const kind = ['段落与列表', '表格与行内格式', '代码块与长行', '引用与嵌套'][index % 4];
+  return [
+    `## 第 ${section} 节｜${kind}`,
+    longParagraph,
+    [
+      `- 第 ${section} 节要点一：${longParagraph.slice(0, 24)}`,
+      `- 第 ${section} 节要点二：${longParagraph.slice(24, 48)}`,
+      '  - 二级细节：可以折叠的补充说明',
+      '    - 三级细节：更深的层级',
+      `1. 步骤一：确认第 ${section} 节的输入`,
+      '2. 步骤二：执行校验并记录结果',
+      '   1. 子步骤：回填结论',
+    ].join('\n'),
+    `| 指标 | 第 ${section} 节 | 说明 |\n| --- | ---: | --- |\n| 渲染耗时 | ${8 + (section % 7)} ms | 压测占位 |\n| 块数量 | ${section * 4} | 累计值 |\n| 备注 | \`section_${section}\` | **加粗** 与行内代码混排 |`,
+    '```typescript\n'
+      + `interface Section${section} {\n  index: number;\n  title: string;\n}\n\n`
+      + `const section${section}: Section${section} = { index: ${section}, title: "第 ${section} 节" };\n`
+      + `console.log(section${section}.title);\n`
+      + '```',
+    `> 第 ${section} 节引用：${longParagraph.slice(48, 88)}…\n>\n> > 嵌套一层：继续说明这一节的目标与边界。`,
+    `**小结 ${section}：** 本节用于压测渲染与滚动，内容本身没有业务含义。`,
+  ].join('\n\n');
+}).join('\n\n');
+
 const topics = [
   '中文段落与阅读节奏', '中英文混排与标点', '粗体与行内代码', '多语言代码块',
   '表格与长单元格', '列表与引用嵌套', '公式与货币边界', '长链接与连续字符',
@@ -239,6 +291,10 @@ const specialThreads: Thread[] = [
       '接下来是截断的公式。', '推导进行到这里：$$\\frac{x^2 + 1}{',
       '接下来是尚未闭合的代码块。', '已经收到的代码：\n\n```typescript\nfunction pendingReply() {\n  const message = "生成尚未结束";',
     ],
+  },
+  {
+    id: 'dev-render-stress', title: '压测专项｜20 节、140 个块的超长单条回复',
+    turns: ['给我一条足够长的回复，专门用来压测渲染与滚动性能。', stressReply],
   },
 ];
 

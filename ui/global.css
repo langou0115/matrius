@@ -848,9 +848,16 @@ input[type='password']::-ms-clear { display: none; }
 .message-markdown [data-streamdown='table'] { width: 100%; border-collapse: collapse; font-size: var(--text-ui); line-height: 1.6; text-align: left; }
 .message-markdown [data-streamdown='table-header'] { background: transparent; }
 .message-markdown [data-streamdown='table-header-cell'], .message-markdown [data-streamdown='table-cell'] {
-  min-width: 96px; max-width: 360px; padding: 10px 16px 10px 0; border: 0; border-bottom: 1px solid var(--border);
+  min-width: 96px; max-width: 360px; padding: 10px 16px; border: 0; border-bottom: 1px solid var(--border);
   vertical-align: top; overflow-wrap: anywhere;
 }
+/* The first column starts on the reply's own text edge and the last one ends there, so the grid
+   reads as part of the paragraph rather than as an indented block; the 16px between columns is what
+   keeps a right-aligned number from touching the next cell's text. */
+.message-markdown [data-streamdown='table-header-cell']:first-child,
+.message-markdown [data-streamdown='table-cell']:first-child { padding-left: 0; }
+.message-markdown [data-streamdown='table-header-cell']:last-child,
+.message-markdown [data-streamdown='table-cell']:last-child { padding-right: 0; }
 .message-markdown [data-streamdown='table-header-cell'] { color: var(--foreground); font-family: var(--font-semibold); font-size: var(--text-ui); font-weight: 400; }
 .message-markdown [data-streamdown='table-cell'] { font-size: var(--text-ui); }
 .message-markdown [data-streamdown='table-body'] tr:last-child [data-streamdown='table-cell'] { border-bottom: 0; }
