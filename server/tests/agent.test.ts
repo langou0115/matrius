@@ -5,11 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { createAssistantMessageEventStream, type AssistantMessage } from '@mariozechner/pi-ai';
+import type { StreamFn } from '@mariozechner/pi-agent-core';
+
 import type {
   AgentRunEvent,
   AgentRunRequest,
+  ReplyUpdate,
 } from '../../contract/agent-protocol';
+import { createReplyRun } from '../agent/runner';
 import { createAgentRunService, type AgentRunService } from '../agent/run-service';
+import { createToolActivityResolver } from '../agent/tool-activity';
+import { toolRegistry } from '../agent/tools';
 import { buildApp } from '../app';
 import { loadSettings } from '../config';
 
@@ -219,4 +226,181 @@ test('the SSE route rejects a second run and proxies steer and stop', async () =
     assert.deepEqual(await stop.json(), { ok: true });
     assert.deepEqual(stopped, ['conversation-1']);
   });
+});
+
+function assistantTemplate(partial: Partial<AssistantMessage> = {}): AssistantMessage {
+  return {
+    role: 'assistant',
+    content: [],
+    api: 'openai-completions',
+    provider: 'provider-1',
+    model: 'test-model',
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: 'stop',
+    timestamp: Date.now(),
+    ...partial,
+  };
+}
+
+test('createReplyRun streams inline UI markers in-place without prematurely rendering cards at the top', async () => {
+  const weatherTool = toolRegistry.enabled(new Set()).find((item) => item.id === 'show_weather');
+  assert.ok(weatherTool);
+  const tools = [weatherTool.create({
+    instanceId: 1,
+    conversationId: 'conv-ui-1',
+    features: new Set(),
+    services: {
+      search: { searchMany: async () => [] },
+      fetch: { fetch: async () => ({ title: '', url: '', text: '', truncated: false, chars: 0 }) },
+    },
+  })];
+  const toolActivity = createToolActivityResolver(toolRegistry);
+
+  let turn = 0;
+  const streamFn: StreamFn = () => {
+    const stream = createAssistantMessageEventStream();
+    turn += 1;
+    queueMicrotask(() => {
+      if (turn === 1) {
+        const toolCall = {
+          type: 'toolCall' as const,
+          id: 'call_1',
+          name: 'show_weather',
+          arguments: {
+            location: '北京',
+            condition: 'sunny',
+            conditionLabel: '晴',
+            temperatureC: 20,
+            highC: 22,
+            lowC: 12,
+          },
+        };
+        const msg = assistantTemplate({ content: [toolCall], stopReason: 'toolUse' });
+        stream.push({ type: 'start', partial: assistantTemplate() });
+        stream.push({ type: 'toolcall_start', contentIndex: 0, partial: msg });
+        stream.push({ type: 'toolcall_end', contentIndex: 0, toolCall, partial: msg });
+        stream.push({ type: 'done', reason: 'toolUse', message: msg });
+        stream.end(msg);
+        return;
+      }
+
+      const chunks = ['先看北京天气：\n\n', '[[ui:weather-call_1]]', '\n\n记得带伞。'];
+      let text = '';
+      stream.push({ type: 'start', partial: assistantTemplate() });
+      stream.push({ type: 'text_start', contentIndex: 0, partial: assistantTemplate({ content: [{ type: 'text', text: '' }] }) });
+      for (const chunk of chunks) {
+        text += chunk;
+        stream.push({
+          type: 'text_delta',
+          contentIndex: 0,
+          delta: chunk,
+          partial: assistantTemplate({ content: [{ type: 'text', text }] }),
+        });
+      }
+      const finalMsg = assistantTemplate({ content: [{ type: 'text', text }] });
+      stream.push({ type: 'text_end', contentIndex: 0, content: text, partial: finalMsg });
+      stream.push({ type: 'done', reason: 'stop', message: finalMsg });
+      stream.end(finalMsg);
+    });
+    return stream;
+  };
+
+  const updates: ReplyUpdate[] = [];
+  const run = createReplyRun({
+    config: model(),
+    apiKey: 'test-key',
+    messages: [{ id: 'u1', role: 'user', content: '北京天气如何？' }],
+    tools,
+    toolActivity,
+    streamFn,
+    onUpdate: (value) => updates.push(value),
+  });
+  const result = await run.start();
+  assert.equal(result.status, 'complete');
+
+  const contents = updates.map((item) => item.content);
+  const firstMarkerIndex = contents.findIndex((text) => text.includes('[[ui:weather-call_1]]'));
+  const firstProseIndex = contents.findIndex((text) => text.includes('先看北京天气：'));
+  assert.ok(firstProseIndex >= 0);
+  assert.ok(firstMarkerIndex > firstProseIndex);
+  assert.equal(contents.at(-1), '先看北京天气：\n\n[[ui:weather-call_1]]\n\n记得带伞。');
+});
+
+test('createReplyRun appends omitted UI markers at the end once the reply completes', async () => {
+  const weatherTool = toolRegistry.enabled(new Set()).find((item) => item.id === 'show_weather');
+  assert.ok(weatherTool);
+  const tools = [weatherTool.create({
+    instanceId: 1,
+    conversationId: 'conv-ui-2',
+    features: new Set(),
+    services: {
+      search: { searchMany: async () => [] },
+      fetch: { fetch: async () => ({ title: '', url: '', text: '', truncated: false, chars: 0 }) },
+    },
+  })];
+  const toolActivity = createToolActivityResolver(toolRegistry);
+
+  let turn = 0;
+  const streamFn: StreamFn = () => {
+    const stream = createAssistantMessageEventStream();
+    turn += 1;
+    queueMicrotask(() => {
+      if (turn === 1) {
+        const toolCall = {
+          type: 'toolCall' as const,
+          id: 'call_2',
+          name: 'show_weather',
+          arguments: {
+            location: '上海',
+            condition: 'rain',
+            conditionLabel: '小雨',
+            temperatureC: 18,
+            highC: 20,
+            lowC: 14,
+          },
+        };
+        const msg = assistantTemplate({ content: [toolCall], stopReason: 'toolUse' });
+        stream.push({ type: 'start', partial: assistantTemplate() });
+        stream.push({ type: 'toolcall_start', contentIndex: 0, partial: msg });
+        stream.push({ type: 'toolcall_end', contentIndex: 0, toolCall, partial: msg });
+        stream.push({ type: 'done', reason: 'toolUse', message: msg });
+        stream.end(msg);
+        return;
+      }
+
+      const text = '上海今天有小雨。';
+      const msg = assistantTemplate({ content: [{ type: 'text', text }] });
+      stream.push({ type: 'start', partial: assistantTemplate() });
+      stream.push({ type: 'text_start', contentIndex: 0, partial: assistantTemplate({ content: [{ type: 'text', text: '' }] }) });
+      stream.push({ type: 'text_delta', contentIndex: 0, delta: text, partial: msg });
+      stream.push({ type: 'text_end', contentIndex: 0, content: text, partial: msg });
+      stream.push({ type: 'done', reason: 'stop', message: msg });
+      stream.end(msg);
+    });
+    return stream;
+  };
+
+  const updates: ReplyUpdate[] = [];
+  const run = createReplyRun({
+    config: model(),
+    apiKey: 'test-key',
+    messages: [{ id: 'u1', role: 'user', content: '上海天气如何？' }],
+    tools,
+    toolActivity,
+    streamFn,
+    onUpdate: (value) => updates.push(value),
+  });
+  const result = await run.start();
+  assert.equal(result.status, 'complete');
+
+  const beforeFinal = updates.slice(0, -1).map((item) => item.content);
+  assert.equal(beforeFinal.some((text) => text.includes('[[ui:weather-call_2]]')), false);
+  assert.equal(updates.at(-1)?.content, '上海今天有小雨。\n\n[[ui:weather-call_2]]');
 });

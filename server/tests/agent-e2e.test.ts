@@ -19,16 +19,27 @@ function completionChunk(content: string, finishReason: string | null, usage = f
   })}\n\n`;
 }
 
-async function fakeProvider(content: string): Promise<{ url: string; close: () => Promise<void> }> {
-  const server = createServer((_request, response) => {
-    response.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+async function fakeProvider(
+  content: string,
+  onRequest?: (body: Record<string, unknown>) => void,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('end', () => {
+      if (onRequest) {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        if (raw) onRequest(JSON.parse(raw) as Record<string, unknown>);
+      }
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      });
+      response.write(completionChunk('', null));
+      response.write(completionChunk(content, null));
+      response.write(completionChunk('', 'stop', true));
+      response.end('data: [DONE]\n\n');
     });
-    response.write(completionChunk('', null));
-    response.write(completionChunk(content, null));
-    response.write(completionChunk('', 'stop', true));
-    response.end('data: [DONE]\n\n');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -117,7 +128,8 @@ test('the memory endpoint extracts and normalizes a summary', async () => {
 });
 
 test('the title endpoint uses the server Agent and normalizes the result', async () => {
-  const provider = await fakeProvider('## Fake title');
+  const captured: Record<string, unknown>[] = [];
+  const provider = await fakeProvider('## Fake title', (body) => captured.push(body));
   try {
     await withApp(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/agent/title`, {
@@ -130,6 +142,12 @@ test('the title endpoint uses the server Agent and normalizes the result', async
       });
       assert.equal(response.status, 200);
       assert.deepEqual(await response.json(), { title: 'Fake title' });
+      const messages = (captured[0]?.messages ?? []) as { role: string; content: string }[];
+      assert.equal(messages.length, 2);
+      assert.equal(messages[0].role, 'system');
+      assert.equal(messages[1].role, 'user');
+      assert.match(messages[1].content, /<user_message>\nGenerate a title\n<\/user_message>/u);
+      assert.doesNotMatch(messages[1].content, /<current_context>/u);
     });
   } finally {
     await provider.close();

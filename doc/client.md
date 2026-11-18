@@ -11,7 +11,7 @@
 - 导航统一从 `@/router` 导入 `Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href`；功能代码不直接导入 `react-router-dom`。测试通过 `tests/stubs/router.mjs` 替换该模块。
 - `Link asChild` 的锚点使用共享 `LinkAnchor`，由 `@/router` 的 `Link` 注入 `href` 与导航处理。
 - 浏览器差异集中在适配层，不在业务页面散落平台 API 调用。业务契约与 Web 实现分离，便于后续替换底层传输或存储。
-- Agent 运行在 `server/agent/`；客户端通过 `core/api/agent-runs.ts` 提交运行、消费 SSE，并用 `/api/agent/runs/:conversationId/stop` 与 `/steer` 发送停止/steer，共享类型与纯逻辑在 `contract/agent-*.ts`。聊天 React 层负责状态与模型设置适配，模型请求经同源 `/api/model-proxy` 转发，凭据只保存在浏览器。
+- Agent 运行在 `server/agent/`；客户端通过 `core/api/agent-runs.ts` 提交运行、消费 SSE，并用 `/api/agent/runs/:conversationId/stop` 与 `/steer` 发送停止/steer，共享类型与纯逻辑在 `contract/agent-*.ts`。聊天 React 层负责状态与模型设置适配，模型请求与目录查询均经服务端 `/api/agent/*` 发起，凭据只保存在浏览器。
 - 当前只保证桌面浏览器；移动 Web 的窄屏布局、软键盘、安全区与触屏交互在后续阶段单独适配。长会话避免一次挂载全部消息，流式更新避免重绘整个列表。
 - 实现 Vite、React Router 或 React 19 API 前，先查对应版本的官方文档；不要引入 Expo、React Native Web、Metro 或第二套路由。
 
@@ -58,7 +58,7 @@
 Agent Runtime 在服务端运行。浏览器通过 `POST /api/agent/runs` 的 SSE 提交运行并消费事件（文本、推理、工具、用量、结束），通过 `/api/agent/runs/:conversationId/stop` 与 `/steer` 停止或纠偏；上下文组装、工具执行、压缩、标题与记忆都在 `server/agent`。模型配置与 API key 每次运行临时发送，服务端不落库、不写日志。
 
 - 服务端负责协议解码、SSE 分帧、工具循环与错误映射；客户端只消费运行事件并按事件更新消息。
-- 模型请求统一经本站同源的 `/api/model-proxy` 转发，避免服务商 CORS 预检差异；中继无状态，不保存密钥或对话。开发时由 `vite.config.ts` 注册的中间件处理，生产由 Web 入口处理（部署方式待重新设计）。
+- 模型目录查询通过 `POST /api/agent/models` 由服务端直接向服务商请求，避免浏览器 CORS 预检差异；服务端不保存密钥。
 - 同一会话只允许一个活动运行；运行状态在服务端进程内，刷新页面或重启服务不保证恢复。
 
 ## 依赖与构建

@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 /** A small menu shared by the page actions and file actions. */
-export function LibraryMenu({ anchor, label, onClose, children }: {
+export function LibraryMenu({ anchor, alignAnchor, label, onClose, children }: {
   anchor: HTMLElement;
+  /** Optional outer box (e.g. a full row) used for placement while `anchor` keeps focus. */
+  alignAnchor?: HTMLElement | null;
   label: string;
   onClose: () => void;
   children: ReactNode;
@@ -12,24 +14,30 @@ export function LibraryMenu({ anchor, label, onClose, children }: {
   useLayoutEffect(() => {
     const element = menu.current;
     if (!element) return;
-    const rect = anchor.getBoundingClientRect();
+    const rect = (alignAnchor ?? anchor).getBoundingClientRect();
     const { width, height } = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
     element.style.top = `${rect.bottom + height + 6 <= window.innerHeight - 8
       ? rect.bottom + 6 : Math.max(8, rect.top - height - 6)}px`;
     element.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
-  }, [anchor]);
+  }, [alignAnchor, anchor]);
   useEffect(() => {
     function outside(event: PointerEvent) {
       if (!menu.current?.contains(event.target as Node) && !anchor.contains(event.target as Node)) onClose();
     }
+    function handleScroll(event: Event) {
+      const target = event.target;
+      if (target === document || target === window || (target instanceof Node && target.contains(anchor))) {
+        onClose();
+      }
+    }
     document.addEventListener('pointerdown', outside);
     window.addEventListener('resize', onClose);
-    window.addEventListener('scroll', onClose, true);
+    window.addEventListener('scroll', handleScroll, true);
     return () => {
       document.removeEventListener('pointerdown', outside);
       window.removeEventListener('resize', onClose);
-      window.removeEventListener('scroll', onClose, true);
+      window.removeEventListener('scroll', handleScroll, true);
     };
   }, [anchor, onClose]);
   return createPortal(<div className="library-item-menu library-floating-menu" ref={menu} role="menu" aria-label={label}

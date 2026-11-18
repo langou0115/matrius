@@ -45,11 +45,37 @@ test('splitReplyUiSegments places UI blocks at start, middle, or end based on ma
   );
 });
 
-test('splitReplyUiSegments hides incomplete streaming markers and non-latest unsubmitted ask blocks', () => {
-  const streaming = splitReplyUiSegments('正在整理天气：\n\n[[ui:weather-', [weatherBlock], { streaming: true });
+test('splitReplyUiSegments waits for inline markers while streaming and appends unplaced blocks on finish', () => {
+  const beforeMarker = splitReplyUiSegments('正在整理天气：\n\n', [weatherBlock], { streaming: true });
   assert.deepEqual(
-    streaming.map((item) => (item.kind === 'block' ? item.block.id : item.text)),
-    ['weather-1', '正在整理天气：'],
+    beforeMarker.map((item) => (item.kind === 'block' ? item.block.id : item.text)),
+    ['正在整理天气：'],
+  );
+
+  for (const partial of ['[[', '[[u', '[[ui', '[[ui:', '[[ui:weather-', '[[ui:weather-1]']) {
+    const streamingPartial = splitReplyUiSegments(`正在整理天气：\n\n${partial}`, [weatherBlock], { streaming: true });
+    assert.deepEqual(
+      streamingPartial.map((item) => (item.kind === 'block' ? item.block.id : item.text)),
+      ['正在整理天气：'],
+    );
+  }
+
+  const markerArrived = splitReplyUiSegments('正在整理天气：\n\n[[ui:weather-1]]', [weatherBlock], { streaming: true });
+  assert.deepEqual(
+    markerArrived.map((item) => (item.kind === 'block' ? item.block.id : item.text)),
+    ['正在整理天气：', 'weather-1'],
+  );
+
+  const trailingText = splitReplyUiSegments('正在整理天气：\n\n[[ui:weather-1]]\n\n出门记得带伞。', [weatherBlock], { streaming: true });
+  assert.deepEqual(
+    trailingText.map((item) => (item.kind === 'block' ? item.block.id : item.text)),
+    ['正在整理天气：', 'weather-1', '出门记得带伞。'],
+  );
+
+  const omittedFinished = splitReplyUiSegments('正在整理天气。', [weatherBlock], { streaming: false });
+  assert.deepEqual(
+    omittedFinished.map((item) => (item.kind === 'block' ? item.block.id : item.text)),
+    ['正在整理天气。', 'weather-1'],
   );
 
   const nonLatest = splitReplyUiSegments('前文\n\n[[ui:ask-1]]\n\n后文', [askBlock], { isLatest: false });

@@ -6,7 +6,7 @@ import { BrandMark } from '@/components/web/brand-mark';
 import type { AskQuestionSubmission, MessageFile, WebActivity } from '@contract/agent-types';
 import { buildSystemPrompt } from '@contract/agent-prompt';
 import { useChat, type Message, type MessageImage } from './chat-state';
-import { collectReplySources, webActivitiesOf, type ReplySources } from './citations';
+import { collectReplySources, createCitationContext, webActivitiesOf, type MessageCitationContext, type ReplySources } from './citations';
 import { Composer } from './components/composer';
 import { ContextMeter } from './components/context-meter';
 import { measureContextUsage } from './context-usage';
@@ -48,6 +48,7 @@ function createId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}
 // parsing stable through a token stream without missing a new search or page read.
 const activityCache = new WeakMap<object, WebActivity[]>();
 const sourceCache = new WeakMap<Message, ReplySources>();
+const citationContextCache = new WeakMap<Message, MessageCitationContext>();
 
 function cachedWebActivities(message: Message): WebActivity[] {
   const key: object = message.activities ?? message;
@@ -64,6 +65,14 @@ function cachedReplySources(message: Message): ReplySources {
   const sources = collectReplySources(message.content, cachedWebActivities(message));
   sourceCache.set(message, sources);
   return sources;
+}
+
+function cachedCitationContext(message: Message): MessageCitationContext {
+  const cached = citationContextCache.get(message);
+  if (cached) return cached;
+  const context = createCitationContext(message.content, cachedWebActivities(message));
+  citationContextCache.set(message, context);
+  return context;
 }
 
 const RUNTIME_NOTICE_ID = 'runtime-error';
@@ -277,19 +286,21 @@ export default function ChatScreen() {
             // Citation rendering is part of web research: an answer that never called a web tool
             // keeps ordinary Markdown footnotes instead of being rewritten into source markers.
             const cites = !!webActivities?.length;
+            const citationContext = message.role === 'assistant' && cites ? cachedCitationContext(message) : undefined;
             // The source chip is final only once the reply stops; a running answer keeps its sources
             // in the live research rows and gains the chip when the text is complete.
             const replySources = message.role === 'assistant' && message.status !== 'streaming' && cites ? cachedReplySources(message) : null;
-            // Preserve an explicitly opened waiting disclosure even if the model only emits prose.
-            const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length || !!message.process?.length
-              || reasoningOpen[message.id] === true
-              || (live && message.status === 'streaming' && !message.content.trim());
             const replySegments = message.role === 'assistant'
               ? splitReplyUiSegments(message.content, message.uiBlocks, {
                 streaming: message.status === 'streaming',
                 isLatest: message.id === lastMessage?.id,
               })
               : [];
+            // Preserve an explicitly opened waiting disclosure even if the model only emits prose
+            // or is still streaming an initial [[ui:...]] marker prefix.
+            const showReasoning = !!message.reasoning?.trim() || !!message.activities?.length || !!message.process?.length
+              || reasoningOpen[message.id] === true
+              || (live && message.status === 'streaming' && replySegments.length === 0);
             const hasVisibleText = message.role === 'assistant' && stripUiBlockMarkers(message.content).length > 0;
             const block = message.role === 'user'
               ? <UserMessage key={message.id} message={message} />
@@ -310,6 +321,7 @@ export default function ChatScreen() {
                       content={segment.text}
                       streaming={message.status === 'streaming' && index === replySegments.length - 1}
                       webActivities={cites ? webActivities : undefined}
+                      citationContext={citationContext}
                     />
                   </div>
                 )

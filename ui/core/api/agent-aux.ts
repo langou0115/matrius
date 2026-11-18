@@ -66,34 +66,3 @@ export async function requestMemorySummary({
   }, signal);
   return result?.summary ?? null;
 }
-
-export type TaskSuggestion = {
-  title: string;
-  prompt: string;
-};
-
-/** Optional empty-state helper: returns null on failure so built-in suggestions can be used. */
-export async function requestTaskSuggestions({
-  config,
-  apiKey,
-  memorySummary,
-  customInstructions,
-  aboutMore,
-  signal,
-}: {
-  config: ModelConfig;
-  apiKey: string;
-  memorySummary: string;
-  customInstructions?: string;
-  aboutMore?: string;
-  signal?: AbortSignal;
-}): Promise<TaskSuggestion[] | null> {
-  const result = await post<{ suggestions: TaskSuggestion[] | null }>('/api/agent/task-suggestions', {
-    model: config,
-    ...(apiKey ? { apiKey } : {}),
-    memorySummary,
-    ...(customInstructions ? { customInstructions } : {}),
-    ...(aboutMore ? { aboutMore } : {}),
-  }, signal);
-  return result?.suggestions ?? null;
-}

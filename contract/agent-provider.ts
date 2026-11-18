@@ -31,7 +31,9 @@ export type ProviderConfig = {
   models: ProviderModelConfig[];
 };
 
-function validateBaseUrl(baseUrl: string) {
+export type CatalogModel = { id: string; name: string };
+
+export function validateBaseUrl(baseUrl: string) {
   let url: URL;
   try { url = new URL(baseUrl.trim()); } catch { throw new Error('请输入完整的服务商 Base URL。'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
@@ -111,7 +113,7 @@ export type { ThinkingEffort };
 const protocolToApi = { completion: 'openai-completions', responses: 'openai-responses', message: 'anthropic-messages' } as const;
 
 /** Models are only built where requests originate: the server runtime. The browser
-    reaches providers through `/api/model-proxy`, never through a pi-ai model object. */
+    sends model config per request to `/api/agent/*`, never builds a pi-ai model object. */
 export function createAgentModel(config: ModelConfig): Model<Api> {
   return {
     api: protocolToApi[config.protocol], baseUrl: config.baseUrl,

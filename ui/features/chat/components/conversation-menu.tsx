@@ -36,21 +36,29 @@ export function ConversationMenu({ conversation, anchor, onClose, onPin, onRenam
       : Math.max(topEdge, trigger.top - height - 6);
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
-    element.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    element.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true });
   }, [anchor]);
 
   useEffect(() => {
     function outside(event: PointerEvent) {
       if (event.target instanceof Node && !menu.current?.contains(event.target) && !anchor.contains(event.target)) onClose();
     }
+    function handleScroll(event: Event) {
+      // Only close when a container holding the anchor button scrolls (e.g. the sidebar list);
+      // chat stream auto-scroll in `.messages-scroll` must not dismiss the sidebar menu.
+      const target = event.target;
+      if (target === document || target === window || (target instanceof Node && target.contains(anchor))) {
+        onClose();
+      }
+    }
     function dismiss() { onClose(); }
     document.addEventListener('pointerdown', outside);
     window.addEventListener('resize', dismiss);
-    window.addEventListener('scroll', dismiss, true);
+    window.addEventListener('scroll', handleScroll, true);
     return () => {
       document.removeEventListener('pointerdown', outside);
       window.removeEventListener('resize', dismiss);
-      window.removeEventListener('scroll', dismiss, true);
+      window.removeEventListener('scroll', handleScroll, true);
     };
   }, [anchor, onClose]);
 

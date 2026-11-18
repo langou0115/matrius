@@ -8,27 +8,22 @@ import { askQuestionParameters, showWeatherParameters } from './schema';
 type ShowWeatherParams = Static<typeof showWeatherParameters>;
 type AskQuestionParams = Static<typeof askQuestionParameters>;
 
-const WEATHER_PROMPT = `Intelligent UI — Weather (\`show_weather\`):
-- Trigger whenever the user asks about current weather, temperature, rain/snow, air quality, outfit/travel weather, or 1–14 day forecasts for any city or region.
-- Gather accurate current and forecast data first (via \`web_search\` when web tools are enabled), then call \`show_weather\` to render the interactive Weather card (°C/°F toggle, hourly strip, 1–14 day forecast).
-- You may place the card at the beginning, middle, or end of your reply: either embed the returned \`[[ui:...]]\` marker inline anywhere in your prose, or call the tool at the exact point in your response where you want it to appear.
-- Do NOT dump a long Markdown weather table in prose once \`show_weather\` is called; keep accompanying text to a brief summary or practical advice.`;
+const WEATHER_PROMPT = `Intelligent UI — Weather (show_weather):
+- For ANY weather, temperature, rain/snow, air quality, or 1–14 day forecast question, you MUST call show_weather instead of answering with only plain text or a Markdown weather table.
+- When web tools are enabled, search/fetch forecast data first, then immediately call show_weather as your next tool call (if a live current thermometer reading is missing from search results, estimate temperatureC reasonably from the day's forecast range).
+- Do NOT begin writing the final weather reply before calling show_weather — even if the card should appear in the middle or at the end of your reply. Call show_weather first; the tool response will give you the exact token needed to render the card.`;
 
-const ASK_QUESTION_PROMPT = `Intelligent UI — Ask Question (\`ask_question\`):
-- Intelligent UI means proactively choosing interactive components over plain-text walls whenever interaction saves the user effort.
-- Trigger \`ask_question\` INSTEAD OF plain-text numbered questions whenever:
-  1. The user's request is incomplete or missing key parameters (e.g. "帮我新建一个定时任务：", "帮我写个方案", "推荐几家店").
-  2. There are multiple valid directions, formats, frequencies, or preferences to clarify before acting.
-  3. You need quick confirmation or multi-factor choices from the user.
-- You decide where the card appears (beginning, middle, or end of your reply): embed the returned \`[[ui:...]]\` marker inline anywhere in your prose (for example after an explanation or in the middle between two paragraphs), or omit the marker to place it where the tool was called.
-- Never repeat the card's options as a Markdown list.`;
+const ASK_QUESTION_PROMPT = `Intelligent UI — Ask Question (ask_question):
+- Proactively call ask_question INSTEAD OF writing plain-text numbered questions or generic advice walls whenever the user's request is open-ended, ambiguous, or missing key preferences/constraints (e.g. travel itinerary, study/fitness plan, proposal/outline, product or restaurant recommendations, or multi-factor confirmation before acting).
+- Do NOT begin writing plain-text follow-up questions before calling ask_question — even if the card should appear after an intro paragraph or at the end of your reply. Call ask_question first; the tool response will give you the exact token needed to render the card.
+- Skip ask_question only for direct factual/translation/coding questions with sufficient context, scheduled task creation requests (direct them to the Scheduled Tasks page), or when the user explicitly asks not to be asked questions.`;
 
 function createShowWeatherTool(): AgentTool<typeof showWeatherParameters> {
   return {
     name: 'show_weather',
     label: '展示天气卡片',
     description:
-      'Call this whenever the user asks about current weather or 1–14 day forecasts for a location (fetch data via web_search first if needed). Renders an interactive Weather card in the reply.',
+      'Render an interactive Weather card for any weather or forecast query (fetch forecast data via web_search first if web tools are enabled). Always call this tool before writing your weather reply.',
     parameters: showWeatherParameters,
     execute: async (toolCallId, params: ShowWeatherParams) => {
       const data: WeatherData = {
@@ -43,7 +38,7 @@ function createShowWeatherTool(): AgentTool<typeof showWeatherParameters> {
       return {
         content: [{
           type: 'text',
-          text: `Weather card rendered for ${data.location} (${data.conditionLabel}, ${data.temperatureC}°C${data.daily?.length ? `, ${data.daily.length}-day forecast` : ''}). Inline marker: [[ui:${uiBlock.id}]]. You may place [[ui:${uiBlock.id}]] at the start, middle, or end of your reply.`,
+          text: `Weather card ready for ${data.location} (${data.conditionLabel}, ${data.temperatureC}°C${data.daily?.length ? `, ${data.daily.length}-day forecast` : ''}). Now write your brief summary/advice (keeping inline source citations like [^1] and their footnote definitions if you used web results) and place [[ui:${uiBlock.id}]] on its own line at the exact point (start, middle, or end) where the card should appear, without wrapping it in backticks. Do not repeat the forecast table in prose.`,
         }],
         details: { uiBlock },
       };
@@ -56,7 +51,7 @@ function createAskQuestionTool(): AgentTool<typeof askQuestionParameters> {
     name: 'ask_question',
     label: '发起交互问答',
     description:
-      'Call this instead of plain-text follow-up questions whenever the user request is incomplete, missing parameters (e.g. task content/schedule), ambiguous, or needs preferences/confirmation. Renders an interactive list card with presets, optional custom input, and a direct Send button.',
+      'Render an interactive choice/input card instead of plain-text questions whenever a request is open-ended, missing preferences/constraints (e.g. travel/study/fitness plans, proposals, recommendations), or needs confirmation. Always call this tool before writing your reply.',
     parameters: askQuestionParameters,
     execute: async (toolCallId, params: AskQuestionParams) => {
       const data: AskQuestionData = {
@@ -74,7 +69,7 @@ function createAskQuestionTool(): AgentTool<typeof askQuestionParameters> {
       return {
         content: [{
           type: 'text',
-          text: `Ask Question card rendered with ${data.questions.length} question(s). Inline marker: [[ui:${uiBlock.id}]]. You may place [[ui:${uiBlock.id}]] at the start, middle, or end of your reply, then wait for the user to submit their selection.`,
+          text: `Ask Question card ready with ${data.questions.length} question(s). Now write your brief intro/guidance and place [[ui:${uiBlock.id}]] on its own line at the exact point (start, middle, or end) where the card should appear, without wrapping it in backticks or repeating the options in text, then wait for the user to submit.`,
         }],
         details: { uiBlock },
       };

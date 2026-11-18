@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AgentRunEvent, AgentRunRequest, Message } from '../../contract/agent-protocol';
 import type { AgentRunService } from '../agent/run-service';
 import { generateMemorySummary } from '../agent/memory';
-import { generateTaskSuggestions } from '../agent/task-suggestions';
+import { fetchProviderModels } from '../agent/models';
 import { generateConversationTitle } from '../agent/title';
 import { validateModelConfig } from '../../contract/agent-provider';
 import { invalid } from '../errors';
@@ -13,7 +13,7 @@ import {
   agentRunSchema,
   agentSteerSchema,
   memoryRequestSchema,
-  taskSuggestionsRequestSchema,
+  providerModelsRequestSchema,
   titleRequestSchema,
 } from './agent-schemas';
 
@@ -122,21 +122,14 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     };
   });
 
-  app.post('/api/agent/task-suggestions', async (request) => {
-    const payload = taskSuggestionsRequestSchema.parse(request.body);
-    let config;
-    try {
-      config = validateModelConfig(payload.model as never);
-    } catch (error) {
-      throw invalid(error instanceof Error ? error.message : '模型配置不合法。');
-    }
+  app.post('/api/agent/models', async (request) => {
+    const payload = providerModelsRequestSchema.parse(request.body);
     return {
-      suggestions: await generateTaskSuggestions({
-        config,
+      models: await fetchProviderModels({
+        protocol: payload.protocol,
+        baseUrl: payload.baseUrl,
+        requiresApiKey: payload.requiresApiKey,
         apiKey: payload.apiKey ?? '',
-        memorySummary: payload.memorySummary,
-        customInstructions: payload.customInstructions,
-        aboutMore: payload.aboutMore,
       }),
     };
   });

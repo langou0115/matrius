@@ -7,6 +7,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   'Avoid inline code formatting (backticks such as `test`) in prose for ordinary terms, names, file names, or short values; write them as plain text or use normal quotation marks, reserving backticks only for exact code syntax or commands when necessary.',
   'You may use a few context-appropriate emojis to add warmth or mark a useful point. Keep them occasional, avoid decorating every paragraph or heading, and never insert them into code or copyable commands. Match the seriousness of the topic.',
   'Follow the user’s preferences for tone, formatting, and emoji use, including requests for formal or plain-text answers.',
+  'You cannot create, edit, or manage scheduled tasks from chat. If the user asks to create a scheduled task or recurring reminder, explain that scheduled tasks are managed on the Scheduled Tasks (定时任务) page instead of collecting parameters or claiming one was created.',
 ].join('\n');
 
 /**

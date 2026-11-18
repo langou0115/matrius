@@ -176,24 +176,18 @@ export function TaskModal({
   onClose,
   onSubmit,
 }: TaskModalProps) {
+  const [openedAt] = useState(() => Date.now());
   const systemTimezone = useMemo(() => getSystemTimezoneOption(), []);
   const timezoneOptions = useMemo(() => buildTimezoneOptions(systemTimezone), [systemTimezone]);
 
-  const defaultRunAtMs = useMemo(() => {
-    if (initialTask?.runAtMs) return initialTask.runAtMs;
-    const base = Date.now() + 10 * 60_000;
-    return Math.ceil(base / 60_000) * 60_000;
-  }, [initialTask?.runAtMs]);
+  const fallbackRunAtMs = Math.ceil((openedAt + 10 * 60_000) / 60_000) * 60_000;
+  const defaultRunAtMs = initialTask?.runAtMs ?? fallbackRunAtMs;
 
-  const initialWall = useMemo(
-    () => extractWallClock(defaultRunAtMs, systemTimezone.offsetMinutes),
-    [defaultRunAtMs, systemTimezone.offsetMinutes],
-  );
+  const initialWall = extractWallClock(defaultRunAtMs, systemTimezone.offsetMinutes);
 
-  const initialRepeat = useMemo(
-    () => (initialTask ? toRepeatState(initialTask.kind, initialTask.intervalMinutes) : { repeatKey: 'once' as RepeatKey, intervalValue: 30 }),
-    [initialTask],
-  );
+  const initialRepeat = initialTask
+    ? toRepeatState(initialTask.kind, initialTask.intervalMinutes)
+    : { repeatKey: 'once' as RepeatKey, intervalValue: 30 };
 
   const [title, setTitle] = useState(() => initialTask?.title ?? initialTitle);
   const [prompt, setPrompt] = useState(() => initialTask?.prompt ?? initialPrompt);
@@ -243,8 +237,8 @@ export function TaskModal({
   const repeatLabel = selectedRepeat.label;
 
   const todayWall = useMemo(
-    () => extractWallClock(Date.now(), currentTimezone.offsetMinutes),
-    [currentTimezone.offsetMinutes],
+    () => extractWallClock(openedAt, currentTimezone.offsetMinutes),
+    [openedAt, currentTimezone.offsetMinutes],
   );
 
   const togglePopover = useCallback((kind: Exclude<PopoverKind, null>, anchor: HTMLElement | null, height: number) => {
@@ -261,8 +255,9 @@ export function TaskModal({
   useLayoutEffect(() => {
     const element = promptRef.current;
     if (!element) return;
+    const minHeight = Number.parseFloat(window.getComputedStyle(element).minHeight) || 76;
     element.style.height = 'auto';
-    element.style.height = `${Math.min(220, Math.max(100, element.scrollHeight))}px`;
+    element.style.height = `${Math.min(220, Math.max(minHeight, element.scrollHeight))}px`;
   }, [prompt]);
 
   useEffect(() => {
@@ -273,8 +268,9 @@ export function TaskModal({
       const nextWidth = element.getBoundingClientRect().width;
       if (nextWidth === width) return;
       width = nextWidth;
+      const minHeight = Number.parseFloat(window.getComputedStyle(element).minHeight) || 76;
       element.style.height = 'auto';
-      element.style.height = `${Math.min(220, Math.max(100, element.scrollHeight))}px`;
+      element.style.height = `${Math.min(220, Math.max(minHeight, element.scrollHeight))}px`;
     });
     observer.observe(element);
     return () => observer.disconnect();

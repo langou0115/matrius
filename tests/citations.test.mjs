@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  collectReplySources, extractCitations, prepareCitations, webActivitiesOf,
+  collectReplySources, createCitationContext, extractCitations, prepareCitations, webActivitiesOf,
 } from '../ui/features/chat/citations.ts';
 
 test('footnote references become numbered citation links and definitions leave the body', () => {
@@ -101,4 +101,29 @@ test('web activities merge process entries over the synced activity list without
     ],
   });
   assert.deepEqual(merged.map((activity) => `${activity.id}:${activity.status}`), ['s1:running', 'f1:complete']);
+});
+
+test('createCitationContext keeps citations resolved and sequentially numbered across split UI segments', () => {
+  const activities = [{
+    id: 'search', kind: 'search', status: 'complete', query: 'q',
+    results: [
+      { rank: 1, title: '来源A', url: 'https://a.example/page', domain: 'a.example', snippet: '摘要A', engine: 'x' },
+      { rank: 2, title: '来源B', url: 'https://b.example/page', domain: 'b.example', snippet: '摘要B', engine: 'x' },
+    ],
+  }];
+  const full = '前半段[^a]。\n\n[[ui:weather-1]]\n\n后半段[^b]。\n\n[^a]: [A](https://a.example/page)\n[^b]: [B](https://b.example/page)';
+  const ctx = createCitationContext(full, activities);
+
+  const first = prepareCitations('前半段[^a]。', activities, ctx);
+  assert.equal(first.markdown, '前半段[1](#citation-a)。');
+  assert.equal(first.byLabel.get('a')?.resolved, true);
+  assert.equal(first.byLabel.get('a')?.url, 'https://a.example/page');
+
+  const second = prepareCitations('后半段[^b]。\n\n[^a]: [A](https://a.example/page)\n[^b]: [B](https://b.example/page)', activities, ctx);
+  assert.equal(second.markdown.trim(), '后半段[2](#citation-b)。');
+  assert.equal(second.byLabel.get('b')?.resolved, true);
+  assert.equal(second.byLabel.get('b')?.url, 'https://b.example/page');
+
+  const defsOnly = prepareCitations('[^a]: [A](https://a.example/page)\n[^b]: [B](https://b.example/page)', activities, ctx);
+  assert.equal(defsOnly.markdown.trim(), '');
 });

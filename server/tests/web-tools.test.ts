@@ -127,3 +127,28 @@ test('web_fetch returns every page in full with no per-run or per-batch allowanc
   const second = await spent.execute('over', { urls: ['https://example.com/second'] });
   assert.equal((second.details as { contentChars: number }).contentChars, 60_000);
 });
+
+test('UI tool prompts keep marker syntax hidden until tool execution returns a real uiBlock', async () => {
+  const uiPrompts = toolRegistry.prompts(context.features).filter((prompt) => prompt.includes('Intelligent UI'));
+  assert.equal(uiPrompts.length, 2);
+  for (const prompt of uiPrompts) {
+    assert.equal(prompt.includes('[[ui:'), false);
+    assert.equal(prompt.includes('placement marker'), false);
+  }
+  const tools = toolRegistry.createTools(context).filter((tool) => tool.name === 'show_weather' || tool.name === 'ask_question');
+  for (const tool of tools) {
+    assert.equal(tool.description.includes('[[ui:'), false);
+    assert.equal(tool.description.includes('placement marker'), false);
+  }
+  const weather = tools.find((tool) => tool.name === 'show_weather') as AgentTool;
+  const result = await weather.execute('call_ui_1', {
+    location: '深圳',
+    condition: 'cloudy',
+    conditionLabel: '阴天',
+    temperatureC: 24,
+    highC: 28,
+    lowC: 19,
+  });
+  const text = result.content.filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+  assert.match(text, /\[\[ui:weather-call_ui_1\]\]/u);
+});

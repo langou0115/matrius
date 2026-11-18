@@ -52,8 +52,9 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
     return conversationFileIds(current, conversations);
   }, [conversations, editing]);
   const deletableFiles = useMemo(() => attachedFiles.filter(isServerFileId), [attachedFiles]);
-  const [menu, setMenu] = useState<{ conversation: Conversation; anchor: HTMLButtonElement } | null>(null);
+  const [menu, setMenu] = useState<{ conversationId: string; anchor: HTMLButtonElement } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
+  const menuConversation = menu ? conversations.find((item) => item.id === menu.conversationId) ?? null : null;
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const groups = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -149,13 +150,13 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
               const status = item.id !== activeId && runtime.isRunning(item.id) ? 'running' as const
                 : item.id !== activeId && item.completedReadAt === null && last?.role === 'assistant' && last.status === 'complete' ? 'completed' as const
                   : undefined;
-              return <div className={`conversation-item ${activeId === item.id ? 'is-active' : ''} ${menu?.conversation.id === item.id ? 'menu-open' : ''}`} key={item.id}>
+              return <div className={`conversation-item ${activeId === item.id ? 'is-active' : ''} ${menuConversation?.id === item.id ? 'menu-open' : ''}`} key={item.id}>
                 <ConversationSelect title={item.title} active={activeId === item.id}
                   hasUnreadError={item.errorReadAt == null && last?.role === 'assistant' && last.status === 'error'}
                   status={status}
-                  onLongPress={mobile ? (anchor) => setMenu({ conversation: item, anchor }) : undefined}
+                  onLongPress={mobile ? (anchor) => setMenu({ conversationId: item.id, anchor }) : undefined}
                   onSelect={() => select(item.id)} />
-                {(!mobile || activeId === item.id) && <button className="icon-button conversation-more" aria-label={`对话操作：${item.title}`} aria-haspopup="menu" aria-expanded={menu?.conversation.id === item.id} aria-controls={menu?.conversation.id === item.id ? 'conversation-menu' : undefined} onClick={(event) => { setMenu(menu?.conversation.id === item.id ? null : { conversation: item, anchor: event.currentTarget }); }}><Icon name="more" size={17} /></button>}
+                {(!mobile || activeId === item.id) && <button className="icon-button conversation-more" aria-label={`对话操作：${item.title}`} aria-haspopup="menu" aria-expanded={menuConversation?.id === item.id} aria-controls={menuConversation?.id === item.id ? 'conversation-menu' : undefined} onClick={(event) => { setMenu(menuConversation?.id === item.id ? null : { conversationId: item.id, anchor: event.currentTarget }); }}><Icon name="more" size={17} /></button>}
               </div>;
             })}
             </div>
@@ -166,10 +167,10 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
         <span className="sidebar-settings-icon"><Icon name="settings" size={18} /></span>
         <span className="sidebar-settings-entry-text"><strong>设置</strong><span>模型、偏好与实例数据</span></span>
       </LinkAnchor></Link>
-      {menu && <ConversationMenu conversation={menu.conversation} anchor={menu.anchor} onClose={closeMenu}
-        onPin={() => { dispatch({ type: 'pin', id: menu.conversation.id }); closeMenu(); }}
-        onRename={() => { menu.anchor.focus(); setEditing(menu.conversation); setTitle(menu.conversation.title); setConfirmDelete(false); setDeleteAttachedFiles(false); closeMenu(); }}
-        onDelete={() => { menu.anchor.focus(); openDeleteDialog(menu.conversation); closeMenu(); }}
+      {menu && menuConversation && <ConversationMenu conversation={menuConversation} anchor={menu.anchor} onClose={closeMenu}
+        onPin={() => { dispatch({ type: 'pin', id: menuConversation.id }); closeMenu(); }}
+        onRename={() => { menu.anchor.focus(); setEditing(menuConversation); setTitle(menuConversation.title); setConfirmDelete(false); setDeleteAttachedFiles(false); closeMenu(); }}
+        onDelete={() => { menu.anchor.focus(); openDeleteDialog(menuConversation); closeMenu(); }}
       />}
       {editing && <Dialog title={confirmDelete ? '删除这段对话？' : '重命名对话'}
         onClose={() => { setEditing(null); setDeleteAttachedFiles(false); }} className="compact-dialog">

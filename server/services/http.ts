@@ -190,6 +190,10 @@ export function createHttpClient(settings: Settings): HttpClient {
           headersTimeout: options.timeoutMs,
           bodyTimeout: options.timeoutMs,
         });
+        // undici's BodyReadable._destroy emits RequestAbortedError asynchronously when
+        // destroyed before end (e.g. redirects or maxBytes truncation). Attach an error
+        // listener before any destroy() or iteration so Node never sees an unhandled error.
+        response.body.on('error', () => {});
         const headers = normalizeHeaders(response.headers);
         if (
           [301, 302, 303, 307, 308].includes(response.statusCode)

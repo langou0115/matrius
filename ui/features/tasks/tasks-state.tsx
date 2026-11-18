@@ -9,16 +9,12 @@ import {
   type PropsWithChildren,
 } from 'react';
 
-import { requestTaskSuggestions, type TaskSuggestion } from '@/core/api/agent-aux';
-import { useChat } from '@/features/chat/chat-state';
-import { useChatRuntime } from '@/features/chat/chat-runtime';
 import { useFeature, useInstance } from '@/features/instance/instance-state';
-import { pickMemoryModel } from '@/features/memory/memory-model';
-import { useMemory } from '@/features/memory/memory-state';
 import { useModels } from '@/features/models/model-state';
-import { usePersonalization } from '@/features/settings/personalization-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { createMockTasks } from './mock-tasks';
+import { useChat } from '@/features/chat/chat-state';
+import { useChatRuntime } from '@/features/chat/chat-runtime';
 import {
   createScheduledTask,
   deleteScheduledTask,
@@ -36,35 +32,15 @@ function createId(): string {
 
 const POLL_INTERVAL_MS = 15_000;
 
-export const DEFAULT_TASK_SUGGESTIONS: readonly TaskSuggestion[] = [
-  {
-    title: '每日 AI 开源早报',
-    prompt: '每天早上9点搜索并总结今天 GitHub Trending 上最值得关注的 3 个 AI 开源项目更新，并附原文链接',
-  },
-  {
-    title: '重要发布页巡检',
-    prompt: '每隔 6 小时检查一次主要 AI 模型官网是否有新版本或 API 变更公告',
-  },
-  {
-    title: '下班前工作复盘',
-    prompt: '每天下午 6 点提醒我梳理今天完成的工作与明天优先级最高的 3 项待办',
-  },
-  {
-    title: '10 分钟后专注提醒',
-    prompt: '10 分钟后提醒我起身活动并喝一杯水',
-  },
-];
-
 type TasksContextValue = {
   tasks: ScheduledTask[];
-  suggestions: readonly TaskSuggestion[] | null;
-  suggestionsLoading: boolean;
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
   createTask: (input: CreateScheduledTaskInput) => Promise<ScheduledTask>;
   updateTask: (taskId: string, input: PatchScheduledTaskInput) => Promise<ScheduledTask>;
   removeTask: (taskId: string) => Promise<void>;
+  removeTasks: (taskIds: string[]) => Promise<void>;
   runTaskNow: (task: ScheduledTask) => Promise<boolean>;
 };
 
@@ -77,31 +53,31 @@ export function TasksProvider({ children }: PropsWithChildren) {
   const { conversations } = useChat();
   const runtime = useChatRuntime();
   const models = useModels();
-  const memory = useMemory();
-  const { preferences } = usePersonalization();
 
-  const [tasks, setTasks] = useState<ScheduledTask[]>([]);
-  const [tasksLoaded, setTasksLoaded] = useState(false);
-  const [suggestions, setSuggestions] = useState<readonly TaskSuggestion[] | null>(null);
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [sourceMode, setSourceMode] = useState<'mock' | 'server'>(() => (preview ? 'mock' : 'server'));
+  const [tasks, setTasks] = useState<ScheduledTask[]>(() => (preview ? createMockTasks() : []));
+  const [loadedServer, setLoadedServer] = useState(false);
+  const [manualReloading, setManualReloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const currentMode = preview ? 'mock' : 'server';
+  if (sourceMode !== currentMode) {
+    setSourceMode(currentMode);
+    setTasks(preview ? createMockTasks() : []);
+    setLoadedServer(false);
+    setError(null);
+  }
 
   const conversationsRef = useRef(conversations);
   const runtimeRef = useRef(runtime);
   const modelsRef = useRef(models);
-  const memoryRef = useRef(memory);
-  const preferencesRef = useRef(preferences);
   const instanceRef = useRef(instance);
   const inFlight = useRef(new Set<string>());
-  const suggestionsRequested = useRef(false);
 
   useEffect(() => {
     conversationsRef.current = conversations;
     runtimeRef.current = runtime;
     modelsRef.current = models;
-    memoryRef.current = memory;
-    preferencesRef.current = preferences;
     instanceRef.current = instance;
   });
 
@@ -109,34 +85,43 @@ export function TasksProvider({ children }: PropsWithChildren) {
 
   const reload = useCallback(async () => {
     if (!canUseServer) return;
-    setLoading(true);
+    setManualReloading(true);
     try {
       const items = await listScheduledTasks(instanceRef.current.request);
       setTasks(items);
-      setTasksLoaded(true);
+      setLoadedServer(true);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '无法加载定时任务列表。');
     } finally {
-      setLoading(false);
+      setManualReloading(false);
     }
   }, [canUseServer]);
 
   useEffect(() => {
-    if (preview) {
-      setTasks(createMockTasks());
-      setSuggestions(DEFAULT_TASK_SUGGESTIONS);
-      setTasksLoaded(true);
-      setError(null);
-      return;
-    }
-    if (!canUseServer) {
-      setTasks([]);
-      setTasksLoaded(false);
-      return;
-    }
-    void reload();
-  }, [preview, canUseServer, reload]);
+    if (!canUseServer) return;
+    let cancelled = false;
+    listScheduledTasks(instanceRef.current.request)
+      .then((items) => {
+        if (cancelled) return;
+        setTasks(items);
+        setLoadedServer(true);
+        setError(null);
+      })
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setLoadedServer(true);
+        setError(caught instanceof Error ? caught.message : '无法加载定时任务列表。');
+      });
+    return () => { cancelled = true; };
+  }, [canUseServer]);
+
+  const loading = canUseServer && (!loadedServer || manualReloading);
+
+  const visibleTasks = useMemo(
+    () => (preview || canUseServer ? tasks : []),
+    [preview, canUseServer, tasks],
+  );
 
   const createTask = useCallback(async (input: CreateScheduledTaskInput) => {
     if (preview) {
@@ -206,14 +191,32 @@ export function TasksProvider({ children }: PropsWithChildren) {
     return updated;
   }, [preview]);
 
-  const removeTask = useCallback(async (taskId: string) => {
+  const removeTasks = useCallback(async (taskIds: string[]) => {
+    const ids = Array.from(new Set(taskIds));
+    if (!ids.length) return;
     if (preview) {
-      setTasks((current) => current.filter((item) => item.id !== taskId));
+      const drop = new Set(ids);
+      setTasks((current) => current.filter((item) => !drop.has(item.id)));
       return;
     }
-    await deleteScheduledTask(instanceRef.current.request, taskId);
-    setTasks((current) => current.filter((item) => item.id !== taskId));
+    const results = await Promise.allSettled(
+      ids.map((id) => deleteScheduledTask(instanceRef.current.request, id)),
+    );
+    const deleted = new Set<string>();
+    let firstError: unknown;
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') deleted.add(ids[index]);
+      else if (firstError === undefined) firstError = result.reason;
+    });
+    if (deleted.size) {
+      setTasks((current) => current.filter((item) => !deleted.has(item.id)));
+    }
+    if (firstError !== undefined) throw firstError;
   }, [preview]);
+
+  const removeTask = useCallback(async (taskId: string) => {
+    await removeTasks([taskId]);
+  }, [removeTasks]);
 
   const runTaskNow = useCallback(async (task: ScheduledTask): Promise<boolean> => {
     if (preview) {
@@ -311,49 +314,17 @@ export function TasksProvider({ children }: PropsWithChildren) {
     return () => window.clearInterval(timer);
   }, [canUseServer, models.ready, models.selected, tasks.length, runTaskNow]);
 
-  useEffect(() => {
-    if (!canUseServer || preview || !tasksLoaded || tasks.length > 0) return;
-    if (suggestionsRequested.current) return;
-    if (!models.ready) return;
-    const memoryModel = pickMemoryModel(modelsRef.current);
-    if (!memoryModel) {
-      setSuggestions(DEFAULT_TASK_SUGGESTIONS);
-      return;
-    }
-    suggestionsRequested.current = true;
-    setSuggestionsLoading(true);
-    const controller = new AbortController();
-    const apiKey = memoryModel.requiresApiKey ? modelsRef.current.getKey(memoryModel.providerId) : '';
-    void requestTaskSuggestions({
-      config: memoryModel,
-      apiKey,
-      memorySummary: memoryRef.current.enabled ? memoryRef.current.summary : '',
-      customInstructions: preferencesRef.current.customInstructions,
-      aboutMore: preferencesRef.current.aboutMore,
-      signal: controller.signal,
-    }).then((generated) => {
-      if (controller.signal.aborted) return;
-      setSuggestions(generated?.length ? generated : DEFAULT_TASK_SUGGESTIONS);
-    }).catch(() => {
-      if (!controller.signal.aborted) setSuggestions(DEFAULT_TASK_SUGGESTIONS);
-    }).finally(() => {
-      if (!controller.signal.aborted) setSuggestionsLoading(false);
-    });
-    return () => controller.abort();
-  }, [canUseServer, preview, tasksLoaded, tasks.length, models.ready, models.selected?.id, models.memoryModelId]);
-
   const value = useMemo<TasksContextValue>(() => ({
-    tasks,
-    suggestions,
-    suggestionsLoading,
+    tasks: visibleTasks,
     loading,
     error,
     reload,
     createTask,
     updateTask,
     removeTask,
+    removeTasks,
     runTaskNow,
-  }), [tasks, suggestions, suggestionsLoading, loading, error, reload, createTask, updateTask, removeTask, runTaskNow]);
+  }), [visibleTasks, loading, error, reload, createTask, updateTask, removeTask, removeTasks, runTaskNow]);
 
   return <TasksContext value={value}>{children}</TasksContext>;
 }

@@ -87,14 +87,13 @@ export const memoryRequestSchema = z.object({
   assistantMessage: z.string().max(4_000).default(''),
 });
 
-export const taskSuggestionsRequestSchema = z.object({
-  model: modelSchema,
-  apiKey: z.string().max(10_000).optional(),
-  memorySummary: z.string().max(4_000).default(''),
-  customInstructions: z.string().max(4_000).optional(),
-  aboutMore: z.string().max(4_000).optional(),
-});
-
 export const agentSteerSchema = z.object({
   message: agentMessageSchema,
+});
+
+export const providerModelsRequestSchema = z.object({
+  protocol: z.enum(['completion', 'responses', 'message']),
+  baseUrl: z.string().url().max(2_000),
+  requiresApiKey: z.boolean().default(true),
+  apiKey: z.string().max(10_000).optional(),
 });

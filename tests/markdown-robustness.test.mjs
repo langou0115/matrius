@@ -212,3 +212,13 @@ test('no reply the demo workspace ships with shows LaTeX as text', () => {
     }
   }
 });
+
+test('code block action buttons render crisp 24x24 stroke icons instead of 16x16 filled defaults', () => {
+  const doc = parseHTML(render('```powershell\nwinget install JesseDuffield.lazygit\n```')).document;
+  const svgs = [...doc.querySelectorAll('[data-streamdown="code-block-actions"] button svg')];
+  assert.equal(svgs.length, 2);
+  for (const svg of svgs) {
+    assert.equal(svg.getAttribute('viewBox'), '0 0 24 24');
+    assert.equal(svg.getAttribute('fill'), 'none');
+  }
+});

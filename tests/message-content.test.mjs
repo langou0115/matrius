@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
 import { MessageContent } from '../ui/features/chat/components/message-content.tsx';
+import { createCitationContext } from '../ui/features/chat/citations.ts';
 import { ModelIcon } from '../ui/features/chat/components/model-icon.tsx';
 import { normalizeMarkdown } from '../ui/features/chat/markdown/normalize-markdown.ts';
 import { createDemoWorkspace } from '../ui/features/mock/fixtures/chat-workspace.ts';
@@ -719,6 +720,32 @@ test('web footnotes become superscript source links and their definition list le
   assert.equal(markers[1].getAttribute('href'), 'https://github.com');
   assert.equal(document.querySelector('.footnotes'), null, 'sources belong in the panel, not under the text');
   assert.doesNotMatch(document.querySelector('.message-markdown').textContent, /官方文档|GitHub/);
+});
+
+test('split UI segments keep superscript citation links when definitions follow the card', () => {
+  const activities = [{
+    id: 'search', kind: 'search', status: 'complete', query: 'q',
+    results: [{ rank: 1, title: '来源标题', url: 'https://openai.com/docs', domain: 'openai.com', snippet: '来源摘要', engine: 'x' }],
+  }];
+  const full = '天气预报[^1]。\n\n[[ui:weather-1]]\n\n[^1]: [官方文档](https://openai.com/docs)';
+  const citationContext = createCitationContext(full, activities);
+  const { document: bodyDoc } = parseHTML(renderToStaticMarkup(createElement(MessageContent, {
+    content: '天气预报[^1]。',
+    webActivities: activities,
+    citationContext,
+  })));
+  const marker = bodyDoc.querySelector('.message-citation');
+  assert.ok(marker);
+  assert.equal(marker.textContent, '1');
+  assert.equal(marker.getAttribute('href'), 'https://openai.com/docs');
+  assert.equal(marker.classList.contains('is-static'), false);
+
+  const defsHtml = renderToStaticMarkup(createElement(MessageContent, {
+    content: '[^1]: [官方文档](https://openai.com/docs)',
+    webActivities: activities,
+    citationContext,
+  }));
+  assert.equal(defsHtml, '');
 });
 
 test('the source panel lists only cited sources and keeps their marker numbers', () => {

@@ -66,12 +66,14 @@ function tokenCount(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
-export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, memoryText, tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal, toolActivity = emptyToolActivity }: {
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, memoryText, includeCurrentContext = true, tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal, toolActivity = emptyToolActivity }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
   /** Long-term memory text is volatile; it travels in the trailing request context, not the system prompt. */
   memoryText?: string;
+  /** Appends the trailing clock/timezone block for chat runs; auxiliary one-shot helpers can omit it. */
+  includeCurrentContext?: boolean;
   /** Registered tools. Empty means a text-only run, where a tool call is an error. */
   tools?: AgentTool[];
   onUpdate: (value: ReplyUpdate) => void; streamFn?: StreamFn;
@@ -86,8 +88,11 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   const model = createAgentModel(config);
   const diagnostics = createReplyDiagnostics(config, thinkingEffort);
   if (thinkingEffort !== 'default') model.reasoning = true;
+  const initialMessages = includeCurrentContext
+    ? [...buildContext(messages, config), requestContextMessage(memoryText)]
+    : buildContext(messages, config);
   const agent = new Agent({
-    initialState: { model, messages: [...buildContext(messages, config), requestContextMessage(memoryText)], systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
+    initialState: { model, messages: initialMessages, systemPrompt, thinkingLevel: thinkingEffort === 'default' ? 'off' : thinkingEffort, tools },
     getApiKey: () => apiKey || 'no-key', streamFn: diagnostics.stream(streamFn),
     transport: 'sse', maxRetryDelayMs: 5000,
     // Keep reasoning from eating the whole reply window; document writes need the tokens.
@@ -123,9 +128,10 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   }
   const hasUsage = () => tokenUsage.input + tokenUsage.output + tokenUsage.cacheRead + tokenUsage.cacheWrite > 0;
   /** Usage travels with the result so the caller can report it to the instance. */
-  const finish = (result: ReplyResult, outcome: string) => diagnostics.finish(
-    hasUsage() ? { ...result, usage: { ...tokenUsage } } : result, outcome,
-  );
+  const finish = (result: ReplyResult, outcome: string) => {
+    if (uiBlocks.length && visibleContent(false) !== visibleContent(true)) emit(true);
+    return diagnostics.finish(hasUsage() ? { ...result, usage: { ...tokenUsage } } : result, outcome);
+  };
   let stopped = false;
   let timedOut = false;
   let durationExceeded = false;
@@ -202,7 +208,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
     else contentTurns.push({ text: value, answer: false, uiBlockIds: [] });
   }
   /** Answers stay joined; the newest transition text is only a draft until replaced. */
-  function visibleContent(): string {
+  function visibleContent(includeUnplacedUiBlocks = false): string {
     const explicitMarkers = new Set<string>();
     for (const turn of contentTurns) {
       for (const match of turn.text.matchAll(/\[\[ui:([a-zA-Z0-9_-]+)\]\]/gu)) {
@@ -217,21 +223,26 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         continue;
       }
       if (turn.text) answers.push(turn.text);
-      for (const id of turn.uiBlockIds) {
-        if (!explicitMarkers.has(id)) {
-          explicitMarkers.add(id);
-          answers.push(formatUiBlockMarker(id));
-        }
-      }
       draft = '';
     }
-    return [...answers, ...(draft ? [draft] : [])].join('\n\n');
+    const parts = [...answers, ...(draft ? [draft] : [])];
+    // Defer fallback markers until the run finishes so streaming prose never renders a card
+    // prematurely at the top and then moves it when the inline [[ui:...]] marker arrives.
+    if (includeUnplacedUiBlocks) {
+      for (const block of uiBlocks) {
+        if (!explicitMarkers.has(block.id)) {
+          explicitMarkers.add(block.id);
+          parts.push(formatUiBlockMarker(block.id));
+        }
+      }
+    }
+    return parts.join('\n\n');
   }
-  function emit() {
+  function emit(includeUnplacedUiBlocks = false) {
     onUpdate({
       ...(contextTokens ? { contextTokens } : {}),
       reasoningActive,
-      content: visibleContent(),
+      content: visibleContent(includeUnplacedUiBlocks),
       reasoning: reasoningTurns.filter(Boolean).join('\n\n'),
       activities,
       process,
@@ -398,12 +409,13 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
         if (finalMessage?.stopReason === 'error') return finish({ status: 'error', error: describeModelError(finalMessage.errorMessage) }, 'provider_error');
         if (!finalMessage) return finish({ status: 'error', error: agent.state.errorMessage ? describeModelError(agent.state.errorMessage) : '服务商未返回有效回复，请检查模型配置。' }, 'missing_message');
         const hasText = finalMessage.content.some((block) => block.type === 'text' && block.text.trim());
-        if (finalMessage.stopReason === 'length') return finish(hasText
+        const hasOutput = hasText || uiBlocks.length > 0;
+        if (finalMessage.stopReason === 'length') return finish(hasOutput
           ? { status: 'complete', error: '已达到最大输出长度，可继续追问。' }
           : { status: 'error', error: outputRetries
             ? `已达到最大输出长度，但尚未生成回答正文。已自动降低思考并拆分重试 ${outputRetries} 次仍未成功：请把模型设置里的「最大输出」调到 8192 以上，或把思考强度调到低/关闭后重试。`
             : '已达到最大输出长度，但尚未生成回答正文。请调大模型的最大输出或降低思考深度后重试。' }, 'output_limit');
-        if (!hasText) return finish({ status: 'error', error: finalMessage.content.some((block) => block.type === 'thinking')
+        if (!hasOutput) return finish({ status: 'error', error: finalMessage.content.some((block) => block.type === 'thinking')
           ? '模型仅返回了思考内容，没有回答正文。已保留思考和工具记录。'
           : '模型本次回复没有回答正文。已保留之前收到的内容和工具记录。' }, 'no_final_text');
         return finish({ status: 'complete' }, 'complete');

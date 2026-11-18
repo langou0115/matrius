@@ -25,6 +25,11 @@ export type PreparedCitations = {
   byLabel: Map<string, CitationSource>;
 };
 
+export type MessageCitationContext = {
+  byLabel: Map<string, CitationSource>;
+  numbers: Map<string, number>;
+};
+
 type Line = { text: string; code: boolean; definition: boolean };
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
@@ -278,6 +283,15 @@ function analyze(content: string, activities: WebActivity[]) {
   return { lines, citations, byLabel };
 }
 
+/** Analyze the full reply once so split UI segments keep whole-message citation numbering and links. */
+export function createCitationContext(content: string, activities: WebActivity[] = []): MessageCitationContext {
+  const { citations, byLabel } = analyze(content, activities);
+  return {
+    byLabel,
+    numbers: new Map(citations.map((source) => [source.label, source.number])),
+  };
+}
+
 /**
  * Rewrite GFM footnote references into small citation links before Markdown parsing. Definitions
  * are removed from the body: the app renders their metadata as hover cards and in the source panel,
@@ -286,19 +300,24 @@ function analyze(content: string, activities: WebActivity[]) {
  * Rewriting even while a definition is still streaming means the reader sees `1` instead of the raw
  * `[^1]` syntax; the number is stable because it is assigned by first reference.
  */
-export function prepareCitations(content: string, activities: WebActivity[] = []): PreparedCitations {
-  const { lines, citations, byLabel } = analyze(content, activities);
-  const numbers = new Map(citations.map((source) => [source.label, source.number]));
+export function prepareCitations(
+  content: string,
+  activities: WebActivity[] = [],
+  context?: MessageCitationContext,
+): PreparedCitations {
+  const resolved = context ?? createCitationContext(content, activities);
+  const lines = scanLines(content);
+  collectDefinitions(lines);
   const markdown = lines.map((line) => {
     if (line.definition) return '';
     if (line.code) return line.text;
     return transformProse(line.text, (text) => text.replace(REFERENCE, (match, rawLabel: string) => {
       const label = rawLabel.trim();
-      const number = numbers.get(label);
+      const number = resolved.numbers.get(label);
       return number ? `[${number}](#citation-${encodeURIComponent(label)})` : match;
     }));
   }).join('\n');
-  return { markdown, byLabel };
+  return { markdown, byLabel: resolved.byLabel };
 }
 
 export function extractCitations(content: string, activities: WebActivity[] = []): CitationSource[] {

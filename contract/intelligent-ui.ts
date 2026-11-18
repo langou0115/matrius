@@ -131,7 +131,8 @@ export type IntelligentUiBlock =
     };
 
 const UI_MARKER_REGEX = /\[\[ui:([a-zA-Z0-9_-]+)\]\]/gu;
-const PARTIAL_UI_MARKER_SUFFIX = /\[\[ui:[a-zA-Z0-9_-]*$/u;
+const PARTIAL_UI_MARKER_SUFFIX = /\[\[ui:[a-zA-Z0-9_-]*\]?$/u;
+const STREAMING_UI_MARKER_SUFFIX = /\[\[(?:u(?:i(?::[a-zA-Z0-9_-]*\]?)?)?)?$/u;
 
 export function formatUiBlockMarker(id: string): string {
   return `[[ui:${id}]]`;
@@ -162,7 +163,7 @@ export function splitReplyUiSegments(
   const visibleById = new Map(visibleBlocks.map((block) => [block.id, block]));
   const placedIds = new Set<string>();
 
-  const normalized = streaming ? content.replace(PARTIAL_UI_MARKER_SUFFIX, '') : content;
+  const normalized = streaming ? content.replace(STREAMING_UI_MARKER_SUFFIX, '') : content;
   const segments: ReplyUiSegment[] = [];
   let cursor = 0;
 
@@ -191,9 +192,13 @@ export function splitReplyUiSegments(
   }
   pushText(normalized.slice(cursor));
 
+  // While streaming, wait for each block's inline [[ui:...]] marker rather than rendering
+  // it prematurely at the top and jumping later; unplaced blocks append once finished.
+  if (streaming) return segments;
+
   const unplaced = visibleBlocks.filter((block) => !placedIds.has(block.id));
   if (unplaced.length) {
-    return [...unplaced.map((block): ReplyUiSegment => ({ kind: 'block', block })), ...segments];
+    return [...segments, ...unplaced.map((block): ReplyUiSegment => ({ kind: 'block', block }))];
   }
   return segments;
 }

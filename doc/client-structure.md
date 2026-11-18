@@ -152,8 +152,7 @@ ui/
 │   ├── database/browser-store.ts       IndexedDB 事务与旧数据读取辅助（不存聊天数据）
 │   ├── features/capabilities.ts        按服务端授权判断功能
 │   ├── llm/
-│   │   ├── model-proxy.ts              同源模型中继地址与请求头
-│   │   └── provider-catalog.ts         从 Provider 获取模型目录
+│   │   └── provider-catalog.ts         通过服务端 `/api/agent/models` 获取 Provider 模型目录
 │   └── platform/
 │       ├── clipboard.ts                Web 原文复制适配
 │       ├── model-credentials.ts        凭据接口与内存实现
@@ -226,7 +225,7 @@ ui/
 ## 模型与 Runtime 入口
 
 - `features/models/model-settings-screen.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型三类对话框；删除 Provider 或模型直接执行，不弹确认框。`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
-- `contract/agent-provider.ts`：Provider 配置校验与运行时模型映射（`@contract/agent-provider`）；`core/llm/provider-catalog.ts`：从 Provider 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现；`core/llm/model-proxy.ts`：同源模型中继地址。
+- `contract/agent-provider.ts`：Provider 配置校验与运行时模型映射（`@contract/agent-provider`）；`core/llm/provider-catalog.ts`：经服务端 `POST /api/agent/models` 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现。
 - `core/api/agent-runs.ts`：浏览器侧 Agent 通信适配，提交运行、消费 SSE 并更新消息，同时发送停止/steer；Agent 循环与工具模块位于 server/agent 与 server/agent/tools。
 - `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到实例。
 

@@ -1,14 +1,16 @@
+import { Download } from 'lucide-react';
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Streamdown, type CodeHighlighterPlugin, type Components, type DiagramPlugin, type PluginConfig,
+  Streamdown, type CodeHighlighterPlugin, type Components, type DiagramPlugin, type IconMap, type PluginConfig,
   type StreamdownTranslations,
 } from 'streamdown';
 import { cjk } from '@streamdown/cjk';
 import { createMathPlugin, type MathPlugin } from '@streamdown/math';
 import rehypeKatex from 'rehype-katex';
 
+import { Icon } from '@/components/web/icon';
 import type { WebActivity } from '@contract/agent-types';
-import { prepareCitations, type CitationSource } from '../citations';
+import { prepareCitations, type CitationSource, type MessageCitationContext } from '../citations';
 import { normalizeMarkdown } from '../markdown/normalize-markdown';
 import { CitationMarker } from './citation-marker';
 
@@ -130,6 +132,14 @@ function mathPluginFor(streaming: boolean): MathPlugin {
   return { ...base, rehypePlugin: [katexWithFormulaSource, { streaming }] as unknown as MathPlugin['rehypePlugin'] };
 }
 
+const streamdownIcons: Partial<IconMap> = {
+  CheckIcon: ({ className, size = 16 }) => <Icon name="check" size={size} className={className} />,
+  CopyIcon: ({ className, size = 16 }) => <Icon name="copy" size={size} className={className} />,
+  DownloadIcon: ({ className, size = 16 }) => (
+    <Download size={size} strokeWidth={1.65} className={className} aria-hidden="true" />
+  ),
+};
+
 const translations: Partial<StreamdownTranslations> = {
   close: '关闭',
   copied: '已复制',
@@ -195,11 +205,13 @@ function useStreamedContent(content: string, streaming: boolean): string {
   return content.startsWith(parsed) ? parsed : content;
 }
 
-export const MessageContent = memo(function MessageContent({ content, streaming = false, webActivities }: {
+export const MessageContent = memo(function MessageContent({ content, streaming = false, webActivities, citationContext }: {
   content: string;
   streaming?: boolean;
   /** Web tool calls made for this answer. Supplying them enables footnote citations and cards. */
   webActivities?: WebActivity[];
+  /** Whole-message citation index when a reply is split around inline Intelligent UI cards. */
+  citationContext?: MessageCitationContext;
 }) {
   const id = useId();
   const rendered = useStreamedContent(content, streaming);
@@ -225,10 +237,10 @@ export const MessageContent = memo(function MessageContent({ content, streaming 
   }, []);
   const prepared = useMemo(() => {
     const normalized = normalizeMarkdown(rendered);
-    return webActivities === undefined
+    return webActivities === undefined && !citationContext
       ? { markdown: normalized, byLabel: null }
-      : prepareCitations(normalized, webActivities);
-  }, [rendered, webActivities]);
+      : prepareCitations(normalized, webActivities, citationContext);
+  }, [rendered, webActivities, citationContext]);
   const components = useMemo(() => createComponents(prepared.byLabel), [prepared.byLabel]);
 
   // The Shiki engine (Oniguruma grammar bundle) and the Mermaid runtime are both large, so each
@@ -275,8 +287,11 @@ export const MessageContent = memo(function MessageContent({ content, streaming 
     codeBlockMaxHeight={0}
     tableMaxHeight={0}
     lineNumbers={false}
+    icons={streamdownIcons}
     translations={translations}
   >{prepared.markdown}</Streamdown>, [prepared.markdown, components, plugins, streaming, id]);
+
+  if (rendered.trim() && !prepared.markdown.trim()) return null;
 
   return <div className={`message-markdown${replacing ? ' is-replacing' : ''}`}>{body}</div>;
 });

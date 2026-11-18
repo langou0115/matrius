@@ -39,3 +39,62 @@ test('the HTTP client advertises compression and decodes the response', async ()
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }
 });
+
+test('the HTTP client follows redirects with unended bodies and truncates safely without crashing', async () => {
+  const server = createServer((request, response) => {
+    if (request.url === '/redirect') {
+      response.writeHead(302, { location: '/target' });
+      // Leave the redirect body open so response.body.destroy() triggers undici's abort path.
+      response.write('redirecting...');
+      return;
+    }
+    if (request.url === '/target') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('ok');
+      return;
+    }
+    if (request.url === '/large') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      response.write('0123456789');
+      setTimeout(() => {
+        if (!response.destroyed) response.end('abcdefghijklmnopqrstuvwxyz');
+      }, 20);
+      return;
+    }
+    response.writeHead(200, { 'content-length': '100' });
+    response.write('partial');
+    setTimeout(() => response.socket?.destroy(), 20);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const settings = loadSettings({ APP_ENV: 'test', LOG_LEVEL: 'silent', WEBTOOL_PROXY_URL: '' });
+    const client = createHttpClient(settings);
+
+    const redirected = await client.get(`http://127.0.0.1:${port}/redirect`, {
+      timeoutMs: 3000,
+      maxBytes: 1024,
+      maxRedirects: 2,
+    });
+    assert.equal(redirected.status, 200);
+    assert.equal(redirected.body.toString('utf8'), 'ok');
+
+    const truncated = await client.get(`http://127.0.0.1:${port}/large`, {
+      timeoutMs: 3000,
+      maxBytes: 8,
+    });
+    assert.equal(truncated.truncated, true);
+    assert.equal(truncated.body.toString('utf8'), '01234567');
+
+    await assert.rejects(() => client.get(`http://127.0.0.1:${port}/aborted`, {
+      timeoutMs: 3000,
+      maxBytes: 1024,
+    }));
+
+    // Allow any setImmediate stream cleanup callbacks to fire before closing the test.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+});
