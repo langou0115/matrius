@@ -1,12 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
-import { MessageContent } from './message-content';
-
 /**
  * Long user messages fold to roughly eight lines so one pasted wall of text cannot bury the reply.
- * The decision is made from the rendered height, not a character count: the same text wraps to a
- * different number of lines on a phone and on a wide window, and only overflow is worth folding.
+ * User prompts render as plain text (preserving line breaks verbatim without Markdown formatting),
+ * and the fold decision comes from rendered height so mobile and desktop wrap naturally.
  */
 export function CollapsibleMessageContent({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -26,7 +24,7 @@ export function CollapsibleMessageContent({ content }: { content: string }) {
 
   const folded = overflowing && !expanded;
   return <div className={`collapsible-message${expanded ? ' is-expanded' : ''}${folded ? ' is-folded' : ''}`}>
-    <div ref={body} className="collapsible-message-body"><MessageContent content={content} /></div>
+    <div ref={body} className="collapsible-message-body">{content}</div>
     {overflowing && <button className="collapsible-message-toggle" type="button" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>
       <span>{expanded ? '收起' : '展开'}</span>
       {expanded ? <ChevronUp size={14} strokeWidth={1.75} aria-hidden="true" /> : <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />}
