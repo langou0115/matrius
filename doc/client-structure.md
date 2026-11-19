@@ -126,21 +126,29 @@ ui/
 │   │   ├── memory-model.ts             记忆助手模型的跟随/指定解析
 │   │   └── memory-dialog.tsx           摘要查看、对话式修改与清空确认
 │   ├── models/
-│   │   ├── model-credential-store.ts   API key 的独立 IndexedDB 记录
-│   │   ├── model-repository.ts         无密钥元数据读写与旧配置迁移
+│   │   ├── models-api.ts               `/api/models` 服务端模型与密钥状态读写接口
+│   │   ├── model-credential-store.ts   旧版浏览器 IndexedDB 密钥辅助（仅历史兼容测试）
+│   │   ├── model-repository.ts         旧版无密钥元数据辅助（仅历史兼容测试）
 │   │   ├── model-settings-screen.tsx   Provider 与模型管理界面
-│   │   └── model-state.tsx             工作区独立模型状态与按 Provider 隔离的凭据
+│   │   └── model-state.tsx             工作区模型状态（正常模式走服务端，Mock 走内存）
 │   ├── instance/
-│   │   ├── instance-retry.ts               实例校验失败后的退避重试
-│   │   ├── instance-state.tsx              Provider、useInstance、useFeature 与 FeatureGate
-│   │   ├── change-password-dialog.tsx  首次改密与主动改密
+│   │   ├── auth-unlock-screen.tsx      `AUTH_SECRET` 开屏密钥解锁界面
+│   │   ├── instance-retry.ts           实例校验失败后的退避重试
+│   │   ├── instance-state.tsx          Provider、useInstance、useFeature 与 FeatureGate
 │   │   ├── network-tools-preference.ts 保存在实例画像字段的网络工具开关
-│   │   ├── network-tools-state.tsx     网络工具开关状态
+│   │   └── network-tools-state.tsx     网络工具开关状态
+│   ├── tasks/
+│   │   ├── tasks-screen.tsx            定时任务管理界面与状态切换
+│   │   ├── tasks-state.tsx             任务列表状态与轮询更新
+│   │   ├── tasks-api.ts                `/api/tasks` REST 客户端
+│   │   ├── task-modal.tsx              创建与编辑定时任务弹窗
+│   │   └── mock-tasks.ts               `/mock/tasks` 预览用内存任务
 │   ├── debug/
 │   │   ├── debug-screen.tsx            开发调试页（Mock 预览与工具测试栏目）
 │   │   └── tools-panel.tsx             Search / Fetch 等工具连通性测试面板
 │   └── mock/
 │       ├── mock-items.ts               预览项清单与按路径反查
+│       ├── intelligent-ui-preview.tsx  交互式 UI 块预览
 │       ├── process-preview.tsx         思考/工具/中断状态预览
 │       └── storage-preview.tsx         保存失败提示预览
 ├── core/
@@ -165,7 +173,7 @@ ui/
 ```
 
 - 路径别名 `@/` 指向 `ui/`，`@/assets/` 指向 `assets/`，`@contract/` 指向根目录 `contract/`（`tsconfig.json` 与 `vite.config.ts` 各登记一次，测试加载器 `tests/typescript-loader.mjs` 同步支持）。字体在 `assets/fonts/`，由 `ui/global.css` 顶部的 `@font-face` 引用 `../assets/fonts/*.ttf`，Vite 负责哈希并输出到构建产物。品牌标志文件是 `public/brand/matrius-sailboat.png`，favicon 使用透明底彩色 PNG（`public/favicon.png`，由 `assets/images/favicon.png` 复制，不再提供 `/favicon.ico`），PWA/Apple 图标使用同一帆船图案（`public/icons/`）；Apple 图标使用深蓝底，可遮罩图标使用深蓝底并保留安全边距。
-- `contract/` 只放前后端共用的东西，且不得 import Node/DOM/React/数据库：`agent-protocol.ts`（wire 类型）、`agent-types.ts`（共享类型）、`agent-context.ts`（上下文组装、token 估算与请求校验）、`agent-prompt.ts`（系统提示）、`agent-memory.ts`、`agent-title.ts`、`agent-compaction.ts`、`agent-provider.ts`（Provider 校验与模型映射）、`agent-thinking.ts`（思考强度与预算）。UI 用 `@contract/*` 导入，server 用相对路径导入，两侧共用同一份实现。
+- `contract/` 只放前后端共用的东西，且不得 import Node/DOM/React/数据库：`agent-protocol.ts`（wire 类型）、`agent-types.ts`（共享类型）、`agent-context.ts`（上下文组装、token 估算与请求校验）、`agent-prompt.ts`（系统提示）、`agent-memory.ts`、`agent-title.ts`、`agent-compaction.ts`、`agent-provider.ts`（Provider 校验与模型映射）、`agent-thinking.ts`（思考强度与预算）、`intelligent-ui.ts`（交互 UI 块解析与规范）。UI 用 `@contract/*` 导入，server 用相对路径导入，两侧共用同一份实现。
 - 模板 Explore、标签导航、启动动画组件和 reset-project 脚本已移除。
 - `dev/fixtures/chat-workspace.ts` 为显式开发预览数据，通过独立 `/mock/chat` 开发路径加载，包含 100 个批量多轮对话和 13 个专项会话（Markdown 综合格式、代码、公式、裸 LaTeX、错位定界符、50 轮长对话、超长回复、多语言、边界内容、短回复、未完成内容、压测长回复等）。Markdown 综合格式会话覆盖标题到六级、行内混排、转义与 HTML 实体、软换行、多层引用、四层嵌套列表、列表内代码块与引用、宽表格与对齐、十种语言代码块、长行横向滚动与多脚注；压测会话由程序生成 20 节、140 个块，用于观察长消息首次渲染、滚动与跨块选区。预览项清单集中在 `features/mock/mock-items.ts`，`/mock` 是列出各项的独立全页索引，新增测试只需在 `ui/router/routes.tsx` 注册一个 `/mock/*` 路由并往清单加一条记录。聊天预览保留设置入口，通过 `/mock/chat/settings` 复用正式设置组件，并共享本次预览状态；所有 `/mock/*` 路由由 `routes.tsx` 的 `MockOnly` 统一保护，生产构建直接跳回首页。预览索引、工具栏与样例数据仅在开发分支动态加载。正常模式不注入、不保存示例数据。
 - `/mock/process` 通过 `features/mock/process-preview.tsx` 复用思考折叠区、正文和中断提示；阶段切换保留展开状态及连续计时，包含等待、思考、搜索、读取、再次思考、回答和结束，可验证按发生顺序追加步骤及整轮完成状态。模拟数据位于 `dev/fixtures/process-preview.ts`，不调用模型或写入聊天记录。
@@ -188,9 +196,9 @@ ui/
 | 实例 REST 客户端、连接状态、409 冲突与错误映射 | `ui/core/api/` |
 | 更多消息格式适配 | 聊天模块内的消息渲染组件 |
 | 记忆、文件、实例访问 | `ui/features/<module>/` |
-| 移动 Web 响应式布局 | 保持共享状态与契约，后续按窄屏、软键盘与安全区适配 |
+| 移动 Web 响应式布局 | 已按 767px 断点实现（抽屉导航、移动资料库选择栏、软键盘与安全区适配） |
 
-其中模型配置、模型目录与同源代理地址已有实现，其余目录随功能创建。
+其中模型配置、模型目录与响应式核心交互均已实现，其余能力随特性迭代补充。
 
 ## 职责边界
 
@@ -224,7 +232,7 @@ ui/
 
 ## 模型与 Runtime 入口
 
-- `features/models/model-settings-screen.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型三类对话框；删除 Provider 或模型直接执行，不弹确认框。`model-state.tsx`：工作区独立状态和按 Provider 隔离的凭据；`model-repository.ts`：无密钥元数据读写及旧配置迁移；`model-credential-store.ts`：密钥的独立 IndexedDB 记录，Mock 不读写。
+- `features/models/model-settings-screen.tsx`：Provider 折叠卡片、当前模型选择，以及获取模型列表、编辑 Provider、编辑模型三类对话框；删除 Provider 或模型直接执行，不弹确认框。`model-state.tsx`：工作区模型状态，正常模式通过 `models-api.ts` 读写服务端 `/api/models`（不写浏览器 IndexedDB，也不回传明文密钥），Mock 模式使用 `core/platform/model-credentials.ts` 内存实现。
 - `contract/agent-provider.ts`：Provider 配置校验与运行时模型映射（`@contract/agent-provider`）；`core/llm/provider-catalog.ts`：经服务端 `POST /api/agent/models` 获取模型目录；`core/platform/model-credentials.ts`：凭据接口与内存实现。
 - `core/api/agent-runs.ts`：浏览器侧 Agent 通信适配，提交运行、消费 SSE 并更新消息，同时发送停止/steer；Agent 循环与工具模块位于 server/agent 与 server/agent/tools。
 - `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到实例。
@@ -244,9 +252,10 @@ ui/
 
 ## 开发脚本
 
+- `scripts/start.mjs`：单进程自部署启动器，先执行全量 `vite build` 构建 `dist/`，再启动 Node API 同时托管界面与 `/api/*` 并等待就绪后输出访问地址。
 - `scripts/dev.mjs`：跨平台本机开发启动器，管理本地 SQLite、Node API 和 Vite 进程及退出清理，不连接服务器。
-- `scripts/dev-api-proxy.cjs`：Vite 开发服务器的同源 `/api/*` 转发，模型中继优先处理。
-- `vite.config.ts`：Vite 开发与构建配置；设置 `DEV_WEB_PORT`（默认 8081，严格端口）、`@/` 与 `@/assets/` 别名、pi-ai 映射、KaTeX 样式注入，以及 `/api/*` 与模型中继中间件。
+- `scripts/dev-api-proxy.cjs`：Vite 开发服务器的同源 `/api/*` 转发。
+- `vite.config.ts`：Vite 开发与构建配置；设置 `WEB_PORT`（默认 8081，严格端口）、`@/` 与 `@/assets/` 别名、KaTeX 样式与离线外壳插件，以及 `/api/*` 开发代理中间件。
 
 - `features/workspace/workspace-mode.ts`：按实例连接状态加载工作区或等待重连的工作区身份。
 - `features/workspace/cloud-workspace-repository.ts`：唯一实例的内存 REST 仓储，加载服务端数据并按 revision 保存变化；不访问 IndexedDB，不包含模型配置或凭据。

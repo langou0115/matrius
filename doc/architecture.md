@@ -11,26 +11,27 @@ server/      Fastify、SQLite、工具、文档服务
 contract/    前后端共用的类型与无副作用纯逻辑（不 import Node/DOM/React/数据库）
 
 ui/
-├── 聊天 UI、会话状态
+├── 聊天 UI、会话状态、开屏密钥解锁
 ├── Agent Runtime 在 server/agent；客户端只保留 SSE 通信适配
 ├── REST + SSE /api/* → Node/Fastify → SQLite / 文件系统
-└── IndexedDB：模型配置、密钥与设备状态
+└── 设备状态（如上次打开的会话地址）
 
 server/
-├── routes/      REST 路由
+├── routes/      REST 路由（含 /api/auth/*、/api/models）
+├── auth/        AUTH_SECRET HMAC Cookie 门禁
 ├── services/    搜索、抓取、文件、文档、PDF
 ├── agent/       Agent 循环、上下文、压缩、标题、记忆、工具模块
 └── db/          SQLite、codecs、迁移
 ```
 
-服务端是业务数据的唯一事实源，不提供匿名本地工作区、双向同步或本地/云端模式切换。
+服务端是业务数据（含模型配置与 API key）的唯一事实源，不提供匿名本地工作区、双向同步或本地/云端模式切换。
 Agent Runtime 与服务端工具位于 `server/agent`；浏览器只保留 SSE 通信适配与展示逻辑。
-模型配置与密钥只持久化在当前浏览器；每次 Agent run 临时发送给服务端，服务端不落库、不写日志。
+模型配置与 API key 保存在服务端 `model_configs` 表中，不回传明文给浏览器、不写日志。
 
 ## 单用户实例与访问
 
 每个部署只有一个工作区，`instance` 单例表绑定唯一 `id`。
-无需登录；所有可访问部署地址的客户端共享同一实例数据。
+通过 `.env.local` 中的可选 `AUTH_SECRET` 实现单人开屏密钥锁定；所有通过验证的客户端共享同一实例数据。
 没有用户创建、角色、用户停用、`/admin` 或 `/api/admin/*`。
 跨设备与多标签页仍使用 `baseRevision` 防止静默覆盖。
 `/api/workspace/import` 保留作旧数据导入兼容，不能用来访问或混入其他历史实例的数据。

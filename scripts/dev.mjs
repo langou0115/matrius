@@ -26,11 +26,11 @@ export function devDataDir(env = {}, directory = root) {
 }
 
 export function devPorts(env) {
-  const ports = [env.DEV_WEB_PORT || '8081', env.DEV_API_PORT || '8000'].map((port) => {
-    if (!/^[1-9]\d*$/u.test(port) || Number(port) > 65535) throw new Error('Invalid DEV_WEB_PORT or DEV_API_PORT.');
+  const ports = [env.WEB_PORT || '8081', env.API_PORT || '8000'].map((port) => {
+    if (!/^[1-9]\d*$/u.test(port) || Number(port) > 65535) throw new Error('Invalid WEB_PORT or API_PORT.');
     return Number(port);
   });
-  if (ports[0] === ports[1]) throw new Error('DEV_WEB_PORT and DEV_API_PORT must differ.');
+  if (ports[0] === ports[1]) throw new Error('WEB_PORT and API_PORT must differ.');
   return ports;
 }
 
@@ -223,7 +223,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     ...devEnvironment({ env, dataDir, webPort }),
     DATABASE_URL: '',
     HOST: '127.0.0.1',
-    PORT: String(apiPort),
+    API_PORT: String(apiPort),
   };
 
   const abort = new AbortController();

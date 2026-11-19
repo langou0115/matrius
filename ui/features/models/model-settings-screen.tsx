@@ -6,6 +6,7 @@ import { SelectField } from '@/components/web/select-field';
 import { fetchProviderCatalog, type CatalogModel } from '@/core/llm/provider-catalog';
 import { protocols, type ProviderConfig, type ProviderModelConfig } from '@contract/agent-provider';
 import { SettingsPage } from '@/features/settings/settings-page';
+import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChatRuntime } from '@/features/chat/chat-runtime';
 import { useModels } from './model-state';
 
@@ -29,6 +30,7 @@ function errorMessage(reason: unknown) {
 
 export default function ModelSettingsScreen() {
   const models = useModels();
+  const preview = useIsPreview();
   const { isAnyRunning } = useChatRuntime();
   const [providerForm, setProviderForm] = useState<ProviderForm | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -55,7 +57,7 @@ export default function ModelSettingsScreen() {
     setProviderForm(value ? {
       id: value.id, name: value.name, protocol: value.protocol, baseUrl: value.baseUrl, requiresApiKey: value.requiresApiKey,
     } : newProvider());
-    setApiKey(value ? models.getKey(value.id) : '');
+    setApiKey(preview && value ? models.getKey(value.id) : '');
   }
   function editModel(provider: ProviderConfig, value: ProviderModelConfig | null) {
     clearMessages();
@@ -96,7 +98,10 @@ export default function ModelSettingsScreen() {
     setCatalogError(null);
     setCatalogLoading(true);
     try {
-      const catalog = await fetchProviderCatalog(provider, models.getKey(provider.id));
+      const catalog = await fetchProviderCatalog(provider, models.getKey(provider.id), undefined, {
+        providerId: provider.id,
+        hasSavedKey: models.hasKey(provider.id),
+      });
       if (catalogRequest.current !== token) return;
       setAvailableModels(catalog);
     } catch (reason) {
@@ -136,7 +141,7 @@ export default function ModelSettingsScreen() {
     : availableModels;
 
   return <SettingsPage title="模型服务" description="按服务商管理连接信息，再发现并添加要使用的模型。">
-    <p className="settings-footnote">服务商、模型与 API key 仅保存在此浏览器的本地存储中，本站不会保存；清除浏览器数据或更换设备后需要重新配置。</p>
+    <p className="settings-footnote">服务商、模型与 API key 保存在服务器本机数据目录中，更换设备或访问域名后无需重新配置；API key 仅在服务端使用且不会回传明文。</p>
     {models.error && <p className="model-form-error" role="alert">{models.error}</p>}
     {!models.ready && !models.error && <p role="status" className="settings-footnote">正在读取模型配置…</p>}
     {isAnyRunning && <p className="settings-footnote" role="status">正在生成回复，请先停止或等待完成后再修改配置。</p>}
@@ -152,7 +157,7 @@ export default function ModelSettingsScreen() {
         const bodyId = `provider-body-${provider.id}`;
         const protocolLabel = protocols.find((item) => item.id === provider.protocol)?.label ?? provider.protocol;
         const keyStatus = provider.requiresApiKey
-          ? (models.getKey(provider.id) ? '已保存 API key' : '需要 API key')
+          ? (models.hasKey(provider.id) ? '已保存 API key' : '需要 API key')
           : '无需 API key';
         return <article className="provider-card" key={provider.id}>
           <div className="provider-heading">
@@ -221,7 +226,7 @@ export default function ModelSettingsScreen() {
           }} />
           <label className="model-form-field">Base URL<input className="text-field" type="url" value={providerForm.baseUrl} onChange={(event) => setProviderForm({ ...providerForm, baseUrl: event.target.value })} placeholder="https://your-provider.example/v1" required autoCapitalize="none" spellCheck={false} /><span>填写服务商的 API 基础地址，不包含 /models、/chat/completions、/responses 或 /messages。</span></label>
           <label className="model-key-toggle"><input className="model-checkbox-input" type="checkbox" checked={providerForm.requiresApiKey} onChange={(event) => setProviderForm({ ...providerForm, requiresApiKey: event.target.checked })} /><span className="model-checkbox" aria-hidden="true" />接口需要 API key</label>
-          {providerForm.requiresApiKey && <label className="model-form-field">API key<input className="text-field" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder={models.getKey(providerForm.id) ? '已填写；留空保持当前 key' : '保存在此浏览器中'} /><span>与模型配置分开保存在本机浏览器，未加密；清除站点数据后需要重新填写。</span></label>}
+          {providerForm.requiresApiKey && <label className="model-form-field">API key<input className="text-field" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder={models.hasKey(providerForm.id) ? '已填写；留空保持当前 key' : '保存在服务器本机'} /><span>API key 保存在服务器本机数据库中且不会回传到浏览器；留空则保留当前已存密钥。</span></label>}
           <div className="dialog-footer"><button type="button" className="secondary-button" onClick={closeProviderForm}>取消</button><button type="submit" className="primary-button">{saving ? '保存中…' : '保存服务商'}</button></div>
         </fieldset>
       </form>

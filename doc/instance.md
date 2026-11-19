@@ -1,10 +1,10 @@
 # 实例访问与资源
 
-Matrius 无需登录；任何可访问部署地址的客户端均可使用全部已登记功能，共享对话、文件、偏好和用量。没有管理员、密码、登录会话或账户设置。侧边栏底部直接打开设置，存储和用量归入「资源」。
+Matrius 是单用户实例；所有通过访问验证的客户端共享对话、文件、模型配置、偏好和用量。若服务端未配置 `AUTH_SECRET`，则无需登录即可使用；若在 `.env.local` 或环境变量设置了 `AUTH_SECRET`，打开网页时需先在开屏界面输入访问密钥解锁（服务端签发 `HttpOnly` Cookie），设置页「关于 Matrius」中可随时手动锁定。没有多用户账户或角色体系。侧边栏底部直接打开设置，存储和用量归入「资源」。
 
-客户端通过 GET /api/features 初始化实例能力，断网时重连，不回退到本地业务数据。旧 /api/auth/* 已移除。业务数据导入和删除标记接口位于 /api/workspace/*。
+客户端通过 GET /api/features 初始化实例能力，断网时重连，不回退到本地业务数据。当配置了 `AUTH_SECRET` 时，受保护 `/api/*` 未解锁会返回 401，开屏页通过 `/api/auth/status`、`/api/auth/unlock` 与 `/api/auth/lock` 管理 `HttpOnly` HMAC 会话 Cookie。业务数据导入和删除标记接口位于 /api/workspace/*。
 
-数据库只有一条基线迁移 0001_initial，直接创建单实例 schema：instance.id=1 及指向它的业务表，画像和偏好表为 profiles、profile_fields、preferences。空库初始化不会生成迁移备份或其他伴随文件。开发期的账户迁移链（0001–0011）已删除；旧数据库需要删除 DATA_DIR 或执行一次 `alembic stamp 0001_initial`。
+数据库以 0001_initial 为基线创建单实例 schema（instance.id=1 及指向它的业务表，画像和偏好表为 profiles、profile_fields、preferences），并在启动或执行 `npm run db:migrate` 时按顺序应用 `server/db/migrations/` 下的后续 SQL 迁移（`0002_scheduled_tasks`、`0003_ui_blocks`、`0004_model_configs`），兼容保留 `alembic_version` 表，无需 Python 或 Alembic CLI。空库初始化不会生成迁移备份或其他伴随文件。开发期的旧多账户迁移链（0001–0011）已移除。
 
 存储接口 GET /api/files/usage 返回 disk.total、disk.used、disk.free。这里不再读取主机的文件系统，而是以 `STORAGE_LIMIT_BYTES`（默认 128 MiB）作为应用存储上限，`used` 是已保存文件的字节总和；上传和文档保存超出上限时返回 413 `storage_full`。
 

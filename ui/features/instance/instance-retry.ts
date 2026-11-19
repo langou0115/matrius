@@ -1,5 +1,5 @@
 /** A failed instance check is almost always a short backend restart (uvicorn --reload). */
-export type InstanceStatus = 'checking' | 'ready' | 'unavailable';
+export type InstanceStatus = 'checking' | 'locked' | 'ready' | 'unavailable';
 
 /**
  * Backoff for retrying the instance check while the server is unreachable. The last step

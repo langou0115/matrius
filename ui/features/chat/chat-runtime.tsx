@@ -201,6 +201,7 @@ function useRuntime(
       conversationId, replyId, messages: history, config,
       ...(contextSummary ? { contextSummary } : {}),
       apiKey: config?.requiresApiKey ? models.getKey(config.providerId) : '',
+      hasApiKey: config ? models.hasKey(config.providerId) : false,
       // Thinking depth belongs to the model, so the bound model carries its own depth.
       thinkingEffort: config?.thinkingEffort ?? 'low',
       memoryText: memoryPromptBlock(memoryRef.current),

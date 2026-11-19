@@ -8,6 +8,8 @@ import { generateMemorySummary } from '../agent/memory';
 import { fetchProviderModels } from '../agent/models';
 import { generateConversationTitle } from '../agent/title';
 import { validateModelConfig } from '../../contract/agent-provider';
+import type { AppDatabase } from '../db/client';
+import { getProviderApiKey } from '../db/repositories/models';
 import { invalid } from '../errors';
 import {
   agentRunSchema,
@@ -17,9 +19,23 @@ import {
   titleRequestSchema,
 } from './agent-schemas';
 
-export type AgentRouteDeps = { runs: AgentRunService };
+export type AgentRouteDeps = { runs: AgentRunService; db?: AppDatabase };
 
+const INSTANCE_ID = 1;
 const HEARTBEAT_MS = 15_000;
+
+function resolveApiKey(
+  db: AppDatabase | undefined,
+  providerId: string | undefined,
+  inlineApiKey: string | undefined,
+  requiresApiKey: boolean,
+): string {
+  if (!requiresApiKey) return '';
+  const inline = inlineApiKey?.trim() ?? '';
+  if (inline) return inline;
+  if (!db || !providerId) return '';
+  return getProviderApiKey(db, INSTANCE_ID, providerId);
+}
 
 function writeEvent(response: ServerResponse, event: AgentRunEvent): void {
   if (response.writableEnded) return;
@@ -27,7 +43,7 @@ function writeEvent(response: ServerResponse, event: AgentRunEvent): void {
 }
 
 export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps): void {
-  const { runs } = deps;
+  const { runs, db } = deps;
 
   app.post('/api/agent/runs', async (request, reply) => {
     const payload = agentRunSchema.parse(request.body);
@@ -35,6 +51,12 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       reply.code(409);
       return { error: { code: 'run_in_progress', message: '当前会话正在生成回复。' } };
     }
+    const apiKey = resolveApiKey(
+      db,
+      payload.model.providerId,
+      payload.apiKey,
+      payload.model.requiresApiKey,
+    );
 
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -68,7 +90,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     });
 
     try {
-      runs.start(payload as unknown as AgentRunRequest, (event) => {
+      runs.start({ ...(payload as unknown as AgentRunRequest), apiKey }, (event) => {
         if (ended) return;
         writeEvent(reply.raw, event);
         if (event.type === 'end') close();
@@ -95,7 +117,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     return {
       title: await generateConversationTitle({
         config,
-        apiKey: payload.apiKey ?? '',
+        apiKey: resolveApiKey(db, config.providerId, payload.apiKey, config.requiresApiKey),
         content: payload.content,
         ...(payload.quote ? { quote: payload.quote } : {}),
       }),
@@ -113,7 +135,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     return {
       summary: await generateMemorySummary({
         config,
-        apiKey: payload.apiKey ?? '',
+        apiKey: resolveApiKey(db, config.providerId, payload.apiKey, config.requiresApiKey),
         instruction: payload.instruction,
         currentSummary: payload.currentSummary,
         userMessage: payload.userMessage,
@@ -129,7 +151,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
         protocol: payload.protocol,
         baseUrl: payload.baseUrl,
         requiresApiKey: payload.requiresApiKey,
-        apiKey: payload.apiKey ?? '',
+        apiKey: resolveApiKey(db, payload.providerId, payload.apiKey, payload.requiresApiKey),
       }),
     };
   });

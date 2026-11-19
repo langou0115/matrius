@@ -21,8 +21,8 @@ export const settingsItems: readonly SettingsItem[] = [
   { id: 'usage', title: '用量', description: '查看模型的 Token 使用量与每日趋势。', group: '资源', feature: 'usage', keywords: '用量 token 活动 统计 使用量 消耗 趋势 每日 每周 累计 输入 输出 usage token activity' },
   { id: 'appearance', title: '外观', description: '调整显示模式与配色主题。', group: '偏好', keywords: `显示 浅色 深色 暗色 夜间 跟随系统 亮度 颜色 皮肤 light dark system theme ${themePresets.map((item) => `${item.id} ${item.name}`).join(' ')}` },
   { id: 'personalization', title: '个性化', description: '记忆助手、自定义指令、称呼、个人信息、对话标题与网页搜索。', group: '偏好', keywords: '个性化 自定义 指令 提示词 回复 风格 偏好 记忆 记忆助手 摘要 记住 忘记 称呼 职业 关于你 标题 命名 生成 网页 网络 搜索 联网 personalization instructions prompt profile memory title web search' },
-  { id: 'models', title: '模型服务', description: '添加服务商、API key 与模型，开始对话。', group: '偏好', keywords: '模型 服务商 接入 密钥 地址 协议 base url api key openai anthropic responses' },
-  { id: 'about', title: '关于 Matrius', description: '查看应用版本、单用户实例与存储说明。', group: '应用', keywords: '版本 本地 存储 数据 浏览器 隐私 about version' },
+  { id: 'models', title: '模型服务', description: '在服务器本机管理服务商、API key 与模型。', group: '偏好', keywords: '模型 服务商 接入 密钥 地址 协议 base url api key openai anthropic responses' },
+  { id: 'about', title: '关于 Matrius', description: '查看应用版本、单用户实例与访问锁定。', group: '应用', keywords: '版本 本地 存储 数据 浏览器 服务器 密钥 锁定 隐私 about version' },
 ];
 
 export function visibleSettings(features: readonly string[], preview = false, connected = false) {

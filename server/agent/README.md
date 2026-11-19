@@ -1,19 +1,21 @@
 # Server agent
 
 This is the home of the agent runtime: the streaming runner, compaction,
-diagnostics, the run registry and the `web_search` / `web_fetch` / `file` (list,
-read, grep) tools. The pure logic both sides share — context assembly, token
-estimates, system and memory prompts, title normalization and provider
-validation — lives in `contract/agent-*.ts`. The browser keeps only the SSE
+diagnostics, the run registry and the `web_search` / `web_fetch` / `file` / `ui`
+tools. The pure logic both sides share — context assembly, token estimates,
+system and memory prompts, title normalization, interactive UI blocks and
+provider validation — lives in `contract/*.ts`. The browser keeps only the SSE
 client (`ui/core/api/agent-runs.ts`) and the title/memory side requests
 (`ui/core/api/agent-aux.ts`).
 
-## Target layout
+## Layout
 
 ```text
 server/agent/
 ├── runtime.ts        # per-conversation run registry, start/stop/steer
 ├── runner.ts         # pi Agent creation, streaming, retries, cancellation
+├── run-service.ts    # bridges runner updates/usage/end events to SSE
+├── models.ts         # upstream provider catalog fetch
 ├── compaction.ts     # silent rolling-summary compaction
 ├── title.ts          # one-shot title request (normalizer lives in contract/)
 ├── memory.ts         # background memory summary (shape lives in contract/)
@@ -29,16 +31,19 @@ server/agent/
 - **No UI imports.** The agent must not import React, the router, `ui/features`,
   IndexedDB or browser globals.
 - **Shared logic comes from `contract/`.** Context assembly, token estimates,
-  prompts, title normalization and provider validation are imported from
-  `contract/agent-*.ts`. Do not copy them back into `ui/` or re-implement them
-  here; the two sides must run the same function, not two equal copies.
+  prompts, title normalization, intelligent UI schema and provider validation
+  are imported from `contract/*.ts`. Do not copy them back into `ui/` or
+  re-implement them here; the two sides must run the same function, not two
+  equal copies.
 - **No HTTP loopback.** Tools call `server/services/*` directly. The browser
   tool adapters' `request('/api/...')` calls do not move here.
 - **No model-proxy.** The server calls providers directly from Node. The
   `/api/model-proxy` relay and `scripts/model-proxy.cjs` are removed.
-- **Credentials are per-run.** The browser sends the selected model config and
-  API key with a run. The server never persists or logs the key. Fastify/pino
-  redaction strips `authorization`, `x-api-key` and `apiKey`.
+- **Server-stored credentials.** Provider configs and API keys live in SQLite
+  (`model_configs`) and are never returned in plaintext to the browser or
+  logged. Requests reference `providerId` so the server resolves the key
+  directly (optional per-request `apiKey` override is also never logged). Fastify/pino
+  redaction strips `authorization`, `x-api-key`, `cookie`, `secret` and `apiKey`.
 - **The client remains the message writer in this phase.** The run endpoint
   streams updates and a final `end` event; the UI persists the assistant
   message, context summary, title and memory as it does today.

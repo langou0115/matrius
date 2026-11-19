@@ -96,7 +96,7 @@ export default defineConfig({
   optimizeDeps: { entries: ['index.html'] },
   server: {
     host: '127.0.0.1',
-    port: Number(process.env.DEV_WEB_PORT ?? 8081),
+    port: Number(process.env.WEB_PORT ?? 8081),
     // A stale server on the configured port must fail loudly instead of moving to
     // another port that the API origin and the browser tab do not know about.
     strictPort: true,

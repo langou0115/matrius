@@ -132,3 +132,24 @@ test('the remote runtime surfaces an HTTP error on the assistant message', async
     globalThis.fetch = original;
   }
 });
+
+test('the remote runtime allows server-stored keys when hasApiKey is set without a raw browser key', async () => {
+  const original = globalThis.fetch;
+  let sentBody = null;
+  globalThis.fetch = async (_url, init) => {
+    sentBody = JSON.parse(String(init.body));
+    return sseResponse([{ type: 'end', result: { status: 'complete' } }]);
+  };
+  try {
+    const replies = [];
+    const runtime = createRemoteAgentRuntime({
+      onReply: (_conversationId, message) => replies.push(message),
+    });
+    assert.equal(runtime.start(request({ apiKey: '', hasApiKey: true })), true);
+    await waitFor(() => replies.some((message) => message.status === 'complete'));
+    assert.equal('apiKey' in sentBody, false);
+    runtime.dispose();
+  } finally {
+    globalThis.fetch = original;
+  }
+});

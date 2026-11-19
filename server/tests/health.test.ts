@@ -14,7 +14,7 @@ function testSettings() {
     settings: loadSettings({
       APP_ENV: 'test',
       DATA_DIR: directory,
-      PORT: '8000',
+      API_PORT: '8000',
       HOST: '127.0.0.1',
       LOG_LEVEL: 'silent',
       WEBTOOL_PROXY_URL: '',

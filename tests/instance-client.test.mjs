@@ -4,16 +4,57 @@ import { createInstanceClient, ApiError } from '../ui/core/api/instance-client.t
 import { visibleSettings } from '../ui/features/settings/settings-catalog.ts';
 import { workspaceScope } from '../ui/features/workspace/workspace-mode.ts';
 
-test('instance connects without cookies or authorization and loads capabilities', async () => {
+test('instance connects with same-origin credentials and loads capabilities', async () => {
   const client = createInstanceClient(async (url, init) => {
     assert.equal(url, '/api/features');
-    assert.equal(init.credentials, 'omit');
+    assert.equal(init.credentials, 'same-origin');
     assert.equal(init.headers.has('Authorization'), false);
     return Response.json({ features: [{ id: 'files' }, { id: 'usage' }] });
   });
   await client.refresh();
   assert.deepEqual(client.getSnapshot().info.features, ['files', 'usage']);
+  assert.equal(client.getSnapshot().authRequired, false);
   assert.equal(workspaceScope(client.getSnapshot(), false), 'instance');
+});
+
+test('401 transitions instance to locked and unlock restores ready state', async () => {
+  let locked = true;
+  const client = createInstanceClient(async (url, init) => {
+    if (url === '/api/features') {
+      if (locked) return Response.json({ error: { code: 'auth_required', message: 'locked' } }, { status: 401 });
+      return new Response(JSON.stringify({ features: [{ id: 'files' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'X-Matrius-Auth': 'required' },
+      });
+    }
+    if (url === '/api/auth/unlock') {
+      const body = JSON.parse(String(init.body));
+      if (body.secret !== 'good-secret') {
+        return Response.json({ error: { code: 'invalid_secret', message: '访问密钥不正确。' } }, { status: 401 });
+      }
+      locked = false;
+      return Response.json({ ok: true, unlocked: true });
+    }
+    if (url === '/api/auth/lock') {
+      locked = true;
+      return Response.json({ ok: true });
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  await client.refresh();
+  assert.equal(client.getSnapshot().status, 'locked');
+  assert.equal(client.getSnapshot().authRequired, true);
+
+  await assert.rejects(() => client.unlock('wrong'), (err) => err instanceof ApiError && err.status === 401);
+  assert.equal(client.getSnapshot().status, 'locked');
+
+  await client.unlock('good-secret');
+  assert.equal(client.getSnapshot().status, 'ready');
+  assert.equal(client.getSnapshot().authRequired, true);
+
+  await client.lock();
+  assert.equal(client.getSnapshot().status, 'locked');
 });
 
 test('unreachable instance is retried without a login state', async () => {

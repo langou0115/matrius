@@ -1,21 +1,27 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { extname, resolve } from 'node:path';
 
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 
 import { createAgentRunService, type AgentRunService } from './agent/run-service';
+import { isAuthorizedCookie } from './auth/secret-gate';
 import { getSettings, type Settings } from './config';
 import { openDatabase, type AppDatabase } from './db/client';
 import { migrate } from './db/migrate';
 import { AppError, errorBody, validationError, zodDetails } from './errors';
 import { registerAgentRoutes } from './routes/agent';
+import { registerAuthRoutes } from './routes/auth';
 import { registerConversationRoutes } from './routes/conversations';
 import { registerDebugRoutes } from './routes/debug';
 import { registerFeatureRoutes } from './routes/features';
 import { registerFileRoutes } from './routes/files';
 import { registerHealthRoutes } from './routes/health';
+import { registerModelRoutes } from './routes/models';
 import { registerTaskRoutes } from './routes/tasks';
 import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
@@ -44,6 +50,8 @@ export type BuildAppOptions = {
   runs?: AgentRunService;
   /** Skip migrations only when the caller already prepared the database. */
   migrate?: boolean;
+  /** Serve built UI assets from `dist/` (defaults to `settings.APP_ENV === 'production'`). */
+  serveStatic?: boolean;
 };
 
 export type BuiltApp = {
@@ -100,8 +108,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
         paths: [
           'req.headers.authorization',
           'req.headers["x-api-key"]',
+          'req.headers.cookie',
           'apiKey',
           'body.apiKey',
+          'body.apiKeys',
+          'secret',
+          'body.secret',
         ],
         censor: '[redacted]',
       },
@@ -120,6 +132,46 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
     limits: { fileSize: settings.MAX_UPLOAD_BYTES, files: 1 },
   });
   await registerDebugRoutes(app, { settings, search, fetch });
+
+  if (settings.authEnabled) {
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.method === 'OPTIONS') return;
+      const pathname = request.url.split('?', 1)[0] ?? '/';
+      const isPublicApi = pathname === '/api/health'
+        || pathname === '/api/health/ready'
+        || pathname.startsWith('/api/auth/');
+      const isProtected = (pathname.startsWith('/api/') && !isPublicApi)
+        || pathname === '/debug'
+        || pathname.startsWith('/debug-assets/');
+      if (!isProtected) return;
+      if (!isAuthorizedCookie(request.headers.cookie, settings.AUTH_SECRET)) {
+        reply.header('Cache-Control', 'no-store');
+        throw new AppError(401, 'auth_required', '请先输入访问密钥解锁。');
+      }
+    });
+  }
+
+  const distRoot = resolve(settings.repoRoot, 'dist');
+  const indexHtmlPath = resolve(distRoot, 'index.html');
+  const staticEnabled = (options.serveStatic ?? settings.APP_ENV === 'production') && existsSync(indexHtmlPath);
+  const indexHtml = staticEnabled ? readFileSync(indexHtmlPath) : null;
+  if (staticEnabled) {
+    await app.register(fastifyStatic, {
+      root: distRoot,
+      prefix: '/',
+      decorateReply: false,
+      wildcard: false,
+      index: false,
+      setHeaders(reply, filePath) {
+        const normalized = filePath.replaceAll('\\', '/');
+        if (normalized.endsWith('/sw.js') || normalized.endsWith('/manifest.json') || normalized.endsWith('/index.html')) {
+          reply.header('Cache-Control', 'no-cache');
+        } else if (normalized.includes('/assets/')) {
+          reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    });
+  }
 
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header('X-Request-ID', request.id);
@@ -152,18 +204,34 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
     });
   });
 
-  app.setNotFoundHandler((_request, reply) => {
+  app.setNotFoundHandler((request, reply) => {
+    const pathname = request.url.split('?', 1)[0] ?? '/';
+    const isAsset = pathname.startsWith('/assets/') || pathname.startsWith('/vendor/') || Boolean(extname(pathname));
+    if (
+      indexHtml
+      && (request.method === 'GET' || request.method === 'HEAD')
+      && !pathname.startsWith('/api/')
+      && !pathname.startsWith('/debug')
+      && !isAsset
+    ) {
+      reply.header('Cache-Control', 'no-cache');
+      reply.type('text/html; charset=utf-8');
+      reply.send(request.method === 'HEAD' ? '' : indexHtml);
+      return;
+    }
     reply.code(404).send({ error: { code: 'not_found', message: '资源不存在。' } });
   });
 
   registerHealthRoutes(app, { settings, db, storage, cache });
-  registerFeatureRoutes(app);
+  registerAuthRoutes(app, { settings, cache });
+  registerFeatureRoutes(app, settings);
   registerConversationRoutes(app, { db });
   registerWorkspaceRoutes(app, { db });
+  registerModelRoutes(app, { db });
   registerUsageRoutes(app, { db });
   registerTaskRoutes(app, { db });
   registerFileRoutes(app, { db, storage, cache, settings });
-  registerAgentRoutes(app, { runs });
+  registerAgentRoutes(app, { runs, db });
 
   app.addHook('onClose', async () => {
     runs.dispose();
@@ -180,6 +248,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
 export async function start(): Promise<FastifyInstance> {
   const settings = getSettings();
   const { app } = await buildApp({ settings });
-  await app.listen({ port: settings.PORT, host: settings.HOST });
+  await app.listen({ port: settings.API_PORT, host: settings.HOST });
   return app;
 }

@@ -6,13 +6,13 @@
 
 ## 平台与路由
 
-- React 19 + TypeScript 的普通 Web 应用，Vite 8 构建，React Router 7 路由；只维护 Web 界面，移动 Web 响应式适配后续按单独要求进行。界面使用原生 DOM 与 CSS，共享状态和业务契约不依赖 DOM。
+- React 19 + TypeScript 的普通 Web 应用，Vite 8 构建，React Router 7 路由；已支持桌面与移动 Web 响应式界面（767px 断点）。界面使用原生 DOM 与 CSS，共享状态和业务契约不依赖 DOM。
 - 路由表只有 `ui/router/routes.tsx` 一处，入口是根目录 `index.html` 与 `ui/main.tsx`；页面组件不再要求放在某个路由目录，也没有 `.web.tsx` / `.tsx` fallback 成对规则。
 - 导航统一从 `@/router` 导入 `Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href`；功能代码不直接导入 `react-router-dom`。测试通过 `tests/stubs/router.mjs` 替换该模块。
 - `Link asChild` 的锚点使用共享 `LinkAnchor`，由 `@/router` 的 `Link` 注入 `href` 与导航处理。
 - 浏览器差异集中在适配层，不在业务页面散落平台 API 调用。业务契约与 Web 实现分离，便于后续替换底层传输或存储。
-- Agent 运行在 `server/agent/`；客户端通过 `core/api/agent-runs.ts` 提交运行、消费 SSE，并用 `/api/agent/runs/:conversationId/stop` 与 `/steer` 发送停止/steer，共享类型与纯逻辑在 `contract/agent-*.ts`。聊天 React 层负责状态与模型设置适配，模型请求与目录查询均经服务端 `/api/agent/*` 发起，凭据只保存在浏览器。
-- 当前只保证桌面浏览器；移动 Web 的窄屏布局、软键盘、安全区与触屏交互在后续阶段单独适配。长会话避免一次挂载全部消息，流式更新避免重绘整个列表。
+- Agent 运行在 `server/agent/`；客户端通过 `core/api/agent-runs.ts` 提交运行、消费 SSE，并用 `/api/agent/runs/:conversationId/stop` 与 `/steer` 发送停止/steer，共享类型与纯逻辑在 `contract/agent-*.ts`。聊天 React 层负责状态与模型设置适配，模型请求与目录查询均经服务端 `/api/agent/*` 发起，模型配置与密钥保存在服务端 SQLite，浏览器只保存 `providerId` 等非敏感配置。
+- 移动端窄屏、抽屉导航、软键盘安全区、长按菜单与选择栏已适配；长会话避免一次挂载全部消息，流式更新避免重绘整个列表。真实设备上的连续选区与真实服务商浏览交互仍需结合实际场景验收。
 - 实现 Vite、React Router 或 React 19 API 前，先查对应版本的官方文档；不要引入 Expo、React Native Web、Metro 或第二套路由。
 
 ## 主题
@@ -22,7 +22,7 @@
 - 默认 Twitter 配色，目标迁移旧版 10 套配色；主题只改变颜色，布局、字体、间距和圆角统一管理。
 - tweakcn 预设的原始变量随代码保存，运行时不联网取主题。主题以 CSS 变量输出，业务代码不硬编码颜色。
 - 配色解析在主题切换时集中处理并复用结果，避免每条流式消息重复解析。Web 在 `resolve-theme.ts` 统一抬升暗色表面与文字的最低明度，保留预设色相和原始数据；设置中的主题缩略图跟随当前明暗模式使用相同解析结果。
-- 偏好统一接入本地仓储持久化，不先写只对 Web 生效的临时存储。
+- 偏好统一接入实例 REST 仓储持久化，不先写只对浏览器生效的临时存储。
 
 ## 字体
 
@@ -45,20 +45,18 @@
 - Web 目标是同一回答跨段落连续选中；跨独立组件连续选区需要单独验证，不能直接套用旧版选区实现。
 - 停止或出错时保留已生成文本与模型实际返回的推理/工具活动。供应商隐藏的思考内容不展示，也不重新注入上下文。
 
-## 本地存储与安全存储
+## 本地存储与服务端存储
 
-- Web 只用 IndexedDB 持久化模型配置、密钥与设备状态；聊天、记忆与偏好保存在服务端。实现与边界见[存储与数据](data.md)。
-- 密钥不得进入普通业务存储、日志、崩溃上报或同步载荷。
-- 浏览器没有系统级安全存储；`core/platform/model-credentials.ts` 只定义凭据接口与工作区独立的内存实现，正式工作区由 `features/models/model-credential-store.ts` 把密钥单独写入 IndexedDB 的 `model-credentials` 记录，刷新后仍可用；Mock 预览继续使用内存实现，不读写这份记录。
-- 该记录**未加密**，同源脚本与能访问本机浏览器配置的人都能读取，界面上必须如实说明。密钥始终不进入 `model-preferences`、工作区记录、日志、崩溃上报或同步载荷；删除服务商会一并删除对应密钥，清除站点数据会删除全部密钥。
+- 会话、记忆、偏好、模型配置与 API key 全部保存在服务端。实现与边界见[存储与数据](data.md)。
+- 密钥不得进入日志或崩溃上报；浏览器只保存设备状态（如上次会话路径），不再把模型配置或 API key 写入浏览器 IndexedDB，服务端也不向浏览器回传明文 API key。Mock 预览继续使用仅存在于当前页面会话的内存实现，不读写服务端数据。
 - 浏览器不直接访问服务器上的 SQLite 数据库或文件目录，只通过 `/api/*`（含 SSE）访问。
 
 ## Agent 运行与模型调用
 
-Agent Runtime 在服务端运行。浏览器通过 `POST /api/agent/runs` 的 SSE 提交运行并消费事件（文本、推理、工具、用量、结束），通过 `/api/agent/runs/:conversationId/stop` 与 `/steer` 停止或纠偏；上下文组装、工具执行、压缩、标题与记忆都在 `server/agent`。模型配置与 API key 每次运行临时发送，服务端不落库、不写日志。
+Agent Runtime 在服务端运行。浏览器通过 `POST /api/agent/runs` 的 SSE 提交运行并消费事件（文本、推理、工具、用量、结束），通过 `/api/agent/runs/:conversationId/stop` 与 `/steer` 停止或纠偏；上下文组装、工具执行、压缩、标题与记忆都在 `server/agent`。服务端按请求中的模型配置读取本地数据库里保存的 API key 发起调用，不写日志。
 
 - 服务端负责协议解码、SSE 分帧、工具循环与错误映射；客户端只消费运行事件并按事件更新消息。
-- 模型目录查询通过 `POST /api/agent/models` 由服务端直接向服务商请求，避免浏览器 CORS 预检差异；服务端不保存密钥。
+- 模型目录查询通过 `POST /api/agent/models` 由服务端直接向服务商请求，避免浏览器 CORS 预检差异，并可复用服务端已保存的 API key。
 - 同一会话只允许一个活动运行；运行状态在服务端进程内，刷新页面或重启服务不保证恢复。
 
 ## 依赖与构建
@@ -66,4 +64,4 @@ Agent Runtime 在服务端运行。浏览器通过 `POST /api/agent/runs` 的 SS
 - 使用 React Router 7，不引入第二套路由。优先复用现有依赖；新增第三方状态管理、网络或代码生成库前先与维护者确认。
 - 依赖通过 `npm install <package>` 安装并提交 `package-lock.json`；当前使用 npm，未来如切换 Bun 并存在 `bun.lock`，统一使用 `bunx`。
 - 项目只构建 Web + PWA，不包含 `ios/`、`android/` 工程或原生壳。
-- 生产构建执行 `npm run build`：Vite 输出静态 SPA 到 `dist/`，由静态服务器提供；`index.html` 直接携带 manifest、主题色与 Apple 触摸图标元数据，不再有导出后注入步骤；`public/sw.js` 提供应用外壳离线缓存。部署方式待重新设计。
+- 单进程使用执行 `npm run start`（先运行 `vite build` 输出静态 SPA 到 `dist/`，再由单进程 Fastify 托管静态资源与 `/api/*`）；`index.html` 直接携带 manifest、主题色与 Apple 触摸图标元数据，不再有导出后注入步骤；`public/sw.js` 提供应用外壳离线缓存。

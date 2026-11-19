@@ -11,7 +11,8 @@ server/agent/tools/
 ├── index.ts        # built-in registration list
 ├── _template/      # copy this when adding a tool
 ├── web/            # web_search + web_fetch (implemented)
-└── file/           # list/read/grep (implemented); create/edit/save next
+├── file/           # list/read/grep/inspect/help/create/edit/save/delete (implemented)
+└── ui/             # interactive UI blocks (implemented)
 ```
 
 ## Adding a tool

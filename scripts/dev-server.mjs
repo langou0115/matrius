@@ -8,15 +8,19 @@ const cacheDir = join(root, 'node_modules', '.cache', 'matrius-server');
 
 // Stat source files without reading their contents. Exclude tests and large
 // vendor binaries; resource paths still refer to the original source directory.
-export async function sourceSnapshot(directory) {
+export async function sourceSnapshot(directory, options = {}) {
+  const {
+    pattern = /\.(?:ts|json|sql)$/u,
+    skipDirs = ['tests', 'vendor', 'node_modules', '.data', '.venv'],
+  } = options;
   const entries = await readdir(directory, { withFileTypes: true });
   const groups = await Promise.all(entries.map(async (entry) => {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      return ['tests', 'vendor', 'node_modules', '.data', '.venv'].includes(entry.name)
-        ? [] : sourceSnapshot(path);
+      return skipDirs.includes(entry.name)
+        ? [] : sourceSnapshot(path, { pattern, skipDirs });
     }
-    if (!/\.(?:ts|json|sql)$/u.test(entry.name)) return [];
+    if (pattern && !pattern.test(entry.name)) return [];
     const info = await stat(path);
     return [[path, info.size, info.mtimeMs, info.ctimeMs]];
   }));

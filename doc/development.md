@@ -4,7 +4,7 @@
 
 ## 本机开发
 
-npm ci 安装依赖；npm run dev 常驻启动 Node API 与 Vite，启动时自动迁移开发库。默认 Web 8081、API 8000，通过 .env.local 的 DEV_WEB_PORT / DEV_API_PORT 配置。Vite 将 /api 请求代理到本机 API。开发不连接生产服务器。
+npm ci 安装依赖；npm run start 默认按 .env.local 的 API_PORT（默认 8000）启动单进程服务；开发热更新时 npm run dev 常驻启动 Node API 与 Vite，启动时自动迁移开发库，默认 Web 8081、API 8000，通过 .env.local 的 WEB_PORT / API_PORT 配置。Vite 将 /api 请求代理到本机 API。开发不连接生产服务器。
 
 Node API 在启动时读取服务端代码与 .env.local，npm run dev 不会热重载 API；修改服务端代码、代理或搜索/抓取限额后需要重启 npm run dev。只改后端时也可以使用 `npm run dev:server`（tsx watch，自动重启）。
 
@@ -47,6 +47,6 @@ Agent 在服务端运行，结合 Node API 日志与浏览器 Network 的 SSE �
 
 /mock/* 仅开发可用，由 ui/router/routes.tsx 的 MockOnly 保护，生产重定向首页。
 
-部署方式待重新设计，当前不发布到服务器；本文只覆盖本机开发。
+日常单进程使用只需 `npm ci` 后直接执行 `npm run start`（[scripts/start.mjs](../scripts/start.mjs) 会先执行一次完整 `vite build` 编译 `dist/`，再以单进程 Fastify 同时托管静态页面与 `/api/*`，按 `.env.local` 的 `API_PORT`（默认 `8000`）监听，待 `/api/health/ready` 就绪后打印访问地址，可通过 `AUTH_SECRET` 开启开屏密钥解锁；开发热更新仍用 `npm run dev`）。`npm run build` 仍可单独触发构建。
 
 提交前同步文档，如实报告实际检查与未实测范围，不提交密钥或真实用户数据。

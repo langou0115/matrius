@@ -914,6 +914,33 @@ input[type='password']::-ms-clear { display: none; }
 @media (max-width: 767px) { .storage-error { gap: 10px; padding: 12px; } .storage-error button { width: 44px; height: 44px; } }
 @media (prefers-color-scheme: dark) { .storage-screen { background: #212121; color: #b4b4b4; } .storage-screen strong { color: #ececec; } }
 
+.auth-unlock-screen { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; font-family: var(--font-display); background: #fafafa; color: #202123; }
+.auth-unlock-card { width: min(380px, 100%); display: flex; flex-direction: column; gap: 16px; padding: 28px 24px; border: 1px solid #e5e7eb; border-radius: 20px; background: #ffffff; box-shadow: 0 10px 30px #0000000d; }
+.auth-unlock-brand { display: flex; align-items: center; gap: 12px; }
+.auth-unlock-brand h1 { margin: 0; font-size: 22px; font-family: var(--font-semibold); font-weight: 500; letter-spacing: -.4px; }
+.auth-unlock-description { margin: 0; font-size: var(--text-small); line-height: 1.6; color: #536471; }
+.auth-unlock-field { display: block; }
+.auth-unlock-input-wrap { position: relative; display: flex; align-items: center; }
+.auth-unlock-icon { position: absolute; left: 12px; color: #6b7280; pointer-events: none; }
+.auth-unlock-input-wrap input { width: 100%; border: 1px solid #d1d5db; border-radius: 12px; padding: 11px 42px 11px 38px; font-size: 16px; color: #111827; background: #ffffff; }
+.auth-unlock-input-wrap input:focus { outline: none; border-color: #1d9bf0; }
+.auth-unlock-toggle { position: absolute; right: 6px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: #6b7280; }
+.auth-unlock-toggle:hover { background: #f3f4f6; color: #111827; }
+.auth-unlock-error { margin: 0; font-size: var(--text-caption); color: #c93b3b; }
+.auth-unlock-submit { width: 100%; border-radius: 12px; padding: 11px 16px; font-size: var(--text-small); font-family: var(--font-medium); background: #1d9bf0; color: #ffffff; cursor: pointer; }
+.auth-unlock-submit:disabled { opacity: .55; cursor: not-allowed; }
+@media (prefers-color-scheme: dark) {
+  .auth-unlock-screen { background: #171717; color: #ececec; }
+  .auth-unlock-card { background: #212121; border-color: #303030; box-shadow: 0 12px 32px #00000040; }
+  .auth-unlock-description { color: #b4b4b4; }
+  .auth-unlock-icon { color: #9ca3af; }
+  .auth-unlock-input-wrap input { background: #171717; border-color: #3a3a3a; color: #f3f4f6; }
+  .auth-unlock-input-wrap input:focus { border-color: #38bdf8; }
+  .auth-unlock-toggle { color: #9ca3af; }
+  .auth-unlock-toggle:hover { background: #2c2c2c; color: #f3f4f6; }
+  .auth-unlock-error { color: #f87171; }
+}
+
 .assistant-message { margin: 0 0 32px; color: var(--foreground); overflow-wrap: anywhere; font-size: var(--text-body); line-height: 1.6; }
 /* Deliberately not a scroll container. A box that scrolls one way has to clip the other, and
    KaTeX's inline layout draws a couple of pixels below the line box (fractions and matrices

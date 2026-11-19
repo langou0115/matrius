@@ -17,6 +17,8 @@ export type AgentRequest = {
   messages: Message[];
   config?: ModelConfig;
   apiKey: string;
+  /** True when the server already holds a stored API key for this provider. */
+  hasApiKey?: boolean;
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
   /** Long-term memory text travels in the trailing request context, not the cacheable system prompt. */
@@ -294,7 +296,7 @@ export function createRemoteAgentRuntime({ onReply, onSummary, onUsage }: Runtim
         update({ error: '请先在设置 → 模型服务中添加并选择模型。' });
         return false;
       }
-      if (request.config.requiresApiKey && !request.apiKey) {
+      if (request.config.requiresApiKey && !request.apiKey && !request.hasApiKey) {
         update({ error: '请先填写模型 API Key。' });
         return false;
       }

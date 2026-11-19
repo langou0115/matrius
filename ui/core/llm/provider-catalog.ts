@@ -4,14 +4,21 @@ export type { CatalogModel };
 
 const CLIENT_TIMEOUT_MS = 15_000;
 
+export type FetchProviderCatalogOptions = {
+  providerId?: string;
+  hasSavedKey?: boolean;
+};
+
 export async function fetchProviderCatalog(
-  provider: Pick<ProviderConfig, 'baseUrl' | 'protocol' | 'requiresApiKey'>,
+  provider: Pick<ProviderConfig, 'baseUrl' | 'protocol' | 'requiresApiKey'> & { id?: string },
   apiKey: string,
   fetcher: typeof fetch = fetch,
+  options: FetchProviderCatalogOptions = {},
 ): Promise<CatalogModel[]> {
   const baseUrl = validateBaseUrl(provider.baseUrl);
   const trimmedKey = apiKey.trim();
-  if (provider.requiresApiKey && !trimmedKey) {
+  const providerId = options.providerId ?? provider.id;
+  if (provider.requiresApiKey && !trimmedKey && !options.hasSavedKey) {
     throw new Error('请先在服务商设置中填写 API key，再获取模型列表。');
   }
 
@@ -22,12 +29,13 @@ export async function fetchProviderCatalog(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
+        ...(providerId ? { providerId } : {}),
         protocol: provider.protocol,
         baseUrl,
         requiresApiKey: provider.requiresApiKey,
         ...(trimmedKey ? { apiKey: trimmedKey } : {}),
       }),
-      credentials: 'omit',
+      credentials: 'same-origin',
       cache: 'no-store',
       signal: controller.signal,
     });

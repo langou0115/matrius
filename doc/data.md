@@ -4,12 +4,12 @@
 
 ## 唯一事实源
 
-会话、消息、已读、记忆、画像、外观、网络工具偏好、文件元数据和 Token 用量统一保存到实例后端。
-浏览器不维护聊天工作区副本，不提供匿名模式、离线写入或本地/云端同步。
+会话、消息、已读、记忆、画像、外观、网络工具偏好、模型服务配置与 API key、文件元数据和 Token 用量统一保存到实例后端。
+浏览器不维护聊天工作区、模型配置或 API key 副本，不提供匿名模式、离线写入或本地/云端同步。
 UI → features → repository → API → SQLite / 文件系统。
 
-客户端仍使用 IndexedDB 保存模型服务配置和独立的模型密钥记录；当前会话位置等设备状态可留在浏览器。
-旧浏览器工作区数据保留但不再加载或写入；`browser-store.ts` 中的历史格式读取与迁移辅助函数不构成产品模式。
+仅最近会话位置等设备状态可留在浏览器。
+旧浏览器工作区与模型数据不再加载或写入；`browser-store.ts` 中的历史格式读取与迁移辅助函数不构成产品模式。
 `/mock/*` 的工作区和模型配置只在内存中，正式构建不可访问。
 
 ## 目录
@@ -37,9 +37,9 @@ SQLite 事务与文件替换不是跨存储的原子事务；备份和恢复应�
 
 默认数据目录从旧的 `server/.data` 改为 `~/.matrius`；若要沿用旧开发数据，先停止 API，再把旧目录的 `matrius.db*`、`files/` 和 `drafts/` 复制到新目录（或在 `.env.local` 把 `DATA_DIR` 指回旧路径）。
 
-开发启动和 `npm run db:migrate` 直接在 `DATA_DIR/matrius.db`（默认 `~/.matrius/matrius.db`）上执行 `server/db/migrations` 的 SQL 迁移（由 `server/db/migrate.ts` 执行，并保留 `alembic_version` 表兼容旧库）；`--reset-db` 清空当前数据目录的数据库、上传文件和草稿。
+服务启动（`npm run start`、`npm run dev`）及 `npm run db:migrate` 直接在 `DATA_DIR/matrius.db`（默认 `~/.matrius/matrius.db`）上执行 `server/db/migrations` 的 SQL 迁移（由 `server/db/migrate.ts` 执行，并保留 `alembic_version` 表兼容旧库）；`npm run dev -- --reset-db` 清空当前数据目录的数据库、上传文件和草稿。
 
-数据库只有一条基线迁移 `0001_initial`，直接创建单实例 schema（`instance.id=1` 及指向它的业务表）。空库初始化不会生成迁移备份或其他伴随文件；新库的持久内容只有 `matrius.db` 和 `files/`。
+数据库以 `0001_initial` 为基线创建单实例 schema（`instance.id=1` 及指向它的业务表），随后按序应用 `0002_scheduled_tasks`、`0003_ui_blocks`、`0004_model_configs` 等迁移。空库初始化不会生成迁移备份或其他伴随文件；新库的持久内容只有 `matrius.db` 和 `files/`。
 上传文件写入 `DATA_DIR/files/<fileId>/<safeName>`，数据库只保存元数据；旧版 `users/<userId>/...` 布局及其迁移逻辑已移除，开发阶段不迁移旧账户数据。
 
 ## 写入与冲突
@@ -55,4 +55,4 @@ SQLite 事务与文件替换不是跨存储的原子事务；备份和恢复应�
 搜索结果/文件文本缓存、滑动窗口限流和并发计数存在 API 内存，重启清零。
 文档草稿元数据在内存、字节在 drafts 下，重启失效，因此 API 保持单 Node 进程。
 Agent 循环、取消与运行状态在服务端进程内，刷新页面或重启服务不保证恢复；输入框草稿仍只保留在页面会话。
-模型 API key 只持久化在浏览器，不写日志；模型中继会在单次请求期间转发给服务商，不保存密钥。
+模型 API key 保存在服务端 `model_configs` 表中，不回传给浏览器、不写日志；`/api/agent/*` 请求时由服务端直接取出并转发给模型服务商。

@@ -15,7 +15,9 @@ const environmentSchema = z.object({
   CORS_ORIGINS: z.string().default(''),
   LOG_LEVEL: z.string().default('info'),
   HOST: z.string().default('0.0.0.0'),
-  PORT: z.coerce.number().int().min(1).max(65_535).default(8000),
+  API_PORT: z.coerce.number().int().min(1).max(65_535).default(8000),
+  AUTH_SECRET: z.string().default('').transform((value) => value.trim()),
+  AUTH_SESSION_TTL_SECONDS: z.coerce.number().int().min(60).default(7 * 24 * 3600),
   DATA_DIR: z.string().optional(),
   DATABASE_URL: z.string().optional(),
   SQLITE_BUSY_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
@@ -65,6 +67,12 @@ export type Settings = Environment & {
   readonly databasePath: string;
   readonly corsOrigins: string[];
   readonly enableDebugPage: boolean;
+  readonly authEnabled: boolean;
+};
+
+export type LoadSettingsOptions = {
+  /** Override `.env.local` loading (`false` disables file loading; string reads a specific file). */
+  envFile?: boolean | string;
 };
 
 function readEnvFile(path: string): Record<string, string | undefined> {
@@ -100,12 +108,22 @@ function resolveFrom(base: string, value: string): string {
 /**
  * Load configuration once per process.
  *
- * Development reads the repository `.env.local` as a second source, mirroring the
- * Python server. Production never reads that file; the container environment is
- * the only source of configuration there.
+ * Both development and production read the repository `.env.local` as a fallback
+ * source behind process environment variables, while `APP_ENV=test` skips it so
+ * tests remain isolated from local developer files.
  */
-export function loadSettings(processEnv: NodeJS.ProcessEnv = process.env): Settings {
-  const envFile = processEnv.APP_ENV === 'production' ? {} : readEnvFile(resolve(REPO_ROOT, '.env.local'));
+export function loadSettings(
+  processEnv: NodeJS.ProcessEnv = process.env,
+  options: LoadSettingsOptions = {},
+): Settings {
+  const defaultEnvPath = resolve(REPO_ROOT, '.env.local');
+  const envFile = options.envFile === false
+    ? {}
+    : typeof options.envFile === 'string'
+      ? readEnvFile(options.envFile)
+      : processEnv.APP_ENV === 'test'
+        ? {}
+        : readEnvFile(defaultEnvPath);
   const parsed = environmentSchema.parse({ ...envFile, ...processEnv });
 
   const dataDir = parsed.DATA_DIR
@@ -128,6 +146,7 @@ export function loadSettings(processEnv: NodeJS.ProcessEnv = process.env): Setti
     enableDebugPage: parsed.ENABLE_DEBUG_PAGE !== undefined
       ? parsed.ENABLE_DEBUG_PAGE === 'true'
       : parsed.APP_ENV !== 'production',
+    authEnabled: parsed.AUTH_SECRET.length > 0,
   };
 }
 

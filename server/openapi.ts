@@ -287,7 +287,9 @@ export const openApiDocument = {
   servers: [{ url: '/' }],
   tags: [
     { name: 'health', description: 'Liveness and readiness' },
+    { name: 'auth', description: 'Optional AUTH_SECRET splash unlock' },
     { name: 'features', description: 'Instance capability list' },
+    { name: 'models', description: 'Server-persisted provider and model configs' },
     { name: 'conversations', description: 'Conversations and messages' },
     { name: 'workspace', description: 'Preferences, profile, memories and import compatibility' },
     { name: 'files', description: 'Library upload, download and metadata' },
@@ -309,11 +311,60 @@ export const openApiDocument = {
         responses: { ...ok(obj({ service: str(), status: str(), checks: obj({}, []), documents: obj({}, []) })), ...error('503', 'Degraded') },
       },
     },
+    '/api/auth/status': {
+      get: {
+        tags: ['auth'],
+        summary: 'Whether AUTH_SECRET splash login is enabled and unlocked',
+        responses: ok(obj({ required: bool(), unlocked: bool() })),
+      },
+    },
+    '/api/auth/unlock': {
+      post: {
+        tags: ['auth'],
+        summary: 'Verify AUTH_SECRET and issue an HttpOnly session cookie',
+        requestBody: jsonBody(obj({ secret: str() }, ['secret'])),
+        responses: { ...ok(obj({ ok: bool(), unlocked: bool() })), ...error('401', 'Invalid secret'), ...error('429', 'Rate limited') },
+      },
+    },
+    '/api/auth/lock': {
+      post: {
+        tags: ['auth'],
+        summary: 'Clear the session cookie to lock access again',
+        responses: ok(obj({ ok: bool() })),
+      },
+    },
     '/api/features': {
       get: {
         tags: ['features'],
         summary: 'List instance features',
         responses: ok(obj({ features: arr(obj({ id: str(), name: str(), description: str() })) })),
+      },
+    },
+    '/api/models': {
+      get: {
+        tags: ['models'],
+        summary: 'Get server-stored providers, selections, and key presence (never raw API keys)',
+        responses: ok(obj({
+          providers: arr(obj({}, [])),
+          selectedId: nullable(str()),
+          titleModelId: nullable(str()),
+          memoryModelId: nullable(str()),
+          configuredKeyProviderIds: arr(str()),
+          revision: int(),
+        })),
+      },
+      put: {
+        tags: ['models'],
+        summary: 'Update providers, selections, and optional provider API keys with baseRevision',
+        requestBody: jsonBody(obj({
+          baseRevision: int(),
+          providers: arr(obj({}, [])),
+          selectedId: nullable(str()),
+          titleModelId: nullable(str()),
+          memoryModelId: nullable(str()),
+          apiKeys: obj({}, []),
+        }, ['baseRevision', 'providers', 'selectedId', 'titleModelId', 'memoryModelId'])),
+        responses: { ...ok(obj({}, [])), ...errorResponses },
       },
     },
     '/api/conversations': {

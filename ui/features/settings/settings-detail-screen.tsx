@@ -3,6 +3,8 @@ import type { CSSProperties } from 'react';
 import { Icon } from '@/components/web/icon';
 import { BrandMark } from '@/components/web/brand-mark';
 import { useResolvedColorMode } from '@/components/web/app-frame';
+import { useInstance } from '@/features/instance/instance-state';
+import { useIsPreview } from '@/features/workspace/preview-context';
 import { resolveTheme } from '@/theme/resolve-theme';
 import { useAppearance } from '@/theme/appearance';
 import { themePresets } from '@/theme/presets';
@@ -36,9 +38,22 @@ export function AppearanceSettingsScreen() {
 }
 
 export function AboutSettingsScreen() {
+  const instance = useInstance();
+  const preview = useIsPreview();
   return <SettingsPage title="关于 Matrius" description="应用信息与实例存储说明。">
       <section className="settings-section" aria-labelledby="about-heading"><h2 id="about-heading">关于</h2>
         <div className="about-card"><span className="about-logo"><BrandMark size={38} /></span><div><h3>Matrius</h3><p>一个安静、自由的 AI 对话空间。</p></div><span className="version-label">v1.0.0</span></div>
       </section>
+      {!preview && instance.authRequired && <section className="settings-section" aria-labelledby="security-heading"><h2 id="security-heading">访问安全</h2>
+        <div className="settings-list">
+          <div className="settings-row">
+            <span className="settings-row-copy">
+              <strong>访问密钥已启用</strong>
+              <small>锁定当前浏览器后需要重新输入 AUTH_SECRET 解锁。</small>
+            </span>
+            <button type="button" className="secondary-button settings-row-action" onClick={() => void instance.lock()}>锁定访问</button>
+          </div>
+        </div>
+      </section>}
   </SettingsPage>;
 }

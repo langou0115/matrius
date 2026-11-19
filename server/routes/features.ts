@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 
+import type { Settings } from '../config';
 import { enabledFeatures } from '../features/registry';
 
 /**
@@ -8,9 +9,10 @@ import { enabledFeatures } from '../features/registry';
  * The response must never be cached: a deployment can add a feature and the
  * open page should see it after a refresh, not after a cache expiry.
  */
-export function registerFeatureRoutes(app: FastifyInstance): void {
+export function registerFeatureRoutes(app: FastifyInstance, settings: Pick<Settings, 'authEnabled'>): void {
   app.get('/api/features', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
+    if (settings.authEnabled) reply.header('X-Matrius-Auth', 'required');
     return { features: enabledFeatures() };
   });
 }

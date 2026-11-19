@@ -17,9 +17,9 @@ const { handleDevApi } = createRequire(import.meta.url)('../scripts/dev-api-prox
 
 test('development ports validate overrides', () => {
   assert.deepEqual(devPorts({}), [8081, 8000]);
-  assert.deepEqual(devPorts({ DEV_WEB_PORT: '8082', DEV_API_PORT: '8001' }), [8082, 8001]);
-  for (const value of ['0', '-1', '65536', 'abc', '80;bad']) assert.throws(() => devPorts({ DEV_WEB_PORT: value }));
-  assert.throws(() => devPorts({ DEV_WEB_PORT: '8000' }), /differ/);
+  assert.deepEqual(devPorts({ WEB_PORT: '8088', API_PORT: '8008' }), [8088, 8008]);
+  for (const value of ['0', '-1', '65536', 'abc', '80;bad']) assert.throws(() => devPorts({ WEB_PORT: value }));
+  assert.throws(() => devPorts({ WEB_PORT: '8000' }), /differ/);
 });
 
 test('the web dev server keeps the configured port and can rebuild its dependency cache', () => {

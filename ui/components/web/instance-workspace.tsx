@@ -15,6 +15,7 @@ import { PersonalizationProvider, usePersonalization } from '@/features/settings
 import { MemoryProvider, useMemory } from '@/features/memory/memory-state';
 import { TasksProvider } from '@/features/tasks/tasks-state';
 import { useInstance } from '@/features/instance/instance-state';
+import { AuthUnlockScreen } from '@/features/instance/auth-unlock-screen';
 import { createCloudWorkspaceRepository } from '@/features/workspace/cloud-workspace-repository';
 import { workspaceScope } from '@/features/workspace/workspace-mode';
 import { NetworkToolsProvider } from '@/features/instance/network-tools-state';
@@ -133,6 +134,9 @@ function RememberLastConversation({ scope }: { scope: string }) {
 export function InstanceWorkspace({ children, preview }: PropsWithChildren<{ preview: boolean }>) {
   const instance = useInstance();
   const resolved = workspaceScope(instance, preview);
+  if (!preview && instance.status === 'locked') {
+    return <AuthUnlockScreen onUnlock={instance.unlock} />;
+  }
   if (resolved === 'pending') return <div className="storage-screen" role="status">
     <strong>Matrius</strong>
     <p>{instance.status === 'unavailable' ? '无法连接实例，请检查网络后重试。' : '正在连接实例…'}</p>

@@ -211,6 +211,7 @@ test('tasks screen renders clean empty state without suggestions when there are 
     const path = String(url);
     let data = { items: [], nextCursor: null };
     if (path === '/api/features') data = { features: [{ id: 'tasks' }] };
+    if (path === '/api/models') data = { providers: [], selectedId: null, titleModelId: null, memoryModelId: null, configuredKeyProviderIds: [], revision: 1 };
     if (path === '/api/preferences') data = { themeId: 'twitter', mode: 'system', revision: 1 };
     if (path === '/api/profile') data = { customInstructions: '', aboutName: '', occupation: '', aboutMore: '', revision: 1 };
     if (path.startsWith('/api/profile/fields/')) data = { value: '{}', revision: 1 };

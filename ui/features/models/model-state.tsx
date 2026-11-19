@@ -2,52 +2,137 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type P
 
 import type { ThinkingEffort } from '@contract/agent-thinking';
 import { flattenProviderModels, validateModelConfig, validateProviderConfig, type ModelConfig, type ProviderConfig, type ProviderModelConfig } from '@contract/agent-provider';
+import { ApiError } from '@/core/api/instance-client';
 import { createModelCredentials, type CredentialVault } from '@/core/platform/model-credentials';
-import { createStoredModelCredentials } from './model-credential-store';
-import { loadModelPreferences, saveModelPreferences, type ModelPreferences } from './model-repository';
+import { useInstance } from '@/features/instance/instance-state';
+import { fetchModelSettings, saveModelSettings } from './models-api';
+
+export type ModelPreferences = {
+  providers: ProviderConfig[];
+  selectedId: string | null;
+  titleModelId: string | null;
+  memoryModelId: string | null;
+};
+
+const EMPTY_PREFERENCES: ModelPreferences = {
+  providers: [],
+  selectedId: null,
+  titleModelId: null,
+  memoryModelId: null,
+};
 
 function useModelState(preview: boolean) {
-  const [data, setData] = useState<ModelPreferences>({ providers: [], selectedId: null, titleModelId: null, memoryModelId: null });
+  const instance = useInstance();
+  const [data, setData] = useState<ModelPreferences>(EMPTY_PREFERENCES);
+  const [configuredKeyProviderIds, setConfiguredKeyProviderIds] = useState<string[]>([]);
   const [ready, setReady] = useState(preview);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
-  // Preview stays on the session vault: it must not read or write real credentials.
-  const [vault] = useState<CredentialVault>(() => preview ? createModelCredentials() : createStoredModelCredentials());
+  // Preview stays on the session vault: it never reads or writes server credentials.
+  const [vault] = useState<CredentialVault>(() => createModelCredentials());
   const revision = useRef(0);
   const current = useRef(data);
+  const configuredKeysRef = useRef(configuredKeyProviderIds);
   const queue = useRef(Promise.resolve());
+  const requestRef = useRef(instance.request);
+  useEffect(() => {
+    requestRef.current = instance.request;
+  }, [instance.request]);
+
   const models = useMemo(() => flattenProviderModels(data.providers), [data.providers]);
 
   useEffect(() => {
     let active = true;
-    if (!preview) Promise.all([loadModelPreferences(), vault.load()]).then(([loaded]) => {
+    if (preview) return () => { active = false; };
+    fetchModelSettings(requestRef.current).then((loaded) => {
       if (!active) return;
-      revision.current = loaded.revision; current.current = loaded.data;
-      setData(loaded.data); setReady(true);
-    }).catch(() => { if (active) setError('无法读取模型配置，请刷新后重试。'); });
+      if (!loaded || !Array.isArray(loaded.providers)) {
+        setError('无法读取模型配置，请刷新后重试。');
+        return;
+      }
+      const next: ModelPreferences = {
+        providers: loaded.providers,
+        selectedId: loaded.selectedId ?? null,
+        titleModelId: loaded.titleModelId ?? null,
+        memoryModelId: loaded.memoryModelId ?? null,
+      };
+      const keyIds = Array.isArray(loaded.configuredKeyProviderIds) ? loaded.configuredKeyProviderIds : [];
+      revision.current = loaded.revision ?? 1;
+      current.current = next;
+      configuredKeysRef.current = keyIds;
+      setData(next);
+      setConfiguredKeyProviderIds(keyIds);
+      setError(null);
+      setReady(true);
+    }).catch(() => {
+      if (active) setError('无法读取模型配置，请刷新后重试。');
+    });
     return () => { active = false; };
-  }, [preview, vault]);
+  }, [preview]);
 
-  function update(next: ModelPreferences): Promise<void> {
+  function update(next: ModelPreferences, apiKeys?: Record<string, string | null>): Promise<void> {
     const operation = queue.current.then(async () => {
-      if (!preview) revision.current = await saveModelPreferences(next, revision.current);
-      current.current = next; setData(next); setError(null);
+      if (!preview) {
+        const saved = await saveModelSettings(requestRef.current, {
+          baseRevision: revision.current,
+          providers: next.providers,
+          selectedId: next.selectedId,
+          titleModelId: next.titleModelId,
+          memoryModelId: next.memoryModelId,
+          ...(apiKeys ? { apiKeys } : {}),
+        });
+        const nextPrefs: ModelPreferences = {
+          providers: saved.providers,
+          selectedId: saved.selectedId,
+          titleModelId: saved.titleModelId,
+          memoryModelId: saved.memoryModelId,
+        };
+        revision.current = saved.revision;
+        current.current = nextPrefs;
+        configuredKeysRef.current = saved.configuredKeyProviderIds;
+        setData(nextPrefs);
+        setConfiguredKeyProviderIds(saved.configuredKeyProviderIds);
+        setError(null);
+        return;
+      }
+      current.current = next;
+      setData(next);
+      setError(null);
     });
     queue.current = operation.catch(() => {});
-    return operation.catch(() => { throw new Error('模型配置未能保存，可能存在其他页面的修改。请刷新后重试。'); });
+    return operation.catch((reason: unknown) => {
+      if (reason instanceof ApiError) {
+        if (reason.status === 409) throw new Error('模型配置已在其他页面修改，请刷新后重试。');
+        throw new Error(reason.message);
+      }
+      throw new Error('模型配置未能保存，可能存在其他页面的修改。请刷新后重试。');
+    });
+  }
+
+  function hasKey(providerId: string): boolean {
+    return preview ? Boolean(vault.get(providerId)) : configuredKeysRef.current.includes(providerId);
   }
 
   async function saveProvider(config: ProviderConfig, apiKey: string) {
     const existing = current.current.providers.find((item) => item.id === config.id);
     const valid = validateProviderConfig({ ...config, models: existing?.models ?? config.models });
+    const trimmedKey = apiKey.trim();
+    let apiKeys: Record<string, string | null> | undefined;
+    if (!valid.requiresApiKey) {
+      apiKeys = { [valid.id]: null };
+    } else if (trimmedKey) {
+      apiKeys = { [valid.id]: trimmedKey };
+    }
     await update({
       providers: [...current.current.providers.filter((item) => item.id !== valid.id), valid],
       selectedId: current.current.selectedId ?? valid.models[0]?.id ?? null,
       titleModelId: current.current.titleModelId,
       memoryModelId: current.current.memoryModelId,
-    });
-    if (!valid.requiresApiKey) await vault.delete(valid.id);
-    else if (apiKey.trim()) await vault.set(valid.id, apiKey);
+    }, apiKeys);
+    if (preview) {
+      if (!valid.requiresApiKey) await vault.delete(valid.id);
+      else if (trimmedKey) await vault.set(valid.id, trimmedKey);
+    }
     setVersion((value) => value + 1);
   }
 
@@ -84,11 +169,12 @@ function useModelState(preview: boolean) {
   }
 
   return {
-    ...data, models, ready, error, version,
+    ...data, models, ready, error, version, configuredKeyProviderIds,
     selected: models.find((item) => item.id === data.selectedId),
     titleModel: models.find((item) => item.id === data.titleModelId),
     memoryModel: models.find((item) => item.id === data.memoryModelId),
-    getKey: (providerId: string) => vault.get(providerId),
+    hasKey,
+    getKey: (providerId: string) => (preview ? vault.get(providerId) : ''),
     saveProvider,
     saveModel,
     async save(config: ModelConfig, apiKey: string) {
@@ -106,14 +192,23 @@ function useModelState(preview: boolean) {
           thinkingEffort: valid.thinkingEffort,
         }],
       });
+      const trimmedKey = apiKey.trim();
+      let apiKeys: Record<string, string | null> | undefined;
+      if (!provider.requiresApiKey) {
+        apiKeys = { [provider.id]: null };
+      } else if (trimmedKey) {
+        apiKeys = { [provider.id]: trimmedKey };
+      }
       await update({
         providers: [...current.current.providers.filter((item) => item.id !== provider.id), provider],
         selectedId: current.current.selectedId ?? valid.id,
         titleModelId: current.current.titleModelId,
         memoryModelId: current.current.memoryModelId,
-      });
-      if (!provider.requiresApiKey) await vault.delete(provider.id);
-      else if (apiKey.trim()) await vault.set(provider.id, apiKey);
+      }, apiKeys);
+      if (preview) {
+        if (!provider.requiresApiKey) await vault.delete(provider.id);
+        else if (trimmedKey) await vault.set(provider.id, trimmedKey);
+      }
       setVersion((value) => value + 1);
     },
     async select(id: string) {
@@ -153,8 +248,8 @@ function useModelState(preview: boolean) {
         selectedId: removed?.models.some((item) => item.id === current.current.selectedId) ? remainingModels[0]?.id ?? null : current.current.selectedId,
         titleModelId: removed?.models.some((item) => item.id === current.current.titleModelId) ? null : current.current.titleModelId,
         memoryModelId: removed?.models.some((item) => item.id === current.current.memoryModelId) ? null : current.current.memoryModelId,
-      });
-      await vault.delete(id);
+      }, { [id]: null });
+      if (preview) await vault.delete(id);
       setVersion((value) => value + 1);
     },
   };

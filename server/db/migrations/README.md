@@ -1,11 +1,9 @@
 # Migrations
 
-The TypeScript server keeps the `alembic_version` table and uses the same
-revision ids as Alembic. This is deliberate:
-
-- existing production/development databases are adopted, not rebuilt;
-- a rollback to the Python server still sees a known revision;
-- backups remain interchangeable.
+The TypeScript server keeps the `alembic_version` table and revision sequence
+(`0001_initial.sql` through `0004_model_configs.sql`). The Python server has been
+removed, while existing SQLite databases created under `0001_initial` are
+adopted seamlessly without rebuilding.
 
 ## Rules
 

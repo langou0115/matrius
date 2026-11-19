@@ -50,4 +50,23 @@ test('fetchProviderCatalog validates key locally and surfaces server errors', as
     }), { status: 502, headers: { 'Content-Type': 'application/json' } })),
     /Provider 返回 HTTP 401/,
   );
+
+  const savedCalls = [];
+  const models = await fetchProviderCatalog({
+    id: 'provider-saved',
+    protocol: 'completion',
+    baseUrl: 'https://api.example.com/v1',
+    requiresApiKey: true,
+  }, '', async (url, init) => {
+    savedCalls.push({ url: String(url), init, body: JSON.parse(String(init?.body)) });
+    return Response.json({ models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }] });
+  }, { providerId: 'provider-saved', hasSavedKey: true });
+  assert.equal(savedCalls[0].init.credentials, 'same-origin');
+  assert.deepEqual(savedCalls[0].body, {
+    providerId: 'provider-saved',
+    protocol: 'completion',
+    baseUrl: 'https://api.example.com/v1',
+    requiresApiKey: true,
+  });
+  assert.deepEqual(models, [{ id: 'deepseek-chat', name: 'deepseek-chat' }]);
 });

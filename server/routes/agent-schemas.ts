@@ -92,6 +92,7 @@ export const agentSteerSchema = z.object({
 });
 
 export const providerModelsRequestSchema = z.object({
+  providerId: z.string().min(1).max(200).optional(),
   protocol: z.enum(['completion', 'responses', 'message']),
   baseUrl: z.string().url().max(2_000),
   requiresApiKey: z.boolean().default(true),
