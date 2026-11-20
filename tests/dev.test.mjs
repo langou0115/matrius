@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  availablePort, devDataDir, devEnvironment, devWebArgs,
+  availablePort, devDataDir, devEnvironment, devTarget, devWebArgs,
   devWebEnv, devPorts, ready, resetDatabase, resetTargets, supervise,
 } from '../scripts/dev.mjs';
 const { handleDevApi } = createRequire(import.meta.url)('../scripts/dev-api-proxy.cjs');
@@ -27,10 +27,18 @@ test('the web dev server keeps the configured port and can rebuild its dependenc
   assert.deepEqual(devWebArgs(8081, { clear: true }).at(-1), '--force');
   assert.equal(devWebArgs(8081, { clear: false }).includes('--force'), false);
 
-  // The dev server proxies first-party API traffic to the local Node API.
+  // The dev server proxies first-party API traffic to the local Node API and forwards UI target.
   const env = devWebEnv({ env: { PATH: '/bin' }, apiPort: 8000 });
   assert.equal(env.MATRIUS_DEV_API_URL, 'http://127.0.0.1:8000');
+  assert.equal(env.VITE_MATRIUS_TARGET, 'web');
   assert.equal(env.PATH, '/bin');
+
+  assert.equal(devWebEnv({ apiPort: 8000, target: 'desktop' }).VITE_MATRIUS_TARGET, 'desktop');
+  assert.equal(devTarget([], {}), 'web');
+  assert.equal(devTarget(['--web'], { MATRIUS_TARGET: 'desktop' }), 'web');
+  assert.equal(devTarget(['--desktop'], {}), 'desktop');
+  assert.equal(devTarget([], { MATRIUS_TARGET: 'desktop' }), 'desktop');
+  assert.throws(() => devTarget(['--desktop', '--web'], {}), /combine/);
 });
 
 test('development environment is local-only and never inherits production data locations', () => {

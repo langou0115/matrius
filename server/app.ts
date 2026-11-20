@@ -21,7 +21,9 @@ import { registerDebugRoutes } from './routes/debug';
 import { registerFeatureRoutes } from './routes/features';
 import { registerFileRoutes } from './routes/files';
 import { registerHealthRoutes } from './routes/health';
+import { registerHostRoutes } from './routes/hosts';
 import { registerModelRoutes } from './routes/models';
+import { registerProjectRoutes } from './routes/projects';
 import { registerTaskRoutes } from './routes/tasks';
 import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
@@ -29,6 +31,8 @@ import { MemoryCache } from './services/cache';
 import { DraftStore } from './services/documents/drafts';
 import type { DocumentToolService } from './services/documents/service';
 import { createFetchService } from './services/fetch';
+import type { HostFsService } from './services/host-fs';
+import type { WorkHostService } from './services/hosts';
 import { createHttpClient } from './services/http';
 import { createSearchService } from './services/search';
 import { LocalStorage } from './services/storage';
@@ -48,6 +52,8 @@ export type BuildAppOptions = {
   storage?: LocalStorage;
   cache?: MemoryCache;
   runs?: AgentRunService;
+  hosts?: WorkHostService;
+  hostFs?: HostFsService;
   /** Skip migrations only when the caller already prepared the database. */
   migrate?: boolean;
   /** Serve built UI assets from `dist/` (defaults to `settings.APP_ENV === 'production'`). */
@@ -228,6 +234,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   registerConversationRoutes(app, { db });
   registerWorkspaceRoutes(app, { db });
   registerModelRoutes(app, { db });
+  registerHostRoutes(app, {
+    db,
+    ...(options.hosts ? { hosts: options.hosts } : {}),
+    ...(options.hostFs ? { hostFs: options.hostFs } : {}),
+  });
+  registerProjectRoutes(app, { db });
   registerUsageRoutes(app, { db });
   registerTaskRoutes(app, { db });
   registerFileRoutes(app, { db, storage, cache, settings });

@@ -7,6 +7,7 @@ import { useChat } from '../chat-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { conversationHref } from '../conversation-href';
 import { formatRelativeTime, searchConversations, splitMatches } from '../conversation-search';
+import { writeSidebarTab } from '../sidebar-mode';
 
 const PAGE_SIZE = 20;
 const LOAD_MORE_DISTANCE = 160;
@@ -37,6 +38,7 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
   }, [active, query]);
 
   function open(id: string) {
+    writeSidebarTab('chat');
     router.push(conversationHref(id, preview));
     onClose();
   }

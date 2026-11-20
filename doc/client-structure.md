@@ -55,6 +55,7 @@ ui/
 │   │   ├── conversation-route-state.ts URL 对话选择与有效性状态
 │   │   ├── conversation-search.ts      搜索匹配、命中片段、高亮分段与相对时间
 │   │   ├── last-conversation.ts        本机记住的最近对话与地址
+│   │   ├── sidebar-mode.ts             记住桌面端侧栏选中的「工作 / 对话」标签，进入设置再返回时保持原栏
 │   │   ├── location-pathname.ts        监听 history 变化，把地址栏作为页面事实源
 │   │   ├── message-order.ts            重新加载后还原 steering 消息顺序
 │   │   ├── scroll-position.ts          按会话记住滚动位置，防抖写入 localStorage
@@ -131,6 +132,15 @@ ui/
 │   │   ├── model-repository.ts         旧版无密钥元数据辅助（仅历史兼容测试）
 │   │   ├── model-settings-screen.tsx   Provider 与模型管理界面
 │   │   └── model-state.tsx             工作区模型状态（正常模式走服务端，Mock 走内存）
+│   ├── hosts/
+│   │   ├── hosts-api.ts                `/api/hosts` 桌面端 SSH / WSL 主机读写与探活接口
+│   │   └── host-settings-screen.tsx    设置页「工作 → 主机」管理界面（仅桌面端可用）
+│   ├── work/
+│   │   ├── work-api.ts                 `/api/projects` 与 `/api/hosts/:id/fs` 桌面端项目与目录浏览接口
+│   │   ├── work-state.ts               当前选中工作项目状态（sessionStorage 记忆）
+│   │   ├── work-sidebar-panel.tsx      桌面端侧栏「工作」面板（「创建项目」入口与项目列表）
+│   │   ├── create-project-dialog.tsx   「创建项目」弹窗（选择主机或跳转主机设置 + 选择项目目录）
+│   │   └── directory-browser-dialog.tsx 「选择项目目录」文件与目录浏览器弹窗（支持本机 / WSL / SSH）
 │   ├── instance/
 │   │   ├── auth-unlock-screen.tsx      `AUTH_SECRET` 开屏密钥解锁界面
 │   │   ├── instance-retry.ts           实例校验失败后的退避重试
@@ -164,7 +174,8 @@ ui/
 │   └── platform/
 │       ├── clipboard.ts                Web 原文复制适配
 │       ├── model-credentials.ts        凭据接口与内存实现
-│       └── run-protection.ts           生成期间的 beforeunload 离开确认
+│       ├── run-protection.ts           生成期间的 beforeunload 离开确认
+│       └── target.ts                   运行目标判定（`isDesktopTarget`，区分 Web 与桌面端）
 ├── theme/
 │   ├── appearance.tsx                  共享外观状态，默认 Twitter / 跟随系统
 │   ├── presets.ts                      旧版 tweakcn 原始配色变量
@@ -224,7 +235,7 @@ ui/
 ## 设置模块
 
 - `/settings` 是可搜索的设置目录，根路径跳转到 `/settings/appearance`；`/settings/appearance` 合并显示模式和配色主题，`/settings/models` 管理模型服务，`/settings/usage` 展示 Token 用量，`/settings/about` 展示应用信息；旧 `/settings/theme`、`/settings/display` 路径由 `appearance-redirect.tsx` 跳到外观页。Chat Mock 使用 `/mock/chat/settings` 下的同名子路径，继承开发守卫；实例、存储与用量是云端整页路由，不进入 Mock 分类。所有路径都在 `ui/router/routes.tsx` 注册。
-- `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-page.tsx` 渲染目录、搜索与分类导航，并管理共用页面框架与返回入口；`settings-detail-screen.tsx` 提供外观与关于等详情控件。`settings-return.ts` 记录进入设置前的页面：从会话进入返回该会话，从资料库进入返回资料库；只有直接打开设置且没有来源时才回退到当前会话或新对话。
+- `features/settings/settings-catalog.ts` 集中管理目录、搜索词与显示模式选项；`settings-page.tsx` 渲染目录、搜索与分类导航，并管理共用页面框架与返回入口；`settings-detail-screen.tsx` 提供外观与关于等详情控件。`settings-return.ts` 记录进入设置前的页面：从会话进入返回该会话，从资料库进入返回资料库；在桌面端从「工作」栏进入设置时，返回标签显示「返回工作」，返回后侧栏仍停留在「工作」栏；只有直接打开设置且没有来源时才回退到当前会话或新对话。桌面端非移动视口下在「应用」上方新增「工作 → 主机」（`/settings/hosts`，管理 SSH 主机与 WSL 发行版），网页端与移动端视口均隐藏并重定向。
 - 标签页标题由 `features/chat/document-title.ts` 决定：`/c/<id>`（含 Mock）使用对话名，空标题和其他页面使用 Matrius。
 - 设置子页均不卸载根工作区 Provider，导航期间保留会话、草稿与外观状态。
 - `/settings/personalization` 与 `/mock/chat/settings/personalization` 提供记忆、自定义指令和关于你的表单，入口与搜索集中在 `settings-catalog.ts`。`personalization.ts` 定义字段、默认值与校验，`personalization-state.tsx` 保存共享状态，`personalization-screen.tsx` 实现 Web 表单；根工作区通过已有仓储恢复和自动保存，Runtime 在每次请求开始时组装系统提示。
@@ -237,7 +248,7 @@ ui/
 - `core/api/agent-runs.ts`：浏览器侧 Agent 通信适配，提交运行、消费 SSE 并更新消息，同时发送停止/steer；Agent 循环与工具模块位于 server/agent 与 server/agent/tools。
 - `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到实例。
 
-- 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部实例所有者入口；搜索按钮保留在侧栏顶部。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
+- 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部实例所有者入口；搜索按钮保留在侧栏顶部。工作（Work）相关功能在网页端没有，且移动端视口同样按 Web 端处理（`npm run dev`、`npm run dev:web`、Web 构建及移动端均只显示对话导航）；仅当通过 `npm run dev:desktop` 以桌面端目标且非移动视口运行时，才会在品牌行与「新对话」之间显示「工作 / 对话」切换栏（默认停留「对话」；切换到「工作」时，左侧工作栏展示「创建项目」与项目列表，点击创建可选择主机或跳转「设置 → 工作 → 主机」并弹出目录与文件选择器挑选项目目录，右侧主工作区 `main.work-main` 仍保持空白占位，不显示聊天界面；从「工作」栏进入设置再返回时保持停留在「工作」栏）。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
 
 ## 实例与功能开关
 

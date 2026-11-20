@@ -20,6 +20,10 @@ Matrius 是可自行部署的单用户 AI 对话应用，提供 React Web 与 PW
 多模型流式对话、思考与工具过程、引用、分支、搜索、个人记忆、个性化、资料库、文档工具、交互式 UI 块、定时任务与 Token 用量。
 开发预览与接口调试页在 `/mock/*` 与 `/debug`，仅开发环境可用（生产构建关闭）。
 
+### Web 与 Desktop 边界
+
+- **工作（Work）相关功能在网页端没有（移动端同样按 Web 端看待）**：侧栏顶部的「工作 / 对话」切换栏、「工作」面板内的项目创建与主机目录浏览、设置页「应用」上方的「工作 → 主机」管理（SSH 主机与 WSL 发行版）及后续「工作」能力仅面向桌面端（Desktop，开发期通过 `npm run dev:desktop` 预览），网页端（Web 与 PWA，含桌面浏览器和移动浏览器，以及桌面预览下的移动端视口）均不提供也不显示工作相关功能。
+
 ## 技术边界
 
 React 19、TypeScript、Vite 8、React Router 7；Node 24、Fastify、node:sqlite、SQLite WAL。

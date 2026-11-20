@@ -8,8 +8,9 @@ import ts from 'typescript';
 // navigation module is replaced with a no-op stand-in before it can be loaded.
 const ROUTER_STUB = new URL('./stubs/router.mjs', import.meta.url);
 
-/** Vite replaces this at build time; tests toggle `globalThis.__DEV__` instead. */
+/** Vite replaces these at build time; tests toggle globals instead. */
 const DEV_FLAG = /import\.meta\.env\.DEV/g;
+const TARGET_FLAG = /import\.meta\.env\.VITE_MATRIUS_TARGET/g;
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === '@/router') {
@@ -35,7 +36,9 @@ export async function resolve(specifier, context, nextResolve) {
 
 export async function load(url, context, nextLoad) {
   if (/\.tsx?$/.test(url) && !url.includes('/node_modules/')) {
-    const source = readFileSync(fileURLToPath(url), 'utf8').replace(DEV_FLAG, '(globalThis.__DEV__ === true)');
+    const source = readFileSync(fileURLToPath(url), 'utf8')
+      .replace(DEV_FLAG, '(globalThis.__DEV__ === true)')
+      .replace(TARGET_FLAG, "(globalThis.__MATRIUS_TARGET__ ?? 'web')");
     const { outputText } = ts.transpileModule(source, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
       fileName: fileURLToPath(url),

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { resetSidebarTabForTests, writeSidebarTab } from '../ui/features/chat/sidebar-mode.ts';
 import {
   isSettingsPath,
   rememberWorkspacePath,
@@ -40,4 +41,24 @@ test('without an origin, return falls back to the active conversation or home', 
   assert.equal(workspaceReturnHref(null, false), '/');
   assert.equal(workspaceReturnHref('m1', true), '/mock/chat/c/m1');
   assert.equal(workspaceReturnLabel(), '返回对话');
+});
+
+test('desktop work tab return label says 返回工作 unless mobile or library/tasks origin', () => {
+  const previousTarget = globalThis.__MATRIUS_TARGET__;
+  globalThis.__MATRIUS_TARGET__ = 'desktop';
+  resetWorkspaceReturnForTests();
+  resetSidebarTabForTests();
+  try {
+    writeSidebarTab('work');
+    rememberWorkspacePath('/');
+    assert.equal(workspaceReturnLabel(false), '返回工作');
+    assert.equal(workspaceReturnLabel(true), '返回对话');
+
+    rememberWorkspacePath('/library');
+    assert.equal(workspaceReturnLabel(false), '返回资料库');
+  } finally {
+    resetSidebarTabForTests();
+    resetWorkspaceReturnForTests();
+    globalThis.__MATRIUS_TARGET__ = previousTarget;
+  }
 });

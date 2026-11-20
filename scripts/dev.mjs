@@ -39,11 +39,23 @@ export function devWebArgs(webPort, { clear = false } = {}) {
   return ['--port', String(webPort), '--strictPort', ...(clear ? ['--force'] : [])];
 }
 
-/** The dev server reads the API origin for its same-origin `/api/` proxy. */
-export function devWebEnv({ env = {}, apiPort }) {
+/** Resolve UI target (`web` by default; `--desktop` or `MATRIUS_TARGET=desktop` enables Desktop UI). */
+export function devTarget(args = [], env = {}) {
+  const hasDesktop = args.includes('--desktop');
+  const hasWeb = args.includes('--web');
+  if (hasDesktop && hasWeb) throw new Error('Cannot combine --desktop and --web.');
+  if (hasDesktop) return 'desktop';
+  if (hasWeb) return 'web';
+  const raw = String(env.VITE_MATRIUS_TARGET ?? env.MATRIUS_TARGET ?? '').trim().toLowerCase();
+  return raw === 'desktop' ? 'desktop' : 'web';
+}
+
+/** The dev server reads the API origin and target for its same-origin `/api/` proxy and UI gate. */
+export function devWebEnv({ env = {}, apiPort, target = 'web' }) {
   return {
     ...env,
     MATRIUS_DEV_API_URL: `http://127.0.0.1:${apiPort}`,
+    VITE_MATRIUS_TARGET: target,
   };
 }
 
@@ -182,10 +194,12 @@ export async function ready(url, signal, label = 'Node API') {
 
 export async function main({ args = process.argv.slice(2), env = process.env } = {}) {
   if (args.includes('--help')) {
-    console.log('npm run dev [-- --check | --reset-db | --clear]\n'
+    console.log('npm run dev [-- --web | --desktop | --check | --reset-db | --clear]\n'
       + 'Runs the Node API + Vite entirely on this machine; no SSH or WSL required.\n'
       + 'Data lives in ~/.matrius by default (SQLite + uploaded files); set DATA_DIR in .env.local to override.\n'
       + 'Requires Node.js and npm ci; no Python or uv is needed.\n'
+      + '--web launches the Web UI (default for `npm run dev` and `npm run dev:web`, without desktop-only work tab).\n'
+      + '--desktop launches the Desktop UI preview (`npm run dev:desktop`, showing the desktop-only work switcher).\n'
       + '--check validates local configuration, tools, ports and paths without starting services.\n'
       + '--reset-db deletes matrius.db* and files in the active data directory before migrating; stop the API first.\n'
       + '--clear rebuilds Vite\'s dependency pre-bundle from scratch; use it after a dependency change.\n'
@@ -193,7 +207,9 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
       + 'Production env files are never read.');
     return;
   }
-  if (args.some((arg) => !['--check', '--reset-db', '--clear'].includes(arg))) throw new Error('Unknown option. Use --help.');
+  const knownOptions = ['--check', '--reset-db', '--clear', '--desktop', '--web'];
+  if (args.some((arg) => !knownOptions.includes(arg))) throw new Error('Unknown option. Use --help.');
+  const target = devTarget(args, env);
   const readEnv = async (file) => {
     try { return parseEnv(await readFile(file, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; return {}; }
@@ -209,7 +225,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   if (args.includes('--check')) {
     await availablePort(webPort);
     await availablePort(apiPort);
-    console.log(`Configuration and tools valid. Web: ${webPort}; API: ${apiPort}.\n`
+    console.log(`Configuration and tools valid. Target: ${target}; Web: ${webPort}; API: ${apiPort}.\n`
       + `Data: ${join(dataDir, 'matrius.db')} (SQLite) and ${join(dataDir, 'files')}.\n`
       + `Single-user instance; no login required.\n`
       + 'No network connection will be made by npm run dev.');
@@ -255,14 +271,14 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     }
     const web = runner.start(process.execPath,
       [join(root, 'node_modules/vite/bin/vite.js'), ...devWebArgs(webPort, { clear: args.includes('--clear') })],
-      { cwd: root, env: devWebEnv({ env, apiPort }) });
+      { cwd: root, env: devWebEnv({ env, apiPort, target }) });
     runner.watch(web, 'Vite');
     await Promise.all([
       ready(`http://127.0.0.1:${apiPort}/api/health/ready`, abort.signal),
       ready(`http://127.0.0.1:${webPort}/`, abort.signal, 'Vite'),
     ]);
     abort.signal.throwIfAborted();
-    console.log(`Development: http://localhost:${webPort}. Data stays in ${dataDir}; `
+    console.log(`Development (${target}): http://localhost:${webPort}. Data stays in ${dataDir}; `
       + `no login is required. Ctrl+C stops local services only.`);
     const code = await runner.finished;
     if (code) throw new Error('Development service stopped unexpectedly.');

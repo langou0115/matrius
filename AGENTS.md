@@ -20,13 +20,15 @@ Matrius 是 React 19 + TypeScript（Vite 8）UI 与单 Node/TypeScript 后端的
 
 ```bash
 npm ci
-npm run dev                 # 本机 Node API + Vite，数据默认在 ~/.matrius
+npm run dev                 # 本机 Node API + Vite（默认 Web 端），数据默认在 ~/.matrius
+npm run dev:web             # 显式以 Web 端启动本机开发服务
+npm run dev:desktop         # 以桌面端预览模式启动（显示桌面端专属「工作 / 对话」切换栏）
 npm run dev:server          # 只启动 TypeScript/Fastify 后端（tsx watch）
 npm run build               # 只执行 Vite 生产构建到 dist/
 npm run start               # 先全量构建 dist/，再单进程启动（读 .env.local 并托管界面与 /api/*）
 npm run db:migrate          # 只迁移本机开发库
-npm run test                # UI/共享测试，按文件并发执行
-npm run test:server         # 后端测试（node:test + tsx），按文件并发执行
+npm run test                # UI/共享测试，限制文件级并发（--test-concurrency=2）
+npm run test:server         # 后端测试（node:test + tsx），限制文件级并发（--test-concurrency=2）
 npm run typecheck:server    # 后端类型检查
 npx tsc --noEmit            # UI 类型检查
 npx eslint .                # 使用 eslint.config.mjs 检查，可选
@@ -39,7 +41,7 @@ npx eslint .                # 使用 eslint.config.mjs 检查，可选
 - 前端是 React 19 + TypeScript 的普通 Web 应用，Vite 8 构建、React Router 7 路由；入口是根目录 `index.html` 与 `ui/main.tsx`。
 - 路由只有一个事实源：`ui/router/routes.tsx`。新增页面必须在其中注册；除聊天路由外页面使用 `React.lazy`；`/debug` 与 `/mock/*` 由 `DevOnly` 保护，生产构建直接回到 `/`，未知 URL 也重定向到 `/`。
 - 导航统一从 `@/router` 导入 `Link`（支持 `asChild`）、`router.push/replace/back`、`Redirect`、`usePathname`、`useLocalSearchParams` 和 `Href`；功能代码不要直接导入 `react-router-dom`。
-- 不再有 `.web.tsx` / `.web.ts` 后缀、平台 fallback 兄弟文件或 `ui/app/`；所有页面与组件都是普通 `X.tsx` / `X.ts`，只维护 Web + PWA 目标。
+- 不再有 `.web.tsx` / `.web.ts` 后缀、平台 fallback 兄弟文件或 `ui/app/`；所有页面与组件都是普通 `X.tsx` / `X.ts`。工作（Work）相关功能与界面（侧栏「工作 / 对话」切换栏与设置页「工作 → 主机」管理）仅面向桌面端（`npm run dev:desktop` 预览），网页端（Web / PWA）及移动端均按 Web 端处理，不提供也没有工作相关功能。
 - 页面外壳在 `ui/components/web/app-shell.tsx`；只在 Web 端运行，不添加原生工程、移动端壳或第二套路由。
 - 生产 Web 支持 PWA：`index.html` 直接包含 manifest 链接、主题色与 Apple 触摸图标元数据，`public/sw.js` 缓存应用外壳；不再有导出后 HTML 注入步骤。
 

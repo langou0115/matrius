@@ -4,7 +4,7 @@
 
 ## 本机开发
 
-npm ci 安装依赖；npm run start 默认按 .env.local 的 API_PORT（默认 8000）启动单进程服务；开发热更新时 npm run dev 常驻启动 Node API 与 Vite，启动时自动迁移开发库，默认 Web 8081、API 8000，通过 .env.local 的 WEB_PORT / API_PORT 配置。Vite 将 /api 请求代理到本机 API。开发不连接生产服务器。
+npm ci 安装依赖；npm run start 默认按 .env.local 的 API_PORT（默认 8000）启动单进程服务；开发热更新时 npm run dev（等价于 `npm run dev:web`）默认以 Web 端常驻启动 Node API 与 Vite，启动时自动迁移开发库，默认 Web 8081、API 8000，通过 .env.local 的 WEB_PORT / API_PORT 配置。Vite 将 /api 请求代理到本机 API。开发不连接生产服务器。如需预览桌面端专属 UI（例如侧栏「工作 / 对话」切换栏，网页端没有工作相关功能），使用 `npm run dev:desktop`。
 
 Node API 在启动时读取服务端代码与 .env.local，npm run dev 不会热重载 API；修改服务端代码、代理或搜索/抓取限额后需要重启 npm run dev。只改后端时也可以使用 `npm run dev:server`（tsx watch，自动重启）。
 
@@ -24,8 +24,8 @@ Vite 的依赖扫描固定从 `index.html` 开始，不再通过全仓库 HTML g
 
 - npx tsc --noEmit：前端类型检查。
 - npm run typecheck:server：后端类型检查。
-- npm run test：UI 与共享测试，按文件并发执行。
-- npm run test:server：后端测试，按文件并发执行。
+- npm run test：UI 与共享测试，按文件并发执行（限制 `--test-concurrency=2`，避免高核数环境并发起大量子进程导致内存过载）。
+- npm run test:server：后端测试，按文件并发执行（限制 `--test-concurrency=2`）。
 - npm run build：生产构建到 dist。
 - npx eslint .：可选风格检查。
 

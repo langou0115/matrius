@@ -1,7 +1,7 @@
 import { useMobile } from '@/components/web/use-mobile';
 import { Link, router, usePathname, type Href } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Clock, FolderOpen, SquarePen } from 'lucide-react';
 
 import { BrandMark } from '@/components/web/brand-mark';
@@ -14,6 +14,9 @@ import { conversationFileIds } from '../conversation-files';
 import { ConversationMenu } from './conversation-menu';
 import { ConversationSelect } from './conversation-select';
 import { useIsPreview } from '@/features/workspace/preview-context';
+import { isDesktopTarget } from '@/core/platform/target';
+import { WorkSidebarPanel } from '@/features/work/work-sidebar-panel';
+import { useSidebarTab, writeSidebarTab, type SidebarTab } from '../sidebar-mode';
 import { useChatRuntime } from '../chat-runtime';
 import { conversationHref } from '../conversation-href';
 import { writeLastRoute } from '../last-conversation';
@@ -24,6 +27,10 @@ type Props = { onSearch: () => void; collapsed: boolean };
 export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarCollapsed }: Props) {
   const { conversations, activeId, dispatch } = useChat();
   const mobile = useMobile();
+  const showModeSwitch = isDesktopTarget() && !mobile;
+  const activeTab = useSidebarTab(showModeSwitch);
+  const workTabRef = useRef<HTMLButtonElement>(null);
+  const chatTabRef = useRef<HTMLButtonElement>(null);
   const runtime = useChatRuntime();
   const preview = useIsPreview();
   const instance = useInstance();
@@ -113,16 +120,28 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
     setConfirmDelete(true);
     setDeleteAttachedFiles(false);
   }
+  function switchTab(next: SidebarTab, focus = false) {
+    if (next === 'work') setMenu(null);
+    writeSidebarTab(next);
+    if (!focus) return;
+    const target = next === 'work' ? workTabRef.current : chatTabRef.current;
+    target?.focus();
+  }
+  function handleTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      switchTab(activeTab === 'work' ? 'chat' : 'work', true);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      switchTab('work', true);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      switchTab('chat', true);
+    }
+  }
 
-  return (
-    <aside className="sidebar" aria-label="对话导航" inert={sidebarCollapsed || undefined}>
-      <div className="sidebar-header">
-        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => { dispatch({ type: 'select', id: null }); if (!preview) writeLastRoute(null); }}><BrandMark size={30} />Matrius</LinkAnchor></Link>
-        <div className="sidebar-header-actions">
-          <button className="icon-button" onClick={onSearch} aria-label="搜索对话"><Icon name="search" size={19} /></button>
-          <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>
-        </div>
-      </div>
+  const chatNavigation = (
+    <>
       <nav className="sidebar-primary" aria-label="工作区">
         <button className={`new-conversation ${activeId === null && !onLibrary && !onTasks ? 'is-active' : ''}`} type="button" onClick={() => select(null)}><SquarePen size={19} strokeWidth={1.75} aria-hidden="true" /><span>新对话</span></button>
         {showLibrary && <Link href={libraryHref as Href} asChild>
@@ -163,6 +182,67 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
           </section>
         ))}
       </nav>
+    </>
+  );
+
+  return (
+    <aside className="sidebar" aria-label="对话导航" inert={sidebarCollapsed || undefined}>
+      <div className="sidebar-header">
+        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => { switchTab('chat'); dispatch({ type: 'select', id: null }); if (!preview) writeLastRoute(null); }}><BrandMark size={30} />Matrius</LinkAnchor></Link>
+        <div className="sidebar-header-actions">
+          <button className="icon-button" onClick={onSearch} aria-label="搜索对话"><Icon name="search" size={19} /></button>
+          <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>
+        </div>
+      </div>
+      {showModeSwitch ? <>
+        <div className="sidebar-mode-switch" role="tablist" aria-label="侧栏切换" onKeyDown={handleTabKeyDown}>
+          <button
+            ref={workTabRef}
+            type="button"
+            role="tab"
+            id="sidebar-tab-work"
+            className={`sidebar-mode-tab ${activeTab === 'work' ? 'is-active' : ''}`}
+            aria-selected={activeTab === 'work'}
+            aria-controls="sidebar-panel-work"
+            tabIndex={activeTab === 'work' ? 0 : -1}
+            onClick={() => switchTab('work')}
+          >
+            工作
+          </button>
+          <button
+            ref={chatTabRef}
+            type="button"
+            role="tab"
+            id="sidebar-tab-chat"
+            className={`sidebar-mode-tab ${activeTab === 'chat' ? 'is-active' : ''}`}
+            aria-selected={activeTab === 'chat'}
+            aria-controls="sidebar-panel-chat"
+            tabIndex={activeTab === 'chat' ? 0 : -1}
+            onClick={() => switchTab('chat')}
+          >
+            对话
+          </button>
+        </div>
+        {activeTab === 'work' ? (
+          <div
+            className="sidebar-work-panel"
+            id="sidebar-panel-work"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-work"
+          >
+            <WorkSidebarPanel />
+          </div>
+        ) : (
+          <div
+            className="sidebar-chat-panel"
+            id="sidebar-panel-chat"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-chat"
+          >
+            {chatNavigation}
+          </div>
+        )}
+      </> : chatNavigation}
       <Link href={preview ? '/mock/chat/settings' : '/settings'} asChild><LinkAnchor className="sidebar-settings-entry" aria-label="打开设置">
         <span className="sidebar-settings-icon"><Icon name="settings" size={18} /></span>
         <span className="sidebar-settings-entry-text"><strong>设置</strong><span>模型、偏好与实例数据</span></span>

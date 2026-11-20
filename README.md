@@ -17,6 +17,7 @@
 ## 功能特性
 
 - **多轮流式对话**：支持停止生成、生成中纠偏（steer）、划词引用、会话分支（fork）、标题与正文搜索、置顶与 AI 自动标题；思考与工具执行过程按发生顺序实时展示，中断后保留已生成内容与上下文。
+- **网页端边界**：网页端仅提供对话、资料库、定时任务与设置等核心能力；**工作（Work）相关功能仅面向桌面端（Desktop），网页端不提供**（本地可通过 `npm run dev:desktop` 预览桌面端入口）。
 - **完整富文本渲染**：基于 Streamdown 渲染 Markdown / GFM 表格与脚注、KaTeX 数学公式、Shiki 按需代码高亮与 Mermaid 图表，联网引用自动编号并与来源侧栏联动。
 - **多模型自带密钥（BYOK）**：支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 及兼容协议；支持从服务端代理拉取服务商模型列表，并为对话、标题生成与个人记忆分别指定模型。
 - **服务端 Agent 工具链**：
@@ -80,7 +81,9 @@ cp .env.local.example .env.local
 
 ```bash
 npm run start              # 先全量构建 dist/，再启动单进程生产服务（读取 .env.local）
-npm run dev                # 开发模式：并行启动 Node API + Vite 热更新
+npm run dev                # 开发模式：默认启动 Web 端（Node API + Vite 热更新）
+npm run dev:web            # 显式以 Web 端启动开发模式
+npm run dev:desktop        # 以桌面端预览模式启动（显示桌面端专属「工作 / 对话」切换栏）
 npm run dev:server         # 仅启动 Node/Fastify 后端（tsx watch 自动重载）
 npm run build              # 仅执行 Vite 生产构建到 dist/
 npm run db:migrate         # 手动执行开发库 SQL 迁移

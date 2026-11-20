@@ -265,6 +265,47 @@ const schemas: Record<string, Schema> = {
   AgentModel: agentModel,
   AgentMessage: agentMessage,
   AgentRunRequest: agentRun,
+  WorkHost: obj({
+    id,
+    kind: { type: 'string', enum: ['ssh', 'wsl'] },
+    name: str(),
+    host: str(),
+    port: int(),
+    username: str(),
+    authMethod: { type: 'string', enum: ['agent', 'key', 'password'] },
+    privateKeyPath: str(),
+    hasSecret: bool(),
+    distro: str(),
+    defaultDirectory: str(),
+    note: str(),
+    status: { type: 'string', enum: ['connected', 'disconnected', 'error'] },
+    statusMessage: nullable(str()),
+    lastCheckedAt: nullable(timestamp),
+    revision: int(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }),
+  WorkProject: obj({
+    id,
+    name: str(),
+    hostId: str(),
+    directory: str(),
+    revision: int(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }),
+  HostDirectoryListing: obj({
+    hostId: str(),
+    path: str(),
+    parentPath: nullable(str()),
+    truncated: bool(),
+    entries: arr(obj({
+      kind: { type: 'string', enum: ['directory', 'file'] },
+      name: str(),
+      path: str(),
+      accessible: bool(),
+    }, ['kind', 'name', 'path', 'accessible'])),
+  }),
 };
 
 const conversationParameters = [{
@@ -290,6 +331,7 @@ export const openApiDocument = {
     { name: 'auth', description: 'Optional AUTH_SECRET splash unlock' },
     { name: 'features', description: 'Instance capability list' },
     { name: 'models', description: 'Server-persisted provider and model configs' },
+    { name: 'hosts', description: 'Desktop SSH and WSL work host configs and probes' },
     { name: 'conversations', description: 'Conversations and messages' },
     { name: 'workspace', description: 'Preferences, profile, memories and import compatibility' },
     { name: 'files', description: 'Library upload, download and metadata' },
@@ -365,6 +407,89 @@ export const openApiDocument = {
           apiKeys: obj({}, []),
         }, ['baseRevision', 'providers', 'selectedId', 'titleModelId', 'memoryModelId'])),
         responses: { ...ok(obj({}, [])), ...errorResponses },
+      },
+    },
+    '/api/hosts': {
+      get: {
+        tags: ['hosts'],
+        summary: 'List configured SSH and WSL hosts without returning stored secrets',
+        responses: ok(obj({ items: arr(ref('WorkHost')) })),
+      },
+      post: {
+        tags: ['hosts'],
+        summary: 'Create an SSH or WSL host config',
+        requestBody: jsonBody(obj({ kind: str(), name: str() }, ['kind', 'name'])),
+        responses: { ...created(ref('WorkHost')), ...errorResponses },
+      },
+    },
+    '/api/hosts/wsl/discover': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Discover local WSL distributions when supported on the host OS',
+        responses: ok(obj({ available: bool(), distros: arr(obj({}, [])), message: str() })),
+      },
+    },
+    '/api/hosts/{hostId}': {
+      patch: {
+        tags: ['hosts'],
+        summary: 'Update a host config with baseRevision',
+        parameters: [{ name: 'hostId', in: 'path', required: true, schema: id }],
+        requestBody: jsonBody(obj({ baseRevision: int(), kind: str(), name: str() }, ['baseRevision', 'kind', 'name'])),
+        responses: { ...ok(ref('WorkHost')), ...errorResponses },
+      },
+      delete: {
+        tags: ['hosts'],
+        summary: 'Delete a host config',
+        parameters: [{ name: 'hostId', in: 'path', required: true, schema: id }],
+        responses: { 204: jsonResponse('Deleted'), ...errorResponses },
+      },
+    },
+    '/api/hosts/{hostId}/connect': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Probe SSH or WSL host connectivity and update status',
+        parameters: [{ name: 'hostId', in: 'path', required: true, schema: id }],
+        responses: { ...ok(ref('WorkHost')), ...errorResponses },
+      },
+    },
+    '/api/hosts/{hostId}/disconnect': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Mark a host as disconnected',
+        parameters: [{ name: 'hostId', in: 'path', required: true, schema: id }],
+        responses: { ...ok(ref('WorkHost')), ...errorResponses },
+      },
+    },
+    '/api/hosts/{hostId}/fs': {
+      get: {
+        tags: ['hosts'],
+        summary: 'List directories and files on the local host or a configured SSH/WSL host',
+        parameters: [
+          { name: 'hostId', in: 'path', required: true, schema: str() },
+          { name: 'path', in: 'query', schema: str() },
+        ],
+        responses: { ...ok(ref('HostDirectoryListing')), ...errorResponses },
+      },
+    },
+    '/api/projects': {
+      get: {
+        tags: ['hosts'],
+        summary: 'List desktop work projects',
+        responses: ok(obj({ items: arr(ref('WorkProject')) })),
+      },
+      post: {
+        tags: ['hosts'],
+        summary: 'Create a desktop work project bound to a host and directory',
+        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str() }, ['hostId', 'directory'])),
+        responses: { ...created(ref('WorkProject')), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}': {
+      delete: {
+        tags: ['hosts'],
+        summary: 'Delete a desktop work project',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: id }],
+        responses: { 204: jsonResponse('Deleted'), ...errorResponses },
       },
     },
     '/api/conversations': {

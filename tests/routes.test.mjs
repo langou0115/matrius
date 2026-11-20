@@ -40,8 +40,8 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   const { AppRoutes } = await import('../ui/router/routes.tsx');
 
   for (const path of ['/', '/c/example', '/library', '/tasks', '/settings', '/settings/appearance', '/settings/models',
-    '/settings/personalization', '/settings/account', '/settings/storage', '/settings/usage', '/settings/about',
-    '/admin', '/debug', '/debug?tab=tools', '/mock/chat', '/mock/chat/settings/appearance', '/mock/library', '/mock/tasks', '/mock/process', '/mock/storage']) {
+    '/settings/hosts', '/settings/personalization', '/settings/account', '/settings/storage', '/settings/usage', '/settings/about',
+    '/admin', '/debug', '/debug?tab=tools', '/mock/chat', '/mock/chat/settings/appearance', '/mock/chat/settings/hosts', '/mock/library', '/mock/tasks', '/mock/process', '/mock/storage']) {
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);

@@ -1,8 +1,10 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from '@/router';
-import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, Server, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
+import { useMobile } from '@/components/web/use-mobile';
+import { isDesktopTarget } from '@/core/platform/target';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChat } from '@/features/chat/chat-state';
 import { useInstance } from '@/features/instance/instance-state';
@@ -20,6 +22,7 @@ const categoryIcons: Record<string, LucideIcon> = {
   appearance: Palette,
   personalization: SlidersHorizontal,
   models: Cpu,
+  hosts: Server,
   about: Info,
   storage: HardDrive,
   usage: ChartColumn,
@@ -41,14 +44,16 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
   const { activeId: conversationId } = useChat();
   const root = useSettingsRoot();
   const { info } = useInstance();
+  const mobile = useMobile();
   const settingsItems = visibleSettings(
     info?.features ?? [],
     preview,
     Boolean(info),
+    isDesktopTarget() && !mobile,
   );
   const pathname = usePathname().replace(/\/$/, '');
   const returnHref = workspaceReturnHref(conversationId, preview);
-  const returnLabel = workspaceReturnLabel();
+  const returnLabel = workspaceReturnLabel(mobile);
   // Account, usage, storage and sync are full app pages rather than preview chat settings,
   // so they always live under /settings even when the rest of the catalogue is scoped to /mock.
   const directRoutes = new Set(['storage', 'usage']);

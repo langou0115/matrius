@@ -82,7 +82,12 @@ function offlineShell(): Plugin {
   };
 }
 
+const appTarget = (process.env.VITE_MATRIUS_TARGET ?? process.env.MATRIUS_TARGET) === 'desktop' ? 'desktop' : 'web';
+
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_MATRIUS_TARGET': JSON.stringify(appTarget),
+  },
   plugins: [offlineShell(), react(), tailwindcss(), developmentMiddleware(), katexStylesheet(), dropStaleServiceWorker()],
   resolve: {
     alias: [

@@ -26,6 +26,8 @@ implementation has been removed; UI chat now uses the server Agent over SSE.
 | Agent title / background memory endpoints | implemented |
 | UI remote SSE runtime + server title/memory | implemented |
 | Server-side model configs & API keys (`/api/models`) | implemented |
+| Desktop SSH & WSL work hosts (`/api/hosts`, `0005_work_hosts`) | implemented |
+| Desktop work projects & directory browser (`/api/projects`, `/api/hosts/:hostId/fs`, `0006_work_projects`) | implemented |
 | Optional `AUTH_SECRET` splash unlock gate (`/api/auth/*`) | implemented |
 | Static `dist/` serving (`APP_ENV=production`) | implemented |
 
@@ -54,7 +56,7 @@ server/
 │   ├── client.ts           # node:sqlite wrapper + transactions
 │   ├── codecs.ts           # UUID / timestamp / JSON / boolean formats
 │   ├── migrate.ts          # alembic_version-compatible SQL migrations
-│   ├── migrations/         # 0001_initial.sql – 0004_model_configs.sql
+│   ├── migrations/         # 0001_initial.sql – 0006_work_projects.sql
 │   └── repositories/       # typed data access
 ├── routes/                 # Fastify route modules (auth, models, tasks, etc.)
 ├── services/               # storage, cache, search, fetch, documents, PDF

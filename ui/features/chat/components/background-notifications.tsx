@@ -6,6 +6,7 @@ import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChat } from '../chat-state';
 import { useChatRuntime, type BackgroundNotification } from '../chat-runtime';
 import { conversationHref } from '../conversation-href';
+import { writeSidebarTab } from '../sidebar-mode';
 
 const DISMISS_AFTER_MS = 5000;
 
@@ -22,6 +23,7 @@ function NotificationCard({ notification, onDismiss }: { notification: Backgroun
     aria-label={`打开对话：${notification.title}。${notification.preview}`}
     onClick={() => {
       onDismiss(notification.id);
+      writeSidebarTab('chat');
       router.push(conversationHref(notification.conversationId, preview));
     }}>
     <span className="background-notification-icon" aria-hidden="true"><Icon name="check" size={15} /></span>

@@ -21,6 +21,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { id: '0002_scheduled_tasks', file: '0002_scheduled_tasks.sql' },
   { id: '0003_ui_blocks', file: '0003_ui_blocks.sql' },
   { id: '0004_model_configs', file: '0004_model_configs.sql' },
+  { id: '0005_work_hosts', file: '0005_work_hosts.sql' },
+  { id: '0006_work_projects', file: '0006_work_projects.sql' },
 ];
 
 export const HEAD_REVISION = MIGRATIONS[MIGRATIONS.length - 1].id;

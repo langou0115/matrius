@@ -88,8 +88,14 @@ test('204 No Content responses resolve cleanly without JSON parse error', async 
 });
 
 test('resource settings contain storage and usage without an account category', () => {
-  const items = visibleSettings(['files', 'usage'], false, true);
+  const items = visibleSettings(['files', 'usage'], false, true, false);
   assert.equal(items.find(i => i.id === 'storage').group, '资源');
   assert.equal(items.find(i => i.id === 'usage').group, '资源');
   assert.equal(items.some(i => i.id === 'account'), false);
+  assert.equal(items.some(i => i.id === 'hosts'), false);
+
+  const desktopItems = visibleSettings(['files', 'usage'], false, true, true);
+  const groups = desktopItems.reduce((list, item) => (list.includes(item.group) ? list : [...list, item.group]), []);
+  assert.deepEqual(groups, ['资源', '偏好', '工作', '应用']);
+  assert.equal(desktopItems.find(i => i.id === 'hosts').group, '工作');
 });

@@ -39,7 +39,7 @@ SQLite 事务与文件替换不是跨存储的原子事务；备份和恢复应�
 
 服务启动（`npm run start`、`npm run dev`）及 `npm run db:migrate` 直接在 `DATA_DIR/matrius.db`（默认 `~/.matrius/matrius.db`）上执行 `server/db/migrations` 的 SQL 迁移（由 `server/db/migrate.ts` 执行，并保留 `alembic_version` 表兼容旧库）；`npm run dev -- --reset-db` 清空当前数据目录的数据库、上传文件和草稿。
 
-数据库以 `0001_initial` 为基线创建单实例 schema（`instance.id=1` 及指向它的业务表），随后按序应用 `0002_scheduled_tasks`、`0003_ui_blocks`、`0004_model_configs` 等迁移。空库初始化不会生成迁移备份或其他伴随文件；新库的持久内容只有 `matrius.db` 和 `files/`。
+数据库以 `0001_initial` 为基线创建单实例 schema（`instance.id=1` 及指向它的业务表），随后按序应用 `0002_scheduled_tasks`、`0003_ui_blocks`、`0004_model_configs`、`0005_work_hosts`、`0006_work_projects` 等迁移。空库初始化不会生成迁移备份或其他伴随文件；新库的持久内容只有 `matrius.db` 和 `files/`。
 上传文件写入 `DATA_DIR/files/<fileId>/<safeName>`，数据库只保存元数据；旧版 `users/<userId>/...` 布局及其迁移逻辑已移除，开发阶段不迁移旧账户数据。
 
 ## 写入与冲突

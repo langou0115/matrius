@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useState, type PropsWithChildren } from 'react';
 
+import { isDesktopTarget } from '@/core/platform/target';
 import { useChat } from '@/features/chat/chat-state';
+import { useSidebarTab } from '@/features/chat/sidebar-mode';
 import { SearchDialog } from '@/features/chat/components/search-dialog';
 import { Dialog } from './dialog';
+import { Icon } from './icon';
 import { useMobile } from './use-mobile';
 import { Sidebar } from '@/features/chat/components/sidebar';
 
 export function Workspace({ children }: PropsWithChildren) {
   const { sidebarOpen, dispatch } = useChat();
   const mobile = useMobile();
+  const showWorkPane = useSidebarTab(isDesktopTarget() && !mobile) === 'work';
   const closeSidebar = () => { if (sidebarOpen) dispatch({ type: 'sidebar' }); };
   const [sidebarVisible, setSidebarVisible] = useState(sidebarOpen);
   if (sidebarOpen && !sidebarVisible) setSidebarVisible(true);
@@ -41,7 +45,25 @@ export function Workspace({ children }: PropsWithChildren) {
         if ((event.target as HTMLElement).closest('a, .new-conversation, .conversation-select')) closeSidebar();
       }}><Sidebar onSearch={() => { closeSidebar(); openSearch(); }} collapsed={false} /></div>
     </Dialog> : <Sidebar onSearch={openSearch} collapsed={!sidebarOpen} />}
-    <div className="workspace-content">{children}</div>
+    <div className="workspace-content">
+      {showWorkPane ? (
+        <main className="work-main" id="main-content" tabIndex={-1} aria-label="工作区">
+          {!sidebarOpen && (
+            <header className="chat-topbar">
+              <button
+                className="sidebar-expand"
+                type="button"
+                onClick={() => dispatch({ type: 'sidebar' })}
+                aria-label="展开侧栏"
+                aria-expanded={false}
+              >
+                <Icon name="sidebar" size={22} />
+              </button>
+            </header>
+          )}
+        </main>
+      ) : children}
+    </div>
     {searchOpen && <SearchDialog onClose={() => setSearchOpen(false)} />}
   </div>;
 }

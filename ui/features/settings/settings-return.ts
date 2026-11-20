@@ -1,3 +1,5 @@
+import { isDesktopTarget } from '@/core/platform/target';
+import { readSidebarTab } from '@/features/chat/sidebar-mode';
 import type { Href } from '@/router';
 
 import { conversationHref } from '@/features/chat/conversation-href';
@@ -30,9 +32,10 @@ export function workspaceReturnHref(activeId: string | null, preview: boolean): 
   return (lastWorkspacePath ?? conversationHref(activeId, preview)) as Href;
 }
 
-export function workspaceReturnLabel(): string {
+export function workspaceReturnLabel(mobile = false): string {
   if (lastWorkspacePath === '/library' || lastWorkspacePath === '/mock/library') return '返回资料库';
   if (lastWorkspacePath === '/tasks' || lastWorkspacePath === '/mock/tasks') return '返回定时任务';
+  if (!mobile && isDesktopTarget() && readSidebarTab(true) === 'work') return '返回工作';
   return '返回对话';
 }
 

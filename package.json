@@ -57,12 +57,14 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:web": "node scripts/dev.mjs --web",
+    "dev:desktop": "node scripts/dev.mjs --desktop",
     "dev:server": "tsx watch server/main.ts",
     "build": "vite build",
     "start": "node scripts/start.mjs",
     "db:migrate": "tsx server/scripts/migrate.ts",
-    "test": "node --import ./tests/register.mjs --test \"tests/*.test.mjs\"",
-    "test:server": "tsx --test \"server/tests/**/*.test.ts\"",
+    "test": "node --import ./tests/register.mjs --test --test-concurrency=2 \"tests/*.test.mjs\"",
+    "test:server": "tsx --test --test-concurrency=2 \"server/tests/**/*.test.ts\"",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "postinstall": "node scripts/sync-katex.mjs"
   },
