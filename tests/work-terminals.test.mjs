@@ -15,9 +15,13 @@ import { ModelProvider } from '../ui/features/models/model-state.tsx';
 import { PersonalizationProvider } from '../ui/features/settings/personalization-state.tsx';
 import { WorkGeneralScreen } from '../ui/features/work/work-general-screen.tsx';
 import {
+  getWorkState,
+  hydrateWorkSettings,
   resetWorkStateForTests,
   setDefaultWindowsShell,
   setWorkPlatformForTests,
+  setWorkProjects,
+  setWorkTerminals,
   upsertWorkProject,
 } from '../ui/features/work/work-state.ts';
 import { PreviewContext } from '../ui/features/workspace/preview-context.ts';
@@ -453,6 +457,37 @@ test('WorkGeneralScreen enables Windows default terminal selector only on Window
     assert.equal(trigger.disabled, false);
   } finally {
     await act(async () => { root.unmount(); });
+    resetWorkStateForTests();
+    resetSidebarTabForTests();
+    dom.restore();
+  }
+});
+
+test('SQLite work settings hydration preserves activeProjectId and per-project active/pinned/renamed tabs on restart', () => {
+  const dom = setupDom();
+  try {
+    setWorkProjects([
+      { id: 'proj-a', name: 'A', hostId: 'local', directory: 'D:\\A', revision: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'proj-b', name: 'B', hostId: 'local', directory: 'D:\\B', revision: 1, createdAt: 2, updatedAt: 2 },
+    ]);
+    hydrateWorkSettings({
+      defaultWindowsShell: 'cmd',
+      activeProjectId: 'proj-b',
+      activeTerminals: { 'proj-a': 'term-a2', 'proj-b': 'term-b1' },
+    });
+    setWorkTerminals([
+      { id: 'term-a1', projectId: 'proj-a', hostId: 'local', title: 'PowerShell', preset: 'shell', shell: 'powershell', command: '', cwd: 'D:\\A', status: 'restored', exitCode: null, pinned: false, createdAt: 1 },
+      { id: 'term-a2', projectId: 'proj-a', hostId: 'local', title: '构建标签', preset: 'shell', shell: 'cmd', command: '', cwd: 'D:\\A\\ui', status: 'restored', exitCode: null, pinned: true, createdAt: 2 },
+      { id: 'term-b1', projectId: 'proj-b', hostId: 'local', title: '服务日志', preset: 'shell', shell: 'cmd', command: '', cwd: 'D:\\B', status: 'restored', exitCode: null, pinned: true, createdAt: 3 },
+    ]);
+
+    const snapshot = getWorkState();
+    assert.equal(snapshot.activeProjectId, 'proj-b');
+    assert.equal(snapshot.activeTerminalId, 'term-b1');
+    assert.equal(snapshot.defaultWindowsShell, 'cmd');
+    assert.equal(snapshot.terminals[0].title, '构建标签');
+    assert.equal(snapshot.terminals[0].pinned, true);
+  } finally {
     resetWorkStateForTests();
     resetSidebarTabForTests();
     dom.restore();

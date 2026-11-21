@@ -137,13 +137,13 @@ export function WorkWorkspace() {
       !defaultWindowsShellLoaded ? loadWorkSettings(instance.request).catch(() => null) : Promise.resolve(null),
     ]).then(([terminalRes, workSettings]) => {
       if (cancelled) return;
+      if (workSettings) hydrateWorkSettings(workSettings);
       if (terminalRes) {
+        if (terminalRes.platform) setWorkServerPlatform(terminalRes.platform);
         if (terminals.length === 0 && terminalRes.items.length > 0) {
           setWorkTerminals(terminalRes.items);
         }
-        if (terminalRes.platform) setWorkServerPlatform(terminalRes.platform);
       }
-      if (workSettings) hydrateWorkSettings(workSettings);
     });
     return () => { cancelled = true; };
   }, [defaultWindowsShellLoaded, instance.request, instance.status, preview, serverPlatform, terminals.length]);
@@ -272,11 +272,17 @@ export function WorkWorkspace() {
   }
 
   async function handleTogglePin(target: WorkTerminalSession) {
-    const nextPinned = !target.pinned;
+    const previousPinned = Boolean(target.pinned);
+    const nextPinned = !previousPinned;
     setTabMenu(null);
     updateWorkTerminalMeta(target.id, { pinned: nextPinned });
     if (!preview) {
-      await updateWorkTerminal(instance.request, target.id, { pinned: nextPinned }).catch(() => {});
+      try {
+        await updateWorkTerminal(instance.request, target.id, { pinned: nextPinned });
+      } catch (reason) {
+        updateWorkTerminalMeta(target.id, { pinned: previousPinned });
+        setNotice(reason instanceof Error && reason.message ? reason.message : '保存终端置顶状态失败，请重试。');
+      }
     }
   }
 
@@ -291,10 +297,16 @@ export function WorkWorkspace() {
       return;
     }
     const targetId = renaming.id;
+    const previousTitle = renaming.title;
     updateWorkTerminalMeta(targetId, { title: normalized });
     setRenaming(null);
     if (!preview) {
-      await updateWorkTerminal(instance.request, targetId, { title: normalized }).catch(() => {});
+      try {
+        await updateWorkTerminal(instance.request, targetId, { title: normalized });
+      } catch (reason) {
+        updateWorkTerminalMeta(targetId, { title: previousTitle });
+        setNotice(reason instanceof Error && reason.message ? reason.message : '保存终端名称失败，请重试。');
+      }
     }
   }
 

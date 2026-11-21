@@ -78,9 +78,6 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     ])
       .then(([projectRes, hostRes, terminalRes, workSettings]) => {
         if (cancelled) return;
-        setWorkProjects(projectRes.items);
-        setWorkHosts(hostRes.items);
-        setWorkTerminals(terminalRes.items);
         if (terminalRes.platform) setWorkServerPlatform(terminalRes.platform);
         if (workSettings) {
           lastSavedSelectionRef.current = JSON.stringify({
@@ -89,6 +86,9 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
           });
           hydrateWorkSettings(workSettings);
         }
+        setWorkProjects(projectRes.items);
+        setWorkHosts(hostRes.items);
+        setWorkTerminals(terminalRes.items);
       })
       .catch((reason: unknown) => {
         if (cancelled) return;
@@ -110,7 +110,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
         activeProjectId,
         activeTerminals: activeTerminalByProject,
       }).catch(() => {});
-    }, 300);
+    }, 100);
     return () => clearTimeout(timer);
   }, [activeProjectId, activeTerminalByProject, canUseServer, defaultWindowsShellLoaded, instance.request, projectsLoaded]);
 

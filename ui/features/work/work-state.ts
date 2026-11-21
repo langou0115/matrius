@@ -143,6 +143,7 @@ function createInitialState(): WorkStoreSnapshot {
 }
 
 let state: WorkStoreSnapshot = createInitialState();
+let hasExplicitProjectChoice = Boolean(state.activeProjectId);
 const listeners = new Set<() => void>();
 
 function emit(next: WorkStoreSnapshot): void {
@@ -168,6 +169,7 @@ export function readActiveProjectId(): string | null {
 }
 
 export function writeActiveProjectId(projectId: string | null): void {
+  hasExplicitProjectChoice = true;
   try {
     if (projectId) globalThis.sessionStorage?.setItem(ACTIVE_PROJECT_KEY, projectId);
     else globalThis.sessionStorage?.removeItem(ACTIVE_PROJECT_KEY);
@@ -231,6 +233,7 @@ export function setWorkHosts(hosts: WorkHost[]): void {
 }
 
 export function upsertWorkProject(saved: WorkProject): void {
+  hasExplicitProjectChoice = true;
   const exists = state.projects.some((item) => item.id === saved.id);
   const nextProjects = exists
     ? state.projects.map((item) => (item.id === saved.id ? saved : item))
@@ -312,6 +315,7 @@ export function setWorkTerminals(terminals: WorkTerminalSession[]): void {
 }
 
 export function addWorkTerminal(terminal: WorkTerminalSession): void {
+  hasExplicitProjectChoice = true;
   const nextTerminals = sortPinnedTerminals([
     ...state.terminals.filter((item) => item.id !== terminal.id),
     terminal,
@@ -382,6 +386,7 @@ export function selectWorkTerminal(terminalId: string | null): void {
   }
   const target = state.terminals.find((item) => item.id === terminalId);
   if (!target) return;
+  hasExplicitProjectChoice = true;
   const nextMap = {
     ...state.activeTerminalByProject,
     [target.projectId]: terminalId,
@@ -511,8 +516,8 @@ export function hydrateWorkSettings(settings: {
 }): void {
   const normalizedShell = normalizeOptionalWindowsShell(settings.defaultWindowsShell) ?? DEFAULT_WINDOWS_SHELL;
   const mergedTerminals = {
-    ...settings.activeTerminals,
     ...state.activeTerminalByProject,
+    ...settings.activeTerminals,
   };
   persistActiveTerminals(mergedTerminals);
   try {
@@ -521,8 +526,10 @@ export function hydrateWorkSettings(settings: {
     // Ignore storage restrictions.
   }
 
+  // Only keep an existing activeProjectId if the user explicitly switched/selected one
+  // in this session; otherwise restore the server-persisted activeProjectId from SQLite.
   let nextActiveProjectId = state.activeProjectId;
-  if (!nextActiveProjectId && settings.activeProjectId) {
+  if (!hasExplicitProjectChoice && settings.activeProjectId) {
     const exists = state.projects.length === 0
       || state.projects.some((item) => item.id === settings.activeProjectId);
     if (exists) nextActiveProjectId = settings.activeProjectId;
@@ -558,6 +565,7 @@ export function bumpHostUnlockVersion(): void {
 }
 
 export function resetWorkStateForTests(): void {
+  hasExplicitProjectChoice = false;
   try {
     globalThis.sessionStorage?.removeItem(ACTIVE_PROJECT_KEY);
     globalThis.localStorage?.removeItem(ACTIVE_TERMINALS_KEY);
