@@ -17,6 +17,7 @@ export type WorkProjectRow = {
   name: string;
   host_id: string;
   directory: string;
+  proxy_url: string;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -36,6 +37,7 @@ export function serializeWorkProject(row: WorkProjectRow): WorkProject {
     name: row.name,
     hostId: row.host_id,
     directory: row.directory,
+    ...(row.proxy_url ? { proxyUrl: row.proxy_url } : {}),
     revision: row.revision,
     createdAt: toMs(row.created_at) ?? Date.now(),
     updatedAt: toMs(row.updated_at) ?? Date.now(),
@@ -87,9 +89,9 @@ export function createWorkProjectRow(db: AppDatabase, instanceId: number, input:
   const now = toDbTimestamp();
   db.prepare(`
     INSERT INTO work_projects (
-      id, instance_id, name, host_id, directory, revision, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-  `).run(id, instanceId, normalized.name, resolvedHostId, normalized.directory, now, now);
+      id, instance_id, name, host_id, directory, proxy_url, revision, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run(id, instanceId, normalized.name, resolvedHostId, normalized.directory, normalized.proxyUrl, now, now);
 
   const created = db
     .prepare('SELECT * FROM work_projects WHERE id = ? AND instance_id = ?')
@@ -108,21 +110,24 @@ export function updateWorkProjectRow(
   if (input.baseRevision !== undefined && current.revision !== input.baseRevision) {
     throw conflict('项目列表已在其他页面更新，请刷新后重试。', serializeWorkProject(current));
   }
-  const normalized = normalizeValidated(input);
+  const normalized = normalizeValidated({
+    ...input,
+    ...(input.proxyUrl === undefined ? { proxyUrl: current.proxy_url } : {}),
+  });
   const resolvedHostId = resolveProjectHostId(db, instanceId, normalized.hostId);
   const now = toDbTimestamp();
 
   const result = input.baseRevision !== undefined
     ? db.prepare(`
         UPDATE work_projects
-        SET name = ?, host_id = ?, directory = ?, revision = revision + 1, updated_at = ?
+        SET name = ?, host_id = ?, directory = ?, proxy_url = ?, revision = revision + 1, updated_at = ?
         WHERE id = ? AND instance_id = ? AND revision = ?
-      `).run(normalized.name, resolvedHostId, normalized.directory, now, current.id, instanceId, input.baseRevision)
+      `).run(normalized.name, resolvedHostId, normalized.directory, normalized.proxyUrl, now, current.id, instanceId, input.baseRevision)
     : db.prepare(`
         UPDATE work_projects
-        SET name = ?, host_id = ?, directory = ?, revision = revision + 1, updated_at = ?
+        SET name = ?, host_id = ?, directory = ?, proxy_url = ?, revision = revision + 1, updated_at = ?
         WHERE id = ? AND instance_id = ?
-      `).run(normalized.name, resolvedHostId, normalized.directory, now, current.id, instanceId);
+      `).run(normalized.name, resolvedHostId, normalized.directory, normalized.proxyUrl, now, current.id, instanceId);
 
   if (result.changes === 0) {
     throw conflict('项目列表已在其他页面更新，请刷新后重试。');

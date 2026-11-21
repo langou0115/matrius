@@ -1,4 +1,9 @@
-import { LOCAL_WORK_HOST_ID, deriveProjectName, type WorkProject } from '@contract/work-projects';
+import {
+  LOCAL_WORK_HOST_ID,
+  deriveProjectName,
+  normalizeProjectProxyUrl,
+  type WorkProject,
+} from '@contract/work-projects';
 import type { WorkHost } from '@contract/work-hosts';
 import {
   FolderOpen,
@@ -59,6 +64,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
   const [name, setName] = useState(() => project?.name ?? '');
   const [hostId, setHostId] = useState<string>(() => project?.hostId ?? defaultHostSelection(seedHosts));
   const [directory, setDirectory] = useState(() => project?.directory ?? '');
+  const [proxyUrl, setProxyUrl] = useState(() => project?.proxyUrl ?? '');
   const [browseDir, setBrowseDir] = useState(() => project?.directory ?? '');
   const [browsing, setBrowsing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -132,6 +138,13 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
       setError('请先选择项目目录。');
       return;
     }
+    let normalizedProxy: string;
+    try {
+      normalizedProxy = normalizeProjectProxyUrl(proxyUrl);
+    } catch (reason) {
+      setError(reason instanceof Error && reason.message ? reason.message : '请输入合法的网络代理地址。');
+      return;
+    }
     const trimmedName = name.trim();
 
     if (preview) {
@@ -143,6 +156,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
           name: resolvedName,
           hostId,
           directory: trimmedDir,
+          ...(normalizedProxy ? { proxyUrl: normalizedProxy } : { proxyUrl: undefined }),
           revision: project.revision + 1,
           updatedAt: now,
         });
@@ -152,6 +166,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
           name: resolvedName,
           hostId,
           directory: trimmedDir,
+          ...(normalizedProxy ? { proxyUrl: normalizedProxy } : {}),
           revision: 1,
           createdAt: now,
           updatedAt: now,
@@ -167,12 +182,14 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
         ? await updateWorkProject(instance.request, project.id, {
             hostId,
             directory: trimmedDir,
+            proxyUrl: normalizedProxy,
             ...(trimmedName ? { name: trimmedName } : {}),
             baseRevision: project.revision,
           })
         : await createWorkProject(instance.request, {
             hostId,
             directory: trimmedDir,
+            ...(normalizedProxy ? { proxyUrl: normalizedProxy } : {}),
             ...(trimmedName ? { name: trimmedName } : {}),
           });
       onSaved(saved);
@@ -251,6 +268,23 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
                   {directory || '选择项目目录'}
                 </span>
               </button>
+            </div>
+
+            <div className="work-field-block">
+              <div className="work-field-header">
+                <label className="work-field-title" htmlFor="work-project-proxy-input">网络代理</label>
+                <span className="work-field-optional">可选</span>
+              </div>
+              <input
+                id="work-project-proxy-input"
+                className="text-field work-proxy-input"
+                value={proxyUrl}
+                onChange={(event) => setProxyUrl(event.target.value)}
+                placeholder="例如：http://127.0.0.1:7890（留空不使用代理）"
+                autoCapitalize="none"
+                spellCheck={false}
+                maxLength={500}
+              />
             </div>
 
             <div className="dialog-footer">

@@ -145,7 +145,7 @@ ui/
 │   │   ├── work-workspace.tsx          桌面端「工作」右侧容器（按项目切换终端标签顶栏、分体式 `+ | ▾` 新建终端与类型菜单、终端区与可调宽目录栏）
 │   │   ├── work-terminal-view.tsx      基于 `@xterm/xterm` 的主题自适应 WebSocket PTY 终端画布（支持重启恢复快照、末次目录与 SSH/WSL 重连解锁）
 │   │   ├── work-files-panel.tsx        右侧工作目录可调宽、可展开文件树边栏（支持 SSH 密码内联解锁）
-│   │   ├── create-project-dialog.tsx   「创建项目 / 项目设置」弹窗（选择主机或跳转主机设置 + 选择项目目录）
+│   │   ├── create-project-dialog.tsx   「创建项目 / 项目设置」弹窗（选择主机或跳转主机设置 + 选择项目目录 + 可选网络代理）
 │   │   ├── directory-browser-dialog.tsx 「选择项目目录」文件与目录浏览器弹窗（支持本机盘符及根目录 / WSL / SSH）
 │   │   └── work-error-dialog.tsx     工作区创建项目、添加终端与目录浏览共用的错误提示弹窗
 │   ├── instance/

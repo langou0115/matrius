@@ -1386,6 +1386,8 @@ input[type='password']::-ms-clear { display: none; }
 .work-field-block { display: flex; flex-direction: column; gap: 6px; }
 .work-field-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .work-field-title { font-size: var(--text-small); color: var(--foreground); }
+.work-field-optional { font-size: 12px; color: var(--muted-text); }
+.work-proxy-input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
 .work-settings-link { color: var(--muted-text); font-size: 12px; line-height: 1.4; transition: color 140ms ease; }
 .work-settings-link:hover:not(:disabled) { color: var(--foreground); }
 .work-dir-picker { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 42px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--background); font-size: var(--text-ui); text-align: left; transition: border-color 140ms ease, background 140ms ease; }

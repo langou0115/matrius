@@ -29,6 +29,7 @@ export type WorkProject = {
   name: string;
   hostId: string;
   directory: string;
+  proxyUrl?: string;
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -38,12 +39,14 @@ export type WorkProjectInput = {
   hostId: string;
   directory: string;
   name?: string;
+  proxyUrl?: string;
 };
 
 export type NormalizedWorkProjectInput = {
   hostId: string;
   directory: string;
   name: string;
+  proxyUrl: string;
 };
 
 function hasControlChars(text: string): boolean {
@@ -73,6 +76,28 @@ export function validateBrowsePath(rawPath: string | undefined): string {
   return trimmed;
 }
 
+const SUPPORTED_PROXY_PROTOCOLS = new Set(['http:', 'https:', 'socks:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:']);
+
+export function normalizeProjectProxyUrl(raw: string | undefined): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return '';
+  if (hasControlChars(trimmed)) throw new Error('网络代理地址不能包含控制字符。');
+  if (/\s/u.test(trimmed)) throw new Error('网络代理地址不能包含空白字符。');
+  if (trimmed.length > 500) throw new Error('网络代理地址不能超过 500 个字符。');
+
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed) ? trimmed : `http://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(withScheme);
+  } catch {
+    throw new Error('请输入合法的网络代理地址，例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080。');
+  }
+  if (!SUPPORTED_PROXY_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) {
+    throw new Error('网络代理仅支持 http://、https:// 或 socks5:// 协议。');
+  }
+  return withScheme;
+}
+
 export function validateWorkProjectInput(raw: WorkProjectInput): NormalizedWorkProjectInput {
   const hostId = (raw.hostId ?? '').trim();
   if (!hostId) throw new Error('请选择项目运行主机。');
@@ -87,9 +112,12 @@ export function validateWorkProjectInput(raw: WorkProjectInput): NormalizedWorkP
   if (hasControlChars(rawName)) throw new Error('项目名称不能包含控制字符。');
   if (rawName.length > 120) throw new Error('项目名称不能超过 120 个字符。');
 
+  const proxyUrl = normalizeProjectProxyUrl(raw.proxyUrl);
+
   return {
     hostId,
     directory,
     name: rawName || deriveProjectName(directory),
+    proxyUrl,
   };
 }

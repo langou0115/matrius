@@ -290,6 +290,7 @@ const schemas: Record<string, Schema> = {
     name: str(),
     hostId: str(),
     directory: str(),
+    proxyUrl: str(),
     revision: int(),
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -506,7 +507,7 @@ export const openApiDocument = {
       post: {
         tags: ['hosts'],
         summary: 'Create a desktop work project bound to a host and directory',
-        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str() }, ['hostId', 'directory'])),
+        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str(), proxyUrl: str() }, ['hostId', 'directory'])),
         responses: { ...created(ref('WorkProject')), ...errorResponses },
       },
     },
@@ -515,7 +516,7 @@ export const openApiDocument = {
         tags: ['hosts'],
         summary: 'Update a desktop work project',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: id }],
-        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str(), baseRevision: int() }, ['hostId', 'directory'])),
+        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str(), proxyUrl: str(), baseRevision: int() }, ['hostId', 'directory'])),
         responses: { ...ok(ref('WorkProject')), ...errorResponses },
       },
       delete: {

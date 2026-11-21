@@ -11,7 +11,12 @@ import { openDatabase } from '../db/client';
 import { migrate } from '../db/migrate';
 import { createWorkHostRow, serializeWorkHost } from '../db/repositories/hosts';
 import { createWorkProjectRow, serializeWorkProject } from '../db/repositories/projects';
-import { createWorkTerminalService, type PtyProcess, type PtySpawner } from '../services/terminals';
+import {
+  createWorkTerminalService,
+  mergeWindowsPathEntries,
+  type PtyProcess,
+  type PtySpawner,
+} from '../services/terminals';
 
 function createFakePty(): PtyProcess & {
   emitData: (chunk: string) => void;
@@ -444,6 +449,79 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
   } finally {
     await secondBuilt.app.close();
     secondDb.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive project proxy env', async () => {
+  const mergedPath = mergeWindowsPathEntries(
+    'D:\\Software\\Nvm\\nodejs\\v26.12.0;C:\\WINDOWS\\system32',
+    ['C:\\WINDOWS\\System32;%LOCALAPPDATA%\\agy\\bin;%USERPROFILE%\\.local\\bin'],
+    { LOCALAPPDATA: 'C:\\Users\\demo\\AppData\\Local', USERPROFILE: 'C:\\Users\\demo' },
+  );
+  assert.equal(
+    mergedPath,
+    'D:\\Software\\Nvm\\nodejs\\v26.12.0;C:\\WINDOWS\\system32;C:\\Users\\demo\\AppData\\Local\\agy\\bin;C:\\Users\\demo\\.local\\bin',
+  );
+
+  const dataDir = mkdtempSync(join(tmpdir(), 'matrius-term-proxy-data-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'matrius-term-proxy-cwd-'));
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+
+  const sshHost = serializeWorkHost(createWorkHostRow(db, 1, {
+    kind: 'ssh',
+    name: 'ProxyBox',
+    host: '10.0.0.15',
+    authMethod: 'agent',
+  }));
+  const localProject = serializeWorkProject(createWorkProjectRow(db, 1, {
+    hostId: 'local',
+    directory: workDir,
+    proxyUrl: 'http://127.0.0.1:7890',
+  }));
+  const sshProject = serializeWorkProject(createWorkProjectRow(db, 1, {
+    hostId: sshHost.id,
+    directory: '/srv/proxy-app',
+    proxyUrl: 'socks5://127.0.0.1:1080',
+  }));
+
+  const spawned: Array<{ args: string[]; env?: Record<string, string | undefined>; pty: ReturnType<typeof createFakePty> }> = [];
+  const terminals = createWorkTerminalService({
+    db,
+    currentPlatform: 'win32',
+    env: { PATH: 'C:\\WINDOWS\\system32' },
+    ptySpawn: (_file, args, opts) => {
+      const pty = createFakePty();
+      spawned.push({ args: Array.isArray(args) ? args : [args], env: opts.env, pty });
+      return pty;
+    },
+  });
+  const { app } = await buildApp({ settings, db, terminals });
+  try {
+    const localRes = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: localProject.id },
+    });
+    assert.equal(localRes.statusCode, 201);
+    assert.equal(spawned[0].env?.HTTP_PROXY, 'http://127.0.0.1:7890');
+    assert.equal(spawned[0].env?.HTTPS_PROXY, 'http://127.0.0.1:7890');
+    assert.equal(spawned[0].env?.ALL_PROXY, 'http://127.0.0.1:7890');
+
+    const sshRes = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: sshProject.id },
+    });
+    assert.equal(sshRes.statusCode, 201);
+    assert.ok(spawned[1].args.some((arg) => arg.includes("HTTP_PROXY='socks5://127.0.0.1:1080'")));
+    assert.ok(spawned[1].args.some((arg) => arg.includes("HTTPS_PROXY='socks5://127.0.0.1:1080'")));
+  } finally {
+    await app.close();
+    db.close();
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(workDir, { recursive: true, force: true });
   }

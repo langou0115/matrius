@@ -316,6 +316,37 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.ok(dDriveBtn);
     await act(async () => { dDriveBtn.click(); });
     assert.match(winBrowser.textContent ?? '', /Engineer/);
+    const selectDriveDirBtn = Array.from(winBrowser.querySelectorAll('.dialog-footer button'))
+      .find((btn) => btn.textContent?.includes('选择当前目录'));
+    assert.ok(selectDriveDirBtn);
+    await act(async () => { selectDriveDirBtn.click(); });
+
+    // Optional network proxy input validates invalid schemes and stores valid proxyUrl on the created project.
+    const proxyInput = secondDialog.querySelector('#work-project-proxy-input');
+    assert.ok(proxyInput);
+    const proxyKey = Object.keys(proxyInput).find((key) => key.startsWith('__reactProps'));
+    assert.ok(proxyKey);
+    const createForm = secondDialog.querySelector('form');
+    const createFormKey = Object.keys(createForm).find((key) => key.startsWith('__reactProps'));
+    await act(async () => {
+      proxyInput.value = 'ftp://bad.proxy:21';
+      proxyInput[proxyKey].onChange({ target: proxyInput });
+    });
+    await act(async () => { await createForm[createFormKey].onSubmit({ preventDefault() {} }); });
+    const proxyErrorDialog = dom.document.querySelector('.work-project-error-dialog[open]');
+    assert.ok(proxyErrorDialog);
+    assert.match(proxyErrorDialog.textContent ?? '', /仅支持 http:\/\/、https:\/\/ 或 socks5:\/\//);
+    await act(async () => { proxyErrorDialog.querySelector('.dialog-footer button').click(); });
+
+    await act(async () => {
+      proxyInput.value = 'http://127.0.0.1:7890';
+      proxyInput[proxyKey].onChange({ target: proxyInput });
+    });
+    await act(async () => { await createForm[createFormKey].onSubmit({ preventDefault() {} }); });
+    const createdItem = dom.document.querySelector('.work-project-item.is-active');
+    assert.ok(createdItem);
+    assert.match(createdItem.querySelector('.work-project-name')?.textContent ?? '', /D:/);
+    assert.match(createdItem.querySelector('.work-project-select')?.getAttribute('title') ?? '', /D:\\/);
   } finally {
     await act(async () => { root.unmount(); });
     resetWorkStateForTests();

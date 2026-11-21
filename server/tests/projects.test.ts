@@ -164,13 +164,14 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     assert.equal(sshCall.env?.SSH_ASKPASS_REQUIRE, 'force');
     assert.equal(sshCall.args.join(' ').includes('ssh-pass-123'), false);
 
-    // 4. Create work project bound to WSL host + directory.
+    // 4. Create work project bound to WSL host + directory + optional proxyUrl.
     const createdRes = await app.inject({
       method: 'POST',
       url: '/api/projects',
       payload: {
         hostId: wslHost.id,
         directory: '/home/ubuntu/workspace/repo',
+        proxyUrl: '127.0.0.1:7890',
       },
     });
     assert.equal(createdRes.statusCode, 201);
@@ -178,6 +179,14 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     assert.equal(project.name, 'repo');
     assert.equal(project.hostId, wslHost.id);
     assert.equal(project.directory, '/home/ubuntu/workspace/repo');
+    assert.equal(project.proxyUrl, 'http://127.0.0.1:7890');
+
+    const badProxyRes = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      payload: { hostId: wslHost.id, directory: '/home/ubuntu/workspace/repo', proxyUrl: 'ftp://127.0.0.1:21' },
+    });
+    assert.equal(badProxyRes.statusCode, 422);
 
     // 5. Reject unknown hostId on project creation.
     const badHostRes = await app.inject({
@@ -187,7 +196,7 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     });
     assert.equal(badHostRes.statusCode, 422);
 
-    // 6. List, update (with revision conflict check), and delete work project.
+    // 6. List, update (including clearing proxyUrl + revision conflict check), and delete work project.
     const listRes = await app.inject({ method: 'GET', url: '/api/projects' });
     assert.equal(listRes.statusCode, 200);
     assert.equal(listRes.json().items.length, 1);
@@ -199,12 +208,14 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
         name: 'matrius-renamed',
         hostId: project.hostId,
         directory: project.directory,
+        proxyUrl: '',
         baseRevision: project.revision,
       },
     });
     assert.equal(patchRes.statusCode, 200);
     const updated = patchRes.json();
     assert.equal(updated.name, 'matrius-renamed');
+    assert.equal(updated.proxyUrl, undefined);
     assert.equal(updated.revision, project.revision + 1);
 
     const stalePatchRes = await app.inject({

@@ -92,14 +92,86 @@ function defaultPtySpawn(file: string, args: string[], options: IWindowsPtyForkO
   return cachedNodePty.spawn(file, args, options);
 }
 
-function buildTerminalEnv(baseEnv: NodeJS.ProcessEnv, extra: Record<string, string> = {}): Record<string, string> {
+function buildTerminalEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  extra: Record<string, string> = {},
+  resolvedWindowsPath?: string,
+): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(baseEnv)) {
-    if (typeof value === 'string') merged[key] = value;
+    if (typeof value !== 'string') continue;
+    if (resolvedWindowsPath && key.toLowerCase() === 'path') continue;
+    merged[key] = value;
+  }
+  if (resolvedWindowsPath) {
+    merged.PATH = resolvedWindowsPath;
   }
   merged.TERM = 'xterm-256color';
   merged.COLORTERM = 'truecolor';
   return { ...merged, ...extra };
+}
+
+function findEnvCaseInsensitive(envSource: NodeJS.ProcessEnv, name: string): string | undefined {
+  const upper = name.toUpperCase();
+  for (const [key, value] of Object.entries(envSource)) {
+    if (key.toUpperCase() === upper && typeof value === 'string') return value;
+  }
+  return undefined;
+}
+
+export function expandWindowsEnvVars(rawValue: string, envSource: NodeJS.ProcessEnv): string {
+  return rawValue.replace(/%([^%]+)%/gu, (full, name: string) => findEnvCaseInsensitive(envSource, name) ?? full);
+}
+
+/**
+ * Merge current session PATH with fresh Windows Registry Machine/User Path entries so
+ * newly installed tools (e.g. `agy`, `claude`, `uv`) work without closing the parent shell.
+ */
+export function mergeWindowsPathEntries(
+  existingPath: string,
+  registryPaths: readonly string[],
+  envSource: NodeJS.ProcessEnv = process.env,
+): string {
+  const seen = new Set<string>();
+  const combined: string[] = [];
+  const pushAll = (raw: string, expand: boolean) => {
+    const resolved = expand ? expandWindowsEnvVars(raw, envSource) : raw;
+    for (const part of resolved.split(';')) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      combined.push(trimmed);
+    }
+  };
+  pushAll(existingPath, false);
+  for (const regPath of registryPaths) {
+    if (regPath) pushAll(regPath, true);
+  }
+  return combined.join(';');
+}
+
+function parseRegQueryPathValue(stdout: Buffer): string {
+  const text = stdout.toString('utf8');
+  for (const rawLine of text.split(/\r?\n/u)) {
+    const match = /^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.+)$/iu.exec(rawLine);
+    if (match?.[1]) return match[1].trim();
+  }
+  return '';
+}
+
+function buildProxyEnvVars(proxyUrl: string | undefined): Record<string, string> {
+  const trimmed = proxyUrl?.trim() ?? '';
+  if (!trimmed) return {};
+  return {
+    HTTP_PROXY: trimmed,
+    HTTPS_PROXY: trimmed,
+    ALL_PROXY: trimmed,
+    http_proxy: trimmed,
+    https_proxy: trimmed,
+    all_proxy: trimmed,
+  };
 }
 
 function resolveLocalCwd(directory: string, fallbackDirectory?: string): string {
@@ -232,11 +304,34 @@ export function createWorkTerminalService(options: {
   const ptySpawn = options.ptySpawn ?? defaultPtySpawn;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const currentPlatform = options.currentPlatform ?? process.platform;
+  const hasExplicitEnv = options.env !== undefined;
   const env = options.env ?? process.env;
   const wslCommand = options.wslCommand !== undefined ? options.wslCommand : resolveWslCommand(currentPlatform);
   const fallbackCwd = options.fallbackCwd ?? process.cwd();
   const runtimeHostSecrets = options.runtimeHostSecrets ?? new Map<string, string>();
   const terminals = new Map<string, ActiveTerminal>();
+
+  let cachedRegPath: { expiresAt: number; values: string[] } | null = null;
+  async function readFreshRegistryPaths(): Promise<string[]> {
+    if (currentPlatform !== 'win32' || hasExplicitEnv) return [];
+    const now = Date.now();
+    if (cachedRegPath && cachedRegPath.expiresAt > now) return cachedRegPath.values;
+    try {
+      const regExe = 'reg.exe';
+      const [machineRes, userRes] = await Promise.all([
+        runCommand(regExe, ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', '/v', 'Path'], { timeoutMs: 1_500 }),
+        runCommand(regExe, ['query', 'HKCU\\Environment', '/v', 'Path'], { timeoutMs: 1_500 }),
+      ]);
+      const values = [
+        machineRes.code === 0 ? parseRegQueryPathValue(machineRes.stdout) : '',
+        userRes.code === 0 ? parseRegQueryPathValue(userRes.stdout) : '',
+      ].filter(Boolean);
+      cachedRegPath = { expiresAt: now + 5_000, values };
+      return values;
+    } catch {
+      return [];
+    }
+  }
 
   for (const row of listWorkTerminalRows(db, INSTANCE_ID)) {
     const session = serializeWorkTerminalRow(row);
@@ -305,6 +400,7 @@ export function createWorkTerminalService(options: {
     hostId: string;
     targetCwd: string;
     fallbackProjectCwd: string;
+    proxyUrl?: string;
     preset: WorkTerminalPreset;
     shell?: WindowsTerminalShell;
     command: string;
@@ -322,13 +418,19 @@ export function createWorkTerminalService(options: {
     let spawnCwd = fallbackCwd;
     let extraEnv: Record<string, string> = {};
     let effectiveCwd = spec.targetCwd;
+    const proxyEnv = buildProxyEnvVars(spec.proxyUrl);
 
     const isWindowsLocal = spec.hostId === LOCAL_WORK_HOST_ID && currentPlatform === 'win32';
     const resolvedWindowsShell = isWindowsLocal ? (spec.shell ?? DEFAULT_WINDOWS_SHELL) : undefined;
+    const freshRegistryPaths = isWindowsLocal ? await readFreshRegistryPaths() : [];
+    const mergedWindowsPath = freshRegistryPaths.length > 0
+      ? mergeWindowsPathEntries(findEnvCaseInsensitive(env, 'Path') ?? '', freshRegistryPaths, env)
+      : undefined;
 
     if (spec.hostId === LOCAL_WORK_HOST_ID) {
       effectiveCwd = resolveLocalCwd(spec.targetCwd, spec.fallbackProjectCwd);
       spawnCwd = effectiveCwd;
+      extraEnv = { ...proxyEnv };
       if (currentPlatform === 'win32') {
         if (resolvedWindowsShell === 'cmd') {
           file = env.ComSpec || 'cmd.exe';
@@ -348,10 +450,14 @@ export function createWorkTerminalService(options: {
     } else {
       const hostRow = requireWorkHostRow(db, INSTANCE_ID, spec.hostId);
       const dirExpr = buildPosixCdTarget(spec.targetCwd);
+      const proxyExports = Object.entries(proxyEnv)
+        .map(([key, value]) => `export ${key}=${posixSingleQuote(value)}`)
+        .join('; ');
+      const proxyPrefix = proxyExports ? `${proxyExports}; ` : '';
       const promptCwdHook = `PROMPT_COMMAND="\${PROMPT_COMMAND:+\$PROMPT_COMMAND; }printf '\\033]7;file://localhost%s\\007' \\"\$PWD\\""`;
       const remoteCommand = spec.command
-        ? `cd ${dirExpr} && ${spec.command}; exec \${SHELL:-sh} -il`
-        : `cd ${dirExpr} && ${promptCwdHook} exec \${SHELL:-sh} -il`;
+        ? `cd ${dirExpr} && ${proxyPrefix}${spec.command}; exec \${SHELL:-sh} -il`
+        : `cd ${dirExpr} && ${proxyPrefix}${promptCwdHook} exec \${SHELL:-sh} -il`;
 
       if (hostRow.kind === 'wsl') {
         if (!wslCommand) {
@@ -365,7 +471,7 @@ export function createWorkTerminalService(options: {
         args = ['-d', hostRow.distro];
         if (hostRow.username) args.push('--user', hostRow.username);
         args.push('--exec', 'sh', '-lc', remoteCommand);
-        extraEnv = { WSL_UTF8: '1' };
+        extraEnv = { WSL_UTF8: '1', ...proxyEnv };
       } else {
         const hostKey = fromDbUuid(hostRow.id);
         const trimmedPassword = spec.passwordOverride?.trim() ?? '';
@@ -408,7 +514,7 @@ export function createWorkTerminalService(options: {
         cols: spec.cols,
         rows: spec.rows,
         cwd: spawnCwd,
-        env: buildTerminalEnv(env, extraEnv),
+        env: buildTerminalEnv(env, extraEnv, mergedWindowsPath),
       });
     } catch (error) {
       const message = error instanceof Error && error.message ? error.message : '无法启动终端进程。';
@@ -482,6 +588,7 @@ export function createWorkTerminalService(options: {
         hostId: project.hostId,
         targetCwd: project.directory,
         fallbackProjectCwd: project.directory,
+        proxyUrl: project.proxyUrl,
         preset: normalized.preset,
         shell: normalized.shell,
         command: normalized.command,
@@ -544,6 +651,7 @@ export function createWorkTerminalService(options: {
         hostId: project.hostId,
         targetCwd: entry.session.cwd || project.directory,
         fallbackProjectCwd: project.directory,
+        proxyUrl: project.proxyUrl,
         preset: entry.session.preset,
         shell: entry.session.shell,
         command: entry.session.command,

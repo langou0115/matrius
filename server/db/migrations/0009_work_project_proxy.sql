@@ -1,0 +1,1 @@
+ALTER TABLE work_projects ADD COLUMN proxy_url TEXT NOT NULL DEFAULT '';

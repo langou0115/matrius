@@ -17,6 +17,7 @@ const createProjectSchema = z.object({
   hostId: z.string().min(1).max(120),
   directory: z.string().min(1).max(1000),
   name: z.string().max(120).optional(),
+  proxyUrl: z.string().max(500).optional(),
 });
 
 const updateProjectSchema = createProjectSchema.extend({
