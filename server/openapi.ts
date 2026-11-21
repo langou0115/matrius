@@ -290,7 +290,7 @@ const schemas: Record<string, Schema> = {
     name: str(),
     hostId: str(),
     directory: str(),
-    proxyUrl: str(),
+    cliProxies: obj({ codex: str(), antigravity: str(), claude: str() }),
     revision: int(),
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -302,6 +302,7 @@ const schemas: Record<string, Schema> = {
     title: str(),
     preset: { type: 'string', enum: ['shell', 'claude', 'codex', 'antigravity'] },
     shell: { type: 'string', enum: ['powershell', 'cmd'] },
+    cliSessionId: str(),
     command: str(),
     cwd: str(),
     status: { type: 'string', enum: ['running', 'restored', 'exited', 'error'] },
@@ -310,6 +311,14 @@ const schemas: Record<string, Schema> = {
     errorCode: str(),
     pinned: bool(),
     createdAt: timestamp,
+  }),
+  WorkCliSession: obj({
+    id: str(),
+    provider: { type: 'string', enum: ['claude', 'codex', 'antigravity'] },
+    projectId: id,
+    title: str(),
+    status: { type: 'string', enum: ['running', 'completed', 'idle'] },
+    updatedAt: timestamp,
   }),
   HostDirectoryListing: obj({
     hostId: str(),
@@ -507,16 +516,24 @@ export const openApiDocument = {
       post: {
         tags: ['hosts'],
         summary: 'Create a desktop work project bound to a host and directory',
-        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str(), proxyUrl: str() }, ['hostId', 'directory'])),
+        requestBody: jsonBody(obj({
+          hostId: str(),
+          directory: str(),
+          name: str(),
+          cliProxies: obj({ codex: str(), antigravity: str(), claude: str() }),
+        }, ['hostId', 'directory'])),
         responses: { ...created(ref('WorkProject')), ...errorResponses },
       },
     },
     '/api/projects/{projectId}': {
       patch: {
         tags: ['hosts'],
-        summary: 'Update a desktop work project',
+        summary: 'Update proxy configuration for a desktop work project',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: id }],
-        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str(), proxyUrl: str(), baseRevision: int() }, ['hostId', 'directory'])),
+        requestBody: jsonBody(obj({
+          cliProxies: obj({ codex: str(), antigravity: str(), claude: str() }),
+          baseRevision: int(),
+        })),
         responses: { ...ok(ref('WorkProject')), ...errorResponses },
       },
       delete: {
@@ -524,6 +541,25 @@ export const openApiDocument = {
         summary: 'Delete a desktop work project',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: id }],
         responses: { 204: jsonResponse('Deleted'), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/cli-sessions': {
+      get: {
+        tags: ['hosts'],
+        summary: 'List Claude Code, Codex, and Antigravity CLI conversations for a work project',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: id },
+          { name: 'limit', in: 'query', schema: int() },
+        ],
+        responses: {
+          ...ok(obj({
+            projectId: id,
+            items: arr(ref('WorkCliSession')),
+            total: int(),
+            hasMore: bool(),
+          })),
+          ...errorResponses,
+        },
       },
     },
     '/api/work/settings': {
@@ -536,6 +572,9 @@ export const openApiDocument = {
           activeTerminals: obj({}),
           filesPanelOpen: bool(),
           filesPanelWidth: nullable(int()),
+          persistTerminalScrollback: bool(),
+          projectOrder: arr(id),
+          cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
         })),
       },
       put: {
@@ -547,6 +586,9 @@ export const openApiDocument = {
           activeTerminals: obj({}),
           filesPanelOpen: bool(),
           filesPanelWidth: nullable(int()),
+          persistTerminalScrollback: bool(),
+          projectOrder: arr(id),
+          cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
         })),
         responses: ok(obj({
           defaultWindowsShell: { type: 'string', enum: ['powershell', 'cmd'] },
@@ -554,6 +596,9 @@ export const openApiDocument = {
           activeTerminals: obj({}),
           filesPanelOpen: bool(),
           filesPanelWidth: nullable(int()),
+          persistTerminalScrollback: bool(),
+          projectOrder: arr(id),
+          cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
         })),
       },
     },
@@ -562,7 +607,7 @@ export const openApiDocument = {
         tags: ['hosts'],
         summary: 'List active desktop work PTY terminal sessions',
         parameters: [{ name: 'projectId', in: 'query', schema: id }],
-        responses: ok(obj({ items: arr(ref('WorkTerminalSession')), platform: str() })),
+        responses: ok(obj({ items: arr(ref('WorkTerminalSession')), platform: str(), windowsBuild: int() })),
       },
       post: {
         tags: ['hosts'],
@@ -571,6 +616,7 @@ export const openApiDocument = {
           projectId: id,
           preset: { type: 'string', enum: ['shell', 'claude', 'codex', 'antigravity'] },
           shell: { type: 'string', enum: ['powershell', 'cmd'] },
+          cliSessionId: str(),
           title: str(),
           command: str(),
           cols: int(),

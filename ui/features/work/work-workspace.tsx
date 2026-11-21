@@ -4,7 +4,6 @@ import {
   defaultTerminalTitle,
   normalizeWorkTerminalTitle,
   type WindowsTerminalShell,
-  type WorkTerminalPreset,
   type WorkTerminalSession,
 } from '@contract/work-terminals';
 import {
@@ -43,6 +42,7 @@ import {
   MAX_WORK_FILES_WIDTH,
   MIN_WORK_FILES_WIDTH,
   addWorkTerminal,
+  bumpCliSessionsRefresh,
   detectPreviewPlatform,
   hydrateWorkSettings,
   isWindowsPlatform,
@@ -61,7 +61,6 @@ function createPreviewTerminalSession(input: {
   projectId: string;
   hostId: string;
   title: string;
-  preset: WorkTerminalPreset;
   shell?: WindowsTerminalShell;
   cwd: string;
 }): WorkTerminalSession {
@@ -70,7 +69,7 @@ function createPreviewTerminalSession(input: {
     projectId: input.projectId,
     hostId: input.hostId,
     title: input.title,
-    preset: input.preset,
+    preset: 'shell',
     ...(input.shell ? { shell: input.shell } : {}),
     command: '',
     cwd: input.cwd,
@@ -139,7 +138,9 @@ export function WorkWorkspace() {
       if (cancelled) return;
       if (workSettings) hydrateWorkSettings(workSettings);
       if (terminalRes) {
-        if (terminalRes.platform) setWorkServerPlatform(terminalRes.platform);
+        if (terminalRes.platform) {
+          setWorkServerPlatform(terminalRes.platform, terminalRes.windowsBuild ?? null);
+        }
         if (terminals.length === 0 && terminalRes.items.length > 0) {
           setWorkTerminals(terminalRes.items);
         }
@@ -217,27 +218,26 @@ export function WorkWorkspace() {
     return Math.max(MIN_WORK_FILES_WIDTH, Math.min(MAX_WORK_FILES_WIDTH, screenWidth - 260));
   }, []);
 
-  async function handleCreateTerminal(preset: WorkTerminalPreset = 'shell', explicitShell?: WindowsTerminalShell) {
+  async function handleCreateTerminal(explicitShell?: WindowsTerminalShell) {
     if (creating) return;
     if (!activeProject) {
       setNotice('请先在左侧创建一个工作项目。');
       return;
     }
 
-    const shell: WindowsTerminalShell | undefined = preset === 'shell' && isWindowsLocal
+    const shell: WindowsTerminalShell | undefined = isWindowsLocal
       ? (explicitShell ?? defaultWindowsShell)
       : undefined;
     const sameFlavorCount = projectTerminals.filter((item) => (
-      item.preset === preset && (preset !== 'shell' || item.shell === shell)
+      item.preset === 'shell' && item.shell === shell
     )).length;
-    const title = defaultTerminalTitle(preset, sameFlavorCount, shell);
+    const title = defaultTerminalTitle('shell', sameFlavorCount, shell);
 
     if (preview) {
       addWorkTerminal(createPreviewTerminalSession({
         projectId: activeProject.id,
         hostId: activeProject.hostId,
         title,
-        preset,
         ...(shell ? { shell } : {}),
         cwd: activeProject.directory,
       }));
@@ -248,7 +248,7 @@ export function WorkWorkspace() {
     try {
       const created = await createWorkTerminal(instance.request, {
         projectId: activeProject.id,
-        preset,
+        preset: 'shell',
         ...(shell ? { shell } : {}),
         title,
         command: '',
@@ -261,14 +261,17 @@ export function WorkWorkspace() {
     }
   }
 
-  async function handleCloseTabs(terminalIds: readonly string[]) {
+  function handleCloseTabs(terminalIds: readonly string[]) {
     if (terminalIds.length === 0) return;
-    if (!preview) {
-      await Promise.allSettled(
-        terminalIds.map((id) => deleteWorkTerminal(instance.request, id)),
-      );
-    }
+    const hasCli = terminals.some((item) => terminalIds.includes(item.id) && item.preset !== 'shell');
     removeWorkTerminals(terminalIds);
+    if (!preview) {
+      void Promise.allSettled(
+        terminalIds.map((id) => deleteWorkTerminal(instance.request, id)),
+      ).then(() => {
+        if (hasCli) bumpCliSessionsRefresh();
+      });
+    }
   }
 
   async function handleTogglePin(target: WorkTerminalSession) {
@@ -358,9 +361,6 @@ export function WorkWorkspace() {
                   >
                     <TerminalPresetIcon preset={session.preset} shell={session.shell} size={14} />
                     <span className="work-tab-title">{session.title}</span>
-                    {session.status !== 'running' && (
-                      <span className={`work-tab-status is-${session.status}`} aria-hidden="true" />
-                    )}
                   </button>
                   {isPinned ? (
                     <button
@@ -400,7 +400,7 @@ export function WorkWorkspace() {
                   disabled={creating}
                   onClick={() => {
                     setAddMenuOpen(false);
-                    void handleCreateTerminal('shell');
+                    void handleCreateTerminal();
                   }}
                 >
                   <Plus size={15} strokeWidth={1.9} aria-hidden="true" />
@@ -456,7 +456,7 @@ export function WorkWorkspace() {
                         data-shell={option.id}
                         onClick={() => {
                           setAddMenuOpen(false);
-                          void handleCreateTerminal('shell', option.id);
+                          void handleCreateTerminal(option.id);
                         }}
                       >
                         <TerminalPresetIcon preset="shell" shell={option.id} size={15} />
@@ -470,53 +470,13 @@ export function WorkWorkspace() {
                       data-preset="shell"
                       onClick={() => {
                         setAddMenuOpen(false);
-                        void handleCreateTerminal('shell');
+                        void handleCreateTerminal();
                       }}
                     >
                       <TerminalPresetIcon preset="shell" size={15} />
                       <span className="work-add-menu-label">终端</span>
                     </button>
                   )}
-                  <div className="work-add-menu-divider" role="separator" />
-                  <button
-                    role="menuitem"
-                    type="button"
-                    data-preset="claude"
-                    className="is-disabled"
-                    aria-disabled="true"
-                    title="Claude Code 终端尚未开发完成"
-                    onClick={(event) => event.preventDefault()}
-                  >
-                    <TerminalPresetIcon preset="claude" size={15} />
-                    <span className="work-add-menu-label">Claude Code</span>
-                    <span className="work-add-menu-badge">暂未接入</span>
-                  </button>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    data-preset="codex"
-                    className="is-disabled"
-                    aria-disabled="true"
-                    title="Codex 终端尚未开发完成"
-                    onClick={(event) => event.preventDefault()}
-                  >
-                    <TerminalPresetIcon preset="codex" size={15} />
-                    <span className="work-add-menu-label">Codex</span>
-                    <span className="work-add-menu-badge">暂未接入</span>
-                  </button>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    data-preset="antigravity"
-                    className="is-disabled"
-                    aria-disabled="true"
-                    title="Antigravity 终端尚未开发完成"
-                    onClick={(event) => event.preventDefault()}
-                  >
-                    <TerminalPresetIcon preset="antigravity" size={15} />
-                    <span className="work-add-menu-label">Antigravity</span>
-                    <span className="work-add-menu-badge">暂未接入</span>
-                  </button>
                 </div>
               )}
             </div>

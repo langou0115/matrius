@@ -136,16 +136,16 @@ ui/
 │   │   ├── hosts-api.ts                `/api/hosts` 桌面端 SSH / WSL 主机读写与探活接口
 │   │   └── host-settings-screen.tsx    设置页「工作 → 主机」管理界面（仅桌面端可用）
 │   ├── work/
-│   │   ├── work-api.ts                 `/api/projects`、`/api/hosts/:id/fs`、`/api/hosts/:id/unlock` 与 `/api/work/terminals` 桌面端项目、目录与终端接口
-│   │   ├── work-state.ts               共享桌面端「工作」状态（项目、按项目隔离的终端标签、平台默认终端、右侧目录栏开关与拖拽宽度）
-│   │   ├── work-shell-preference.ts    `/api/work/settings` 读写桌面端默认 Windows 终端与项目激活状态（独立 `work_settings` 表）
+│   │   ├── work-api.ts                 `/api/projects`、`/api/projects/:id/cli-sessions`、`/api/hosts/:id/fs`、`/api/hosts/:id/unlock` 与 `/api/work/terminals` 桌面端项目、CLI 会话、目录与终端接口
+│   │   ├── work-state.ts               共享桌面端「工作」状态（项目及排序、展开状态与分组 CLI 对话/组序/状态检测、按项目隔离的终端标签、平台默认终端、右侧目录栏开关与拖拽宽度）
+│   │   ├── work-shell-preference.ts    `/api/work/settings` 读写桌面端默认 Windows 终端、项目激活与列表/分组排序（独立 `work_settings` 表）
 │   │   ├── terminal-preset-icon.tsx    `@thesvg/react` 终端/CLI 品牌图标（PowerShell、Claude Code、Codex 与裁剪版 Antigravity）
-│   │   ├── work-general-screen.tsx     设置页「工作 → 常规」界面（Windows 默认终端 PowerShell / CMD 选择，仅桌面端可用）
-│   │   ├── work-sidebar-panel.tsx      桌面端侧栏「工作」面板（「创建项目」入口与单行项目列表，仅桌面端懒加载）
-│   │   ├── work-workspace.tsx          桌面端「工作」右侧容器（按项目切换终端标签顶栏、分体式 `+ | ▾` 新建终端与类型菜单、终端区与可调宽目录栏）
-│   │   ├── work-terminal-view.tsx      基于 `@xterm/xterm` 的主题自适应 WebSocket PTY 终端画布（支持重启恢复快照、末次目录与 SSH/WSL 重连解锁）
+│   │   ├── work-general-screen.tsx     设置页「工作 → 常规」界面（Windows 默认终端选择、终端历史输出快照开关，仅桌面端可用）
+│   │   ├── work-sidebar-panel.tsx      桌面端侧栏「工作」面板（「创建项目」入口、可拖拽排序的项目列表与右键靠右设置菜单、按 Codex/Antigravity/Claude Code 分组且支持拖拽组序与右侧 `+` 新建单一对话的 CLI 对话区、组内「显示更多 / 收起」，仅桌面端懒加载）
+│   │   ├── work-workspace.tsx          桌面端「工作」右侧容器（按项目切换终端标签顶栏、右上角分体式 `+ | ▾` 新建系统终端与种类菜单、右侧工作目录栏折叠开关与终端画布区）
+│   │   ├── work-terminal-view.tsx      基于 `@xterm/xterm` 的主题自适应 WebSocket PTY 终端画布（支持选中文字右键复制、Ctrl+C 复制/中断与 Ctrl+V 粘贴，以及重启恢复快照、末次目录与 SSH/WSL 重连解锁）
 │   │   ├── work-files-panel.tsx        右侧工作目录可调宽、可展开文件树边栏（支持 SSH 密码内联解锁）
-│   │   ├── create-project-dialog.tsx   「创建项目 / 项目设置」弹窗（选择主机或跳转主机设置 + 选择项目目录 + 可选网络代理）
+│   │   ├── create-project-dialog.tsx   「创建项目 / 项目设置」弹窗（创建时可选主机、目录与分立网络代理；创建后「项目设置」锁定名称、主机与目录，仅允许配置网络代理）
 │   │   ├── directory-browser-dialog.tsx 「选择项目目录」文件与目录浏览器弹窗（支持本机盘符及根目录 / WSL / SSH）
 │   │   └── work-error-dialog.tsx     工作区创建项目、添加终端与目录浏览共用的错误提示弹窗
 │   ├── instance/
@@ -255,7 +255,7 @@ ui/
 - `core/api/agent-runs.ts`：浏览器侧 Agent 通信适配，提交运行、消费 SSE 并更新消息，同时发送停止/steer；Agent 循环与工具模块位于 server/agent 与 server/agent/tools。
 - `features/chat/chat-runtime.tsx`：薄 React 适配层，提供模型/凭据与偏好，把核心回复分发到聊天状态，挂在根工作区中，不随设置导航卸载。后台完成时维护临时通知列表；聊天屏挂载/卸载同步 `chatVisible`，让设置页期间的完成也保持未读。凭据、存储和流式传输环境分别经适配层接入。每轮回复结束后把 `onUsage` 汇总的 token 上报到实例。
 
-- 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部设置入口；搜索按钮保留在侧栏顶部，桌面端收起侧栏后保留 60px 图标窄栏（顶部对齐顶栏的展开侧栏图标与分割线、下方仅展示当前模式功能图标：对话为新对话/资料库/定时任务/搜索，工作为创建项目，底部为设置按钮，不放模式切换图标），移动端抽屉关闭后在顶栏保留展开按钮。工作（Work）相关功能在网页端没有，且移动端视口同样按 Web 端处理（`npm run dev`、`npm run dev:web`、Web 构建及移动端均只显示对话导航）；仅当通过 `npm run dev:desktop` 以桌面端目标且非移动视口运行时，才会在品牌行与「新对话」之间显示「工作 / 对话」切换栏（默认停留「对话」；切换到「工作」时，左侧工作栏展示「创建项目」与可点击展开/收缩的单行项目列表及三点「项目设置 / 移除项目」菜单，点击创建或项目设置可选择主机或跳转主机设置并弹出目录与文件选择器挑选项目目录，右侧工作区展示终端标签顶栏（含右上角 `+` 新建终端按钮与右侧工作目录栏折叠按钮）、主区域 `@xterm/xterm` 终端画布以及右侧可展开目录树边栏；从「工作」栏进入设置再返回时保持停留在「工作」栏）。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
+- 侧栏采用品牌、平面主导航、可折叠的置顶/最近列表与底部设置入口；搜索按钮保留在侧栏顶部，桌面端收起侧栏后保留 60px 图标窄栏（顶部对齐顶栏的展开侧栏图标与分割线、下方仅展示当前模式功能图标：对话为新对话/资料库/定时任务/搜索，工作为创建项目，底部为设置按钮，不放模式切换图标），移动端抽屉关闭后在顶栏保留展开按钮。工作（Work）相关功能在网页端没有，且移动端视口同样按 Web 端处理（`npm run dev`、`npm run dev:web`、Web 构建及移动端均只显示对话导航）；仅当通过 `npm run dev:desktop` 以桌面端目标且非移动视口运行时，才会在品牌行与「新对话」之间显示「工作 / 对话」切换栏（默认停留「对话」；切换到「工作」时，左侧工作栏展示「创建项目」与可拖拽排序的项目列表（带独立展开箭头按钮与右键靠右「项目设置 / 移除项目」菜单），展开项目展示按 Codex / Antigravity / Claude Code 分组且支持拖拽调整组序的 CLI 对话区（仅分组标题显示品牌图标，右侧提供 `+` 按钮用于发起新对话且每组同时最多保留一个新对话、未安装 CLI 时直接弹窗报错；具体对话右侧显示加载中/已完成状态检测，组内提供「显示更多 / 收起」分页），点击对话可恢复或聚焦对应终端标签，点击创建可选择主机或跳转主机设置并按需展开设置 Codex / Antigravity / Claude Code 的网络代理（普通终端默认不上代理），创建后通过「项目设置」仅支持配置各 CLI 网络代理（名称、主机与目录锁定不可更改），点击目录按钮可弹出目录与文件选择器挑选项目目录，右侧工作区展示无额外未读圆点的终端标签顶栏（含右上角分体式 `+ | ▾` 新建系统终端按钮与右侧工作目录栏折叠按钮）、主区域支持选中右键复制与 Ctrl+C / Ctrl+V 的 `@xterm/xterm` 终端画布以及右侧可展开目录树边栏；从「工作」栏进入设置再返回时保持停留在「工作」栏）。设置保持独立整页，各级页面保留上一页与 Home 图标，不增加分类侧栏或横向分类导航。流式回复通过临时 `reasoningActive` 区分思考与正文生成，该字段不写入持久化白名单。非当前会话在侧栏显示运行中 spinner（`runs[id]`）或完成未读圆点（`completedReadAt === null`）；后台完成卡片挂载在根布局 `AppFrame` 内，因此设置页也可见并继承主题变量。`updatedAt` 决定「最近」排序，只在追加消息或回复正文生成完成时覆盖；后续思考与正文增量不会让会话反复跳到顶部，因此并发生成的会话不会在侧栏来回抢位。
 
 ## 实例与功能开关
 

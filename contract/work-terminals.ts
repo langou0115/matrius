@@ -3,6 +3,8 @@
  * Keep this module free of Node, DOM, React and SQLite imports.
  */
 
+import { validateCliSessionId } from './work-cli';
+
 export type WorkTerminalPreset = 'shell' | 'claude' | 'codex' | 'antigravity';
 export type WorkTerminalStatus = 'running' | 'restored' | 'exited' | 'error';
 export type WindowsTerminalShell = 'powershell' | 'cmd';
@@ -24,6 +26,7 @@ export type WorkTerminalSession = {
   title: string;
   preset: WorkTerminalPreset;
   shell?: WindowsTerminalShell;
+  cliSessionId?: string;
   command: string;
   cwd: string;
   status: WorkTerminalStatus;
@@ -50,6 +53,7 @@ export type WorkTerminalCreateInput = {
   projectId: string;
   preset?: WorkTerminalPreset;
   shell?: WindowsTerminalShell;
+  cliSessionId?: string;
   title?: string;
   command?: string;
   cols?: number;
@@ -60,6 +64,7 @@ export type NormalizedWorkTerminalInput = {
   projectId: string;
   preset: WorkTerminalPreset;
   shell?: WindowsTerminalShell;
+  cliSessionId?: string;
   title: string;
   command: string;
   cols: number;
@@ -83,7 +88,7 @@ export const WORK_TERMINAL_PRESETS: ReadonlyArray<{
   { id: 'shell', label: '终端', defaultCommand: '' },
   { id: 'claude', label: 'Claude Code', defaultCommand: 'claude' },
   { id: 'codex', label: 'Codex', defaultCommand: 'codex' },
-  { id: 'antigravity', label: 'Antigravity', defaultCommand: 'antigravity' },
+  { id: 'antigravity', label: 'Antigravity', defaultCommand: 'agy' },
 ];
 
 function hasControlChars(text: string): boolean {
@@ -151,6 +156,7 @@ export function validateWorkTerminalInput(
 
   const preset = normalizeTerminalPreset(raw.preset);
   const shell = preset === 'shell' ? normalizeOptionalWindowsShell(raw.shell) : undefined;
+  const cliSessionId = preset === 'shell' ? undefined : validateCliSessionId(raw.cliSessionId);
   const title = (raw.title ?? '').trim();
   if (hasControlChars(title)) throw new Error('终端名称不能包含控制字符。');
   if (title.length > 80) throw new Error('终端名称不能超过 80 个字符。');
@@ -163,9 +169,30 @@ export function validateWorkTerminalInput(
     projectId,
     preset,
     ...(shell ? { shell } : {}),
+    ...(cliSessionId ? { cliSessionId } : {}),
     title: title || defaultTerminalTitle(preset, existingCount, shell),
     command: rawCommand,
     cols: clampTerminalCols(raw.cols),
     rows: clampTerminalRows(raw.rows),
   };
+}
+
+// ConPTY frequently emits `\x1b[3J...\r\n\x1b[H` when `clear`/`cls` runs near the bottom
+// row. The transient `\r\n` before cursor-home pushes a stale/blank row back into scrollback
+// immediately after ED 3 cleared it, so strip only that pre-home newline.
+const ANSI_ESC = '\x1b';
+const CONPTY_CLEAR_NEWLINE_BEFORE_HOME_RE = new RegExp(
+  `(${ANSI_ESC}\\[3J(?:${ANSI_ESC}\\[[0-9;?]*[mlhK])*)(?:\\r?\\n)+(?=${ANSI_ESC}\\[(?:1;1|1;|;1|;)?H)`,
+  'gu',
+);
+
+export function normalizeConptyClearChunk(chunk: string): string {
+  if (!chunk.includes('\x1b[3J')) return chunk;
+  return chunk.replace(CONPTY_CLEAR_NEWLINE_BEFORE_HOME_RE, '$1');
+}
+
+export function trimScrollbackAtEraseSavedLines(scrollback: string): string {
+  const lastClearIndex = scrollback.lastIndexOf('\x1b[3J');
+  const sliced = lastClearIndex >= 0 ? scrollback.slice(lastClearIndex) : scrollback;
+  return normalizeConptyClearChunk(sliced);
 }

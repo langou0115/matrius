@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -57,9 +57,11 @@ function createFakePty(): PtyProcess & {
   return fake;
 }
 
-test('work terminals API spawns PTY sessions for local/WSL/SSH projects, guards stopped WSL, and bridges WebSocket I/O', async () => {
+test('work terminals API spawns PTY sessions for local/WSL/SSH projects, guards stopped WSL, rejects missing CLIs, and bridges WebSocket I/O', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'matrius-term-data-'));
   const workDir = mkdtempSync(join(tmpdir(), 'matrius-term-cwd-'));
+  const binDir = mkdtempSync(join(tmpdir(), 'matrius-term-bin-'));
+  writeFileSync(join(binDir, 'claude.cmd'), '@echo off\r\n');
   const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
   const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
   migrate(db);
@@ -85,6 +87,8 @@ test('work terminals API spawns PTY sessions for local/WSL/SSH projects, guards 
   const sshProject = serializeWorkProject(createWorkProjectRow(db, 1, { hostId: sshHost.id, directory: '/srv/app' }));
 
   let wslState: 'Running' | 'Stopped' = 'Running';
+  let wslInstalled = true;
+  let sshInstalled = true;
   const spawned: Array<{ file: string; args: string[]; cwd?: string; pty: ReturnType<typeof createFakePty> }> = [];
   const ptySpawn: PtySpawner = (file, args, opts) => {
     const pty = createFakePty();
@@ -97,6 +101,7 @@ test('work terminals API spawns PTY sessions for local/WSL/SSH projects, guards 
     ptySpawn,
     currentPlatform: 'win32',
     wslCommand: 'wsl.exe',
+    env: { PATH: binDir, PATHEXT: '.CMD;.EXE', ComSpec: 'cmd.exe' },
     async runCommand(command, args) {
       if (command === 'wsl.exe' && args[0] === '-l') {
         return {
@@ -105,32 +110,41 @@ test('work terminals API spawns PTY sessions for local/WSL/SSH projects, guards 
           stderr: Buffer.alloc(0),
         };
       }
+      if (command === 'wsl.exe' && args.includes('--exec')) {
+        return { code: wslInstalled ? 0 : 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      if (command === 'ssh') {
+        return { code: sshInstalled ? 0 : 127, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
       return { code: 1, stdout: Buffer.alloc(0), stderr: Buffer.from('unexpected') };
     },
   });
 
   const { app } = await buildApp({ settings, db, terminals });
   try {
-    // 1. Create a local Claude Code terminal session.
+    // 1. Create a local Claude Code terminal session with cliSessionId.
     const createLocal = await app.inject({
       method: 'POST',
       url: '/api/work/terminals',
       payload: {
         projectId: localProject.id,
         preset: 'claude',
+        cliSessionId: 'claude-sess-99',
         title: 'Claude Code',
+        command: 'claude --resume claude-sess-99',
         cols: 100,
         rows: 32,
       },
     });
     assert.equal(createLocal.statusCode, 201);
-    const localSession = createLocal.json<{ id: string; title: string; preset: string; command: string; status: string }>();
+    const localSession = createLocal.json<{ id: string; title: string; preset: string; cliSessionId?: string; command: string; status: string }>();
     assert.equal(localSession.title, 'Claude Code');
     assert.equal(localSession.preset, 'claude');
-    assert.equal(localSession.command, 'claude');
+    assert.equal(localSession.cliSessionId, 'claude-sess-99');
+    assert.equal(localSession.command, 'claude --resume claude-sess-99');
     assert.equal(spawned[0].file, 'powershell.exe');
     assert.equal(spawned[0].cwd, workDir);
-    assert.ok(spawned[0].args.includes('claude'));
+    assert.ok(spawned[0].args.includes('claude --resume claude-sess-99'));
 
     // Buffer some output before WebSocket attaches, then stream live I/O via WebSocket.
     spawned[0].pty.emitData('booting...\r\n');
@@ -227,11 +241,48 @@ test('work terminals API spawns PTY sessions for local/WSL/SSH projects, guards 
     const delRes = await app.inject({ method: 'DELETE', url: `/api/work/terminals/${sshId}` });
     assert.equal(delRes.statusCode, 204);
     assert.equal(spawned[2].pty.killed, true);
+
+    // 6. Missing CLI binary on local, WSL, or SSH rejects cleanly without spawning PTY or adding a tab.
+    const spawnBeforeMissing = spawned.length;
+    const missingLocal = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: localProject.id, preset: 'antigravity' },
+    });
+    assert.equal(missingLocal.statusCode, 400);
+    const missingLocalErr = missingLocal.json<{ error?: { code?: string; message?: string } }>().error;
+    assert.equal(missingLocalErr?.code, 'cli_not_installed');
+    assert.match(missingLocalErr?.message ?? '', /未安装 Antigravity/);
+
+    wslState = 'Running';
+    wslInstalled = false;
+    const missingWsl = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: wslProject.id, preset: 'codex' },
+    });
+    assert.equal(missingWsl.statusCode, 400);
+    const missingWslErr = missingWsl.json<{ error?: { code?: string; message?: string } }>().error;
+    assert.equal(missingWslErr?.code, 'cli_not_installed');
+    assert.match(missingWslErr?.message ?? '', /未安装 Codex/);
+
+    sshInstalled = false;
+    const missingSsh = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: sshProject.id, preset: 'claude' },
+    });
+    assert.equal(missingSsh.statusCode, 400);
+    const missingSshErr = missingSsh.json<{ error?: { code?: string; message?: string } }>().error;
+    assert.equal(missingSshErr?.code, 'cli_not_installed');
+    assert.match(missingSshErr?.message ?? '', /未安装 Claude Code/);
+    assert.equal(spawned.length, spawnBeforeMissing);
   } finally {
     await app.close();
     db.close();
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(workDir, { recursive: true, force: true });
+    rmSync(binDir, { recursive: true, force: true });
   }
 });
 
@@ -314,15 +365,7 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
     assert.equal(resSsh.statusCode, 201);
     sshId = resSsh.json<{ id: string }>().id;
 
-    // Emit scrollback and CWD updates in each terminal, plus pin/rename one.
-    spawned1[0].pty.emitData(`${subDir}>\r\n`);
-    spawned1[1].pty.emitData('\x1b]7;file://localhost/home/dev/app/server\x07$ ');
-    spawned1[2].pty.emitData('\x1b]7;file://localhost/srv/app/releases\x07ops$ ');
-    await firstBuilt.app.inject({
-      method: 'PATCH',
-      url: `/api/work/terminals/${localId}`,
-      payload: { title: 'UI构建终端', pinned: true },
-    });
+    // Enable persistent terminal scrollback explicitly (defaults to off), then emit scrollback & CWD updates.
     await firstBuilt.app.inject({
       method: 'PUT',
       url: '/api/work/settings',
@@ -332,7 +375,18 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
         activeTerminals: { [localProject.id]: localId, [sshProject.id]: sshId },
         filesPanelOpen: false,
         filesPanelWidth: 420,
+        persistTerminalScrollback: true,
+        projectOrder: [sshProject.id, localProject.id],
+        cliProviderOrder: ['claude', 'codex', 'antigravity'],
       },
+    });
+    spawned1[0].pty.emitData(`${subDir}>\r\n`);
+    spawned1[1].pty.emitData('\x1b]7;file://localhost/home/dev/app/server\x07$ ');
+    spawned1[2].pty.emitData('\x1b]7;file://localhost/srv/app/releases\x07ops$ ');
+    await firstBuilt.app.inject({
+      method: 'PATCH',
+      url: `/api/work/terminals/${localId}`,
+      payload: { title: 'UI构建终端', pinned: true },
     });
   } finally {
     await firstBuilt.app.close();
@@ -376,6 +430,9 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
       activeTerminals: { [localProject.id]: localId, [sshProject.id]: sshId },
       filesPanelOpen: false,
       filesPanelWidth: 420,
+      persistTerminalScrollback: true,
+      projectOrder: [sshProject.id, localProject.id],
+      cliProviderOrder: ['claude', 'codex', 'antigravity'],
     });
     const profileFieldsRes = await secondBuilt.app.inject({ method: 'GET', url: '/api/profile/fields' });
     assert.deepEqual(profileFieldsRes.json(), { items: [] });
@@ -467,6 +524,9 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
 
   const dataDir = mkdtempSync(join(tmpdir(), 'matrius-term-proxy-data-'));
   const workDir = mkdtempSync(join(tmpdir(), 'matrius-term-proxy-cwd-'));
+  const binDir = mkdtempSync(join(tmpdir(), 'matrius-term-proxy-bin-'));
+  writeFileSync(join(binDir, 'codex.cmd'), '@echo off\r\n');
+  writeFileSync(join(binDir, 'agy.cmd'), '@echo off\r\n');
   const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
   const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
   migrate(db);
@@ -480,19 +540,30 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
   const localProject = serializeWorkProject(createWorkProjectRow(db, 1, {
     hostId: 'local',
     directory: workDir,
-    proxyUrl: 'http://127.0.0.1:7890',
+    cliProxies: {
+      codex: 'http://127.0.0.1:7890',
+      antigravity: 'http://127.0.0.1:7891',
+      claude: 'http://127.0.0.1:7892',
+    },
   }));
   const sshProject = serializeWorkProject(createWorkProjectRow(db, 1, {
     hostId: sshHost.id,
     directory: '/srv/proxy-app',
-    proxyUrl: 'socks5://127.0.0.1:1080',
+    cliProxies: {
+      codex: 'socks5://127.0.0.1:1080',
+      claude: 'http://127.0.0.1:8899',
+    },
   }));
 
   const spawned: Array<{ args: string[]; env?: Record<string, string | undefined>; pty: ReturnType<typeof createFakePty> }> = [];
   const terminals = createWorkTerminalService({
     db,
     currentPlatform: 'win32',
-    env: { PATH: 'C:\\WINDOWS\\system32' },
+    env: { PATH: `C:\\WINDOWS\\system32;${binDir}`, PATHEXT: '.CMD;.EXE', ComSpec: 'cmd.exe' },
+    async runCommand(command) {
+      if (command === 'ssh') return { code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      return { code: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    },
     ptySpawn: (_file, args, opts) => {
       const pty = createFakePty();
       spawned.push({ args: Array.isArray(args) ? args : [args], env: opts.env, pty });
@@ -501,28 +572,139 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
   });
   const { app } = await buildApp({ settings, db, terminals });
   try {
+    // Plain shell terminals never inherit CLI proxy settings by default.
     const localRes = await app.inject({
       method: 'POST',
       url: '/api/work/terminals',
       payload: { projectId: localProject.id },
     });
     assert.equal(localRes.statusCode, 201);
-    assert.equal(spawned[0].env?.HTTP_PROXY, 'http://127.0.0.1:7890');
-    assert.equal(spawned[0].env?.HTTPS_PROXY, 'http://127.0.0.1:7890');
-    assert.equal(spawned[0].env?.ALL_PROXY, 'http://127.0.0.1:7890');
+    assert.equal(spawned[0].env?.HTTP_PROXY, undefined);
+    assert.equal(spawned[0].env?.HTTPS_PROXY, undefined);
+    assert.equal(spawned[0].env?.ALL_PROXY, undefined);
+
+    const codexRes = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: localProject.id, preset: 'codex' },
+    });
+    assert.equal(codexRes.statusCode, 201);
+    assert.equal(spawned[1].env?.HTTP_PROXY, 'http://127.0.0.1:7890');
+    assert.equal(spawned[1].env?.HTTPS_PROXY, 'http://127.0.0.1:7890');
+    assert.equal(spawned[1].env?.ALL_PROXY, 'http://127.0.0.1:7890');
+
+    // Re-creating a non-resumed CLI session for the same project+group returns the existing session (no duplicate spawn).
+    const dupCodexRes = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: localProject.id, preset: 'codex' },
+    });
+    assert.equal(dupCodexRes.statusCode, 201);
+    assert.equal(dupCodexRes.json<{ id: string }>().id, codexRes.json<{ id: string }>().id);
+    assert.equal(spawned.length, 2);
+
+    const agyRes = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: localProject.id, preset: 'antigravity' },
+    });
+    assert.equal(agyRes.statusCode, 201);
+    assert.equal(spawned[2].env?.HTTP_PROXY, 'http://127.0.0.1:7891');
 
     const sshRes = await app.inject({
       method: 'POST',
       url: '/api/work/terminals',
-      payload: { projectId: sshProject.id },
+      payload: { projectId: sshProject.id, preset: 'claude' },
     });
     assert.equal(sshRes.statusCode, 201);
-    assert.ok(spawned[1].args.some((arg) => arg.includes("HTTP_PROXY='socks5://127.0.0.1:1080'")));
-    assert.ok(spawned[1].args.some((arg) => arg.includes("HTTPS_PROXY='socks5://127.0.0.1:1080'")));
+    assert.ok(spawned[3].args.some((arg) => arg.includes("HTTP_PROXY='http://127.0.0.1:8899'")));
+    assert.ok(spawned[3].args.some((arg) => arg.includes("HTTPS_PROXY='http://127.0.0.1:8899'")));
+    assert.equal(spawned[3].args.some((arg) => arg.includes('1080')), false);
+
+    // Scrollback DB persistence defaults to off (live attach still gets startup buffer, SQLite & restart stay empty).
+    const defaultSettingsRes = await app.inject({ method: 'GET', url: '/api/work/settings' });
+    assert.equal(defaultSettingsRes.statusCode, 200);
+    assert.equal(defaultSettingsRes.json<{ persistTerminalScrollback: boolean }>().persistTerminalScrollback, false);
+
+    const localId = localRes.json<{ id: string }>().id;
+    spawned[0].pty.emitData('not-saved-by-default\r\n');
+    const disabledSnapMessages: Array<{ type: string; data?: string }> = [];
+    const wsDisabled = await app.injectWS(
+      `/api/work/terminals/${localId}/ws`,
+      {},
+      {
+        onInit(clientWs) {
+          clientWs.on('message', (raw: unknown) => disabledSnapMessages.push(JSON.parse(String(raw))));
+        },
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.ok(disabledSnapMessages.some((msg) => msg.type === 'snapshot' && msg.data === 'not-saved-by-default\r\n'));
+    wsDisabled.close();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const rowWhileDisabled = db.prepare('SELECT scrollback FROM work_terminals WHERE id = ?').get(localId) as { scrollback: string };
+    assert.equal(rowWhileDisabled.scrollback, '');
+
+    // Simulated restart reader sees empty scrollback when persistence is disabled.
+    const coldTerminals = createWorkTerminalService({ db, currentPlatform: 'win32' });
+    const coldAttached = coldTerminals.attach(localId, () => {});
+    assert.equal(coldAttached.snapshot, '');
+    coldAttached.detach();
+    coldTerminals.disposeAll();
+
+    // When enabled, ED 3 (\x1b[3J) trims old scrollback so cleared output does not replay or persist, while keeping windowsBuild metadata.
+    const enableRes = await app.inject({
+      method: 'PUT',
+      url: '/api/work/settings',
+      payload: { persistTerminalScrollback: true },
+    });
+    assert.equal(enableRes.statusCode, 200);
+    assert.equal(enableRes.json<{ persistTerminalScrollback: boolean }>().persistTerminalScrollback, true);
+
+    spawned[0].pty.emitData('stale-before-clear\r\n');
+    spawned[0].pty.emitData('\x1b[?25l\x1b[3J\x1b[m\r\n');
+    spawned[0].pty.emitData('\x1b[HPS C:\\repo>');
+    const snapMessages: Array<{ type: string; data?: string }> = [];
+    const ws = await app.injectWS(
+      `/api/work/terminals/${localId}/ws`,
+      {},
+      {
+        onInit(clientWs) {
+          clientWs.on('message', (raw: unknown) => snapMessages.push(JSON.parse(String(raw))));
+        },
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const snapshot = snapMessages.find((msg) => msg.type === 'snapshot');
+    assert.ok(snapshot?.data);
+    assert.equal(snapshot.data.includes('stale-before-clear'), false);
+    assert.equal(snapshot.data, '\x1b[3J\x1b[m\x1b[HPS C:\\repo>');
+    ws.close();
+    await new Promise((resolve) => setTimeout(resolve, 1_250));
+    const rowAfterEnable = db.prepare('SELECT scrollback FROM work_terminals WHERE id = ?').get(localId) as { scrollback: string };
+    assert.equal(rowAfterEnable.scrollback, '\x1b[3J\x1b[m\x1b[HPS C:\\repo>');
+
+    // Disabling scrollback clears any stored snapshot on disk.
+    await app.inject({
+      method: 'PUT',
+      url: '/api/work/settings',
+      payload: { persistTerminalScrollback: false },
+    });
+    const rowAfterDisable = db.prepare('SELECT scrollback FROM work_terminals WHERE id = ?').get(localId) as { scrollback: string };
+    assert.equal(rowAfterDisable.scrollback, '');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/work/terminals' });
+    assert.equal(listRes.statusCode, 200);
+    const listed = listRes.json<{ platform: string; windowsBuild?: number }>();
+    assert.equal(listed.platform, 'win32');
+    if (process.platform === 'win32') {
+      assert.equal(typeof listed.windowsBuild, 'number');
+    }
   } finally {
     await app.close();
     db.close();
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(workDir, { recursive: true, force: true });
+    rmSync(binDir, { recursive: true, force: true });
   }
 });

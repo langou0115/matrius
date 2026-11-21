@@ -16,6 +16,7 @@ const createTerminalSchema = z.object({
   projectId: z.string().min(1).max(120),
   preset: z.enum(['shell', 'claude', 'codex', 'antigravity']).optional(),
   shell: z.enum(['powershell', 'cmd']).optional(),
+  cliSessionId: z.string().max(200).optional(),
   title: z.string().max(80).optional(),
   command: z.string().max(500).optional(),
   cols: z.number().int().min(20).max(400).optional(),
@@ -49,6 +50,9 @@ const workSettingsUpdateSchema = z.object({
   activeTerminals: z.record(z.string().max(120), z.string().max(120).nullable()).optional(),
   filesPanelOpen: z.boolean().optional(),
   filesPanelWidth: z.number().int().min(220).max(640).nullable().optional(),
+  persistTerminalScrollback: z.boolean().optional(),
+  projectOrder: z.array(z.string().min(1).max(120)).max(500).optional(),
+  cliProviderOrder: z.array(z.enum(['codex', 'antigravity', 'claude'])).max(10).optional(),
 });
 
 export type TerminalRouteDeps = {
@@ -68,14 +72,22 @@ export function registerTerminalRoutes(app: FastifyInstance, deps: TerminalRoute
     app.put('/api/work/settings', async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
       const body = workSettingsUpdateSchema.parse(request.body ?? {});
-      return db.transaction(() => updateWorkSettingsRow(db, INSTANCE_ID, body));
+      const updated = db.transaction(() => updateWorkSettingsRow(db, INSTANCE_ID, body));
+      if (body.persistTerminalScrollback !== undefined) {
+        terminals.setPersistScrollback?.(updated.persistTerminalScrollback);
+      }
+      return updated;
     });
   }
 
   app.get('/api/work/terminals', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const query = listQuerySchema.parse(request.query ?? {});
-    return { items: terminals.list(query.projectId), platform: terminals.platform };
+    return {
+      items: terminals.list(query.projectId),
+      platform: terminals.platform,
+      ...(terminals.windowsBuild !== undefined ? { windowsBuild: terminals.windowsBuild } : {}),
+    };
   });
 
   app.post('/api/work/terminals', async (request, reply) => {

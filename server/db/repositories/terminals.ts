@@ -1,4 +1,10 @@
 import {
+  WORK_CLI_PROVIDERS,
+  normalizeWorkCliProviderOrder,
+  type WorkCliProvider,
+} from '../../../contract/work-cli';
+import { normalizeWorkProjectOrder } from '../../../contract/work-projects';
+import {
   DEFAULT_WINDOWS_SHELL,
   normalizeOptionalWindowsShell,
   normalizeTerminalPreset,
@@ -18,6 +24,7 @@ export type WorkTerminalRow = {
   title: string;
   preset: string;
   shell: string | null;
+  cli_session_id: string | null;
   command: string;
   cwd: string;
   cols: number;
@@ -39,6 +46,7 @@ export function normalizePersistedTerminalStatus(raw: string): WorkTerminalStatu
 
 export function serializeWorkTerminalRow(row: WorkTerminalRow): WorkTerminalSession {
   const shell = normalizeOptionalWindowsShell(row.shell);
+  const cliSessionId = row.cli_session_id?.trim() || undefined;
   return {
     id: row.id,
     projectId: fromDbUuid(row.project_id),
@@ -46,6 +54,7 @@ export function serializeWorkTerminalRow(row: WorkTerminalRow): WorkTerminalSess
     title: row.title,
     preset: normalizeTerminalPreset(row.preset),
     ...(shell ? { shell } : {}),
+    ...(cliSessionId ? { cliSessionId } : {}),
     command: row.command,
     cwd: row.cwd,
     status: normalizePersistedTerminalStatus(row.last_status),
@@ -80,10 +89,10 @@ export function insertWorkTerminalRow(
   const now = Date.now();
   db.prepare(`
     INSERT INTO work_terminals (
-      id, instance_id, project_id, host_id, title, preset, shell, command,
+      id, instance_id, project_id, host_id, title, preset, shell, cli_session_id, command,
       cwd, cols, rows, pinned, scrollback, last_status, last_exit_code,
       error_message, created_at_ms, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     session.id,
     instanceId,
@@ -92,6 +101,7 @@ export function insertWorkTerminalRow(
     session.title,
     session.preset,
     session.shell ?? null,
+    session.cliSessionId ?? null,
     session.command,
     session.cwd,
     cols,
@@ -193,12 +203,19 @@ export function deleteWorkTerminalRow(db: AppDatabase, instanceId: number, termi
   db.prepare('DELETE FROM work_terminals WHERE id = ? AND instance_id = ?').run(terminalId, instanceId);
 }
 
+export function clearWorkTerminalScrollbacks(db: AppDatabase, instanceId: number): void {
+  db.prepare(`UPDATE work_terminals SET scrollback = '' WHERE instance_id = ?`).run(instanceId);
+}
+
 export type PersistedWorkSettings = {
   defaultWindowsShell: WindowsTerminalShell;
   activeProjectId: string | null;
   activeTerminals: Record<string, string | null>;
   filesPanelOpen: boolean;
   filesPanelWidth: number | null;
+  persistTerminalScrollback: boolean;
+  projectOrder: string[];
+  cliProviderOrder: WorkCliProvider[];
 };
 
 type WorkSettingsRow = {
@@ -208,6 +225,9 @@ type WorkSettingsRow = {
   active_terminals_json: string;
   files_panel_open: number;
   files_panel_width: number | null;
+  persist_terminal_scrollback: number;
+  project_order_json: string;
+  cli_provider_order_json: string;
   updated_at_ms: number;
 };
 
@@ -233,6 +253,26 @@ function parseActiveTerminalsJson(raw: string): Record<string, string | null> {
   }
 }
 
+function parseProjectOrderJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? normalizeWorkProjectOrder(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseCliProviderOrderJson(raw: string | null | undefined): WorkCliProvider[] {
+  if (!raw) return [...WORK_CLI_PROVIDERS];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? normalizeWorkCliProviderOrder(parsed) : [...WORK_CLI_PROVIDERS];
+  } catch {
+    return [...WORK_CLI_PROVIDERS];
+  }
+}
+
 export function getWorkSettingsRow(db: AppDatabase, instanceId: number): PersistedWorkSettings {
   const existing = db
     .prepare('SELECT * FROM work_settings WHERE instance_id = ?')
@@ -244,6 +284,9 @@ export function getWorkSettingsRow(db: AppDatabase, instanceId: number): Persist
       activeTerminals: {},
       filesPanelOpen: true,
       filesPanelWidth: null,
+      persistTerminalScrollback: false,
+      projectOrder: [],
+      cliProviderOrder: [...WORK_CLI_PROVIDERS],
     };
   }
   return {
@@ -252,6 +295,9 @@ export function getWorkSettingsRow(db: AppDatabase, instanceId: number): Persist
     activeTerminals: parseActiveTerminalsJson(existing.active_terminals_json),
     filesPanelOpen: existing.files_panel_open !== 0,
     filesPanelWidth: clampPanelWidth(existing.files_panel_width),
+    persistTerminalScrollback: Boolean(existing.persist_terminal_scrollback),
+    projectOrder: parseProjectOrderJson(existing.project_order_json),
+    cliProviderOrder: parseCliProviderOrderJson(existing.cli_provider_order_json),
   };
 }
 
@@ -277,18 +323,31 @@ export function updateWorkSettingsRow(
     filesPanelWidth: patch.filesPanelWidth !== undefined
       ? clampPanelWidth(patch.filesPanelWidth)
       : current.filesPanelWidth,
+    persistTerminalScrollback: patch.persistTerminalScrollback !== undefined
+      ? Boolean(patch.persistTerminalScrollback)
+      : current.persistTerminalScrollback,
+    projectOrder: patch.projectOrder !== undefined
+      ? normalizeWorkProjectOrder(patch.projectOrder)
+      : current.projectOrder,
+    cliProviderOrder: patch.cliProviderOrder !== undefined
+      ? normalizeWorkCliProviderOrder(patch.cliProviderOrder)
+      : current.cliProviderOrder,
   };
   db.prepare(`
     INSERT INTO work_settings (
       instance_id, default_windows_shell, active_project_id, active_terminals_json,
-      files_panel_open, files_panel_width, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      files_panel_open, files_panel_width, persist_terminal_scrollback,
+      project_order_json, cli_provider_order_json, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(instance_id) DO UPDATE SET
       default_windows_shell = excluded.default_windows_shell,
       active_project_id = excluded.active_project_id,
       active_terminals_json = excluded.active_terminals_json,
       files_panel_open = excluded.files_panel_open,
       files_panel_width = excluded.files_panel_width,
+      persist_terminal_scrollback = excluded.persist_terminal_scrollback,
+      project_order_json = excluded.project_order_json,
+      cli_provider_order_json = excluded.cli_provider_order_json,
       updated_at_ms = excluded.updated_at_ms
   `).run(
     instanceId,
@@ -297,6 +356,9 @@ export function updateWorkSettingsRow(
     JSON.stringify(next.activeTerminals),
     next.filesPanelOpen ? 1 : 0,
     next.filesPanelWidth,
+    next.persistTerminalScrollback ? 1 : 0,
+    JSON.stringify(next.projectOrder),
+    JSON.stringify(next.cliProviderOrder),
     Date.now(),
   );
   return next;

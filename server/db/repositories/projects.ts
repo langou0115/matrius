@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   LOCAL_WORK_HOST_ID,
+  serializeWorkProjectCliProxies,
   validateWorkProjectInput,
   type WorkProject,
   type WorkProjectInput,
@@ -18,6 +19,9 @@ export type WorkProjectRow = {
   host_id: string;
   directory: string;
   proxy_url: string;
+  codex_proxy_url: string;
+  antigravity_proxy_url: string;
+  claude_proxy_url: string;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -32,12 +36,17 @@ function parseProjectId(raw: string): string {
 }
 
 export function serializeWorkProject(row: WorkProjectRow): WorkProject {
+  const cliProxies = serializeWorkProjectCliProxies({
+    codex: row.codex_proxy_url || row.proxy_url,
+    antigravity: row.antigravity_proxy_url || row.proxy_url,
+    claude: row.claude_proxy_url || row.proxy_url,
+  });
   return {
     id: fromDbUuid(row.id),
     name: row.name,
     hostId: row.host_id,
     directory: row.directory,
-    ...(row.proxy_url ? { proxyUrl: row.proxy_url } : {}),
+    ...(cliProxies ? { cliProxies } : {}),
     revision: row.revision,
     createdAt: toMs(row.created_at) ?? Date.now(),
     updatedAt: toMs(row.updated_at) ?? Date.now(),
@@ -89,9 +98,20 @@ export function createWorkProjectRow(db: AppDatabase, instanceId: number, input:
   const now = toDbTimestamp();
   db.prepare(`
     INSERT INTO work_projects (
-      id, instance_id, name, host_id, directory, proxy_url, revision, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-  `).run(id, instanceId, normalized.name, resolvedHostId, normalized.directory, normalized.proxyUrl, now, now);
+      id, instance_id, name, host_id, directory, proxy_url, codex_proxy_url, antigravity_proxy_url, claude_proxy_url, revision, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, 1, ?, ?)
+  `).run(
+    id,
+    instanceId,
+    normalized.name,
+    resolvedHostId,
+    normalized.directory,
+    normalized.cliProxies.codex,
+    normalized.cliProxies.antigravity,
+    normalized.cliProxies.claude,
+    now,
+    now,
+  );
 
   const created = db
     .prepare('SELECT * FROM work_projects WHERE id = ? AND instance_id = ?')
@@ -104,30 +124,67 @@ export function updateWorkProjectRow(
   db: AppDatabase,
   instanceId: number,
   projectId: string,
-  input: WorkProjectInput & { baseRevision?: number },
+  input: Partial<WorkProjectInput> & { baseRevision?: number },
 ): WorkProjectRow {
   const current = requireWorkProjectRow(db, instanceId, projectId);
   if (input.baseRevision !== undefined && current.revision !== input.baseRevision) {
     throw conflict('项目列表已在其他页面更新，请刷新后重试。', serializeWorkProject(current));
   }
+  // Project name, host, and directory are immutable after creation; only CLI proxies may be updated.
+  if (input.name !== undefined && input.name.trim() !== current.name) {
+    throw invalid('项目创建后仅可配置网络代理，项目名称不可修改。');
+  }
+  if (input.hostId !== undefined && input.hostId.trim() !== current.host_id) {
+    throw invalid('项目创建后仅可配置网络代理，运行主机不可修改。');
+  }
+  if (input.directory !== undefined && input.directory.trim() !== current.directory) {
+    throw invalid('项目创建后仅可配置网络代理，项目目录不可修改。');
+  }
   const normalized = normalizeValidated({
-    ...input,
-    ...(input.proxyUrl === undefined ? { proxyUrl: current.proxy_url } : {}),
+    hostId: current.host_id,
+    directory: current.directory,
+    name: current.name,
+    ...(input.cliProxies === undefined && input.proxyUrl === undefined
+      ? {
+          cliProxies: {
+            codex: current.codex_proxy_url || current.proxy_url,
+            antigravity: current.antigravity_proxy_url || current.proxy_url,
+            claude: current.claude_proxy_url || current.proxy_url,
+          },
+        }
+      : {
+          ...(input.cliProxies !== undefined ? { cliProxies: input.cliProxies } : {}),
+          ...(input.proxyUrl !== undefined ? { proxyUrl: input.proxyUrl } : {}),
+        }),
   });
-  const resolvedHostId = resolveProjectHostId(db, instanceId, normalized.hostId);
   const now = toDbTimestamp();
 
   const result = input.baseRevision !== undefined
     ? db.prepare(`
         UPDATE work_projects
-        SET name = ?, host_id = ?, directory = ?, proxy_url = ?, revision = revision + 1, updated_at = ?
+        SET proxy_url = '', codex_proxy_url = ?, antigravity_proxy_url = ?, claude_proxy_url = ?, revision = revision + 1, updated_at = ?
         WHERE id = ? AND instance_id = ? AND revision = ?
-      `).run(normalized.name, resolvedHostId, normalized.directory, normalized.proxyUrl, now, current.id, instanceId, input.baseRevision)
+      `).run(
+        normalized.cliProxies.codex,
+        normalized.cliProxies.antigravity,
+        normalized.cliProxies.claude,
+        now,
+        current.id,
+        instanceId,
+        input.baseRevision,
+      )
     : db.prepare(`
         UPDATE work_projects
-        SET name = ?, host_id = ?, directory = ?, proxy_url = ?, revision = revision + 1, updated_at = ?
+        SET proxy_url = '', codex_proxy_url = ?, antigravity_proxy_url = ?, claude_proxy_url = ?, revision = revision + 1, updated_at = ?
         WHERE id = ? AND instance_id = ?
-      `).run(normalized.name, resolvedHostId, normalized.directory, normalized.proxyUrl, now, current.id, instanceId);
+      `).run(
+        normalized.cliProxies.codex,
+        normalized.cliProxies.antigravity,
+        normalized.cliProxies.claude,
+        now,
+        current.id,
+        instanceId,
+      );
 
   if (result.changes === 0) {
     throw conflict('项目列表已在其他页面更新，请刷新后重试。');

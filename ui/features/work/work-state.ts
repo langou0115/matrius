@@ -1,5 +1,21 @@
+import {
+  CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
+  CLI_SESSIONS_INITIAL_VISIBLE,
+  CLI_SESSIONS_PAGE_STEP,
+  WORK_CLI_PROVIDERS,
+  normalizeWorkCliProviderOrder,
+  reorderStringList,
+  workCliGroupKey,
+  type WorkCliProvider,
+  type WorkCliSession,
+  type WorkProjectCliSessionsResponse,
+} from '@contract/work-cli';
 import type { WorkHost } from '@contract/work-hosts';
-import type { WorkProject } from '@contract/work-projects';
+import {
+  normalizeWorkProjectOrder,
+  sortWorkProjectsByOrder,
+  type WorkProject,
+} from '@contract/work-projects';
 import {
   DEFAULT_WINDOWS_SHELL,
   normalizeOptionalWindowsShell,
@@ -13,6 +29,10 @@ import { useSyncExternalStore } from 'react';
 
 const ACTIVE_PROJECT_KEY = 'matrius:active-work-project';
 const ACTIVE_TERMINALS_KEY = 'matrius:work-active-terminals';
+const EXPANDED_PROJECTS_KEY = 'matrius:work-expanded-projects';
+const PROJECT_ORDER_KEY = 'matrius:work-project-order';
+const CLI_PROVIDER_ORDER_KEY = 'matrius:work-cli-provider-order';
+const COLLAPSED_CLI_GROUPS_KEY = 'matrius:work-collapsed-cli-groups';
 const FILES_PANEL_WIDTH_KEY = 'matrius:work-files-width';
 const DEFAULT_WINDOWS_SHELL_KEY = 'matrius:work-default-windows-shell';
 
@@ -40,11 +60,30 @@ export function detectPreviewPlatform(): 'win32' | 'linux' {
   return raw.includes('win') ? 'win32' : 'linux';
 }
 
+export type WorkProjectCliSessionsState = {
+  items: WorkCliSession[];
+  total: number;
+  hasMore: boolean;
+  loading: boolean;
+  loadingMore: boolean;
+  loaded: boolean;
+  error: string | null;
+  requestedLimit: number;
+};
+
 export type WorkStoreSnapshot = {
   activeProjectId: string | null;
   projects: WorkProject[];
   projectsLoaded: boolean;
   projectsError: string | null;
+  projectOrder: string[];
+  cliProviderOrder: WorkCliProvider[];
+  expandedProjectIds: Record<string, boolean>;
+  collapsedCliGroups: Record<string, boolean>;
+  cliVisibleCounts: Record<string, number>;
+  cliSessionsByProject: Record<string, WorkProjectCliSessionsState>;
+  unreadCompletedCliKeys: Record<string, boolean>;
+  cliRefreshTick: number;
   hosts: WorkHost[];
   terminals: WorkTerminalSession[];
   activeTerminalId: string | null;
@@ -52,10 +91,69 @@ export type WorkStoreSnapshot = {
   filesPanelOpen: boolean;
   filesPanelWidth: number | null;
   serverPlatform: string | null;
+  windowsBuild: number | null;
   defaultWindowsShell: WindowsTerminalShell;
   defaultWindowsShellLoaded: boolean;
+  persistTerminalScrollback: boolean;
   hostUnlockVersion: number;
 };
+
+export function workCliSessionKey(
+  projectId: string,
+  provider: WorkCliProvider,
+  sessionId: string,
+): string {
+  return `${projectId}:${provider}:${sessionId}`;
+}
+
+function readStoredJson(key: string): unknown {
+  try {
+    const raw = globalThis.localStorage?.getItem(key);
+    return raw ? JSON.parse(raw) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistStoredJson(key: string, value: unknown): void {
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage restrictions.
+  }
+}
+
+function readStoredBooleanMap(key: string): Record<string, boolean> {
+  const parsed = readStoredJson(key);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const next: Record<string, boolean> = {};
+  for (const [entryKey, value] of Object.entries(parsed)) {
+    if (value === true && entryKey.trim()) next[entryKey] = true;
+  }
+  return next;
+}
+
+function readStoredExpandedProjects(): Record<string, boolean> {
+  return readStoredBooleanMap(EXPANDED_PROJECTS_KEY);
+}
+
+function persistExpandedProjects(map: Record<string, boolean>): void {
+  persistStoredJson(EXPANDED_PROJECTS_KEY, map);
+}
+
+function readStoredProjectOrder(): string[] {
+  const parsed = readStoredJson(PROJECT_ORDER_KEY);
+  return Array.isArray(parsed) ? normalizeWorkProjectOrder(parsed) : [];
+}
+
+function readStoredCliProviderOrder(): WorkCliProvider[] {
+  const parsed = readStoredJson(CLI_PROVIDER_ORDER_KEY);
+  return Array.isArray(parsed) ? normalizeWorkCliProviderOrder(parsed) : [...WORK_CLI_PROVIDERS];
+}
+
+function readStoredCollapsedCliGroups(): Record<string, boolean> {
+  return readStoredBooleanMap(COLLAPSED_CLI_GROUPS_KEY);
+}
 
 function readSessionProjectId(): string | null {
   try {
@@ -129,6 +227,14 @@ function createInitialState(): WorkStoreSnapshot {
     projects: [],
     projectsLoaded: false,
     projectsError: null,
+    projectOrder: readStoredProjectOrder(),
+    cliProviderOrder: readStoredCliProviderOrder(),
+    expandedProjectIds: readStoredExpandedProjects(),
+    collapsedCliGroups: readStoredCollapsedCliGroups(),
+    cliVisibleCounts: {},
+    cliSessionsByProject: {},
+    unreadCompletedCliKeys: {},
+    cliRefreshTick: 0,
     hosts: [],
     terminals: [],
     activeTerminalId: null,
@@ -136,8 +242,10 @@ function createInitialState(): WorkStoreSnapshot {
     filesPanelOpen: true,
     filesPanelWidth: readStoredFilesWidth(),
     serverPlatform: null,
+    windowsBuild: null,
     defaultWindowsShell: readStoredDefaultWindowsShell(),
     defaultWindowsShellLoaded: false,
+    persistTerminalScrollback: false,
     hostUnlockVersion: 0,
   };
 }
@@ -201,8 +309,11 @@ export function useActiveProjectId(): string | null {
 }
 
 export function setWorkProjects(projects: WorkProject[]): void {
-  const activeStillExists = state.activeProjectId ? projects.some((item) => item.id === state.activeProjectId) : false;
-  const nextActive = activeStillExists ? state.activeProjectId : (projects[0]?.id ?? null);
+  const orderedProjects = sortWorkProjectsByOrder(projects, state.projectOrder);
+  const activeStillExists = state.activeProjectId
+    ? orderedProjects.some((item) => item.id === state.activeProjectId)
+    : false;
+  const nextActive = activeStillExists ? state.activeProjectId : (orderedProjects[0]?.id ?? null);
   if (nextActive !== state.activeProjectId) {
     try {
       if (nextActive) globalThis.sessionStorage?.setItem(ACTIVE_PROJECT_KEY, nextActive);
@@ -218,7 +329,7 @@ export function setWorkProjects(projects: WorkProject[]): void {
   );
   emit({
     ...state,
-    projects,
+    projects: orderedProjects,
     projectsLoaded: true,
     projectsError: null,
     activeProjectId: nextActive,
@@ -240,6 +351,11 @@ export function upsertWorkProject(saved: WorkProject): void {
   const nextProjects = exists
     ? state.projects.map((item) => (item.id === saved.id ? saved : item))
     : [saved, ...state.projects];
+  let nextProjectOrder = state.projectOrder;
+  if (!exists && state.projectOrder.length > 0) {
+    nextProjectOrder = [saved.id, ...state.projectOrder.filter((id) => id !== saved.id)];
+    persistStoredJson(PROJECT_ORDER_KEY, nextProjectOrder);
+  }
   try {
     globalThis.sessionStorage?.setItem(ACTIVE_PROJECT_KEY, saved.id);
   } catch {
@@ -253,6 +369,7 @@ export function upsertWorkProject(saved: WorkProject): void {
   emit({
     ...state,
     projects: nextProjects,
+    projectOrder: nextProjectOrder,
     activeProjectId: saved.id,
     activeTerminalId: nextActiveTerminalId,
   });
@@ -260,6 +377,10 @@ export function upsertWorkProject(saved: WorkProject): void {
 
 export function removeWorkProject(projectId: string): void {
   const nextProjects = state.projects.filter((item) => item.id !== projectId);
+  const nextProjectOrder = state.projectOrder.filter((id) => id !== projectId);
+  if (nextProjectOrder.length !== state.projectOrder.length) {
+    persistStoredJson(PROJECT_ORDER_KEY, nextProjectOrder);
+  }
   const nextTerminals = state.terminals.filter((item) => item.projectId !== projectId);
   const nextMap = { ...state.activeTerminalByProject };
   delete nextMap[projectId];
@@ -280,13 +401,86 @@ export function removeWorkProject(projectId: string): void {
       // Ignore storage restrictions.
     }
   }
+  const nextExpanded = { ...state.expandedProjectIds };
+  delete nextExpanded[projectId];
+  persistExpandedProjects(nextExpanded);
+  const prefix = `${projectId}:`;
+  const nextCollapsedCliGroups = { ...state.collapsedCliGroups };
+  for (const key of Object.keys(nextCollapsedCliGroups)) {
+    if (key.startsWith(prefix)) delete nextCollapsedCliGroups[key];
+  }
+  persistStoredJson(COLLAPSED_CLI_GROUPS_KEY, nextCollapsedCliGroups);
+  const nextCliVisible = { ...state.cliVisibleCounts };
+  for (const key of Object.keys(nextCliVisible)) {
+    if (key === projectId || key.startsWith(prefix)) delete nextCliVisible[key];
+  }
+  const nextCliSessions = { ...state.cliSessionsByProject };
+  delete nextCliSessions[projectId];
+  const nextUnread = { ...state.unreadCompletedCliKeys };
+  for (const key of Object.keys(nextUnread)) {
+    if (key.startsWith(prefix)) delete nextUnread[key];
+  }
   emit({
     ...state,
     projects: nextProjects,
+    projectOrder: nextProjectOrder,
+    expandedProjectIds: nextExpanded,
+    collapsedCliGroups: nextCollapsedCliGroups,
+    cliVisibleCounts: nextCliVisible,
+    cliSessionsByProject: nextCliSessions,
+    unreadCompletedCliKeys: nextUnread,
     terminals: nextTerminals,
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId,
     activeTerminalByProject: nextMap,
+  });
+}
+
+export function reorderWorkProjects(
+  draggedId: string,
+  targetId: string,
+  position?: 'before' | 'after',
+): void {
+  const currentIds = state.projects.map((item) => item.id);
+  const nextOrder = reorderStringList(currentIds, draggedId, targetId, position);
+  if (nextOrder.length === currentIds.length && nextOrder.every((id, index) => id === currentIds[index])) {
+    return;
+  }
+  persistStoredJson(PROJECT_ORDER_KEY, nextOrder);
+  emit({
+    ...state,
+    projectOrder: nextOrder,
+    projects: sortWorkProjectsByOrder(state.projects, nextOrder),
+  });
+}
+
+export function reorderWorkCliProviders(
+  draggedProvider: WorkCliProvider,
+  targetProvider: WorkCliProvider,
+  position?: 'before' | 'after',
+): void {
+  const nextOrder = normalizeWorkCliProviderOrder(
+    reorderStringList(state.cliProviderOrder, draggedProvider, targetProvider, position),
+  );
+  if (nextOrder.every((provider, index) => provider === state.cliProviderOrder[index])) {
+    return;
+  }
+  persistStoredJson(CLI_PROVIDER_ORDER_KEY, nextOrder);
+  emit({
+    ...state,
+    cliProviderOrder: nextOrder,
+  });
+}
+
+export function toggleWorkCliGroupCollapsed(projectId: string, provider: WorkCliProvider): void {
+  const key = workCliGroupKey(projectId, provider);
+  const next = { ...state.collapsedCliGroups };
+  if (next[key]) delete next[key];
+  else next[key] = true;
+  persistStoredJson(COLLAPSED_CLI_GROUPS_KEY, next);
+  emit({
+    ...state,
+    collapsedCliGroups: next,
   });
 }
 
@@ -332,12 +526,17 @@ export function addWorkTerminal(terminal: WorkTerminalSession): void {
   } catch {
     // Ignore storage restrictions.
   }
+  const nextUnread = { ...state.unreadCompletedCliKeys };
+  if (terminal.preset !== 'shell' && terminal.cliSessionId) {
+    delete nextUnread[workCliSessionKey(terminal.projectId, terminal.preset, terminal.cliSessionId)];
+  }
   emit({
     ...state,
     terminals: nextTerminals,
     activeTerminalId: terminal.id,
     activeProjectId: terminal.projectId,
     activeTerminalByProject: nextMap,
+    unreadCompletedCliKeys: nextUnread,
   });
 }
 
@@ -399,11 +598,16 @@ export function selectWorkTerminal(terminalId: string | null): void {
   } catch {
     // Ignore storage restrictions.
   }
+  const nextUnread = { ...state.unreadCompletedCliKeys };
+  if (target.preset !== 'shell' && target.cliSessionId) {
+    delete nextUnread[workCliSessionKey(target.projectId, target.preset, target.cliSessionId)];
+  }
   emit({
     ...state,
     activeTerminalId: terminalId,
     activeProjectId: target.projectId,
     activeTerminalByProject: nextMap,
+    unreadCompletedCliKeys: nextUnread,
   });
 }
 
@@ -493,9 +697,10 @@ export function setWorkFilesPanelWidth(width: number | null, maxWidth = MAX_WORK
   }
 }
 
-export function setWorkServerPlatform(platform: string | null): void {
-  if (state.serverPlatform === platform) return;
-  emit({ ...state, serverPlatform: platform });
+export function setWorkServerPlatform(platform: string | null, windowsBuild?: number | null): void {
+  const nextBuild = windowsBuild !== undefined ? windowsBuild : state.windowsBuild;
+  if (state.serverPlatform === platform && state.windowsBuild === nextBuild) return;
+  emit({ ...state, serverPlatform: platform, windowsBuild: nextBuild });
 }
 
 export function setDefaultWindowsShell(shell: WindowsTerminalShell, loaded = true): void {
@@ -513,12 +718,21 @@ export function setDefaultWindowsShell(shell: WindowsTerminalShell, loaded = tru
   });
 }
 
+export function setPersistTerminalScrollback(enabled: boolean): void {
+  const next = Boolean(enabled);
+  if (state.persistTerminalScrollback === next) return;
+  emit({ ...state, persistTerminalScrollback: next });
+}
+
 export function hydrateWorkSettings(settings: {
   defaultWindowsShell: WindowsTerminalShell;
   activeProjectId: string | null;
   activeTerminals: Record<string, string | null>;
   filesPanelOpen?: boolean;
   filesPanelWidth?: number | null;
+  persistTerminalScrollback?: boolean;
+  projectOrder?: string[];
+  cliProviderOrder?: WorkCliProvider[];
 }): void {
   const normalizedShell = normalizeOptionalWindowsShell(settings.defaultWindowsShell) ?? DEFAULT_WINDOWS_SHELL;
   const mergedTerminals = {
@@ -532,12 +746,23 @@ export function hydrateWorkSettings(settings: {
     // Ignore storage restrictions.
   }
 
+  const nextProjectOrder = settings.projectOrder !== undefined
+    ? normalizeWorkProjectOrder(settings.projectOrder)
+    : state.projectOrder;
+  const nextCliProviderOrder = settings.cliProviderOrder !== undefined
+    ? normalizeWorkCliProviderOrder(settings.cliProviderOrder)
+    : state.cliProviderOrder;
+  if (settings.projectOrder !== undefined) persistStoredJson(PROJECT_ORDER_KEY, nextProjectOrder);
+  if (settings.cliProviderOrder !== undefined) persistStoredJson(CLI_PROVIDER_ORDER_KEY, nextCliProviderOrder);
+
+  const orderedProjects = sortWorkProjectsByOrder(state.projects, nextProjectOrder);
+
   // Only keep an existing activeProjectId if the user explicitly switched/selected one
   // in this session; otherwise restore the server-persisted activeProjectId from SQLite.
   let nextActiveProjectId = state.activeProjectId;
   if (!hasExplicitProjectChoice && settings.activeProjectId) {
-    const exists = state.projects.length === 0
-      || state.projects.some((item) => item.id === settings.activeProjectId);
+    const exists = orderedProjects.length === 0
+      || orderedProjects.some((item) => item.id === settings.activeProjectId);
     if (exists) nextActiveProjectId = settings.activeProjectId;
   }
   if (nextActiveProjectId && nextActiveProjectId !== state.activeProjectId) {
@@ -569,8 +794,12 @@ export function hydrateWorkSettings(settings: {
   }
   emit({
     ...state,
+    projects: orderedProjects,
+    projectOrder: nextProjectOrder,
+    cliProviderOrder: nextCliProviderOrder,
     defaultWindowsShell: normalizedShell,
     defaultWindowsShellLoaded: true,
+    persistTerminalScrollback: Boolean(settings.persistTerminalScrollback),
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId,
     activeTerminalByProject: mergedTerminals,
@@ -587,6 +816,170 @@ export function bumpHostUnlockVersion(): void {
   emit({ ...state, hostUnlockVersion: state.hostUnlockVersion + 1 });
 }
 
+export function bumpCliSessionsRefresh(): void {
+  emit({ ...state, cliRefreshTick: state.cliRefreshTick + 1 });
+}
+
+export function isWorkProjectExpanded(projectId: string): boolean {
+  return Boolean(state.expandedProjectIds[projectId]);
+}
+
+export function setWorkProjectExpanded(projectId: string, expanded: boolean): void {
+  const current = Boolean(state.expandedProjectIds[projectId]);
+  if (current === expanded) return;
+  const next = { ...state.expandedProjectIds };
+  if (expanded) next[projectId] = true;
+  else delete next[projectId];
+  persistExpandedProjects(next);
+  emit({ ...state, expandedProjectIds: next });
+}
+
+export function toggleWorkProjectExpanded(projectId: string): void {
+  setWorkProjectExpanded(projectId, !state.expandedProjectIds[projectId]);
+}
+
+export function showMoreWorkCliSessions(
+  projectId: string,
+  provider: WorkCliProvider,
+  step = CLI_SESSIONS_PAGE_STEP,
+): number {
+  const groupKey = workCliGroupKey(projectId, provider);
+  const current = state.cliVisibleCounts[groupKey] ?? CLI_SESSIONS_INITIAL_VISIBLE;
+  const next = current + Math.max(1, step);
+  emit({
+    ...state,
+    cliVisibleCounts: { ...state.cliVisibleCounts, [groupKey]: next },
+  });
+  return next;
+}
+
+export function collapseWorkCliSessions(projectId: string, provider: WorkCliProvider): void {
+  const groupKey = workCliGroupKey(projectId, provider);
+  if (!(groupKey in state.cliVisibleCounts)) {
+    return;
+  }
+  const nextCounts = { ...state.cliVisibleCounts };
+  delete nextCounts[groupKey];
+  emit({
+    ...state,
+    cliVisibleCounts: nextCounts,
+  });
+}
+
+export function setWorkProjectCliSessionsLoading(
+  projectId: string,
+  options: { loadingMore?: boolean; requestedLimit?: number } = {},
+): void {
+  const prev = state.cliSessionsByProject[projectId];
+  const requestedLimit = options.requestedLimit ?? prev?.requestedLimit ?? CLI_SESSIONS_DEFAULT_FETCH_LIMIT;
+  emit({
+    ...state,
+    cliSessionsByProject: {
+      ...state.cliSessionsByProject,
+      [projectId]: {
+        items: prev?.items ?? [],
+        total: prev?.total ?? 0,
+        hasMore: prev?.hasMore ?? false,
+        loading: !options.loadingMore && !prev?.loaded,
+        loadingMore: Boolean(options.loadingMore),
+        loaded: prev?.loaded ?? false,
+        error: null,
+        requestedLimit,
+      },
+    },
+  });
+}
+
+export function setWorkProjectCliSessions(
+  projectId: string,
+  payload: WorkProjectCliSessionsResponse,
+  requestedLimit = CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
+): void {
+  const prev = state.cliSessionsByProject[projectId];
+  const prevByKey = new Map<string, WorkCliSession>();
+  for (const item of prev?.items ?? []) {
+    prevByKey.set(workCliSessionKey(projectId, item.provider, item.id), item);
+  }
+  const activeTerm = state.activeTerminalId
+    ? state.terminals.find((item) => item.id === state.activeTerminalId) ?? null
+    : null;
+
+  let unreadChanged = false;
+  const nextUnread = { ...state.unreadCompletedCliKeys };
+  for (const item of payload.items) {
+    const key = workCliSessionKey(projectId, item.provider, item.id);
+    const prevItem = prevByKey.get(key);
+    const isCurrentlyViewed = state.activeProjectId === projectId
+      && activeTerm?.preset === item.provider
+      && activeTerm?.cliSessionId === item.id;
+    if (item.status === 'running') {
+      if (nextUnread[key]) {
+        delete nextUnread[key];
+        unreadChanged = true;
+      }
+    } else if (
+      item.status === 'completed'
+      && prevItem?.status === 'running'
+      && !isCurrentlyViewed
+    ) {
+      if (!nextUnread[key]) {
+        nextUnread[key] = true;
+        unreadChanged = true;
+      }
+    }
+  }
+
+  emit({
+    ...state,
+    cliSessionsByProject: {
+      ...state.cliSessionsByProject,
+      [projectId]: {
+        items: payload.items,
+        total: payload.total,
+        hasMore: payload.hasMore,
+        loading: false,
+        loadingMore: false,
+        loaded: true,
+        error: null,
+        requestedLimit,
+      },
+    },
+    ...(unreadChanged ? { unreadCompletedCliKeys: nextUnread } : {}),
+  });
+}
+
+export function setWorkProjectCliSessionsError(projectId: string, message: string): void {
+  const prev = state.cliSessionsByProject[projectId];
+  emit({
+    ...state,
+    cliSessionsByProject: {
+      ...state.cliSessionsByProject,
+      [projectId]: {
+        items: prev?.items ?? [],
+        total: prev?.total ?? 0,
+        hasMore: prev?.hasMore ?? false,
+        loading: false,
+        loadingMore: false,
+        loaded: prev?.loaded ?? true,
+        error: message,
+        requestedLimit: prev?.requestedLimit ?? CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
+      },
+    },
+  });
+}
+
+export function markWorkCliSessionRead(
+  projectId: string,
+  provider: WorkCliProvider,
+  sessionId: string,
+): void {
+  const key = workCliSessionKey(projectId, provider, sessionId);
+  if (!state.unreadCompletedCliKeys[key]) return;
+  const next = { ...state.unreadCompletedCliKeys };
+  delete next[key];
+  emit({ ...state, unreadCompletedCliKeys: next });
+}
+
 export function resetWorkStateForTests(): void {
   hasExplicitProjectChoice = false;
   hasExplicitFilesPanelOpen = false;
@@ -594,6 +987,10 @@ export function resetWorkStateForTests(): void {
   try {
     globalThis.sessionStorage?.removeItem(ACTIVE_PROJECT_KEY);
     globalThis.localStorage?.removeItem(ACTIVE_TERMINALS_KEY);
+    globalThis.localStorage?.removeItem(EXPANDED_PROJECTS_KEY);
+    globalThis.localStorage?.removeItem(PROJECT_ORDER_KEY);
+    globalThis.localStorage?.removeItem(CLI_PROVIDER_ORDER_KEY);
+    globalThis.localStorage?.removeItem(COLLAPSED_CLI_GROUPS_KEY);
     globalThis.localStorage?.removeItem(FILES_PANEL_WIDTH_KEY);
     globalThis.localStorage?.removeItem(DEFAULT_WINDOWS_SHELL_KEY);
   } catch {
@@ -604,6 +1001,14 @@ export function resetWorkStateForTests(): void {
     projects: [],
     projectsLoaded: false,
     projectsError: null,
+    projectOrder: [],
+    cliProviderOrder: [...WORK_CLI_PROVIDERS],
+    expandedProjectIds: {},
+    collapsedCliGroups: {},
+    cliVisibleCounts: {},
+    cliSessionsByProject: {},
+    unreadCompletedCliKeys: {},
+    cliRefreshTick: 0,
     hosts: [],
     terminals: [],
     activeTerminalId: null,
@@ -611,8 +1016,10 @@ export function resetWorkStateForTests(): void {
     filesPanelOpen: true,
     filesPanelWidth: null,
     serverPlatform: null,
+    windowsBuild: null,
     defaultWindowsShell: DEFAULT_WINDOWS_SHELL,
     defaultWindowsShellLoaded: false,
+    persistTerminalScrollback: false,
     hostUnlockVersion: 0,
   });
 }

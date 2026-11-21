@@ -3,6 +3,13 @@
  * Keep this module free of Node, DOM, React and SQLite imports.
  */
 
+import {
+  WORK_CLI_PROVIDERS,
+  WORK_CLI_PROVIDER_LABELS,
+  type WorkCliProvider,
+} from './work-cli';
+import type { WorkTerminalPreset } from './work-terminals';
+
 export const LOCAL_WORK_HOST_ID = 'local';
 export const WINDOWS_DRIVES_ROOT = '此电脑';
 
@@ -24,12 +31,55 @@ export type HostDirectoryListing = {
   selectable?: boolean;
 };
 
+export type WorkProjectCliProxies = Partial<Record<WorkCliProvider, string>>;
+
+export type NormalizedWorkProjectCliProxies = Record<WorkCliProvider, string>;
+
+export const WORK_PROJECT_PROXY_CLI_ITEMS: ReadonlyArray<{
+  id: WorkCliProvider;
+  label: string;
+}> = WORK_CLI_PROVIDERS.map((id) => ({
+  id,
+  label: WORK_CLI_PROVIDER_LABELS[id],
+}));
+
+export function normalizeWorkProjectOrder(raw: readonly unknown[] | undefined): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim();
+    if (!trimmed || trimmed.length > 120 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+export function sortWorkProjectsByOrder(
+  projects: readonly WorkProject[],
+  projectOrder: readonly string[],
+): WorkProject[] {
+  if (projects.length <= 1 || projectOrder.length === 0) return [...projects];
+  const orderIndex = new Map(projectOrder.map((id, index) => [id, index]));
+  const unpinned: WorkProject[] = [];
+  const pinned: Array<{ project: WorkProject; order: number }> = [];
+  for (const project of projects) {
+    const idx = orderIndex.get(project.id);
+    if (idx === undefined) unpinned.push(project);
+    else pinned.push({ project, order: idx });
+  }
+  pinned.sort((left, right) => left.order - right.order);
+  return [...unpinned, ...pinned.map((entry) => entry.project)];
+}
+
 export type WorkProject = {
   id: string;
   name: string;
   hostId: string;
   directory: string;
-  proxyUrl?: string;
+  cliProxies?: WorkProjectCliProxies;
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -39,6 +89,14 @@ export type WorkProjectInput = {
   hostId: string;
   directory: string;
   name?: string;
+  cliProxies?: WorkProjectCliProxies;
+  /** @deprecated Legacy single proxy field retained for backward compatibility; applies only to CLIs, never shell. */
+  proxyUrl?: string;
+};
+
+export type WorkProjectUpdateInput = {
+  cliProxies?: WorkProjectCliProxies;
+  /** @deprecated Legacy single proxy field retained for backward compatibility; applies only to CLIs, never shell. */
   proxyUrl?: string;
 };
 
@@ -46,7 +104,7 @@ export type NormalizedWorkProjectInput = {
   hostId: string;
   directory: string;
   name: string;
-  proxyUrl: string;
+  cliProxies: NormalizedWorkProjectCliProxies;
 };
 
 function hasControlChars(text: string): boolean {
@@ -78,24 +136,65 @@ export function validateBrowsePath(rawPath: string | undefined): string {
 
 const SUPPORTED_PROXY_PROTOCOLS = new Set(['http:', 'https:', 'socks:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:']);
 
-export function normalizeProjectProxyUrl(raw: string | undefined): string {
+export function normalizeProjectProxyUrl(raw: string | undefined, label?: string): string {
+  const prefix = label ? `${label} ` : '';
   const trimmed = (raw ?? '').trim();
   if (!trimmed) return '';
-  if (hasControlChars(trimmed)) throw new Error('网络代理地址不能包含控制字符。');
-  if (/\s/u.test(trimmed)) throw new Error('网络代理地址不能包含空白字符。');
-  if (trimmed.length > 500) throw new Error('网络代理地址不能超过 500 个字符。');
+  if (hasControlChars(trimmed)) throw new Error(`${prefix}网络代理地址不能包含控制字符。`);
+  if (/\s/u.test(trimmed)) throw new Error(`${prefix}网络代理地址不能包含空白字符。`);
+  if (trimmed.length > 500) throw new Error(`${prefix}网络代理地址不能超过 500 个字符。`);
 
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed) ? trimmed : `http://${trimmed}`;
   let parsed: URL;
   try {
     parsed = new URL(withScheme);
   } catch {
-    throw new Error('请输入合法的网络代理地址，例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080。');
+    throw new Error(`${prefix}请输入合法的网络代理地址，例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080。`);
   }
   if (!SUPPORTED_PROXY_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) {
-    throw new Error('网络代理仅支持 http://、https:// 或 socks5:// 协议。');
+    throw new Error(`${prefix}网络代理仅支持 http://、https:// 或 socks5:// 协议。`);
   }
   return withScheme;
+}
+
+export function normalizeWorkProjectCliProxies(
+  raw: WorkProjectCliProxies | undefined,
+  legacyProxyUrl?: string,
+): NormalizedWorkProjectCliProxies {
+  const legacy = raw === undefined && legacyProxyUrl !== undefined
+    ? normalizeProjectProxyUrl(legacyProxyUrl)
+    : '';
+  const values: NormalizedWorkProjectCliProxies = {
+    codex: legacy,
+    antigravity: legacy,
+    claude: legacy,
+  };
+  if (!raw) return values;
+  for (const item of WORK_PROJECT_PROXY_CLI_ITEMS) {
+    values[item.id] = normalizeProjectProxyUrl(raw[item.id], item.label);
+  }
+  return values;
+}
+
+export function serializeWorkProjectCliProxies(
+  values: NormalizedWorkProjectCliProxies,
+): WorkProjectCliProxies | undefined {
+  const next: WorkProjectCliProxies = {};
+  for (const item of WORK_PROJECT_PROXY_CLI_ITEMS) {
+    const value = values[item.id]?.trim();
+    if (value) next[item.id] = value;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+export function resolveWorkTerminalProxyUrl(
+  project: Pick<WorkProject, 'cliProxies'>,
+  preset: WorkTerminalPreset,
+): string | undefined {
+  // Regular terminals never inherit CLI proxy settings by default.
+  if (preset === 'shell') return undefined;
+  const value = project.cliProxies?.[preset]?.trim();
+  return value || undefined;
 }
 
 export function validateWorkProjectInput(raw: WorkProjectInput): NormalizedWorkProjectInput {
@@ -112,12 +211,12 @@ export function validateWorkProjectInput(raw: WorkProjectInput): NormalizedWorkP
   if (hasControlChars(rawName)) throw new Error('项目名称不能包含控制字符。');
   if (rawName.length > 120) throw new Error('项目名称不能超过 120 个字符。');
 
-  const proxyUrl = normalizeProjectProxyUrl(raw.proxyUrl);
+  const cliProxies = normalizeWorkProjectCliProxies(raw.cliProxies, raw.proxyUrl);
 
   return {
     hostId,
     directory,
     name: rawName || deriveProjectName(directory),
-    proxyUrl,
+    cliProxies,
   };
 }

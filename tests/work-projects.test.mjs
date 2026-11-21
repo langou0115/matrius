@@ -194,21 +194,44 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.match(projectItem.textContent ?? '', /matrius/);
     assert.match(projectItem.textContent ?? '', /开发服务器/);
 
-    // Selecting the project row keeps it active without an expand toggle or child terminal list.
+    // Selecting the project row keeps it active without auto-expanding; explicit chevron toggle exists and no `...` button is shown.
     const selectBtn = projectItem.querySelector('.work-project-select');
-    assert.ok(selectBtn);
+    const toggleBtn = projectItem.querySelector('.work-project-toggle');
+    assert.ok(selectBtn && toggleBtn);
     assert.equal(selectBtn.getAttribute('aria-current'), 'true');
-    assert.equal(projectItem.querySelector('.work-project-chevron'), null);
-    assert.equal(selectBtn.getAttribute('aria-controls'), null);
+    assert.equal(projectItem.querySelector('.work-project-more'), null);
+    assert.equal(toggleBtn.getAttribute('aria-expanded'), 'false');
     await act(async () => { selectBtn.click(); });
     assert.equal(selectBtn.getAttribute('aria-current'), 'true');
+    assert.equal(toggleBtn.getAttribute('aria-expanded'), 'false');
 
-    // Verify three-dots menu opens project settings (rename) and remove confirmation.
-    const moreBtn = projectItem.querySelector('.work-project-more');
-    assert.ok(moreBtn);
-    await act(async () => { moreBtn.click(); });
+    // Right-clicking the project row opens the settings context menu right-aligned under the project row (not at cursor coords).
+    projectItem.getBoundingClientRect = () => ({ left: 12, top: 108, bottom: 144, right: 248, width: 236, height: 36 });
+    const originalGetRect = globalThis.HTMLElement.prototype.getBoundingClientRect;
+    globalThis.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.id === 'work-project-menu') {
+        return { left: 0, top: 0, right: 146, bottom: 84, width: 146, height: 84 };
+      }
+      return originalGetRect ? originalGetRect.call(this) : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    };
+    const projectItemKey = Object.keys(projectItem).find((key) => key.startsWith('__reactProps'));
+    assert.ok(projectItemKey);
+    try {
+      await act(async () => {
+        projectItem[projectItemKey].onContextMenu({
+          clientX: 45,
+          clientY: 127,
+          currentTarget: projectItem,
+          preventDefault() {},
+        });
+      });
+    } finally {
+      globalThis.HTMLElement.prototype.getBoundingClientRect = originalGetRect;
+    }
     const projectMenu = dom.document.getElementById('work-project-menu');
     assert.ok(projectMenu);
+    assert.equal(projectMenu.style.left, '102px');
+    assert.equal(projectMenu.style.top, '150px');
     const settingsMenuItem = Array.from(projectMenu.querySelectorAll('[role="menuitem"]'))
       .find((item) => item.textContent?.includes('项目设置'));
     assert.ok(settingsMenuItem);
@@ -217,24 +240,50 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     const editDialog = dom.document.querySelector('.work-project-dialog[open]');
     assert.ok(editDialog);
     const nameInput = editDialog.querySelector('input.text-field');
+    const editHostTrigger = editDialog.querySelector('.select-field-trigger');
+    const editDirBtn = editDialog.querySelector('.work-dir-picker');
+    const editProxyToggle = editDialog.querySelector('.work-proxy-toggle');
+    const editCodexProxyInput = editDialog.querySelector('#work-project-proxy-codex');
     const editForm = editDialog.querySelector('form.provider-edit-form');
-    assert.ok(nameInput && editForm);
-    const namePropsKey = Object.keys(nameInput).find((key) => key.startsWith('__reactProps'));
+    assert.ok(nameInput && editHostTrigger && editDirBtn && editProxyToggle && editCodexProxyInput && editForm);
+    // Project name, host, and directory are locked after creation; only network proxy fields remain editable.
+    assert.equal(nameInput.disabled, true);
+    assert.equal(nameInput.value, 'matrius');
+    assert.equal(editHostTrigger.disabled, true);
+    await act(async () => { editHostTrigger.click(); });
+    assert.equal(editDialog.querySelector('.select-field-popover'), null);
+    assert.equal(editDialog.querySelector('.work-settings-link'), null);
+    assert.equal(editDirBtn.disabled, true);
+    await act(async () => { editDirBtn.click(); });
+    assert.equal(dom.document.querySelector('.work-browser-dialog[open]'), null);
+    assert.match(editDirBtn.textContent ?? '', /\/home\/dev\/projects\/matrius/);
+    assert.equal(editProxyToggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(editCodexProxyInput.disabled, false);
+
+    const editCodexKey = Object.keys(editCodexProxyInput).find((key) => key.startsWith('__reactProps'));
     const editFormPropsKey = Object.keys(editForm).find((key) => key.startsWith('__reactProps'));
-    assert.ok(namePropsKey && editFormPropsKey);
+    assert.ok(editCodexKey && editFormPropsKey);
     await act(async () => {
-      nameInput.value = 'matrius-core';
-      nameInput[namePropsKey].onChange({ target: nameInput });
+      editCodexProxyInput.value = 'http://127.0.0.1:7890';
+      editCodexProxyInput[editCodexKey].onChange({ target: editCodexProxyInput });
     });
     await act(async () => {
       await editForm[editFormPropsKey].onSubmit({ preventDefault() {} });
     });
     assert.equal(dom.document.querySelector('.work-project-dialog[open]'), null);
-    assert.match(dom.document.querySelector('.work-project-item.is-active')?.textContent ?? '', /matrius-core/);
+    assert.match(dom.document.querySelector('.work-project-item.is-active')?.textContent ?? '', /matrius/);
 
-    const updatedMoreBtn = dom.document.querySelector('.work-project-item.is-active .work-project-more');
-    assert.ok(updatedMoreBtn);
-    await act(async () => { updatedMoreBtn.click(); });
+    const updatedProjectItem = dom.document.querySelector('.work-project-item.is-active');
+    const updatedItemKey = Object.keys(updatedProjectItem).find((key) => key.startsWith('__reactProps'));
+    assert.ok(updatedItemKey);
+    await act(async () => {
+      updatedProjectItem[updatedItemKey].onContextMenu({
+        clientX: 84,
+        clientY: 120,
+        currentTarget: updatedProjectItem,
+        preventDefault() {},
+      });
+    });
     const removeMenuItem = Array.from(dom.document.querySelectorAll('#work-project-menu [role="menuitem"]'))
       .find((item) => item.textContent?.includes('移除项目'));
     assert.ok(removeMenuItem);
@@ -321,26 +370,39 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.ok(selectDriveDirBtn);
     await act(async () => { selectDriveDirBtn.click(); });
 
-    // Optional network proxy input validates invalid schemes and stores valid proxyUrl on the created project.
-    const proxyInput = secondDialog.querySelector('#work-project-proxy-input');
-    assert.ok(proxyInput);
-    const proxyKey = Object.keys(proxyInput).find((key) => key.startsWith('__reactProps'));
-    assert.ok(proxyKey);
+    // Expandable network proxy section starts collapsed and configures Codex, Antigravity, Claude Code separately.
+    const proxyToggle = secondDialog.querySelector('.work-proxy-toggle');
+    assert.ok(proxyToggle);
+    assert.equal(proxyToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(secondDialog.querySelector('#work-project-proxy-fields'), null);
+
+    await act(async () => { proxyToggle.click(); });
+    assert.equal(proxyToggle.getAttribute('aria-expanded'), 'true');
+    const codexProxyInput = secondDialog.querySelector('#work-project-proxy-codex');
+    const agyProxyInput = secondDialog.querySelector('#work-project-proxy-antigravity');
+    const claudeProxyInput = secondDialog.querySelector('#work-project-proxy-claude');
+    assert.ok(codexProxyInput && agyProxyInput && claudeProxyInput);
+
+    const codexKey = Object.keys(codexProxyInput).find((key) => key.startsWith('__reactProps'));
+    const claudeKey = Object.keys(claudeProxyInput).find((key) => key.startsWith('__reactProps'));
+    assert.ok(codexKey && claudeKey);
     const createForm = secondDialog.querySelector('form');
     const createFormKey = Object.keys(createForm).find((key) => key.startsWith('__reactProps'));
     await act(async () => {
-      proxyInput.value = 'ftp://bad.proxy:21';
-      proxyInput[proxyKey].onChange({ target: proxyInput });
+      codexProxyInput.value = 'ftp://bad.proxy:21';
+      codexProxyInput[codexKey].onChange({ target: codexProxyInput });
     });
     await act(async () => { await createForm[createFormKey].onSubmit({ preventDefault() {} }); });
     const proxyErrorDialog = dom.document.querySelector('.work-project-error-dialog[open]');
     assert.ok(proxyErrorDialog);
-    assert.match(proxyErrorDialog.textContent ?? '', /仅支持 http:\/\/、https:\/\/ 或 socks5:\/\//);
+    assert.match(proxyErrorDialog.textContent ?? '', /Codex 网络代理仅支持 http:\/\/、https:\/\/ 或 socks5:\/\//);
     await act(async () => { proxyErrorDialog.querySelector('.dialog-footer button').click(); });
 
     await act(async () => {
-      proxyInput.value = 'http://127.0.0.1:7890';
-      proxyInput[proxyKey].onChange({ target: proxyInput });
+      codexProxyInput.value = 'http://127.0.0.1:7890';
+      codexProxyInput[codexKey].onChange({ target: codexProxyInput });
+      claudeProxyInput.value = 'socks5://127.0.0.1:1080';
+      claudeProxyInput[claudeKey].onChange({ target: claudeProxyInput });
     });
     await act(async () => { await createForm[createFormKey].onSubmit({ preventDefault() {} }); });
     const createdItem = dom.document.querySelector('.work-project-item.is-active');

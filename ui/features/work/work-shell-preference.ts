@@ -1,4 +1,9 @@
 import {
+  normalizeWorkCliProviderOrder,
+  type WorkCliProvider,
+} from '@contract/work-cli';
+import { normalizeWorkProjectOrder } from '@contract/work-projects';
+import {
   DEFAULT_WINDOWS_SHELL,
   normalizeWindowsShell,
   type WindowsTerminalShell,
@@ -10,6 +15,9 @@ export type WorkSettingsPayload = {
   activeTerminals: Record<string, string | null>;
   filesPanelOpen: boolean;
   filesPanelWidth: number | null;
+  persistTerminalScrollback: boolean;
+  projectOrder: string[];
+  cliProviderOrder: WorkCliProvider[];
 };
 
 type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -28,6 +36,9 @@ export async function loadWorkSettings(request: ApiRequest): Promise<WorkSetting
     filesPanelWidth: typeof res.filesPanelWidth === 'number' && Number.isFinite(res.filesPanelWidth)
       ? res.filesPanelWidth
       : null,
+    persistTerminalScrollback: res.persistTerminalScrollback === true,
+    projectOrder: normalizeWorkProjectOrder(res.projectOrder),
+    cliProviderOrder: normalizeWorkCliProviderOrder(res.cliProviderOrder),
   };
 }
 
@@ -54,4 +65,14 @@ export async function saveDefaultWindowsShell(
     defaultWindowsShell: normalizeWindowsShell(shell),
   });
   return normalizeWindowsShell(saved.defaultWindowsShell ?? shell);
+}
+
+export async function savePersistTerminalScrollback(
+  request: ApiRequest,
+  enabled: boolean,
+): Promise<boolean> {
+  const saved = await saveWorkSettings(request, {
+    persistTerminalScrollback: Boolean(enabled),
+  });
+  return saved.persistTerminalScrollback === true;
 }

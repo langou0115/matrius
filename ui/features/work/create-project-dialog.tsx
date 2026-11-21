@@ -1,11 +1,16 @@
+import type { WorkCliProvider } from '@contract/work-cli';
 import {
   LOCAL_WORK_HOST_ID,
+  WORK_PROJECT_PROXY_CLI_ITEMS,
   deriveProjectName,
-  normalizeProjectProxyUrl,
+  normalizeWorkProjectCliProxies,
+  serializeWorkProjectCliProxies,
+  type NormalizedWorkProjectCliProxies,
   type WorkProject,
 } from '@contract/work-projects';
 import type { WorkHost } from '@contract/work-hosts';
 import {
+  ChevronRight,
   FolderOpen,
   Laptop,
   Server,
@@ -22,6 +27,7 @@ import { writeSidebarTab } from '@/features/chat/sidebar-mode';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { router, usePathname } from '@/router';
 import { DirectoryBrowserDialog } from './directory-browser-dialog';
+import { TerminalPresetIcon } from './terminal-preset-icon';
 import { createPreviewWorkHosts, createWorkProject, updateWorkProject } from './work-api';
 import { WorkErrorDialog } from './work-error-dialog';
 
@@ -61,14 +67,21 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
     [initialHosts, preview],
   );
   const [hosts, setHosts] = useState<WorkHost[]>(seedHosts);
-  const [name, setName] = useState(() => project?.name ?? '');
   const [hostId, setHostId] = useState<string>(() => project?.hostId ?? defaultHostSelection(seedHosts));
   const [directory, setDirectory] = useState(() => project?.directory ?? '');
-  const [proxyUrl, setProxyUrl] = useState(() => project?.proxyUrl ?? '');
+  const [cliProxies, setCliProxies] = useState<Record<WorkCliProvider, string>>(() => ({
+    codex: project?.cliProxies?.codex ?? '',
+    antigravity: project?.cliProxies?.antigravity ?? '',
+    claude: project?.cliProxies?.claude ?? '',
+  }));
+  const [proxyExpanded, setProxyExpanded] = useState(() => Boolean(project));
   const [browseDir, setBrowseDir] = useState(() => project?.directory ?? '');
   const [browsing, setBrowsing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const configuredProxyCount = WORK_PROJECT_PROXY_CLI_ITEMS.filter(
+    (item) => Boolean(cliProxies[item.id].trim()),
+  ).length;
 
   const canFetchHosts = !preview && instance.status === 'ready';
 
@@ -133,40 +146,37 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
     event.preventDefault();
     if (saving) return;
     setError(null);
-    const trimmedDir = directory.trim();
+    const trimmedDir = project ? project.directory : directory.trim();
     if (!trimmedDir) {
       setError('请先选择项目目录。');
       return;
     }
-    let normalizedProxy: string;
+    let normalizedProxies: NormalizedWorkProjectCliProxies;
     try {
-      normalizedProxy = normalizeProjectProxyUrl(proxyUrl);
+      normalizedProxies = normalizeWorkProjectCliProxies(cliProxies);
     } catch (reason) {
+      setProxyExpanded(true);
       setError(reason instanceof Error && reason.message ? reason.message : '请输入合法的网络代理地址。');
       return;
     }
-    const trimmedName = name.trim();
+    const serializedProxies = serializeWorkProjectCliProxies(normalizedProxies);
 
     if (preview) {
       const now = Date.now();
-      const resolvedName = trimmedName || deriveProjectName(trimmedDir);
       if (project) {
         onSaved({
           ...project,
-          name: resolvedName,
-          hostId,
-          directory: trimmedDir,
-          ...(normalizedProxy ? { proxyUrl: normalizedProxy } : { proxyUrl: undefined }),
+          ...(serializedProxies ? { cliProxies: serializedProxies } : { cliProxies: undefined }),
           revision: project.revision + 1,
           updatedAt: now,
         });
       } else {
         onSaved({
           id: `mock-project-${now}`,
-          name: resolvedName,
+          name: deriveProjectName(trimmedDir),
           hostId,
           directory: trimmedDir,
-          ...(normalizedProxy ? { proxyUrl: normalizedProxy } : {}),
+          ...(serializedProxies ? { cliProxies: serializedProxies } : {}),
           revision: 1,
           createdAt: now,
           updatedAt: now,
@@ -180,17 +190,13 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
     try {
       const saved = project
         ? await updateWorkProject(instance.request, project.id, {
-            hostId,
-            directory: trimmedDir,
-            proxyUrl: normalizedProxy,
-            ...(trimmedName ? { name: trimmedName } : {}),
+            cliProxies: normalizedProxies,
             baseRevision: project.revision,
           })
         : await createWorkProject(instance.request, {
             hostId,
             directory: trimmedDir,
-            ...(normalizedProxy ? { proxyUrl: normalizedProxy } : {}),
-            ...(trimmedName ? { name: trimmedName } : {}),
+            ...(serializedProxies ? { cliProxies: serializedProxies } : {}),
           });
       onSaved(saved);
       onClose();
@@ -210,14 +216,14 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
       >
         <form className="provider-edit-form" onSubmit={(event) => void handleSubmit(event)}>
           <fieldset disabled={saving}>
-            {editing && (
+            {editing && project && (
               <label className="model-form-field">
                 项目名称
                 <input
                   className="text-field"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder={directory ? deriveProjectName(directory) : '项目名称'}
+                  value={project.name}
+                  readOnly
+                  disabled
                   maxLength={120}
                 />
               </label>
@@ -226,20 +232,24 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
             <div className="work-field-block">
               <div className="work-field-header">
                 <span className="work-field-title">主机</span>
-                <button
-                  type="button"
-                  className="work-settings-link"
-                  onClick={openHostSettings}
-                >
-                  主机设置
-                </button>
+                {!editing && (
+                  <button
+                    type="button"
+                    className="work-settings-link"
+                    onClick={openHostSettings}
+                  >
+                    主机设置
+                  </button>
+                )}
               </div>
               <SelectField
                 label="主机"
                 hideLabel
-                value={hostId}
+                value={editing && project ? project.hostId : hostId}
                 options={hostOptions}
+                disabled={editing}
                 onChange={(nextHostId) => {
+                  if (editing) return;
                   if (nextHostId !== hostId) {
                     setHostId(nextHostId);
                     setDirectory('');
@@ -254,9 +264,11 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
               <span className="work-field-title">项目目录</span>
               <button
                 type="button"
-                className={`work-dir-picker${directory ? ' has-value' : ''}`}
-                aria-label="选择项目目录"
+                className={`work-dir-picker${(editing && project ? project.directory : directory) ? ' has-value' : ''}`}
+                aria-label={editing ? '项目目录（创建后不可修改）' : '选择项目目录'}
+                disabled={editing}
                 onClick={() => {
+                  if (editing) return;
                   setError(null);
                   setBrowsing(true);
                 }}
@@ -265,26 +277,53 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
                   <FolderOpen size={15} strokeWidth={1.75} />
                 </span>
                 <span className="work-dir-picker-text">
-                  {directory || '选择项目目录'}
+                  {(editing && project ? project.directory : directory) || '选择项目目录'}
                 </span>
               </button>
             </div>
 
-            <div className="work-field-block">
-              <div className="work-field-header">
-                <label className="work-field-title" htmlFor="work-project-proxy-input">网络代理</label>
-                <span className="work-field-optional">可选</span>
-              </div>
-              <input
-                id="work-project-proxy-input"
-                className="text-field work-proxy-input"
-                value={proxyUrl}
-                onChange={(event) => setProxyUrl(event.target.value)}
-                placeholder="例如：http://127.0.0.1:7890（留空不使用代理）"
-                autoCapitalize="none"
-                spellCheck={false}
-                maxLength={500}
-              />
+            <div className="work-proxy-section">
+              <button
+                type="button"
+                className="work-proxy-toggle"
+                aria-expanded={proxyExpanded}
+                aria-controls="work-project-proxy-fields"
+                onClick={() => setProxyExpanded((open) => !open)}
+              >
+                <span className="work-field-title">网络代理</span>
+                <span className="work-proxy-toggle-meta">
+                  {configuredProxyCount > 0 && <span>已配置 {configuredProxyCount} 项</span>}
+                  <ChevronRight size={15} strokeWidth={1.75} className="work-proxy-chevron" aria-hidden="true" />
+                </span>
+              </button>
+              {proxyExpanded && (
+                <div id="work-project-proxy-fields" className="work-proxy-fields">
+                  {WORK_PROJECT_PROXY_CLI_ITEMS.map((item) => {
+                    const inputId = `work-project-proxy-${item.id}`;
+                    return (
+                      <div key={item.id} className="work-proxy-cli-field">
+                        <label className="work-proxy-cli-label" htmlFor={inputId}>
+                          <TerminalPresetIcon preset={item.id} size={14} />
+                          <span>{item.label}</span>
+                        </label>
+                        <input
+                          id={inputId}
+                          className="text-field work-proxy-input"
+                          value={cliProxies[item.id]}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setCliProxies((current) => ({ ...current, [item.id]: value }));
+                          }}
+                          placeholder="例如：http://127.0.0.1:7890（留空不上代理）"
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          maxLength={500}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="dialog-footer">
@@ -308,7 +347,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
         />
       )}
 
-      {browsing && (
+      {!editing && browsing && (
         <DirectoryBrowserDialog
           hostId={hostId}
           hostLabel={activeHostLabel}

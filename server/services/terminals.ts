@@ -1,16 +1,21 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
+import { release } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { IPty, IWindowsPtyForkOptions } from 'node-pty';
 
-import { LOCAL_WORK_HOST_ID } from '../../contract/work-projects';
+import { WORK_CLI_PROVIDER_LABELS, type WorkCliProvider } from '../../contract/work-cli';
+import { LOCAL_WORK_HOST_ID, resolveWorkTerminalProxyUrl } from '../../contract/work-projects';
 import {
   DEFAULT_WINDOWS_SHELL,
   clampTerminalCols,
   clampTerminalRows,
+  defaultTerminalCommand,
   normalizeTerminalPreset,
   normalizeWorkTerminalTitle,
+  trimScrollbackAtEraseSavedLines,
   validateWorkTerminalInput,
   type WindowsTerminalShell,
   type WorkTerminalCreateInput,
@@ -25,7 +30,9 @@ import { fromDbUuid } from '../db/codecs';
 import { requireWorkHostRow, updateWorkHostSecretRow } from '../db/repositories/hosts';
 import { requireWorkProjectRow, serializeWorkProject } from '../db/repositories/projects';
 import {
+  clearWorkTerminalScrollbacks,
   deleteWorkTerminalRow,
+  getWorkSettingsRow,
   insertWorkTerminalRow,
   listWorkTerminalRows,
   saveWorkTerminalSnapshotRow,
@@ -46,7 +53,9 @@ const INSTANCE_ID = 1;
 const MAX_SCROLLBACK_CHARS = 128_000;
 const SCROLLBACK_PERSIST_DELAY_MS = 1_200;
 
-export type PtyProcess = Pick<IPty, 'write' | 'resize' | 'kill' | 'onData' | 'onExit'>;
+export type PtyProcess = Pick<IPty, 'write' | 'resize' | 'kill' | 'onData' | 'onExit'> & {
+  readonly pid?: number;
+};
 
 export type PtySpawner = (
   file: string,
@@ -67,6 +76,7 @@ type ActiveTerminal = {
 
 export type WorkTerminalService = {
   readonly platform: NodeJS.Platform;
+  readonly windowsBuild?: number;
   list(projectId?: string): WorkTerminalSession[];
   create(input: WorkTerminalCreateInput): Promise<WorkTerminalSession>;
   resume(terminalId: string, input?: WorkTerminalResumeInput): Promise<WorkTerminalSession>;
@@ -79,6 +89,7 @@ export type WorkTerminalService = {
   resize(terminalId: string, cols: number, rows: number): void;
   remove(terminalId: string): void;
   removeByProject(projectId: string): void;
+  setPersistScrollback?: (enabled: boolean) => void;
   disposeAll(): void;
 };
 
@@ -290,6 +301,27 @@ export function extractTerminalCwd(
   return detected;
 }
 
+export function extractCommandExecutable(command: string): string {
+  const trimmed = command.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    const quote = trimmed[0];
+    const end = trimmed.indexOf(quote, 1);
+    return end > 1 ? trimmed.slice(1, end).trim() : trimmed.slice(1).trim();
+  }
+  const spaceIndex = trimmed.search(/\s/u);
+  return spaceIndex >= 0 ? trimmed.slice(0, spaceIndex) : trimmed;
+}
+
+export type WorkCliInstallChecker = (input: {
+  hostId: string;
+  preset: WorkCliProvider;
+  binary: string;
+  mergedWindowsPath?: string;
+  passwordOverride?: string;
+  rememberPassword?: boolean;
+}) => Promise<boolean>;
+
 export function createWorkTerminalService(options: {
   db: AppDatabase;
   ptySpawn?: PtySpawner;
@@ -299,6 +331,7 @@ export function createWorkTerminalService(options: {
   env?: NodeJS.ProcessEnv;
   fallbackCwd?: string;
   runtimeHostSecrets?: Map<string, string>;
+  checkCliCommand?: WorkCliInstallChecker;
 }): WorkTerminalService {
   const { db } = options;
   const ptySpawn = options.ptySpawn ?? defaultPtySpawn;
@@ -310,6 +343,168 @@ export function createWorkTerminalService(options: {
   const fallbackCwd = options.fallbackCwd ?? process.cwd();
   const runtimeHostSecrets = options.runtimeHostSecrets ?? new Map<string, string>();
   const terminals = new Map<string, ActiveTerminal>();
+
+  function isLocalCliInstalled(binary: string, mergedWindowsPath?: string): boolean | null {
+    if (!binary) return false;
+    if (binary.includes('/') || binary.includes('\\')) {
+      if (!existsSync(binary)) return false;
+      if (currentPlatform === 'win32') return true;
+      try {
+        accessSync(binary, constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    const rawPath = mergedWindowsPath ?? findEnvCaseInsensitive(env, 'PATH') ?? '';
+    const delimiter = currentPlatform === 'win32' ? ';' : ':';
+    const dirs = rawPath
+      .split(delimiter)
+      .map((entry) => entry.trim().replace(/^"(.*)"$/u, '$1'))
+      .filter(Boolean);
+
+    if (currentPlatform === 'win32') {
+      const rawPathext = findEnvCaseInsensitive(env, 'PATHEXT') || '.COM;.EXE;.BAT;.CMD';
+      const exts = new Set(
+        rawPathext.split(';').map((ext) => ext.trim()).filter(Boolean),
+      );
+      exts.add('.PS1');
+      exts.add('.CMD');
+      exts.add('.EXE');
+      const hasExt = /\.[A-Za-z0-9]{1,8}$/u.test(binary);
+      for (const dir of dirs) {
+        if (hasExt && existsSync(join(dir, binary))) return true;
+        for (const ext of exts) {
+          if (existsSync(join(dir, `${binary}${ext}`)) || existsSync(join(dir, `${binary}${ext.toLowerCase()}`))) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    for (const dir of dirs) {
+      const candidate = join(dir, binary);
+      try {
+        accessSync(candidate, constants.X_OK);
+        return true;
+      } catch {
+        // Keep searching PATH directories.
+      }
+    }
+    return hasExplicitEnv ? false : null;
+  }
+
+  async function defaultCheckCliCommand(input: {
+    hostId: string;
+    preset: WorkCliProvider;
+    binary: string;
+    mergedWindowsPath?: string;
+    passwordOverride?: string;
+    rememberPassword?: boolean;
+  }): Promise<boolean> {
+    if (input.hostId === LOCAL_WORK_HOST_ID) {
+      const direct = isLocalCliInstalled(input.binary, input.mergedWindowsPath);
+      if (direct !== null) return direct;
+      const shell = resolvePosixShell(env);
+      const res = await runCommand(
+        shell,
+        ['-ilc', 'command -v -- "$1" >/dev/null 2>&1', '_', input.binary],
+        { env: buildTerminalEnv(env), timeoutMs: 3_000 },
+      );
+      return res.code === 0;
+    }
+
+    const hostRow = requireWorkHostRow(db, INSTANCE_ID, input.hostId);
+    const probeCmd = `command -v -- ${posixSingleQuote(input.binary)} >/dev/null 2>&1 || "\${SHELL:-sh}" -ilc ${posixSingleQuote(`command -v -- ${posixSingleQuote(input.binary)} >/dev/null 2>&1`)}`;
+    if (hostRow.kind === 'wsl') {
+      if (!wslCommand) {
+        throw new AppError(400, 'wsl_unavailable', '当前运行环境不支持连接 WSL 终端。');
+      }
+      const runningCheck = await ensureWslDistroRunning(wslCommand, hostRow.distro, runCommand);
+      if (!runningCheck.ok) {
+        throw new AppError(400, 'wsl_not_running', runningCheck.message);
+      }
+      const args = ['-d', hostRow.distro];
+      if (hostRow.username) args.push('--user', hostRow.username);
+      args.push('--exec', 'sh', '-lc', probeCmd);
+      const res = await runCommand(wslCommand, args, { timeoutMs: 4_000 });
+      return res.code === 0;
+    }
+
+    const hostKey = fromDbUuid(hostRow.id);
+    const trimmedPassword = input.passwordOverride?.trim() ?? '';
+    if (trimmedPassword) {
+      runtimeHostSecrets.set(hostKey, trimmedPassword);
+      if (input.rememberPassword && hostRow.auth_method === 'password') {
+        db.transaction(() => updateWorkHostSecretRow(db, INSTANCE_ID, hostKey, trimmedPassword));
+      }
+    }
+    const secret = trimmedPassword || runtimeHostSecrets.get(hostKey) || hostRow.secret_value;
+    // If password authentication has not been unlocked yet, let PTY spawn prompt interactively.
+    if (!secret && hostRow.auth_method === 'password') {
+      return true;
+    }
+
+    const args = [
+      '-o', 'ConnectTimeout=8',
+      '-o', 'StrictHostKeyChecking=accept-new',
+      '-p', String(hostRow.port),
+    ];
+    let sshEnv: Record<string, string> | undefined;
+    if (secret) {
+      args.push('-o', 'NumberOfPasswordPrompts=1');
+      sshEnv = {
+        SSH_ASKPASS: ensureAskpassScript(),
+        SSH_ASKPASS_REQUIRE: 'force',
+        DISPLAY: env.DISPLAY || 'matrius:0',
+        MATRIUS_SSH_PASS: secret,
+      };
+    } else if (hostRow.auth_method === 'key' && hostRow.private_key_path) {
+      args.push('-o', 'BatchMode=yes', '-i', expandHomePath(hostRow.private_key_path), '-o', 'IdentitiesOnly=yes');
+    } else {
+      args.push('-o', 'BatchMode=yes');
+    }
+    const target = hostRow.username ? `${hostRow.username}@${hostRow.host}` : hostRow.host;
+    args.push('--', target, probeCmd);
+    const res = await runCommand('ssh', args, { env: sshEnv, timeoutMs: 8_000 });
+    if (res.code === 0) return true;
+    if (res.code === 255) {
+      throw new AppError(400, 'ssh_connection_failed', '无法连接 SSH 主机检查命令，请先检查主机连接或密码设置。');
+    }
+    return false;
+  }
+
+  const checkCliCommand: WorkCliInstallChecker = options.checkCliCommand ?? defaultCheckCliCommand;
+
+  async function ensureCliInstalled(input: {
+    hostId: string;
+    preset: WorkTerminalPreset;
+    command: string;
+    mergedWindowsPath?: string;
+    passwordOverride?: string;
+    rememberPassword?: boolean;
+  }): Promise<void> {
+    if (input.preset === 'shell') return;
+    const rawCommand = input.command.trim() || defaultTerminalCommand(input.preset);
+    const binary = extractCommandExecutable(rawCommand);
+    if (!binary) return;
+    const installed = await checkCliCommand({
+      hostId: input.hostId,
+      preset: input.preset,
+      binary,
+      mergedWindowsPath: input.mergedWindowsPath,
+      passwordOverride: input.passwordOverride,
+      rememberPassword: input.rememberPassword,
+    });
+    if (!installed) {
+      throw new AppError(
+        400,
+        'cli_not_installed',
+        `当前主机未安装 ${WORK_CLI_PROVIDER_LABELS[input.preset]}（未找到命令 ${binary}），请先安装后再试。`,
+      );
+    }
+  }
 
   let cachedRegPath: { expiresAt: number; values: string[] } | null = null;
   async function readFreshRegistryPaths(): Promise<string[]> {
@@ -333,12 +528,19 @@ export function createWorkTerminalService(options: {
     }
   }
 
+  let persistScrollback = false;
+  try {
+    persistScrollback = getWorkSettingsRow(db, INSTANCE_ID).persistTerminalScrollback;
+  } catch {
+    persistScrollback = false;
+  }
+
   for (const row of listWorkTerminalRows(db, INSTANCE_ID)) {
     const session = serializeWorkTerminalRow(row);
     terminals.set(session.id, {
       session,
       pty: null,
-      scrollback: row.scrollback ?? '',
+      scrollback: persistScrollback ? (row.scrollback ?? '') : '',
       cols: clampTerminalCols(row.cols),
       rows: clampTerminalRows(row.rows),
       dirtySnapshot: false,
@@ -362,7 +564,7 @@ export function createWorkTerminalService(options: {
     entry.dirtySnapshot = false;
     try {
       saveWorkTerminalSnapshotRow(db, INSTANCE_ID, entry.session.id, {
-        scrollback: entry.scrollback,
+        scrollback: persistScrollback ? entry.scrollback : '',
         cwd: entry.session.cwd,
         lastStatus: persistStatus,
         lastExitCode: entry.session.exitCode,
@@ -382,8 +584,16 @@ export function createWorkTerminalService(options: {
     }, SCROLLBACK_PERSIST_DELAY_MS);
   }
 
+  function parseWindowsBuildNumber(): number | undefined {
+    if (currentPlatform !== 'win32') return undefined;
+    const match = /^\d+\.\d+\.(\d+)/u.exec(release());
+    if (!match?.[1]) return undefined;
+    const parsed = Number.parseInt(match[1], 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+
   function appendScrollback(entry: ActiveTerminal, chunk: string): void {
-    const next = entry.scrollback + chunk;
+    const next = trimScrollbackAtEraseSavedLines(entry.scrollback + chunk);
     entry.scrollback = next.length > MAX_SCROLLBACK_CHARS
       ? next.slice(next.length - MAX_SCROLLBACK_CHARS)
       : next;
@@ -426,6 +636,15 @@ export function createWorkTerminalService(options: {
     const mergedWindowsPath = freshRegistryPaths.length > 0
       ? mergeWindowsPathEntries(findEnvCaseInsensitive(env, 'Path') ?? '', freshRegistryPaths, env)
       : undefined;
+
+    await ensureCliInstalled({
+      hostId: spec.hostId,
+      preset: spec.preset,
+      command: spec.command,
+      mergedWindowsPath,
+      passwordOverride: spec.passwordOverride,
+      rememberPassword: spec.rememberPassword,
+    });
 
     if (spec.hostId === LOCAL_WORK_HOST_ID) {
       effectiveCwd = resolveLocalCwd(spec.targetCwd, spec.fallbackProjectCwd);
@@ -528,12 +747,15 @@ export function createWorkTerminalService(options: {
     entry.pty = childPty;
     childPty.onData((data) => {
       if (entry.pty !== childPty) return;
-      appendScrollback(entry, data);
+      const prevCwd = entry.session.cwd;
       const nextCwd = extractTerminalCwd(data, entry.session.hostId, currentPlatform);
-      if (nextCwd && nextCwd !== entry.session.cwd) {
+      if (nextCwd && nextCwd !== prevCwd) {
         entry.session.cwd = nextCwd;
       }
-      schedulePersist(entry);
+      appendScrollback(entry, data);
+      if (persistScrollback || entry.session.cwd !== prevCwd) {
+        schedulePersist(entry);
+      }
       broadcast(entry, { type: 'output', data });
     });
 
@@ -553,8 +775,60 @@ export function createWorkTerminalService(options: {
     });
   }
 
+  function terminatePty(activePty: PtyProcess, asyncTeardown = true): void {
+    const pid = typeof activePty.pid === 'number' && Number.isInteger(activePty.pid) && activePty.pid > 0
+      ? activePty.pid
+      : undefined;
+
+    const killPtyOnly = () => {
+      try {
+        activePty.kill();
+      } catch {
+        // Ignore kill errors on already-closing PTYs.
+      }
+    };
+
+    if (!pid) {
+      killPtyOnly();
+      return;
+    }
+
+    if (!asyncTeardown) {
+      if (currentPlatform === 'win32') {
+        try {
+          execFile('taskkill', ['/PID', String(pid), '/T', '/F'], {
+            windowsHide: true,
+            timeout: 1_500,
+          }, () => {});
+        } catch {
+          // Ignore taskkill errors during shutdown.
+        }
+      }
+      killPtyOnly();
+      return;
+    }
+
+    setImmediate(() => {
+      if (currentPlatform === 'win32') {
+        // Kill the entire child process tree (e.g. PowerShell + agy/claude/codex + MCP children)
+        // before closing ConPTY handles, so ClosePseudoConsole does not block waiting on orphans.
+        execFile('taskkill', ['/PID', String(pid), '/T', '/F'], {
+          windowsHide: true,
+          timeout: 3_000,
+        }, () => {
+          killPtyOnly();
+        });
+        return;
+      }
+      killPtyOnly();
+    });
+  }
+
+  const windowsBuild = parseWindowsBuildNumber();
+
   return {
     platform: currentPlatform,
+    ...(windowsBuild !== undefined ? { windowsBuild } : {}),
     list(projectId?: string): WorkTerminalSession[] {
       const items = Array.from(terminals.values()).map((entry) => ({ ...entry.session }));
       const trimmed = projectId?.trim();
@@ -583,12 +857,24 @@ export function createWorkTerminalService(options: {
         throw invalid(error instanceof Error ? error.message : '终端参数不合法。');
       }
 
+      // Allow at most one open "new conversation" (without cliSessionId) per project + CLI group.
+      if (normalized.preset !== 'shell' && !normalized.cliSessionId) {
+        const existingNew = Array.from(terminals.values()).find((entry) => (
+          entry.session.projectId === project.id
+          && entry.session.preset === normalized.preset
+          && !entry.session.cliSessionId
+        ));
+        if (existingNew) {
+          return { ...existingNew.session };
+        }
+      }
+
       const spawned = await spawnTerminalPty({
         projectId: project.id,
         hostId: project.hostId,
         targetCwd: project.directory,
         fallbackProjectCwd: project.directory,
-        proxyUrl: project.proxyUrl,
+        proxyUrl: resolveWorkTerminalProxyUrl(project, normalized.preset),
         preset: normalized.preset,
         shell: normalized.shell,
         command: normalized.command,
@@ -603,6 +889,7 @@ export function createWorkTerminalService(options: {
         title: normalized.title,
         preset: normalized.preset,
         ...(spawned.resolvedWindowsShell ? { shell: spawned.resolvedWindowsShell } : {}),
+        ...(normalized.cliSessionId ? { cliSessionId: normalized.cliSessionId } : {}),
         command: normalized.command,
         cwd: spawned.effectiveCwd,
         status: 'running',
@@ -651,7 +938,7 @@ export function createWorkTerminalService(options: {
         hostId: project.hostId,
         targetCwd: entry.session.cwd || project.directory,
         fallbackProjectCwd: project.directory,
-        proxyUrl: project.proxyUrl,
+        proxyUrl: resolveWorkTerminalProxyUrl(project, entry.session.preset),
         preset: entry.session.preset,
         shell: entry.session.shell,
         command: entry.session.command,
@@ -762,11 +1049,7 @@ export function createWorkTerminalService(options: {
       entry.pty = null;
       if (entry.session.status === 'running' && activePty) {
         entry.session.status = 'exited';
-        try {
-          activePty.kill();
-        } catch {
-          // Ignore kill errors on already-closing PTYs.
-        }
+        terminatePty(activePty, true);
       }
       entry.listeners.clear();
       deleteWorkTerminalRow(db, INSTANCE_ID, terminalId);
@@ -784,13 +1067,34 @@ export function createWorkTerminalService(options: {
         entry.pty = null;
         if (entry.session.status === 'running' && activePty) {
           entry.session.status = 'exited';
-          try {
-            activePty.kill();
-          } catch {
-            // Ignore shutdown errors.
-          }
+          terminatePty(activePty, true);
         }
         entry.listeners.clear();
+      }
+    },
+
+    setPersistScrollback(enabled) {
+      const next = Boolean(enabled);
+      persistScrollback = next;
+      if (!next) {
+        for (const entry of terminals.values()) {
+          entry.dirtySnapshot = false;
+          if (entry.flushTimer) {
+            clearTimeout(entry.flushTimer);
+            entry.flushTimer = null;
+          }
+        }
+        try {
+          clearWorkTerminalScrollbacks(db, INSTANCE_ID);
+        } catch {
+          // Ignore cleanup errors if settings update races teardown.
+        }
+        return;
+      }
+      for (const entry of terminals.values()) {
+        if (entry.scrollback) {
+          schedulePersist(entry);
+        }
       }
     },
 
@@ -806,11 +1110,7 @@ export function createWorkTerminalService(options: {
         entry.pty = null;
         if (entry.session.status === 'running' && activePty) {
           entry.session.status = 'restored';
-          try {
-            activePty.kill();
-          } catch {
-            // Ignore shutdown cleanup errors.
-          }
+          terminatePty(activePty, false);
         }
         entry.listeners.clear();
       }

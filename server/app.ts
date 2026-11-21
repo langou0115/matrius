@@ -30,6 +30,7 @@ import { registerTerminalRoutes } from './routes/terminals';
 import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { MemoryCache } from './services/cache';
+import { createWorkCliSessionService, type WorkCliSessionService } from './services/cli-sessions';
 import { DraftStore } from './services/documents/drafts';
 import type { DocumentToolService } from './services/documents/service';
 import { createFetchService } from './services/fetch';
@@ -58,6 +59,7 @@ export type BuildAppOptions = {
   hosts?: WorkHostService;
   hostFs?: HostFsService;
   terminals?: WorkTerminalService;
+  cliSessions?: WorkCliSessionService;
   /** Skip migrations only when the caller already prepared the database. */
   migrate?: boolean;
   /** Serve built UI assets from `dist/` (defaults to `settings.APP_ENV === 'production'`). */
@@ -247,7 +249,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
     ...(options.hostFs ? { hostFs: options.hostFs } : {}),
   });
   const terminals = options.terminals ?? createWorkTerminalService({ db, runtimeHostSecrets });
-  registerProjectRoutes(app, { db, terminals });
+  const cliSessions = options.cliSessions ?? createWorkCliSessionService({ db, runtimeHostSecrets });
+  registerProjectRoutes(app, { db, terminals, cliSessions });
   registerTerminalRoutes(app, { db, terminals });
   registerUsageRoutes(app, { db });
   registerTaskRoutes(app, { db });

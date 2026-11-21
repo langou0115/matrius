@@ -164,14 +164,18 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     assert.equal(sshCall.env?.SSH_ASKPASS_REQUIRE, 'force');
     assert.equal(sshCall.args.join(' ').includes('ssh-pass-123'), false);
 
-    // 4. Create work project bound to WSL host + directory + optional proxyUrl.
+    // 4. Create work project bound to WSL host + directory + per-CLI proxy URLs.
     const createdRes = await app.inject({
       method: 'POST',
       url: '/api/projects',
       payload: {
         hostId: wslHost.id,
         directory: '/home/ubuntu/workspace/repo',
-        proxyUrl: '127.0.0.1:7890',
+        cliProxies: {
+          codex: '127.0.0.1:7890',
+          antigravity: 'socks5://127.0.0.1:1080',
+          claude: 'http://127.0.0.1:8899',
+        },
       },
     });
     assert.equal(createdRes.statusCode, 201);
@@ -179,12 +183,20 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     assert.equal(project.name, 'repo');
     assert.equal(project.hostId, wslHost.id);
     assert.equal(project.directory, '/home/ubuntu/workspace/repo');
-    assert.equal(project.proxyUrl, 'http://127.0.0.1:7890');
+    assert.deepEqual(project.cliProxies, {
+      codex: 'http://127.0.0.1:7890',
+      antigravity: 'socks5://127.0.0.1:1080',
+      claude: 'http://127.0.0.1:8899',
+    });
 
     const badProxyRes = await app.inject({
       method: 'POST',
       url: '/api/projects',
-      payload: { hostId: wslHost.id, directory: '/home/ubuntu/workspace/repo', proxyUrl: 'ftp://127.0.0.1:21' },
+      payload: {
+        hostId: wslHost.id,
+        directory: '/home/ubuntu/workspace/repo',
+        cliProxies: { codex: 'ftp://127.0.0.1:21' },
+      },
     });
     assert.equal(badProxyRes.statusCode, 422);
 
@@ -196,35 +208,63 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     });
     assert.equal(badHostRes.statusCode, 422);
 
-    // 6. List, update (including clearing proxyUrl + revision conflict check), and delete work project.
+    // 6. List, update (rejects name/host/directory edits, updates/clears cliProxies, enforces revision conflict), and delete work project.
     const listRes = await app.inject({ method: 'GET', url: '/api/projects' });
     assert.equal(listRes.statusCode, 200);
     assert.equal(listRes.json().items.length, 1);
+
+    const lockedFieldPatch = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${project.id}`,
+      payload: {
+        name: 'matrius-renamed',
+        cliProxies: {},
+        baseRevision: project.revision,
+      },
+    });
+    assert.equal(lockedFieldPatch.statusCode, 422);
+
+    const lockedHostPatch = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${project.id}`,
+      payload: {
+        hostId: 'local',
+        baseRevision: project.revision,
+      },
+    });
+    assert.equal(lockedHostPatch.statusCode, 422);
+
+    const lockedDirPatch = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${project.id}`,
+      payload: {
+        directory: '/tmp/other',
+        baseRevision: project.revision,
+      },
+    });
+    assert.equal(lockedDirPatch.statusCode, 422);
 
     const patchRes = await app.inject({
       method: 'PATCH',
       url: `/api/projects/${project.id}`,
       payload: {
-        name: 'matrius-renamed',
-        hostId: project.hostId,
-        directory: project.directory,
-        proxyUrl: '',
+        cliProxies: {},
         baseRevision: project.revision,
       },
     });
     assert.equal(patchRes.statusCode, 200);
     const updated = patchRes.json();
-    assert.equal(updated.name, 'matrius-renamed');
-    assert.equal(updated.proxyUrl, undefined);
+    assert.equal(updated.name, 'repo');
+    assert.equal(updated.hostId, wslHost.id);
+    assert.equal(updated.directory, '/home/ubuntu/workspace/repo');
+    assert.equal(updated.cliProxies, undefined);
     assert.equal(updated.revision, project.revision + 1);
 
     const stalePatchRes = await app.inject({
       method: 'PATCH',
       url: `/api/projects/${project.id}`,
       payload: {
-        name: 'matrius-stale',
-        hostId: project.hostId,
-        directory: project.directory,
+        cliProxies: { codex: 'http://127.0.0.1:7890' },
         baseRevision: project.revision,
       },
     });

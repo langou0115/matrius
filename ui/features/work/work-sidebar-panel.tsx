@@ -1,8 +1,24 @@
+import {
+  CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
+  CLI_SESSIONS_INITIAL_VISIBLE,
+  CLI_SESSIONS_PAGE_STEP,
+  WORK_CLI_PROVIDER_LABELS,
+  buildCliResumeCommand,
+  formatCliTerminalTitle,
+  normalizeWorkCliProviderOrder,
+  workCliGroupKey,
+  type WorkCliProvider,
+  type WorkCliSession,
+} from '@contract/work-cli';
 import { LOCAL_WORK_HOST_ID, type WorkProject } from '@contract/work-projects';
 import type { WorkHost } from '@contract/work-hosts';
-import type { WorkTerminalSession } from '@contract/work-terminals';
-import { FolderPlus, Settings2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  defaultTerminalCommand,
+  defaultTerminalTitle,
+  type WorkTerminalSession,
+} from '@contract/work-terminals';
+import { Check, ChevronRight, FolderPlus, Plus, Settings2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
@@ -11,26 +27,63 @@ import { listWorkHosts } from '@/features/hosts/hosts-api';
 import { useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { CreateProjectDialog } from './create-project-dialog';
+import { TerminalPresetIcon } from './terminal-preset-icon';
 import {
+  createPreviewCliSessions,
   createPreviewWorkHosts,
+  createWorkTerminal,
   deleteWorkProject,
+  listProjectCliSessions,
   listWorkProjects,
   listWorkTerminals,
 } from './work-api';
+import { WorkErrorDialog } from './work-error-dialog';
 import { loadWorkSettings, saveWorkSettings } from './work-shell-preference';
 import {
+  addWorkTerminal,
+  bumpCliSessionsRefresh,
+  collapseWorkCliSessions,
   detectPreviewPlatform,
+  getWorkState,
   hydrateWorkSettings,
+  markWorkCliSessionRead,
   removeWorkProject,
+  reorderWorkCliProviders,
+  reorderWorkProjects,
+  selectWorkTerminal,
   setWorkHosts,
+  setWorkProjectCliSessions,
+  setWorkProjectCliSessionsError,
+  setWorkProjectCliSessionsLoading,
   setWorkProjects,
   setWorkProjectsError,
   setWorkServerPlatform,
   setWorkTerminals,
+  showMoreWorkCliSessions,
+  toggleWorkCliGroupCollapsed,
+  toggleWorkProjectExpanded,
   upsertWorkProject,
   useWorkState,
+  workCliSessionKey,
   writeActiveProjectId,
 } from './work-state';
+
+const CLI_POLL_INTERVAL_MS = 3_500;
+const CLI_FETCH_PAGE_STEP = 60;
+
+function resolveDragPosition(
+  event: DragEvent<HTMLElement>,
+  fromIndex: number,
+  toIndex: number,
+): 'before' | 'after' {
+  const rect = typeof event.currentTarget?.getBoundingClientRect === 'function'
+    ? event.currentTarget.getBoundingClientRect()
+    : null;
+  if (rect && rect.height > 0 && event.clientY > 0) {
+    return event.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+  }
+  return fromIndex < toIndex ? 'after' : 'before';
+}
 
 function hostDisplayName(hostId: string, hostMap: Map<string, WorkHost>): string {
   if (hostId === LOCAL_WORK_HOST_ID) return '本机';
@@ -39,27 +92,94 @@ function hostDisplayName(hostId: string, hostMap: Map<string, WorkHost>): string
   return host.name;
 }
 
+function createPreviewResumedTerminal(project: WorkProject, session: WorkCliSession): WorkTerminalSession {
+  return {
+    id: `mock-terminal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    projectId: project.id,
+    hostId: project.hostId,
+    title: formatCliTerminalTitle(session.title, session.provider),
+    preset: session.provider,
+    cliSessionId: session.id,
+    command: buildCliResumeCommand(session.provider, session.id),
+    cwd: project.directory,
+    status: 'running',
+    exitCode: null,
+    pinned: false,
+    createdAt: Date.now(),
+  };
+}
+
+function createPreviewNewCliTerminal(project: WorkProject, provider: WorkCliProvider): WorkTerminalSession {
+  return {
+    id: `mock-terminal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    projectId: project.id,
+    hostId: project.hostId,
+    title: defaultTerminalTitle(provider, 0),
+    preset: provider,
+    command: defaultTerminalCommand(provider),
+    cwd: project.directory,
+    status: 'running',
+    exitCode: null,
+    pinned: false,
+    createdAt: Date.now(),
+  };
+}
+
 export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean }) {
   const instance = useInstance();
   const preview = useIsPreview();
   const {
     activeProjectId,
+    activeTerminalId,
     activeTerminalByProject,
     filesPanelOpen,
     filesPanelWidth,
+    projectOrder,
+    cliProviderOrder,
     projects,
     projectsLoaded,
     projectsError,
+    expandedProjectIds,
+    collapsedCliGroups,
+    cliVisibleCounts,
+    cliSessionsByProject,
+    unreadCompletedCliKeys,
+    cliRefreshTick,
     hosts,
+    terminals,
     serverPlatform,
     defaultWindowsShellLoaded,
+    hostUnlockVersion,
   } = useWorkState();
 
   const [groupCollapsed, setGroupCollapsed] = useState(false);
   const [dialogProject, setDialogProject] = useState<WorkProject | 'create' | null>(null);
   const [deleting, setDeleting] = useState<WorkProject | null>(null);
-  const [menu, setMenu] = useState<{ projectId: string; anchor: HTMLButtonElement } | null>(null);
+  const [menu, setMenu] = useState<{
+    projectId: string;
+    anchor: HTMLElement;
+    focusTarget: HTMLElement | null;
+  } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [openingCliKey, setOpeningCliKey] = useState<string | null>(null);
+  const [cliNotice, setCliNotice] = useState<string | null>(null);
+  const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null);
+  const [projectDropTarget, setProjectDropTarget] = useState<{
+    projectId: string;
+    position: 'before' | 'after';
+  } | null>(null);
+  const [draggingCliGroup, setDraggingCliGroup] = useState<{
+    projectId: string;
+    provider: WorkCliProvider;
+  } | null>(null);
+  const [cliGroupDropTarget, setCliGroupDropTarget] = useState<{
+    projectId: string;
+    provider: WorkCliProvider;
+    position: 'before' | 'after';
+  } | null>(null);
+  const dragProjectIdRef = useRef<string | null>(null);
+  const dragCliGroupRef = useRef<{ projectId: string; provider: WorkCliProvider } | null>(null);
+  const pendingNewCliKeysRef = useRef(new Set<string>());
   const lastSavedSelectionRef = useRef<string | null>(null);
 
   const canUseServer = !preview && instance.status === 'ready';
@@ -80,13 +200,15 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     ])
       .then(([projectRes, hostRes, terminalRes, workSettings]) => {
         if (cancelled) return;
-        if (terminalRes.platform) setWorkServerPlatform(terminalRes.platform);
+        if (terminalRes.platform) setWorkServerPlatform(terminalRes.platform, terminalRes.windowsBuild ?? null);
         if (workSettings) {
           lastSavedSelectionRef.current = JSON.stringify({
             activeProjectId: workSettings.activeProjectId,
             activeTerminals: workSettings.activeTerminals,
             filesPanelOpen: workSettings.filesPanelOpen,
             filesPanelWidth: workSettings.filesPanelWidth,
+            projectOrder: workSettings.projectOrder,
+            cliProviderOrder: workSettings.cliProviderOrder,
           });
           hydrateWorkSettings(workSettings);
         }
@@ -108,6 +230,8 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       activeTerminals: activeTerminalByProject,
       filesPanelOpen,
       filesPanelWidth,
+      projectOrder,
+      cliProviderOrder,
     });
     if (serialized === lastSavedSelectionRef.current) return;
     const timer = setTimeout(() => {
@@ -117,6 +241,8 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
         activeTerminals: activeTerminalByProject,
         filesPanelOpen,
         filesPanelWidth,
+        projectOrder,
+        cliProviderOrder,
       }).catch(() => {});
     }, 100);
     return () => clearTimeout(timer);
@@ -124,19 +250,227 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     activeProjectId,
     activeTerminalByProject,
     canUseServer,
+    cliProviderOrder,
     defaultWindowsShellLoaded,
     filesPanelOpen,
     filesPanelWidth,
     instance.request,
+    projectOrder,
     projectsLoaded,
   ]);
 
+  const expandedList = useMemo(
+    () => projects.filter((project) => expandedProjectIds[project.id]).map((project) => project.id),
+    [expandedProjectIds, projects],
+  );
+  const expandedKey = expandedList.join(',');
+
+  const fetchProjectCliSessions = useCallback(async (
+    projectId: string,
+    limit: number,
+    options: { silent?: boolean; loadingMore?: boolean } = {},
+  ) => {
+    if (preview) {
+      setWorkProjectCliSessions(projectId, createPreviewCliSessions(projectId), limit);
+      return;
+    }
+    if (!canUseServer) return;
+    if (!options.silent) {
+      setWorkProjectCliSessionsLoading(projectId, {
+        loadingMore: options.loadingMore,
+        requestedLimit: limit,
+      });
+    }
+    try {
+      const result = await listProjectCliSessions(instance.request, projectId, limit);
+      setWorkProjectCliSessions(projectId, result, limit);
+    } catch (reason) {
+      if (!options.silent || !getWorkState().cliSessionsByProject[projectId]?.loaded) {
+        setWorkProjectCliSessionsError(
+          projectId,
+          reason instanceof Error && reason.message ? reason.message : '读取 CLI 对话失败。',
+        );
+      }
+    }
+  }, [canUseServer, instance.request, preview]);
+
+  // Load expanded projects on expand, refresh tick, or host unlock.
+  useEffect(() => {
+    if (collapsed || !expandedKey) return;
+    const ids = expandedKey.split(',').filter(Boolean);
+    const currentSessions = getWorkState().cliSessionsByProject;
+    for (const projectId of ids) {
+      const current = currentSessions[projectId];
+      if (preview) {
+        if (!current?.loaded) {
+          setWorkProjectCliSessions(projectId, createPreviewCliSessions(projectId), CLI_SESSIONS_DEFAULT_FETCH_LIMIT);
+        }
+        continue;
+      }
+      if (!canUseServer) continue;
+      const limit = current?.requestedLimit ?? CLI_SESSIONS_DEFAULT_FETCH_LIMIT;
+      void fetchProjectCliSessions(projectId, limit, { silent: Boolean(current?.loaded) });
+    }
+  }, [
+    canUseServer,
+    cliRefreshTick,
+    collapsed,
+    expandedKey,
+    fetchProjectCliSessions,
+    hostUnlockVersion,
+    preview,
+  ]);
+
+  // Periodically poll expanded projects while visible so running/completed state stays live.
+  useEffect(() => {
+    if (collapsed || preview || !canUseServer || !expandedKey) return;
+    const ids = expandedKey.split(',').filter(Boolean);
+    if (ids.length === 0) return;
+
+    const refreshAll = (silent: boolean) => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const currentSessions = getWorkState().cliSessionsByProject;
+      for (const projectId of ids) {
+        const current = currentSessions[projectId];
+        const limit = current?.requestedLimit ?? CLI_SESSIONS_DEFAULT_FETCH_LIMIT;
+        void fetchProjectCliSessions(projectId, limit, { silent });
+      }
+    };
+
+    const timer = setInterval(() => refreshAll(true), CLI_POLL_INTERVAL_MS);
+    const onVisibility = () => {
+      if (!document.hidden) refreshAll(true);
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
+    return () => {
+      clearInterval(timer);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
+    };
+  }, [canUseServer, collapsed, expandedKey, fetchProjectCliSessions, preview]);
+
   const hostMap = useMemo(() => new Map(hosts.map((host) => [host.id, host])), [hosts]);
+  const normalizedProviderOrder = useMemo(
+    () => normalizeWorkCliProviderOrder(cliProviderOrder),
+    [cliProviderOrder],
+  );
+  const clearProjectDragState = useCallback(() => {
+    dragProjectIdRef.current = null;
+    setDraggingProjectId(null);
+    setProjectDropTarget(null);
+  }, []);
+  const clearCliGroupDragState = useCallback(() => {
+    dragCliGroupRef.current = null;
+    setDraggingCliGroup(null);
+    setCliGroupDropTarget(null);
+  }, []);
   const syncHosts = useCallback((nextHosts: WorkHost[]) => {
     setWorkHosts(nextHosts);
   }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
   const menuProject = menu ? projects.find((item) => item.id === menu.projectId) ?? null : null;
+  const activeTerminal = activeTerminalId
+    ? terminals.find((item) => item.id === activeTerminalId) ?? null
+    : null;
+
+  async function handleOpenCliSession(project: WorkProject, session: WorkCliSession) {
+    const key = workCliSessionKey(project.id, session.provider, session.id);
+    if (openingCliKey === key) return;
+    markWorkCliSessionRead(project.id, session.provider, session.id);
+
+    const existing = terminals.find((item) => (
+      item.projectId === project.id
+      && item.preset === session.provider
+      && item.cliSessionId === session.id
+      && (item.status === 'running' || item.status === 'restored')
+    )) ?? terminals.find((item) => (
+      item.projectId === project.id
+      && item.preset === session.provider
+      && item.cliSessionId === session.id
+    ));
+    if (existing) {
+      selectWorkTerminal(existing.id);
+      return;
+    }
+
+    writeActiveProjectId(project.id);
+    if (preview) {
+      addWorkTerminal(createPreviewResumedTerminal(project, session));
+      return;
+    }
+
+    setOpeningCliKey(key);
+    try {
+      const created = await createWorkTerminal(instance.request, {
+        projectId: project.id,
+        preset: session.provider,
+        cliSessionId: session.id,
+        title: formatCliTerminalTitle(session.title, session.provider),
+        command: buildCliResumeCommand(session.provider, session.id),
+      });
+      addWorkTerminal(created);
+    } catch (reason) {
+      setCliNotice(reason instanceof Error && reason.message ? reason.message : '打开 CLI 对话失败，请重试。');
+    } finally {
+      setOpeningCliKey((current) => (current === key ? null : current));
+    }
+  }
+
+  async function handleCreateNewCliSession(project: WorkProject, provider: WorkCliProvider) {
+    const newKey = workCliGroupKey(project.id, provider);
+    if (pendingNewCliKeysRef.current.has(newKey)) return;
+
+    const currentTerminals = getWorkState().terminals;
+    const existing = currentTerminals.find((item) => (
+      item.projectId === project.id
+      && item.preset === provider
+      && !item.cliSessionId
+    ));
+    if (existing) {
+      writeActiveProjectId(project.id);
+      selectWorkTerminal(existing.id);
+      return;
+    }
+
+    writeActiveProjectId(project.id);
+    if (preview) {
+      addWorkTerminal(createPreviewNewCliTerminal(project, provider));
+      bumpCliSessionsRefresh();
+      return;
+    }
+
+    pendingNewCliKeysRef.current.add(newKey);
+    setOpeningCliKey(newKey);
+    try {
+      const created = await createWorkTerminal(instance.request, {
+        projectId: project.id,
+        preset: provider,
+        title: defaultTerminalTitle(provider, 0),
+      });
+      addWorkTerminal(created);
+      bumpCliSessionsRefresh();
+    } catch (reason) {
+      setCliNotice(reason instanceof Error && reason.message ? reason.message : '启动 CLI 对话失败，请重试。');
+    } finally {
+      pendingNewCliKeysRef.current.delete(newKey);
+      setOpeningCliKey((current) => (current === newKey ? null : current));
+    }
+  }
+
+  async function handleShowMore(projectId: string, provider: WorkCliProvider) {
+    const current = cliSessionsByProject[projectId];
+    const nextVisible = showMoreWorkCliSessions(projectId, provider, CLI_SESSIONS_PAGE_STEP);
+    const providerCount = current
+      ? current.items.filter((item) => item.provider === provider).length
+      : 0;
+    if (!preview && canUseServer && current && nextVisible > providerCount && current.hasMore && !current.loadingMore) {
+      const nextLimit = Math.min(200, current.requestedLimit + CLI_FETCH_PAGE_STEP);
+      await fetchProjectCliSessions(projectId, nextLimit, { loadingMore: true });
+    }
+  }
 
   async function confirmRemove() {
     if (!deleting || busyId) return;
@@ -207,40 +541,342 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                 {!projectsLoaded && canUseServer ? (
                   <p className="work-sidebar-loading" role="status">正在读取项目…</p>
                 ) : projects.length > 0 ? (
-                  projects.map((project) => {
+                  projects.map((project, projectIndex) => {
                     const isActive = activeProjectId === project.id;
+                    const isExpanded = Boolean(expandedProjectIds[project.id]);
                     const hostLabel = hostDisplayName(project.hostId, hostMap);
+                    const childrenId = `work-project-children-${project.id}`;
+                    const cliState = cliSessionsByProject[project.id];
+                    const sessionsByProvider = new Map<WorkCliProvider, WorkCliSession[]>();
+                    for (const session of cliState?.items ?? []) {
+                      const bucket = sessionsByProvider.get(session.provider);
+                      if (bucket) bucket.push(session);
+                      else sessionsByProvider.set(session.provider, [session]);
+                    }
+                    const cliGroups = normalizedProviderOrder.map((provider) => ({
+                      provider,
+                      sessions: sessionsByProvider.get(provider) ?? [],
+                    }));
+                    const showChildren = isExpanded;
+                    const isDraggingProject = draggingProjectId === project.id;
+                    const projectDropPos = projectDropTarget?.projectId === project.id
+                      ? projectDropTarget.position
+                      : null;
+
+                    const openProjectMenu = (
+                      rowEl: HTMLElement,
+                      focusTarget: HTMLElement | null,
+                    ) => {
+                      if (busyId === project.id) return;
+                      setMenu({
+                        projectId: project.id,
+                        anchor: rowEl,
+                        focusTarget,
+                      });
+                    };
+
                     return (
-                      <div
-                        key={project.id}
-                        className={`work-project-item${isActive ? ' is-active' : ''}${menuProject?.id === project.id ? ' menu-open' : ''}`}
-                      >
-                        <button
-                          type="button"
-                          className="work-project-select"
-                          aria-current={isActive ? 'true' : undefined}
-                          title={`${hostLabel} · ${project.directory}`}
-                          onClick={() => writeActiveProjectId(project.id)}
-                        >
-                          <span className="work-project-name">{project.name}</span>
-                          {project.hostId !== LOCAL_WORK_HOST_ID && (
-                            <span className="work-project-host">{hostLabel}</span>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-button work-project-more"
-                          aria-label={`项目设置：${project.name}`}
-                          aria-haspopup="menu"
-                          aria-expanded={menuProject?.id === project.id}
-                          aria-controls={menuProject?.id === project.id ? 'work-project-menu' : undefined}
-                          disabled={busyId === project.id}
-                          onClick={(event) => {
-                            setMenu(menuProject?.id === project.id ? null : { projectId: project.id, anchor: event.currentTarget });
+                      <div key={project.id} className="work-project-group">
+                        <div
+                          className={`work-project-item${isActive ? ' is-active' : ''}${menuProject?.id === project.id ? ' menu-open' : ''}${isDraggingProject ? ' is-dragging' : ''}${projectDropPos === 'before' ? ' is-drop-before' : ''}${projectDropPos === 'after' ? ' is-drop-after' : ''}`}
+                          data-project-id={project.id}
+                          draggable={busyId !== project.id}
+                          onDragStart={(event) => {
+                            if (busyId === project.id) {
+                              event.preventDefault();
+                              return;
+                            }
+                            closeMenu();
+                            clearCliGroupDragState();
+                            dragProjectIdRef.current = project.id;
+                            setDraggingProjectId(project.id);
+                            if (event.dataTransfer) {
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('application/x-matrius-project', project.id);
+                            }
+                          }}
+                          onDragOver={(event) => {
+                            const sourceId = dragProjectIdRef.current;
+                            if (!sourceId || sourceId === project.id) return;
+                            event.preventDefault();
+                            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                            const fromIndex = projects.findIndex((item) => item.id === sourceId);
+                            const position = resolveDragPosition(event, fromIndex, projectIndex);
+                            setProjectDropTarget((prev) => (
+                              prev?.projectId === project.id && prev.position === position
+                                ? prev
+                                : { projectId: project.id, position }
+                            ));
+                          }}
+                          onDragLeave={(event) => {
+                            const nextTarget = event.relatedTarget as Node | null;
+                            if (nextTarget && event.currentTarget.contains(nextTarget)) return;
+                            setProjectDropTarget((prev) => (
+                              prev?.projectId === project.id ? null : prev
+                            ));
+                          }}
+                          onDrop={(event) => {
+                            const sourceId = dragProjectIdRef.current
+                              ?? event.dataTransfer?.getData('application/x-matrius-project')
+                              ?? '';
+                            if (!sourceId || sourceId === project.id) {
+                              clearProjectDragState();
+                              return;
+                            }
+                            event.preventDefault();
+                            const fromIndex = projects.findIndex((item) => item.id === sourceId);
+                            const position = resolveDragPosition(event, fromIndex, projectIndex);
+                            clearProjectDragState();
+                            reorderWorkProjects(sourceId, project.id, position);
+                          }}
+                          onDragEnd={clearProjectDragState}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            const rowEl = event.currentTarget;
+                            const focusTarget = rowEl.querySelector<HTMLElement>('.work-project-select');
+                            openProjectMenu(rowEl, focusTarget);
                           }}
                         >
-                          <Icon name="more" size={17} />
-                        </button>
+                          <button
+                            type="button"
+                            className="work-project-toggle"
+                            aria-label={isExpanded ? `收起项目：${project.name}` : `展开项目：${project.name}`}
+                            aria-expanded={isExpanded}
+                            aria-controls={showChildren ? childrenId : undefined}
+                            onClick={() => toggleWorkProjectExpanded(project.id)}
+                          >
+                            <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className="work-project-select"
+                            aria-current={isActive ? 'true' : undefined}
+                            title={`${hostLabel} · ${project.directory}`}
+                            onClick={() => writeActiveProjectId(project.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                                event.preventDefault();
+                                const rowEl = event.currentTarget.closest<HTMLElement>('.work-project-item') ?? event.currentTarget;
+                                openProjectMenu(rowEl, event.currentTarget);
+                              }
+                            }}
+                          >
+                            <span className="work-project-name">{project.name}</span>
+                            {project.hostId !== LOCAL_WORK_HOST_ID && (
+                              <span className="work-project-host">{hostLabel}</span>
+                            )}
+                          </button>
+                        </div>
+
+                        {showChildren && (
+                          <div
+                            id={childrenId}
+                            className="work-project-children"
+                            role="region"
+                            aria-label={`${project.name} CLI 对话`}
+                          >
+                            {cliState?.error && (
+                              <p className="work-cli-error" role="alert">{cliState.error}</p>
+                            )}
+                            {cliGroups.map((group, groupIndex) => {
+                              const { provider, sessions: groupSessions } = group;
+                              const groupKey = workCliGroupKey(project.id, provider);
+                              const isGroupCollapsed = Boolean(collapsedCliGroups[groupKey]);
+                              const visibleLimit = cliVisibleCounts[groupKey] ?? CLI_SESSIONS_INITIAL_VISIBLE;
+                              const visibleGroupSessions = groupSessions.slice(0, visibleLimit);
+                              const hasMoreInGroup = Boolean(
+                                groupSessions.length > visibleLimit || cliState?.hasMore,
+                              );
+                              const canCollapseGroupMore = Boolean(
+                                visibleLimit > CLI_SESSIONS_INITIAL_VISIBLE
+                                  && groupSessions.length > CLI_SESSIONS_INITIAL_VISIBLE,
+                              );
+                              const isDraggingGroup = draggingCliGroup?.projectId === project.id
+                                && draggingCliGroup.provider === provider;
+                              const groupDropPos = cliGroupDropTarget?.projectId === project.id
+                                && cliGroupDropTarget.provider === provider
+                                ? cliGroupDropTarget.position
+                                : null;
+
+                              return (
+                                <div
+                                  key={groupKey}
+                                  className="work-cli-group"
+                                  data-cli-provider={provider}
+                                >
+                                  <div
+                                    className={`work-cli-group-header${isDraggingGroup ? ' is-dragging' : ''}${groupDropPos === 'before' ? ' is-drop-before' : ''}${groupDropPos === 'after' ? ' is-drop-after' : ''}`}
+                                    draggable
+                                    onDragStart={(event) => {
+                                      event.stopPropagation();
+                                      clearProjectDragState();
+                                      const payload = { projectId: project.id, provider };
+                                      dragCliGroupRef.current = payload;
+                                      setDraggingCliGroup(payload);
+                                      if (event.dataTransfer) {
+                                        event.dataTransfer.effectAllowed = 'move';
+                                        event.dataTransfer.setData(
+                                          'application/x-matrius-cli-group',
+                                          JSON.stringify(payload),
+                                        );
+                                      }
+                                    }}
+                                    onDragOver={(event) => {
+                                      const source = dragCliGroupRef.current;
+                                      if (!source || source.projectId !== project.id || source.provider === provider) {
+                                        return;
+                                      }
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                                      const fromIndex = cliGroups.findIndex((entry) => entry.provider === source.provider);
+                                      const position = resolveDragPosition(event, fromIndex, groupIndex);
+                                      setCliGroupDropTarget((prev) => (
+                                        prev?.projectId === project.id
+                                        && prev.provider === provider
+                                        && prev.position === position
+                                          ? prev
+                                          : { projectId: project.id, provider, position }
+                                      ));
+                                    }}
+                                    onDragLeave={(event) => {
+                                      const nextTarget = event.relatedTarget as Node | null;
+                                      if (nextTarget && event.currentTarget.contains(nextTarget)) return;
+                                      setCliGroupDropTarget((prev) => (
+                                        prev?.projectId === project.id && prev.provider === provider ? null : prev
+                                      ));
+                                    }}
+                                    onDrop={(event) => {
+                                      let source = dragCliGroupRef.current;
+                                      if (!source && event.dataTransfer) {
+                                        try {
+                                          const raw = event.dataTransfer.getData('application/x-matrius-cli-group');
+                                          if (raw) source = JSON.parse(raw) as { projectId: string; provider: WorkCliProvider };
+                                        } catch {
+                                          source = null;
+                                        }
+                                      }
+                                      if (!source || source.projectId !== project.id || source.provider === provider) {
+                                        clearCliGroupDragState();
+                                        return;
+                                      }
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      const fromIndex = cliGroups.findIndex((entry) => entry.provider === source.provider);
+                                      const position = resolveDragPosition(event, fromIndex, groupIndex);
+                                      clearCliGroupDragState();
+                                      reorderWorkCliProviders(source.provider, provider, position);
+                                    }}
+                                    onDragEnd={clearCliGroupDragState}
+                                  >
+                                    <button
+                                      type="button"
+                                      className="work-cli-group-toggle"
+                                      aria-expanded={groupSessions.length > 0 ? !isGroupCollapsed : undefined}
+                                      onClick={() => {
+                                        if (groupSessions.length > 0) {
+                                          toggleWorkCliGroupCollapsed(project.id, provider);
+                                        }
+                                      }}
+                                    >
+                                      {groupSessions.length > 0 ? (
+                                        <ChevronRight
+                                          size={12}
+                                          strokeWidth={1.75}
+                                          className="work-cli-group-chevron"
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <span className="work-cli-group-spacer" aria-hidden="true" />
+                                      )}
+                                      <span className="work-cli-group-icon" aria-hidden="true">
+                                        <TerminalPresetIcon preset={provider} size={14} />
+                                      </span>
+                                      <span className="work-cli-group-label">{WORK_CLI_PROVIDER_LABELS[provider]}</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="icon-button work-cli-group-add"
+                                      data-cli-provider={provider}
+                                      aria-label={`新建 ${WORK_CLI_PROVIDER_LABELS[provider]} 对话`}
+                                      draggable={false}
+                                      disabled={openingCliKey === groupKey}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleCreateNewCliSession(project, provider);
+                                      }}
+                                    >
+                                      <Plus size={14} strokeWidth={1.85} aria-hidden="true" />
+                                    </button>
+                                  </div>
+
+                                  {groupSessions.length > 0 && !isGroupCollapsed && (
+                                    <div className="work-cli-group-items">
+                                        {visibleGroupSessions.map((session) => {
+                                          const cliKey = workCliSessionKey(project.id, session.provider, session.id);
+                                          const isSessionActive = isActive
+                                            && activeTerminal?.preset === session.provider
+                                            && activeTerminal?.cliSessionId === session.id;
+                                          const isUnread = Boolean(unreadCompletedCliKeys[cliKey]);
+                                          return (
+                                            <button
+                                              key={cliKey}
+                                              type="button"
+                                              className={`work-cli-session-btn${isSessionActive ? ' is-active' : ''}`}
+                                              aria-current={isSessionActive ? 'true' : undefined}
+                                              data-cli-provider={session.provider}
+                                              data-cli-session-id={session.id}
+                                              data-cli-status={session.status}
+                                              disabled={openingCliKey === cliKey}
+                                              onClick={() => void handleOpenCliSession(project, session)}
+                                            >
+                                              <span className="work-cli-session-title">{session.title}</span>
+                                              {session.status === 'running' ? (
+                                                <span className="work-cli-status is-running" role="status" aria-label="加载中">
+                                                  <span className="conversation-spinner" aria-hidden="true" />
+                                                </span>
+                                              ) : session.status === 'completed' ? (
+                                                <span
+                                                  className={`work-cli-status is-completed${isUnread ? ' is-unread' : ''}`}
+                                                  role="img"
+                                                  aria-label="已完成"
+                                                >
+                                                  <Check size={13} strokeWidth={2} aria-hidden="true" />
+                                                </span>
+                                              ) : null}
+                                            </button>
+                                          );
+                                        })}
+                                        {(hasMoreInGroup || canCollapseGroupMore) && (
+                                          <div className="work-project-cli-actions">
+                                            {hasMoreInGroup && (
+                                              <button
+                                                type="button"
+                                                className="work-project-show-more"
+                                                disabled={cliState?.loadingMore}
+                                                onClick={() => void handleShowMore(project.id, provider)}
+                                              >
+                                                {cliState?.loadingMore ? '正在加载…' : '显示更多'}
+                                              </button>
+                                            )}
+                                            {canCollapseGroupMore && (
+                                              <button
+                                                type="button"
+                                                className="work-project-show-less"
+                                                onClick={() => collapseWorkCliSessions(project.id, provider)}
+                                              >
+                                                收起
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -256,6 +892,9 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
           id="work-project-menu"
           label={`项目操作：${menuProject.name}`}
           anchor={menu.anchor}
+          focusReturnTarget={menu.focusTarget}
+          align="end"
+          dismissOnAnchorPointerDown
           rowSelector=".work-project-item"
           onClose={closeMenu}
         >
@@ -263,7 +902,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
             role="menuitem"
             type="button"
             onClick={() => {
-              menu.anchor.focus();
+              (menu.focusTarget ?? menu.anchor).focus();
               setWorkProjectsError(null);
               setDialogProject(menuProject);
               closeMenu();
@@ -277,7 +916,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
             type="button"
             className="danger-text"
             onClick={() => {
-              menu.anchor.focus();
+              (menu.focusTarget ?? menu.anchor).focus();
               setWorkProjectsError(null);
               setDeleting(menuProject);
               closeMenu();
@@ -313,6 +952,15 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
             </button>
           </div>
         </Dialog>
+      )}
+
+      {cliNotice && (
+        <WorkErrorDialog
+          title="提示"
+          message={cliNotice}
+          className="work-cli-error-dialog"
+          onClose={() => setCliNotice(null)}
+        />
       )}
     </>
   );
