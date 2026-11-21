@@ -45,6 +45,8 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
   const {
     activeProjectId,
     activeTerminalByProject,
+    filesPanelOpen,
+    filesPanelWidth,
     projects,
     projectsLoaded,
     projectsError,
@@ -83,6 +85,8 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
           lastSavedSelectionRef.current = JSON.stringify({
             activeProjectId: workSettings.activeProjectId,
             activeTerminals: workSettings.activeTerminals,
+            filesPanelOpen: workSettings.filesPanelOpen,
+            filesPanelWidth: workSettings.filesPanelWidth,
           });
           hydrateWorkSettings(workSettings);
         }
@@ -102,6 +106,8 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     const serialized = JSON.stringify({
       activeProjectId,
       activeTerminals: activeTerminalByProject,
+      filesPanelOpen,
+      filesPanelWidth,
     });
     if (serialized === lastSavedSelectionRef.current) return;
     const timer = setTimeout(() => {
@@ -109,10 +115,21 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       void saveWorkSettings(instance.request, {
         activeProjectId,
         activeTerminals: activeTerminalByProject,
+        filesPanelOpen,
+        filesPanelWidth,
       }).catch(() => {});
     }, 100);
     return () => clearTimeout(timer);
-  }, [activeProjectId, activeTerminalByProject, canUseServer, defaultWindowsShellLoaded, instance.request, projectsLoaded]);
+  }, [
+    activeProjectId,
+    activeTerminalByProject,
+    canUseServer,
+    defaultWindowsShellLoaded,
+    filesPanelOpen,
+    filesPanelWidth,
+    instance.request,
+    projectsLoaded,
+  ]);
 
   const hostMap = useMemo(() => new Map(hosts.map((host) => [host.id, host])), [hosts]);
   const syncHosts = useCallback((nextHosts: WorkHost[]) => {

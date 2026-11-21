@@ -197,6 +197,8 @@ export type PersistedWorkSettings = {
   defaultWindowsShell: WindowsTerminalShell;
   activeProjectId: string | null;
   activeTerminals: Record<string, string | null>;
+  filesPanelOpen: boolean;
+  filesPanelWidth: number | null;
 };
 
 type WorkSettingsRow = {
@@ -204,8 +206,17 @@ type WorkSettingsRow = {
   default_windows_shell: string;
   active_project_id: string | null;
   active_terminals_json: string;
+  files_panel_open: number;
+  files_panel_width: number | null;
   updated_at_ms: number;
 };
+
+function clampPanelWidth(raw: number | null | undefined): number | null {
+  if (raw === null || raw === undefined || !Number.isFinite(raw)) return null;
+  const rounded = Math.round(raw);
+  if (rounded <= 0) return null;
+  return Math.max(220, Math.min(640, rounded));
+}
 
 function parseActiveTerminalsJson(raw: string): Record<string, string | null> {
   try {
@@ -231,12 +242,16 @@ export function getWorkSettingsRow(db: AppDatabase, instanceId: number): Persist
       defaultWindowsShell: DEFAULT_WINDOWS_SHELL,
       activeProjectId: null,
       activeTerminals: {},
+      filesPanelOpen: true,
+      filesPanelWidth: null,
     };
   }
   return {
     defaultWindowsShell: normalizeWindowsShell(existing.default_windows_shell),
     activeProjectId: existing.active_project_id?.trim() ? existing.active_project_id : null,
     activeTerminals: parseActiveTerminalsJson(existing.active_terminals_json),
+    filesPanelOpen: existing.files_panel_open !== 0,
+    filesPanelWidth: clampPanelWidth(existing.files_panel_width),
   };
 }
 
@@ -256,21 +271,32 @@ export function updateWorkSettingsRow(
     activeTerminals: patch.activeTerminals !== undefined
       ? parseActiveTerminalsJson(JSON.stringify(patch.activeTerminals))
       : current.activeTerminals,
+    filesPanelOpen: patch.filesPanelOpen !== undefined
+      ? Boolean(patch.filesPanelOpen)
+      : current.filesPanelOpen,
+    filesPanelWidth: patch.filesPanelWidth !== undefined
+      ? clampPanelWidth(patch.filesPanelWidth)
+      : current.filesPanelWidth,
   };
   db.prepare(`
     INSERT INTO work_settings (
-      instance_id, default_windows_shell, active_project_id, active_terminals_json, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?)
+      instance_id, default_windows_shell, active_project_id, active_terminals_json,
+      files_panel_open, files_panel_width, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(instance_id) DO UPDATE SET
       default_windows_shell = excluded.default_windows_shell,
       active_project_id = excluded.active_project_id,
       active_terminals_json = excluded.active_terminals_json,
+      files_panel_open = excluded.files_panel_open,
+      files_panel_width = excluded.files_panel_width,
       updated_at_ms = excluded.updated_at_ms
   `).run(
     instanceId,
     next.defaultWindowsShell,
     next.activeProjectId,
     JSON.stringify(next.activeTerminals),
+    next.filesPanelOpen ? 1 : 0,
+    next.filesPanelWidth,
     Date.now(),
   );
   return next;

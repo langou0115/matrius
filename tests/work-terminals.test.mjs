@@ -474,6 +474,8 @@ test('SQLite work settings hydration preserves activeProjectId and per-project a
       defaultWindowsShell: 'cmd',
       activeProjectId: 'proj-b',
       activeTerminals: { 'proj-a': 'term-a2', 'proj-b': 'term-b1' },
+      filesPanelOpen: false,
+      filesPanelWidth: 420,
     });
     setWorkTerminals([
       { id: 'term-a1', projectId: 'proj-a', hostId: 'local', title: 'PowerShell', preset: 'shell', shell: 'powershell', command: '', cwd: 'D:\\A', status: 'restored', exitCode: null, pinned: false, createdAt: 1 },
@@ -485,6 +487,8 @@ test('SQLite work settings hydration preserves activeProjectId and per-project a
     assert.equal(snapshot.activeProjectId, 'proj-b');
     assert.equal(snapshot.activeTerminalId, 'term-b1');
     assert.equal(snapshot.defaultWindowsShell, 'cmd');
+    assert.equal(snapshot.filesPanelOpen, false);
+    assert.equal(snapshot.filesPanelWidth, 420);
     assert.equal(snapshot.terminals[0].title, '构建标签');
     assert.equal(snapshot.terminals[0].pinned, true);
   } finally {

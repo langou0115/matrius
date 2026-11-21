@@ -144,6 +144,8 @@ function createInitialState(): WorkStoreSnapshot {
 
 let state: WorkStoreSnapshot = createInitialState();
 let hasExplicitProjectChoice = Boolean(state.activeProjectId);
+let hasExplicitFilesPanelOpen = false;
+let hasExplicitFilesPanelWidth = false;
 const listeners = new Set<() => void>();
 
 function emit(next: WorkStoreSnapshot): void {
@@ -471,12 +473,14 @@ export function removeWorkTerminals(terminalIds: readonly string[]): void {
 }
 
 export function toggleWorkFilesPanel(open?: boolean): void {
+  hasExplicitFilesPanelOpen = true;
   const next = open !== undefined ? open : !state.filesPanelOpen;
   if (next === state.filesPanelOpen) return;
   emit({ ...state, filesPanelOpen: next });
 }
 
 export function setWorkFilesPanelWidth(width: number | null, maxWidth = MAX_WORK_FILES_WIDTH): void {
+  hasExplicitFilesPanelWidth = true;
   const next = width === null ? null : clampWorkFilesWidth(width, maxWidth);
   try {
     if (next === null) globalThis.localStorage?.removeItem(FILES_PANEL_WIDTH_KEY);
@@ -513,6 +517,8 @@ export function hydrateWorkSettings(settings: {
   defaultWindowsShell: WindowsTerminalShell;
   activeProjectId: string | null;
   activeTerminals: Record<string, string | null>;
+  filesPanelOpen?: boolean;
+  filesPanelWidth?: number | null;
 }): void {
   const normalizedShell = normalizeOptionalWindowsShell(settings.defaultWindowsShell) ?? DEFAULT_WINDOWS_SHELL;
   const mergedTerminals = {
@@ -546,6 +552,21 @@ export function hydrateWorkSettings(settings: {
     nextActiveProjectId,
     nextActiveProjectId ? mergedTerminals[nextActiveProjectId] : null,
   );
+  const nextFilesPanelOpen = !hasExplicitFilesPanelOpen && settings.filesPanelOpen !== undefined
+    ? Boolean(settings.filesPanelOpen)
+    : state.filesPanelOpen;
+  let nextFilesPanelWidth = state.filesPanelWidth;
+  if (!hasExplicitFilesPanelWidth && settings.filesPanelWidth !== undefined) {
+    nextFilesPanelWidth = settings.filesPanelWidth === null
+      ? null
+      : clampWorkFilesWidth(settings.filesPanelWidth);
+    try {
+      if (nextFilesPanelWidth === null) globalThis.localStorage?.removeItem(FILES_PANEL_WIDTH_KEY);
+      else globalThis.localStorage?.setItem(FILES_PANEL_WIDTH_KEY, String(nextFilesPanelWidth));
+    } catch {
+      // Ignore storage restrictions.
+    }
+  }
   emit({
     ...state,
     defaultWindowsShell: normalizedShell,
@@ -553,6 +574,8 @@ export function hydrateWorkSettings(settings: {
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId,
     activeTerminalByProject: mergedTerminals,
+    filesPanelOpen: nextFilesPanelOpen,
+    filesPanelWidth: nextFilesPanelWidth,
   });
 }
 
@@ -566,6 +589,8 @@ export function bumpHostUnlockVersion(): void {
 
 export function resetWorkStateForTests(): void {
   hasExplicitProjectChoice = false;
+  hasExplicitFilesPanelOpen = false;
+  hasExplicitFilesPanelWidth = false;
   try {
     globalThis.sessionStorage?.removeItem(ACTIVE_PROJECT_KEY);
     globalThis.localStorage?.removeItem(ACTIVE_TERMINALS_KEY);

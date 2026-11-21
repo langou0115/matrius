@@ -47,6 +47,8 @@ const workSettingsUpdateSchema = z.object({
   defaultWindowsShell: z.enum(['powershell', 'cmd']).optional(),
   activeProjectId: z.string().max(120).nullable().optional(),
   activeTerminals: z.record(z.string().max(120), z.string().max(120).nullable()).optional(),
+  filesPanelOpen: z.boolean().optional(),
+  filesPanelWidth: z.number().int().min(220).max(640).nullable().optional(),
 });
 
 export type TerminalRouteDeps = {

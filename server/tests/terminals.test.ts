@@ -325,6 +325,8 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
         defaultWindowsShell: 'cmd',
         activeProjectId: sshProject.id,
         activeTerminals: { [localProject.id]: localId, [sshProject.id]: sshId },
+        filesPanelOpen: false,
+        filesPanelWidth: 420,
       },
     });
   } finally {
@@ -367,6 +369,8 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
       defaultWindowsShell: 'cmd',
       activeProjectId: sshProject.id,
       activeTerminals: { [localProject.id]: localId, [sshProject.id]: sshId },
+      filesPanelOpen: false,
+      filesPanelWidth: 420,
     });
     const profileFieldsRes = await secondBuilt.app.inject({ method: 'GET', url: '/api/profile/fields' });
     assert.deepEqual(profileFieldsRes.json(), { items: [] });

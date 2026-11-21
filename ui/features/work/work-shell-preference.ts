@@ -8,6 +8,8 @@ export type WorkSettingsPayload = {
   defaultWindowsShell: WindowsTerminalShell;
   activeProjectId: string | null;
   activeTerminals: Record<string, string | null>;
+  filesPanelOpen: boolean;
+  filesPanelWidth: number | null;
 };
 
 type ApiRequest = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -22,6 +24,10 @@ export async function loadWorkSettings(request: ApiRequest): Promise<WorkSetting
     activeTerminals: res.activeTerminals && typeof res.activeTerminals === 'object' && !Array.isArray(res.activeTerminals)
       ? res.activeTerminals
       : {},
+    filesPanelOpen: res.filesPanelOpen !== false,
+    filesPanelWidth: typeof res.filesPanelWidth === 'number' && Number.isFinite(res.filesPanelWidth)
+      ? res.filesPanelWidth
+      : null,
   };
 }
 
