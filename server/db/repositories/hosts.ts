@@ -182,6 +182,21 @@ export function updateWorkHostRow(
   return requireWorkHostRow(db, instanceId, hostId);
 }
 
+export function updateWorkHostSecretRow(
+  db: AppDatabase,
+  instanceId: number,
+  hostId: string,
+  secret: string,
+): WorkHostRow {
+  const current = requireWorkHostRow(db, instanceId, hostId);
+  db.prepare(`
+    UPDATE work_hosts
+    SET secret_value = ?, revision = revision + 1, updated_at = ?
+    WHERE id = ? AND instance_id = ?
+  `).run(secret, toDbTimestamp(), current.id, instanceId);
+  return requireWorkHostRow(db, instanceId, hostId);
+}
+
 export function updateWorkHostConnectionRow(
   db: AppDatabase,
   instanceId: number,

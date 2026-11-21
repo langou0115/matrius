@@ -250,23 +250,55 @@ test('desktop workspace clears the right conversation area when switching to 工
     const workMain = dom.document.querySelector('main.work-main');
     assert.ok(workMain);
     assert.equal(workMain.children.length, 0);
+    assert.ok(dom.document.querySelector('.work-topbar .work-tabs'));
+    assert.ok(dom.document.querySelector('.work-topbar button[aria-label="添加终端"]'));
+    const filesToggleBtn = dom.document.querySelector('.work-topbar button[aria-label="收起工作目录"]');
+    assert.ok(filesToggleBtn);
+    assert.ok(dom.document.querySelector('.work-files-panel'));
+    await act(async () => { filesToggleBtn.click(); });
+    assert.equal(dom.document.querySelector('.work-files-panel'), null);
+    assert.ok(dom.document.querySelector('.work-topbar button[aria-label="展开工作目录"]'));
 
-    // Collapsing the sidebar on 工作 still exposes the expand trigger so the user can reopen it.
+    // Collapsing the sidebar on desktop keeps the slim icon rail with top expand, create project, and settings (no mode switch icon).
     const collapseBtn = dom.document.querySelector('button[aria-label="收起侧栏"]');
     assert.ok(collapseBtn);
     await act(async () => { collapseBtn.click(); });
-    const expandBtn = dom.document.querySelector('main.work-main .sidebar-expand');
+    const rail = dom.document.querySelector('aside.sidebar.is-collapsed');
+    assert.ok(rail);
+    assert.equal(dom.document.querySelector('main.work-main .sidebar-expand'), null);
+    assert.ok(rail.querySelector('button[aria-label="创建项目"]'));
+    assert.equal(rail.querySelector('button[aria-label="切换到对话"]'), null);
+    assert.equal(rail.querySelector('button[aria-label="切换到工作"]'), null);
+    assert.ok(rail.querySelector('a[aria-label="打开设置"]'));
+    const expandBtn = rail.querySelector('button[aria-label="展开侧栏"]');
     assert.ok(expandBtn);
+    assert.ok(rail.firstElementChild?.classList.contains('sidebar-rail-header'));
+    assert.ok(rail.firstElementChild.contains(expandBtn));
+    assert.ok(rail.children[1]?.classList.contains('sidebar-rail-divider'));
 
     await act(async () => { expandBtn.click(); });
-    assert.equal(dom.document.querySelector('main.work-main .sidebar-expand'), null);
+    assert.equal(dom.document.querySelector('aside.sidebar.is-collapsed'), null);
+    assert.ok(dom.document.querySelector('button[aria-label="收起侧栏"]'));
 
-    // Switching back to 对话 restores the right conversation content.
+    // Switching back to 对话 restores the right conversation content, and collapsing shows chat rail icons.
     const chatTab = dom.document.querySelector('#sidebar-tab-chat');
     assert.ok(chatTab);
     await act(async () => { chatTab.click(); });
     assert.ok(dom.document.querySelector('.chat-placeholder'));
     assert.equal(dom.document.querySelector('main.work-main'), null);
+
+    const chatCollapseBtn = dom.document.querySelector('button[aria-label="收起侧栏"]');
+    assert.ok(chatCollapseBtn);
+    await act(async () => { chatCollapseBtn.click(); });
+    const chatRail = dom.document.querySelector('aside.sidebar.is-collapsed');
+    assert.ok(chatRail);
+    assert.ok(chatRail.children[1]?.classList.contains('sidebar-rail-divider'));
+    assert.ok(chatRail.querySelector('button[aria-label="新对话"]'));
+    assert.ok(chatRail.querySelector('a[aria-label="打开资料库"]'));
+    assert.ok(chatRail.querySelector('a[aria-label="打开定时任务"]'));
+    assert.ok(chatRail.querySelector('button[aria-label="搜索对话"]'));
+    assert.ok(chatRail.querySelector('a[aria-label="打开设置"]'));
+    assert.equal(chatRail.querySelector('button[aria-label="切换到工作"]'), null);
   } finally {
     await act(async () => { root.unmount(); });
     resetSidebarTabForTests();

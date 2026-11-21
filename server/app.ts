@@ -5,6 +5,7 @@ import { extname, resolve } from 'node:path';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
+import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 
@@ -25,6 +26,7 @@ import { registerHostRoutes } from './routes/hosts';
 import { registerModelRoutes } from './routes/models';
 import { registerProjectRoutes } from './routes/projects';
 import { registerTaskRoutes } from './routes/tasks';
+import { registerTerminalRoutes } from './routes/terminals';
 import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
 import { MemoryCache } from './services/cache';
@@ -36,6 +38,7 @@ import type { WorkHostService } from './services/hosts';
 import { createHttpClient } from './services/http';
 import { createSearchService } from './services/search';
 import { LocalStorage } from './services/storage';
+import { createWorkTerminalService, type WorkTerminalService } from './services/terminals';
 
 export type AppDependencies = {
   settings: Settings;
@@ -54,6 +57,7 @@ export type BuildAppOptions = {
   runs?: AgentRunService;
   hosts?: WorkHostService;
   hostFs?: HostFsService;
+  terminals?: WorkTerminalService;
   /** Skip migrations only when the caller already prepared the database. */
   migrate?: boolean;
   /** Serve built UI assets from `dist/` (defaults to `settings.APP_ENV === 'production'`). */
@@ -137,6 +141,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   await app.register(multipart, {
     limits: { fileSize: settings.MAX_UPLOAD_BYTES, files: 1 },
   });
+  await app.register(websocket);
   await registerDebugRoutes(app, { settings, search, fetch });
 
   if (settings.authEnabled) {
@@ -234,18 +239,23 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   registerConversationRoutes(app, { db });
   registerWorkspaceRoutes(app, { db });
   registerModelRoutes(app, { db });
+  const runtimeHostSecrets = new Map<string, string>();
   registerHostRoutes(app, {
     db,
+    runtimeHostSecrets,
     ...(options.hosts ? { hosts: options.hosts } : {}),
     ...(options.hostFs ? { hostFs: options.hostFs } : {}),
   });
-  registerProjectRoutes(app, { db });
+  const terminals = options.terminals ?? createWorkTerminalService({ db, runtimeHostSecrets });
+  registerProjectRoutes(app, { db, terminals });
+  registerTerminalRoutes(app, { db, terminals });
   registerUsageRoutes(app, { db });
   registerTaskRoutes(app, { db });
   registerFileRoutes(app, { db, storage, cache, settings });
   registerAgentRoutes(app, { runs, db });
 
   app.addHook('onClose', async () => {
+    terminals.disposeAll();
     runs.dispose();
   });
   if (!options.db) {

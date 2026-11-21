@@ -28,6 +28,7 @@ implementation has been removed; UI chat now uses the server Agent over SSE.
 | Server-side model configs & API keys (`/api/models`) | implemented |
 | Desktop SSH & WSL work hosts (`/api/hosts`, `0005_work_hosts`) | implemented |
 | Desktop work projects & directory browser (`/api/projects`, `/api/hosts/:hostId/fs`, `0006_work_projects`) | implemented |
+| Desktop work PTY terminals (`/api/work/terminals`, WebSocket `/ws` via `node-pty`) | implemented |
 | Optional `AUTH_SECRET` splash unlock gate (`/api/auth/*`) | implemented |
 | Static `dist/` serving (`APP_ENV=production`) | implemented |
 

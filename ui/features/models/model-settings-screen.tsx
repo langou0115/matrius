@@ -140,8 +140,7 @@ export default function ModelSettingsScreen() {
     ? availableModels.filter((item) => item.id.toLowerCase().includes(catalogQuery) || item.name.toLowerCase().includes(catalogQuery))
     : availableModels;
 
-  return <SettingsPage title="模型服务" description="按服务商管理连接信息，再发现并添加要使用的模型。">
-    <p className="settings-footnote">服务商、模型与 API key 保存在服务器本机数据目录中，更换设备或访问域名后无需重新配置；API key 仅在服务端使用且不会回传明文。</p>
+  return <SettingsPage title="模型服务">
     {models.error && <p className="model-form-error" role="alert">{models.error}</p>}
     {!models.ready && !models.error && <p role="status" className="settings-footnote">正在读取模型配置…</p>}
     {isAnyRunning && <p className="settings-footnote" role="status">正在生成回复，请先停止或等待完成后再修改配置。</p>}
@@ -200,7 +199,6 @@ export default function ModelSettingsScreen() {
       })}</div> : <div className="provider-empty-state">
         <span className="provider-empty-icon"><Server size={22} strokeWidth={1.6} aria-hidden="true" /></span>
         <strong>还没有服务商</strong>
-        <p>添加服务商后，即可获取或手动添加模型。</p>
         <button className="primary-button" disabled={disabled} onClick={() => editProvider(null)}><Plus size={16} strokeWidth={1.75} aria-hidden="true" />添加服务商</button>
       </div>}
     </section>
@@ -224,9 +222,9 @@ export default function ModelSettingsScreen() {
             const usingDefault = protocols.some((item) => item.baseUrl === providerForm.baseUrl);
             setProviderForm({ ...providerForm, protocol: protocol.id, baseUrl: usingDefault ? protocol.baseUrl : providerForm.baseUrl });
           }} />
-          <label className="model-form-field">Base URL<input className="text-field" type="url" value={providerForm.baseUrl} onChange={(event) => setProviderForm({ ...providerForm, baseUrl: event.target.value })} placeholder="https://your-provider.example/v1" required autoCapitalize="none" spellCheck={false} /><span>填写服务商的 API 基础地址，不包含 /models、/chat/completions、/responses 或 /messages。</span></label>
+          <label className="model-form-field">Base URL<input className="text-field" type="url" value={providerForm.baseUrl} onChange={(event) => setProviderForm({ ...providerForm, baseUrl: event.target.value })} placeholder="https://your-provider.example/v1" required autoCapitalize="none" spellCheck={false} /><span>不包含 /models、/chat/completions、/responses 或 /messages</span></label>
           <label className="model-key-toggle"><input className="model-checkbox-input" type="checkbox" checked={providerForm.requiresApiKey} onChange={(event) => setProviderForm({ ...providerForm, requiresApiKey: event.target.checked })} /><span className="model-checkbox" aria-hidden="true" />接口需要 API key</label>
-          {providerForm.requiresApiKey && <label className="model-form-field">API key<input className="text-field" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder={models.hasKey(providerForm.id) ? '已填写；留空保持当前 key' : '保存在服务器本机'} /><span>API key 保存在服务器本机数据库中且不会回传到浏览器；留空则保留当前已存密钥。</span></label>}
+          {providerForm.requiresApiKey && <label className="model-form-field">API key<input className="text-field" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder={models.hasKey(providerForm.id) ? '已填写；留空保持当前 key' : '输入 API key'} /></label>}
           <div className="dialog-footer"><button type="button" className="secondary-button" onClick={closeProviderForm}>取消</button><button type="submit" className="primary-button">{saving ? '保存中…' : '保存服务商'}</button></div>
         </fieldset>
       </form>
@@ -243,7 +241,7 @@ export default function ModelSettingsScreen() {
         <fieldset disabled={disabled}>
           <label className="model-form-field">显示名称<input className="text-field" value={modelForm.name} onChange={(event) => setModelForm({ ...modelForm, name: event.target.value })} placeholder="例如：日常对话" required maxLength={100} /></label>
           <label className="model-form-field">模型 ID<input className="text-field" value={modelForm.modelId} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} placeholder="服务商返回的准确模型 ID" required autoCapitalize="none" spellCheck={false} /></label>
-          <div className="model-key-toggle model-image-toggle"><span className="model-toggle-copy"><strong>支持图片输入</strong><small>仅在服务商和该模型本身支持视觉输入时开启。</small></span><label className="model-switch-label"><input className="model-checkbox-input" type="checkbox" checked={modelForm.supportsImage} onChange={(event) => setModelForm({ ...modelForm, supportsImage: event.target.checked })} aria-label="支持图片输入" /><span className="toggle-switch" aria-hidden="true" /></label></div>
+          <div className="model-key-toggle model-image-toggle"><span className="model-toggle-copy"><strong>支持图片输入</strong></span><label className="model-switch-label"><input className="model-checkbox-input" type="checkbox" checked={modelForm.supportsImage} onChange={(event) => setModelForm({ ...modelForm, supportsImage: event.target.checked })} aria-label="支持图片输入" /><span className="toggle-switch" aria-hidden="true" /></label></div>
           <div className="model-form-columns">
             <label className="model-form-field">上下文窗口<input className="text-field" type="number" min={512} step={1} value={modelForm.contextWindow} onChange={(event) => setModelForm({ ...modelForm, contextWindow: Number(event.target.value) })} required /></label>
             <label className="model-form-field">最大输出 tokens<input className="text-field" type="number" min={1} step={1} value={modelForm.maxOutput} onChange={(event) => setModelForm({ ...modelForm, maxOutput: Number(event.target.value) })} required /></label>
@@ -254,7 +252,6 @@ export default function ModelSettingsScreen() {
     </Dialog>}
 
     {catalogProvider && <Dialog title={`${catalogProvider.name} 的模型列表`} onClose={closeCatalog} className="catalog-dialog">
-      <p className="dialog-description">经本站服务器向服务商获取，勾选要用的模型加进来。</p>
       {catalogError && <p className="model-form-error" role="alert">{catalogError}</p>}
       {catalogLoading ? <p className="catalog-status" role="status">正在获取模型列表…</p> : availableModels.length ? <>
         <input className="text-field catalog-filter" type="search" value={catalogFilter} aria-label="筛选模型"

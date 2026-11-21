@@ -294,11 +294,28 @@ const schemas: Record<string, Schema> = {
     createdAt: timestamp,
     updatedAt: timestamp,
   }),
+  WorkTerminalSession: obj({
+    id,
+    projectId: id,
+    hostId: str(),
+    title: str(),
+    preset: { type: 'string', enum: ['shell', 'claude', 'codex', 'antigravity'] },
+    shell: { type: 'string', enum: ['powershell', 'cmd'] },
+    command: str(),
+    cwd: str(),
+    status: { type: 'string', enum: ['running', 'restored', 'exited', 'error'] },
+    exitCode: nullable(int()),
+    errorMessage: str(),
+    errorCode: str(),
+    pinned: bool(),
+    createdAt: timestamp,
+  }),
   HostDirectoryListing: obj({
     hostId: str(),
     path: str(),
     parentPath: nullable(str()),
     truncated: bool(),
+    selectable: bool(),
     entries: arr(obj({
       kind: { type: 'string', enum: ['directory', 'file'] },
       name: str(),
@@ -460,6 +477,15 @@ export const openApiDocument = {
         responses: { ...ok(ref('WorkHost')), ...errorResponses },
       },
     },
+    '/api/hosts/{hostId}/unlock': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Cache (and optionally persist) an SSH host password for the running session',
+        parameters: [{ name: 'hostId', in: 'path', required: true, schema: id }],
+        requestBody: jsonBody(obj({ secret: str(), persist: bool() }, ['secret'])),
+        responses: { ...ok(ref('WorkHost')), ...errorResponses },
+      },
+    },
     '/api/hosts/{hostId}/fs': {
       get: {
         tags: ['hosts'],
@@ -485,10 +511,88 @@ export const openApiDocument = {
       },
     },
     '/api/projects/{projectId}': {
+      patch: {
+        tags: ['hosts'],
+        summary: 'Update a desktop work project',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: id }],
+        requestBody: jsonBody(obj({ hostId: str(), directory: str(), name: str(), baseRevision: int() }, ['hostId', 'directory'])),
+        responses: { ...ok(ref('WorkProject')), ...errorResponses },
+      },
       delete: {
         tags: ['hosts'],
         summary: 'Delete a desktop work project',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: id }],
+        responses: { 204: jsonResponse('Deleted'), ...errorResponses },
+      },
+    },
+    '/api/work/settings': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Read desktop Work preferences stored in dedicated work_settings table',
+        responses: ok(obj({
+          defaultWindowsShell: { type: 'string', enum: ['powershell', 'cmd'] },
+          activeProjectId: nullable(id),
+          activeTerminals: obj({}),
+        })),
+      },
+      put: {
+        tags: ['hosts'],
+        summary: 'Update desktop Work preferences without touching Web profile/preferences',
+        requestBody: jsonBody(obj({
+          defaultWindowsShell: { type: 'string', enum: ['powershell', 'cmd'] },
+          activeProjectId: nullable(id),
+          activeTerminals: obj({}),
+        })),
+        responses: ok(obj({
+          defaultWindowsShell: { type: 'string', enum: ['powershell', 'cmd'] },
+          activeProjectId: nullable(id),
+          activeTerminals: obj({}),
+        })),
+      },
+    },
+    '/api/work/terminals': {
+      get: {
+        tags: ['hosts'],
+        summary: 'List active desktop work PTY terminal sessions',
+        parameters: [{ name: 'projectId', in: 'query', schema: id }],
+        responses: ok(obj({ items: arr(ref('WorkTerminalSession')), platform: str() })),
+      },
+      post: {
+        tags: ['hosts'],
+        summary: 'Spawn a new PTY terminal session for a desktop work project',
+        requestBody: jsonBody(obj({
+          projectId: id,
+          preset: { type: 'string', enum: ['shell', 'claude', 'codex', 'antigravity'] },
+          shell: { type: 'string', enum: ['powershell', 'cmd'] },
+          title: str(),
+          command: str(),
+          cols: int(),
+          rows: int(),
+        }, ['projectId'])),
+        responses: { ...created(ref('WorkTerminalSession')), ...errorResponses },
+      },
+    },
+    '/api/work/terminals/{terminalId}/resume': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Resume or restart a persisted PTY terminal session in its last known directory',
+        parameters: [{ name: 'terminalId', in: 'path', required: true, schema: id }],
+        requestBody: jsonBody(obj({ cols: int(), rows: int(), password: str(), rememberPassword: bool() })),
+        responses: { ...ok(ref('WorkTerminalSession')), ...errorResponses },
+      },
+    },
+    '/api/work/terminals/{terminalId}': {
+      patch: {
+        tags: ['hosts'],
+        summary: 'Rename or pin a PTY terminal session',
+        parameters: [{ name: 'terminalId', in: 'path', required: true, schema: id }],
+        requestBody: jsonBody(obj({ title: str(), pinned: bool() })),
+        responses: { ...ok(ref('WorkTerminalSession')), ...errorResponses },
+      },
+      delete: {
+        tags: ['hosts'],
+        summary: 'Terminate and remove a PTY terminal session',
+        parameters: [{ name: 'terminalId', in: 'path', required: true, schema: id }],
         responses: { 204: jsonResponse('Deleted'), ...errorResponses },
       },
     },

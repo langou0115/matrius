@@ -35,15 +35,22 @@ const fsQuerySchema = z.object({
   path: z.string().max(1000).optional(),
 });
 
+const unlockHostSchema = z.object({
+  secret: z.string().min(1).max(10_000),
+  persist: z.boolean().optional(),
+});
+
 export type HostRouteDeps = {
   db: AppDatabase;
   hosts?: WorkHostService;
   hostFs?: HostFsService;
+  runtimeHostSecrets?: Map<string, string>;
 };
 
 export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): void {
-  const hosts = deps.hosts ?? createWorkHostService({ db: deps.db });
-  const hostFs = deps.hostFs ?? createHostFsService({ db: deps.db });
+  const runtimeHostSecrets = deps.runtimeHostSecrets;
+  const hosts = deps.hosts ?? createWorkHostService({ db: deps.db, runtimeHostSecrets });
+  const hostFs = deps.hostFs ?? createHostFsService({ db: deps.db, runtimeHostSecrets });
 
   app.get('/api/hosts', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -77,6 +84,12 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
   app.post<{ Params: { hostId: string } }>('/api/hosts/:hostId/disconnect', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     return hosts.disconnect(request.params.hostId);
+  });
+
+  app.post<{ Params: { hostId: string } }>('/api/hosts/:hostId/unlock', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const body = unlockHostSchema.parse(request.body ?? {});
+    return hosts.unlock(request.params.hostId, body.secret, Boolean(body.persist));
   });
 
   app.get<{ Params: { hostId: string } }>('/api/hosts/:hostId/fs', async (request, reply) => {

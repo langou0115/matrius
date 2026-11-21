@@ -1,0 +1,475 @@
+import { LOCAL_WORK_HOST_ID } from '@contract/work-projects';
+import type { WorkTerminalServerMessage, WorkTerminalSession } from '@contract/work-terminals';
+import { RotateCw, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { useInstance } from '@/features/instance/instance-state';
+import { useIsPreview } from '@/features/workspace/preview-context';
+import { deleteWorkTerminal, resumeWorkTerminal, workTerminalWsUrl } from './work-api';
+import {
+  bumpHostUnlockVersion,
+  removeWorkTerminal,
+  replaceWorkTerminalSession,
+  updateWorkTerminalStatus,
+  useWorkState,
+} from './work-state';
+
+type XtermInstance = import('@xterm/xterm').Terminal;
+type XtermTheme = import('@xterm/xterm').ITheme;
+type FitAddonInstance = import('@xterm/addon-fit').FitAddon;
+
+function readColorMode(): 'light' | 'dark' {
+  const root = document.querySelector<HTMLElement>('.matrius-app');
+  return root?.getAttribute('data-color-mode') === 'dark' ? 'dark' : 'light';
+}
+
+function readCssColor(name: string, fallback: string): string {
+  const root = document.querySelector<HTMLElement>('.matrius-app') ?? document.documentElement;
+  const value = getComputedStyle(root).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function buildTerminalTheme(): XtermTheme {
+  const mode = readColorMode();
+  if (mode === 'dark') {
+    const background = readCssColor('--background', '#131519');
+    const foreground = readCssColor('--foreground', '#e6e8ec');
+    return {
+      background,
+      foreground,
+      cursor: foreground,
+      cursorAccent: background,
+      selectionBackground: 'rgba(122, 162, 247, 0.28)',
+      scrollbarSliderBackground: 'rgba(230, 232, 236, 0.16)',
+      scrollbarSliderHoverBackground: 'rgba(230, 232, 236, 0.28)',
+      scrollbarSliderActiveBackground: 'rgba(230, 232, 236, 0.42)',
+      black: '#1e2028',
+      red: '#f7768e',
+      green: '#9ece6a',
+      yellow: '#e0af68',
+      blue: '#7aa2f7',
+      magenta: '#bb9af7',
+      cyan: '#7dcfff',
+      white: '#c0caf5',
+      brightBlack: '#565f89',
+      brightRed: '#ff899d',
+      brightGreen: '#b9f27c',
+      brightYellow: '#ff9e64',
+      brightBlue: '#89b4fa',
+      brightMagenta: '#cba6f7',
+      brightCyan: '#89dceb',
+      brightWhite: '#e6e8ec',
+    };
+  }
+  const background = readCssColor('--background', '#ffffff');
+  const foreground = readCssColor('--foreground', '#1f2328');
+  return {
+    background,
+    foreground,
+    cursor: foreground,
+    cursorAccent: background,
+    selectionBackground: 'rgba(22, 119, 255, 0.16)',
+    scrollbarSliderBackground: 'rgba(31, 35, 40, 0.16)',
+    scrollbarSliderHoverBackground: 'rgba(31, 35, 40, 0.28)',
+    scrollbarSliderActiveBackground: 'rgba(31, 35, 40, 0.42)',
+    black: '#24292f',
+    red: '#cf222e',
+    green: '#116329',
+    yellow: '#9a6700',
+    blue: '#0969da',
+    magenta: '#8250df',
+    cyan: '#1b7c83',
+    white: '#6e7781',
+    brightBlack: '#57606a',
+    brightRed: '#a40e26',
+    brightGreen: '#1a7f37',
+    brightYellow: '#bf8700',
+    brightBlue: '#218bff',
+    brightMagenta: '#a475f9',
+    brightCyan: '#3192aa',
+    brightWhite: '#1f2328',
+  };
+}
+
+function canMountXterm(): boolean {
+  return typeof window !== 'undefined'
+    && typeof HTMLCanvasElement !== 'undefined'
+    && typeof requestAnimationFrame === 'function'
+    && 'ResizeObserver' in globalThis;
+}
+
+function WorkTerminalPane({
+  session,
+  active,
+}: {
+  session: WorkTerminalSession;
+  active: boolean;
+}) {
+  const instance = useInstance();
+  const preview = useIsPreview();
+  const { hosts, hostUnlockVersion } = useWorkState();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XtermInstance | null>(null);
+  const fitRef = useRef<FitAddonInstance | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const activeRef = useRef(active);
+  const autoResumedRef = useRef<string | null>(null);
+  const lastUnlockRef = useRef(hostUnlockVersion);
+  const [restarting, setRestarting] = useState(false);
+  const [sshPassword, setSshPassword] = useState('');
+  const [rememberPassword, setRememberPassword] = useState(false);
+
+  const sessionHost = session.hostId !== LOCAL_WORK_HOST_ID
+    ? hosts.find((item) => item.id === session.hostId) ?? null
+    : null;
+  const isSshSession = session.hostId !== LOCAL_WORK_HOST_ID && sessionHost?.kind !== 'wsl';
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
+  const initialCwd = session.cwd;
+  const initialCommand = session.command;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !canMountXterm()) return;
+
+    let disposed = false;
+    let observer: ResizeObserver | null = null;
+    let themeObserver: MutationObserver | null = null;
+    let previewLine = '';
+
+    void (async () => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import('@xterm/xterm'),
+        import('@xterm/addon-fit'),
+      ]);
+      if (disposed) return;
+
+      const fitAddon = new FitAddon();
+      const term = new Terminal({
+        cursorBlink: true,
+        cursorStyle: 'bar',
+        cursorWidth: 1,
+        cursorInactiveStyle: 'none',
+        fontFamily: "JetBrainsMono, 'Cascadia Mono', Consolas, NotoSansSC, ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontSize: 14,
+        lineHeight: 1.15,
+        letterSpacing: 0,
+        scrollback: 5000,
+        allowTransparency: false,
+        theme: buildTerminalTheme(),
+      });
+      term.loadAddon(fitAddon);
+      term.open(container);
+      termRef.current = term;
+      fitRef.current = fitAddon;
+
+      const safeFit = () => {
+        if (disposed || !container.isConnected || container.clientWidth === 0 || container.clientHeight === 0) return;
+        try {
+          fitAddon.fit();
+        } catch {
+          // Ignore layout measurements while unmounting.
+        }
+      };
+
+      requestAnimationFrame(() => {
+        safeFit();
+        if (activeRef.current) term.focus();
+      });
+      void document.fonts?.ready.then(() => safeFit());
+
+      observer = new ResizeObserver(() => safeFit());
+      observer.observe(container);
+
+      const appRoot = document.querySelector('.matrius-app');
+      if (appRoot) {
+        themeObserver = new MutationObserver(() => {
+          term.options.theme = buildTerminalTheme();
+        });
+        themeObserver.observe(appRoot, {
+          attributes: true,
+          attributeFilter: ['data-color-mode', 'data-theme'],
+        });
+      }
+
+      if (preview) {
+        const promptDir = initialCwd || '~';
+        const banner = initialCommand
+          ? `\x1b[36m${promptDir}\x1b[0m \x1b[90m›\x1b[0m ${initialCommand}\r\n`
+          : `\x1b[36m${promptDir}\x1b[0m \x1b[90m$\x1b[0m `;
+        term.write(banner);
+        term.onData((data) => {
+          if (data === '\r') {
+            const cmd = previewLine.trim();
+            previewLine = '';
+            term.write(`\r\n${cmd ? `\x1b[90m[预览模式] ${cmd}\x1b[0m\r\n` : ''}\x1b[36m${promptDir}\x1b[0m \x1b[90m$\x1b[0m `);
+            return;
+          }
+          if (data === '\x7f') {
+            if (previewLine.length > 0) {
+              previewLine = previewLine.slice(0, -1);
+              term.write('\b \b');
+            }
+            return;
+          }
+          if (data >= ' ') {
+            previewLine += data;
+            term.write(data);
+          }
+        });
+        return;
+      }
+
+      const ws = new WebSocket(workTerminalWsUrl(session.id));
+      wsRef.current = ws;
+
+      const sendResize = () => {
+        if (ws.readyState === WebSocket.OPEN && term.cols > 0 && term.rows > 0) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
+      };
+
+      ws.addEventListener('open', () => {
+        safeFit();
+        sendResize();
+      });
+
+      ws.addEventListener('message', (event) => {
+        try {
+          const msg = JSON.parse(String(event.data)) as WorkTerminalServerMessage;
+          if (msg.type === 'snapshot') {
+            term.reset();
+            if (msg.data) term.write(msg.data);
+          } else if (msg.type === 'output') {
+            term.write(msg.data);
+          } else if (msg.type === 'status') {
+            updateWorkTerminalStatus(session.id, msg.status, msg.exitCode, msg.message);
+          }
+        } catch {
+          // Ignore invalid terminal control payloads.
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        if (!disposed) {
+          wsRef.current = null;
+        }
+      });
+
+      term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'input', data }));
+        }
+      });
+
+      term.onResize(({ cols, rows }) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+      });
+    })();
+
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+      themeObserver?.disconnect();
+      wsRef.current?.close();
+      wsRef.current = null;
+      termRef.current?.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+    };
+  }, [initialCommand, initialCwd, preview, session.id]);
+
+  const performResume = useCallback(async (options?: { password?: string; rememberPassword?: boolean }) => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      if (preview) {
+        updateWorkTerminalStatus(session.id, 'running', null);
+        return;
+      }
+      const term = termRef.current;
+      const password = options?.password?.trim();
+      const resumed = await resumeWorkTerminal(instance.request, session.id, {
+        ...(term && term.cols > 0 ? { cols: term.cols, rows: term.rows } : {}),
+        ...(password ? { password, rememberPassword: Boolean(options?.rememberPassword) } : {}),
+      });
+      if (password) {
+        setSshPassword('');
+        bumpHostUnlockVersion();
+      }
+      replaceWorkTerminalSession(resumed);
+      termRef.current?.focus();
+    } catch (reason) {
+      const message = reason instanceof Error && reason.message ? reason.message : '恢复终端连接失败。';
+      updateWorkTerminalStatus(session.id, 'error', null, message);
+    } finally {
+      setRestarting(false);
+    }
+  }, [instance.request, preview, restarting, session.id]);
+
+  useEffect(() => {
+    if (preview || !active) return;
+    if (session.status === 'restored' && autoResumedRef.current !== session.id) {
+      autoResumedRef.current = session.id;
+      const timer = setTimeout(() => {
+        void performResume();
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [active, performResume, preview, session.id, session.status]);
+
+  useEffect(() => {
+    if (lastUnlockRef.current === hostUnlockVersion) return;
+    lastUnlockRef.current = hostUnlockVersion;
+    if (preview || !active || !isSshSession || session.status === 'running') return;
+    const timer = setTimeout(() => {
+      void performResume();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [active, hostUnlockVersion, isSshSession, performResume, preview, session.status]);
+
+  useEffect(() => {
+    if (!active || !canMountXterm()) return;
+    const raf = requestAnimationFrame(() => {
+      const container = containerRef.current;
+      if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+        try {
+          fitRef.current?.fit();
+          const ws = wsRef.current;
+          const term = termRef.current;
+          if (ws?.readyState === WebSocket.OPEN && term) {
+            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+          }
+        } catch {
+          // Ignore fit measurements during transition.
+        }
+      }
+      termRef.current?.focus();
+    });
+    return () => {
+      if (typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(raf);
+      }
+    };
+  }, [active]);
+
+  async function handleClose() {
+    if (!preview) {
+      await deleteWorkTerminal(instance.request, session.id).catch(() => {});
+    }
+    removeWorkTerminal(session.id);
+  }
+
+  return (
+    <div
+      className={`work-terminal-pane${active ? '' : ' is-hidden'}`}
+      data-terminal-id={session.id}
+      data-project-id={session.projectId}
+      aria-hidden={!active}
+    >
+      <div
+        className="work-terminal-frame"
+        onClick={() => termRef.current?.focus()}
+      >
+        <div ref={containerRef} className="work-terminal-canvas" />
+        {session.status !== 'running' && (
+          <div className="work-terminal-status-bar" role="status">
+            <span>
+              {session.errorMessage ?? (
+                session.status === 'restored'
+                  ? `已保存上次状态（${session.cwd}），正在恢复连接…`
+                  : `进程已结束${session.exitCode !== null ? `（退出码 ${session.exitCode}）` : ''}`
+              )}
+            </span>
+            <div className="work-terminal-status-actions">
+              {isSshSession && !preview && (
+                <div className="work-terminal-unlock-form">
+                  <input
+                    type="password"
+                    className="text-field work-terminal-password-input"
+                    value={sshPassword}
+                    onChange={(event) => setSshPassword(event.target.value)}
+                    onClick={(event) => event.stopPropagation()}
+                    placeholder="SSH 密码（如需）"
+                    autoComplete="current-password"
+                    disabled={restarting}
+                  />
+                  <label
+                    className="work-unlock-remember"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={rememberPassword}
+                      onChange={(event) => setRememberPassword(event.target.checked)}
+                      disabled={restarting}
+                    />
+                    <span>记住</span>
+                  </label>
+                </div>
+              )}
+              <button
+                type="button"
+                className="secondary-button work-terminal-action-btn"
+                disabled={restarting}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void performResume({ password: sshPassword, rememberPassword });
+                }}
+              >
+                <RotateCw size={13} strokeWidth={1.75} aria-hidden="true" />
+                {session.status === 'restored' || isSshSession ? '重新连接' : '重新启动'}
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`关闭终端：${session.title}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleClose();
+                }}
+              >
+                <X size={14} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function WorkTerminalView({
+  terminals,
+  activeProjectId,
+  activeTerminalId,
+  hidden = false,
+}: {
+  terminals: readonly WorkTerminalSession[];
+  activeProjectId: string | null;
+  activeTerminalId: string | null;
+  hidden?: boolean;
+}) {
+  // Keep xterm pane DOM order stable by creation order so pinning/reordering tabs
+  // never moves live terminal containers in the DOM and blurs active focus.
+  const stablePanes = [...terminals].sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+  );
+  return (
+    <div className="work-terminal-stack" hidden={hidden} aria-hidden={hidden || undefined}>
+      {stablePanes.map((session) => (
+        <WorkTerminalPane
+          key={session.id}
+          session={session}
+          active={!hidden && session.projectId === activeProjectId && session.id === activeTerminalId}
+        />
+      ))}
+    </div>
+  );
+}

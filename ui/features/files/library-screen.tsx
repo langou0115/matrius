@@ -126,7 +126,7 @@ export default function LibraryScreen() {
   // Keep the expand button on the same top-left row as the chat topbar; the page heading
   // and its content always start below that row.
   const topbar = <header className="library-topbar">
-    {!sidebarOpen && <button className="sidebar-expand" type="button"
+    {mobile && !sidebarOpen && <button className="sidebar-expand" type="button"
       onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}>
       <Icon name="sidebar" size={22} />
     </button>}
@@ -148,10 +148,7 @@ export default function LibraryScreen() {
   </header>;
 
   const heading = <header className="library-heading">
-    <div>
-      <h1>资料库</h1>
-      <p>聊天中上传的图片与文档都保存在云端，可在这里统一管理。</p>
-    </div>
+    <h1>资料库</h1>
   </header>;
 
   if (instance.status === 'checking') {

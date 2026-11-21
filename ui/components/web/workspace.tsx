@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useState, type PropsWithChildren } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState, type PropsWithChildren } from 'react';
 
 import { isDesktopTarget } from '@/core/platform/target';
 import { useChat } from '@/features/chat/chat-state';
 import { useSidebarTab } from '@/features/chat/sidebar-mode';
 import { SearchDialog } from '@/features/chat/components/search-dialog';
 import { Dialog } from './dialog';
-import { Icon } from './icon';
 import { useMobile } from './use-mobile';
 import { Sidebar } from '@/features/chat/components/sidebar';
+
+const WorkWorkspace = lazy(() =>
+  import('@/features/work/work-workspace').then((module) => ({ default: module.WorkWorkspace })),
+);
 
 export function Workspace({ children }: PropsWithChildren) {
   const { sidebarOpen, dispatch } = useChat();
@@ -47,21 +50,9 @@ export function Workspace({ children }: PropsWithChildren) {
     </Dialog> : <Sidebar onSearch={openSearch} collapsed={!sidebarOpen} />}
     <div className="workspace-content">
       {showWorkPane ? (
-        <main className="work-main" id="main-content" tabIndex={-1} aria-label="工作区">
-          {!sidebarOpen && (
-            <header className="chat-topbar">
-              <button
-                className="sidebar-expand"
-                type="button"
-                onClick={() => dispatch({ type: 'sidebar' })}
-                aria-label="展开侧栏"
-                aria-expanded={false}
-              >
-                <Icon name="sidebar" size={22} />
-              </button>
-            </header>
-          )}
-        </main>
+        <Suspense fallback={null}>
+          <WorkWorkspace />
+        </Suspense>
       ) : children}
     </div>
     {searchOpen && <SearchDialog onClose={() => setSearchOpen(false)} />}

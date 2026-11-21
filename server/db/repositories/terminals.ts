@@ -1,0 +1,277 @@
+import {
+  DEFAULT_WINDOWS_SHELL,
+  normalizeOptionalWindowsShell,
+  normalizeTerminalPreset,
+  normalizeWindowsShell,
+  type WindowsTerminalShell,
+  type WorkTerminalSession,
+  type WorkTerminalStatus,
+} from '../../../contract/work-terminals';
+import { fromDbUuid, toDbUuid } from '../codecs';
+import type { AppDatabase } from '../client';
+
+export type WorkTerminalRow = {
+  id: string;
+  instance_id: number;
+  project_id: string;
+  host_id: string;
+  title: string;
+  preset: string;
+  shell: string | null;
+  command: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  pinned: number;
+  scrollback: string;
+  last_status: string;
+  last_exit_code: number | null;
+  error_message: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+};
+
+export function normalizePersistedTerminalStatus(raw: string): WorkTerminalStatus {
+  if (raw === 'exited' || raw === 'error' || raw === 'restored') return raw;
+  // Any running session stored on disk before shutdown must wake in `restored` state until re-spawned.
+  return 'restored';
+}
+
+export function serializeWorkTerminalRow(row: WorkTerminalRow): WorkTerminalSession {
+  const shell = normalizeOptionalWindowsShell(row.shell);
+  return {
+    id: row.id,
+    projectId: fromDbUuid(row.project_id),
+    hostId: row.host_id,
+    title: row.title,
+    preset: normalizeTerminalPreset(row.preset),
+    ...(shell ? { shell } : {}),
+    command: row.command,
+    cwd: row.cwd,
+    status: normalizePersistedTerminalStatus(row.last_status),
+    exitCode: row.last_exit_code,
+    ...(row.error_message ? { errorMessage: row.error_message } : {}),
+    pinned: Boolean(row.pinned),
+    createdAt: Number(row.created_at_ms) || Date.now(),
+  };
+}
+
+export function listWorkTerminalRows(db: AppDatabase, instanceId: number): WorkTerminalRow[] {
+  return db
+    .prepare(
+      `SELECT * FROM work_terminals
+       WHERE instance_id = ?
+       ORDER BY pinned DESC, created_at_ms ASC`,
+    )
+    .all(instanceId) as WorkTerminalRow[];
+}
+
+export function insertWorkTerminalRow(
+  db: AppDatabase,
+  instanceId: number,
+  input: {
+    session: WorkTerminalSession;
+    cols: number;
+    rows: number;
+    scrollback: string;
+  },
+): void {
+  const { session, cols, rows, scrollback } = input;
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO work_terminals (
+      id, instance_id, project_id, host_id, title, preset, shell, command,
+      cwd, cols, rows, pinned, scrollback, last_status, last_exit_code,
+      error_message, created_at_ms, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    session.id,
+    instanceId,
+    toDbUuid(session.projectId),
+    session.hostId,
+    session.title,
+    session.preset,
+    session.shell ?? null,
+    session.command,
+    session.cwd,
+    cols,
+    rows,
+    session.pinned ? 1 : 0,
+    scrollback,
+    session.status,
+    session.exitCode,
+    session.errorMessage ?? null,
+    session.createdAt,
+    now,
+  );
+}
+
+export function updateWorkTerminalMetaRow(
+  db: AppDatabase,
+  instanceId: number,
+  terminalId: string,
+  patch: {
+    title?: string;
+    pinned?: boolean;
+    cwd?: string;
+    cols?: number;
+    rows?: number;
+    lastStatus?: WorkTerminalStatus;
+    lastExitCode?: number | null;
+    errorMessage?: string | null;
+  },
+): void {
+  const sets: string[] = [];
+  const params: Array<string | number | null> = [];
+  if (patch.title !== undefined) {
+    sets.push('title = ?');
+    params.push(patch.title);
+  }
+  if (patch.pinned !== undefined) {
+    sets.push('pinned = ?');
+    params.push(patch.pinned ? 1 : 0);
+  }
+  if (patch.cwd !== undefined) {
+    sets.push('cwd = ?');
+    params.push(patch.cwd);
+  }
+  if (patch.cols !== undefined) {
+    sets.push('cols = ?');
+    params.push(patch.cols);
+  }
+  if (patch.rows !== undefined) {
+    sets.push('rows = ?');
+    params.push(patch.rows);
+  }
+  if (patch.lastStatus !== undefined) {
+    sets.push('last_status = ?');
+    params.push(patch.lastStatus);
+  }
+  if (patch.lastExitCode !== undefined) {
+    sets.push('last_exit_code = ?');
+    params.push(patch.lastExitCode);
+  }
+  if (patch.errorMessage !== undefined) {
+    sets.push('error_message = ?');
+    params.push(patch.errorMessage);
+  }
+  if (sets.length === 0) return;
+  sets.push('updated_at_ms = ?');
+  params.push(Date.now(), terminalId, instanceId);
+  db.prepare(`UPDATE work_terminals SET ${sets.join(', ')} WHERE id = ? AND instance_id = ?`).run(...params);
+}
+
+export function saveWorkTerminalSnapshotRow(
+  db: AppDatabase,
+  instanceId: number,
+  terminalId: string,
+  input: {
+    scrollback: string;
+    cwd: string;
+    lastStatus: WorkTerminalStatus;
+    lastExitCode: number | null;
+    errorMessage?: string | null;
+  },
+): void {
+  db.prepare(`
+    UPDATE work_terminals
+    SET scrollback = ?, cwd = ?, last_status = ?, last_exit_code = ?, error_message = ?, updated_at_ms = ?
+    WHERE id = ? AND instance_id = ?
+  `).run(
+    input.scrollback,
+    input.cwd,
+    input.lastStatus,
+    input.lastExitCode,
+    input.errorMessage ?? null,
+    Date.now(),
+    terminalId,
+    instanceId,
+  );
+}
+
+export function deleteWorkTerminalRow(db: AppDatabase, instanceId: number, terminalId: string): void {
+  db.prepare('DELETE FROM work_terminals WHERE id = ? AND instance_id = ?').run(terminalId, instanceId);
+}
+
+export type PersistedWorkSettings = {
+  defaultWindowsShell: WindowsTerminalShell;
+  activeProjectId: string | null;
+  activeTerminals: Record<string, string | null>;
+};
+
+type WorkSettingsRow = {
+  instance_id: number;
+  default_windows_shell: string;
+  active_project_id: string | null;
+  active_terminals_json: string;
+  updated_at_ms: number;
+};
+
+function parseActiveTerminalsJson(raw: string): Record<string, string | null> {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, string | null> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string' && value.trim()) out[key] = value;
+      else if (value === null) out[key] = null;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function getWorkSettingsRow(db: AppDatabase, instanceId: number): PersistedWorkSettings {
+  const existing = db
+    .prepare('SELECT * FROM work_settings WHERE instance_id = ?')
+    .get(instanceId) as WorkSettingsRow | undefined;
+  if (!existing) {
+    return {
+      defaultWindowsShell: DEFAULT_WINDOWS_SHELL,
+      activeProjectId: null,
+      activeTerminals: {},
+    };
+  }
+  return {
+    defaultWindowsShell: normalizeWindowsShell(existing.default_windows_shell),
+    activeProjectId: existing.active_project_id?.trim() ? existing.active_project_id : null,
+    activeTerminals: parseActiveTerminalsJson(existing.active_terminals_json),
+  };
+}
+
+export function updateWorkSettingsRow(
+  db: AppDatabase,
+  instanceId: number,
+  patch: Partial<PersistedWorkSettings>,
+): PersistedWorkSettings {
+  const current = getWorkSettingsRow(db, instanceId);
+  const next: PersistedWorkSettings = {
+    defaultWindowsShell: patch.defaultWindowsShell !== undefined
+      ? normalizeWindowsShell(patch.defaultWindowsShell)
+      : current.defaultWindowsShell,
+    activeProjectId: patch.activeProjectId !== undefined
+      ? (patch.activeProjectId?.trim() ? patch.activeProjectId : null)
+      : current.activeProjectId,
+    activeTerminals: patch.activeTerminals !== undefined
+      ? parseActiveTerminalsJson(JSON.stringify(patch.activeTerminals))
+      : current.activeTerminals,
+  };
+  db.prepare(`
+    INSERT INTO work_settings (
+      instance_id, default_windows_shell, active_project_id, active_terminals_json, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(instance_id) DO UPDATE SET
+      default_windows_shell = excluded.default_windows_shell,
+      active_project_id = excluded.active_project_id,
+      active_terminals_json = excluded.active_terminals_json,
+      updated_at_ms = excluded.updated_at_ms
+  `).run(
+    instanceId,
+    next.defaultWindowsShell,
+    next.activeProjectId,
+    JSON.stringify(next.activeTerminals),
+    Date.now(),
+  );
+  return next;
+}

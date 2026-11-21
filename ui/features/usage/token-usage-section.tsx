@@ -173,7 +173,6 @@ export function TokenUsageSection({ request, enabled }: { request: ApiRequest; e
     </div>}
     {enabled && report && !hasUsage && <div className="usage-empty">
       <strong>还没有 Token 记录</strong>
-      <p>发送一条对话后，这里会按天显示模型的输入与输出 token；已有的历史对话会在首次打开时按消息长度估算。</p>
     </div>}
     {enabled && report && hasUsage && lifetime && summary && heatmap && weekly && <>
       <dl className="usage-stats">

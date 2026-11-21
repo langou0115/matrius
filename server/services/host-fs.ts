@@ -1,20 +1,23 @@
 import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { access, constants as fsConstants, lstat, readdir, realpath, stat } from 'node:fs/promises';
-import { homedir, tmpdir, userInfo } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, posix, resolve } from 'node:path';
 
 import {
   LOCAL_WORK_HOST_ID,
+  WINDOWS_DRIVES_ROOT,
   validateBrowsePath,
   type HostDirectoryListing,
   type WorkHostEntry,
 } from '../../contract/work-projects';
 import type { AppDatabase } from '../db/client';
+import { fromDbUuid } from '../db/codecs';
 import { requireWorkHostRow, type WorkHostRow } from '../db/repositories/hosts';
 import { AppError, invalid } from '../errors';
 import {
   decodeWslText,
   defaultRunCommand,
+  ensureWslDistroRunning,
   expandHomePath,
   resolveWslCommand,
   type HostCommandRunner,
@@ -58,7 +61,7 @@ export type HostFsService = {
 
 let cachedAskpassPath: string | null = null;
 
-function ensureAskpassScript(): string {
+export function ensureAskpassScript(): string {
   if (cachedAskpassPath && existsSync(cachedAskpassPath)) return cachedAskpassPath;
   if (process.platform === 'win32') {
     const target = join(tmpdir(), 'matrius-ssh-askpass.cmd');
@@ -73,7 +76,7 @@ function ensureAskpassScript(): string {
   return target;
 }
 
-function posixSingleQuote(value: string): string {
+export function posixSingleQuote(value: string): string {
   return `'${value.replaceAll('\'', "'\\''")}'`;
 }
 
@@ -88,14 +91,71 @@ function sortEntries(entries: WorkHostEntry[]): { entries: WorkHostEntry[]; trun
   return { entries: sorted, truncated: false };
 }
 
-function resolveLocalTarget(rawPath: string, homeDir: string): string {
+const DRIVE_CHECK_TIMEOUT_MS = 400;
+
+async function defaultListWindowsDrives(): Promise<string[]> {
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  const checks = await Promise.all(
+    letters.map(async (letter) => {
+      const root = `${letter}:\\`;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const ok = await Promise.race([
+          stat(root).then((info) => info.isDirectory()).catch(() => false),
+          new Promise<false>((resolveTimeout) => {
+            timer = setTimeout(() => resolveTimeout(false), DRIVE_CHECK_TIMEOUT_MS);
+          }),
+        ]);
+        return ok ? root : null;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }),
+  );
+  return checks.filter((item): item is string => item !== null);
+}
+
+function isWindowsDrivesRequest(rawPath: string, currentPlatform: NodeJS.Platform): boolean {
+  if (currentPlatform !== 'win32') return false;
+  return rawPath === WINDOWS_DRIVES_ROOT || rawPath === '/' || rawPath === '\\';
+}
+
+function resolveLocalTarget(rawPath: string, homeDir: string, currentPlatform: NodeJS.Platform): string {
   if (!rawPath || rawPath === '~') return homeDir;
   if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) return join(homeDir, rawPath.slice(2));
+  if (currentPlatform === 'win32' && /^[A-Za-z]:$/u.test(rawPath)) {
+    return `${rawPath.toUpperCase()}\\`;
+  }
   return resolve(rawPath);
 }
 
-async function listLocalFs(hostId: string, rawPath: string, homeDir: string): Promise<HostDirectoryListing> {
-  const requested = resolveLocalTarget(rawPath, homeDir);
+async function listLocalFs(
+  hostId: string,
+  rawPath: string,
+  homeDir: string,
+  currentPlatform: NodeJS.Platform,
+  listWindowsDrives: () => Promise<string[]>,
+): Promise<HostDirectoryListing> {
+  const drivesPromise = currentPlatform === 'win32' ? listWindowsDrives() : Promise.resolve<string[]>([]);
+
+  if (isWindowsDrivesRequest(rawPath, currentPlatform)) {
+    const drives = await drivesPromise;
+    return {
+      hostId,
+      path: WINDOWS_DRIVES_ROOT,
+      parentPath: null,
+      selectable: false,
+      truncated: false,
+      entries: drives.map((drive) => ({
+        kind: 'directory',
+        name: drive,
+        path: drive,
+        accessible: true,
+      })),
+    };
+  }
+
+  const requested = resolveLocalTarget(rawPath, homeDir, currentPlatform);
   let targetPath = requested;
   let info;
   let dirents;
@@ -114,29 +174,39 @@ async function listLocalFs(hostId: string, rawPath: string, homeDir: string): Pr
     throw new AppError(400, 'path_error', `无法读取目录：${err.message}`);
   }
 
-  const rawEntries: WorkHostEntry[] = [];
-  for (const dirent of dirents) {
-    const entryPath = join(targetPath, dirent.name);
-    let kind: 'directory' | 'file' = dirent.isDirectory() ? 'directory' : 'file';
-    if (dirent.isSymbolicLink()) {
-      const resolvedKind = await stat(entryPath).then((entryStat) => (entryStat.isDirectory() ? 'directory' : 'file')).catch(() => 'file' as const);
-      kind = resolvedKind;
-    } else if (!dirent.isDirectory() && !dirent.isFile()) {
-      const fallback = await lstat(entryPath).then((entryStat) => (entryStat.isDirectory() ? 'directory' : 'file')).catch(() => null);
-      if (!fallback) continue;
-      kind = fallback;
-    }
-    const mode = kind === 'directory' ? (fsConstants.R_OK | fsConstants.X_OK) : fsConstants.R_OK;
-    const accessible = await access(entryPath, mode).then(() => true).catch(() => false);
-    rawEntries.push({ kind, name: dirent.name, path: entryPath, accessible });
-  }
+  const [rawEntries, drives] = await Promise.all([
+    (async () => {
+      const items: WorkHostEntry[] = [];
+      for (const dirent of dirents) {
+        const entryPath = join(targetPath, dirent.name);
+        let kind: 'directory' | 'file' = dirent.isDirectory() ? 'directory' : 'file';
+        if (dirent.isSymbolicLink()) {
+          const resolvedKind = await stat(entryPath).then((entryStat) => (entryStat.isDirectory() ? 'directory' : 'file')).catch(() => 'file' as const);
+          kind = resolvedKind;
+        } else if (!dirent.isDirectory() && !dirent.isFile()) {
+          const fallback = await lstat(entryPath).then((entryStat) => (entryStat.isDirectory() ? 'directory' : 'file')).catch(() => null);
+          if (!fallback) continue;
+          kind = fallback;
+        }
+        const mode = kind === 'directory' ? (fsConstants.R_OK | fsConstants.X_OK) : fsConstants.R_OK;
+        const accessible = await access(entryPath, mode).then(() => true).catch(() => false);
+        items.push({ kind, name: dirent.name, path: entryPath, accessible });
+      }
+      return items;
+    })(),
+    drivesPromise,
+  ]);
 
   const { entries, truncated } = sortEntries(rawEntries);
   const parent = dirname(targetPath);
+  const parentPath = parent !== targetPath
+    ? parent
+    : (currentPlatform === 'win32' && /^[A-Za-z]:\\?$/u.test(targetPath) && drives.length > 0 ? WINDOWS_DRIVES_ROOT : null);
+
   return {
     hostId,
     path: targetPath,
-    parentPath: parent !== targetPath ? parent : null,
+    parentPath,
     truncated,
     entries,
   };
@@ -204,28 +274,28 @@ export function createHostFsService(options: {
   currentPlatform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
-  localUsername?: string;
+  listWindowsDrives?: () => Promise<string[]>;
+  runtimeHostSecrets?: Map<string, string>;
 }): HostFsService {
   const { db } = options;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const currentPlatform = options.currentPlatform ?? process.platform;
   const env = options.env ?? process.env;
-  const wslCommand = options.wslCommand !== undefined ? options.wslCommand : resolveWslCommand(currentPlatform, env);
+  const wslCommand = options.wslCommand !== undefined ? options.wslCommand : resolveWslCommand(currentPlatform);
   const homeDir = options.homeDir ?? homedir();
-  const localUsername = options.localUsername ?? userInfo().username;
+  const listWindowsDrives = options.listWindowsDrives ?? defaultListWindowsDrives;
+  const runtimeHostSecrets = options.runtimeHostSecrets ?? new Map<string, string>();
 
   async function listWslFs(hostId: string, row: WorkHostRow, rawPath: string): Promise<HostDirectoryListing> {
-    // When the backend itself runs inside the chosen WSL distro for the same user, browse directly.
-    if (
-      currentPlatform === 'linux'
-      && env.WSL_DISTRO_NAME === row.distro
-      && (!row.username || row.username === localUsername)
-    ) {
-      return listLocalFs(hostId, rawPath, homeDir);
-    }
-
     if (!wslCommand) {
       throw new AppError(400, 'wsl_unavailable', '当前运行环境无法浏览该 WSL 发行版目录。');
+    }
+
+    const runningCheck = await ensureWslDistroRunning(wslCommand, row.distro, runCommand);
+    if (!runningCheck.ok) {
+      if (runningCheck.code === 'enoent') throw new AppError(400, 'wsl_unavailable', runningCheck.message);
+      if (runningCheck.code === 'timed_out') throw new AppError(504, 'host_browse_timeout', runningCheck.message);
+      throw new AppError(502, 'host_browse_failed', runningCheck.message);
     }
 
     const args = ['-d', row.distro];
@@ -254,8 +324,9 @@ export function createHostFsService(options: {
   }
 
   async function listSshFs(hostId: string, row: WorkHostRow, rawPath: string): Promise<HostDirectoryListing> {
-    if (row.auth_method === 'password' && !row.secret_value) {
-      throw invalid('未保存 SSH 密码，请先前往「设置 → 工作 → 主机」填写密码。');
+    const resolvedSecret = runtimeHostSecrets.get(fromDbUuid(row.id)) || row.secret_value;
+    if (row.auth_method === 'password' && !resolvedSecret) {
+      throw new AppError(401, 'ssh_auth_required', '未保存 SSH 密码，请输入密码以浏览工作目录。');
     }
 
     const args = [
@@ -266,12 +337,12 @@ export function createHostFsService(options: {
     ];
 
     const cmdEnv: Record<string, string> = {};
-    if (row.auth_method === 'password') {
+    if (resolvedSecret) {
       args.push('-o', 'NumberOfPasswordPrompts=1');
       cmdEnv.SSH_ASKPASS = ensureAskpassScript();
       cmdEnv.SSH_ASKPASS_REQUIRE = 'force';
       cmdEnv.DISPLAY = env.DISPLAY || 'matrius:0';
-      cmdEnv.MATRIUS_SSH_PASS = row.secret_value;
+      cmdEnv.MATRIUS_SSH_PASS = resolvedSecret;
     } else {
       args.push('-o', 'BatchMode=yes');
       if (row.auth_method === 'key' && row.private_key_path) {
@@ -314,7 +385,7 @@ export function createHostFsService(options: {
       }
 
       if (hostId === LOCAL_WORK_HOST_ID) {
-        return listLocalFs(LOCAL_WORK_HOST_ID, cleanPath, homeDir);
+        return listLocalFs(LOCAL_WORK_HOST_ID, cleanPath, homeDir, currentPlatform, listWindowsDrives);
       }
 
       const row = requireWorkHostRow(db, INSTANCE_ID, hostId);

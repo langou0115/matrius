@@ -8,7 +8,13 @@ import { buildApp } from '../app';
 import { loadSettings } from '../config';
 import { openDatabase } from '../db/client';
 import { migrate } from '../db/migrate';
-import { createWorkHostService, parseWslListOutput } from '../services/hosts';
+import { createWorkHostService, parseWslListOutput, resolveWslCommand } from '../services/hosts';
+
+test('resolveWslCommand only resolves wsl.exe on Windows and treats WSL Linux as standard Linux', () => {
+  assert.equal(resolveWslCommand('win32'), 'wsl.exe');
+  assert.equal(resolveWslCommand('linux'), null);
+  assert.equal(resolveWslCommand('darwin'), null);
+});
 
 test('parseWslListOutput handles UTF-16LE and UTF-8 wsl.exe output', () => {
   const sample = [
@@ -161,7 +167,24 @@ test('hosts API persists SSH/WSL configs without exposing secrets and enforces b
     });
     assert.equal(connectedWsl.statusCode, 200);
     assert.equal(connectedWsl.json<{ status: string }>().status, 'connected');
-    assert.ok(calls.some((call) => call.command === 'wsl.exe' && call.args.includes('Ubuntu-24.04')));
+    assert.ok(calls.some((call) => call.command === 'wsl.exe' && call.args[0] === '-d' && call.args.includes('Ubuntu-24.04')));
+
+    // Connecting a stopped WSL distro reports disconnected/error without invoking `wsl.exe -d` to boot it.
+    calls.length = 0;
+    const stoppedCreated = await app.inject({
+      method: 'POST',
+      url: '/api/hosts',
+      payload: {
+        kind: 'wsl',
+        name: 'Debian',
+        distro: 'Debian',
+      },
+    });
+    const stoppedId = stoppedCreated.json<{ id: string }>().id;
+    const stoppedConnect = await app.inject({ method: 'POST', url: `/api/hosts/${stoppedId}/connect` });
+    assert.equal(stoppedConnect.statusCode, 200);
+    assert.equal(stoppedConnect.json<{ status: string }>().status, 'error');
+    assert.equal(calls.some((call) => call.command === 'wsl.exe' && call.args[0] === '-d'), false);
 
     // Reject option-like SSH hostnames to prevent argument injection.
     const badHost = await app.inject({
@@ -174,6 +197,8 @@ test('hosts API persists SSH/WSL configs without exposing secrets and enforces b
     // Delete hosts.
     const deleted = await app.inject({ method: 'DELETE', url: `/api/hosts/${wslId}` });
     assert.equal(deleted.statusCode, 204);
+    const deletedStopped = await app.inject({ method: 'DELETE', url: `/api/hosts/${stoppedId}` });
+    assert.equal(deletedStopped.statusCode, 204);
     const listAfter = await app.inject({ method: 'GET', url: '/api/hosts' });
     assert.equal(listAfter.json<{ items: unknown[] }>().items.length, 1);
   } finally {

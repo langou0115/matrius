@@ -48,7 +48,7 @@ export default function StorageScreen() {
   const ratio = usage && usage.disk.total > 0 ? Math.min(1, usage.disk.used / usage.disk.total) : 0;
   const hasFiles = Boolean(usage && usage.disk.used > 0);
 
-  return <SettingsPage title="存储" description="查看应用的存储上限与已用空间。">
+  return <SettingsPage title="存储">
     <section className="settings-section" aria-labelledby="storage-heading">
       <h2 id="storage-heading">存储空间</h2>
       {usage ? <>
@@ -67,7 +67,6 @@ export default function StorageScreen() {
 
     <section className="settings-section" aria-labelledby="storage-manage-heading">
       <h2 id="storage-manage-heading">管理存储空间</h2>
-      <p className="storage-section-caption">管理本应用保存的内容，释放存储空间</p>
       <div className="settings-list storage-categories">
         <CategoryRow href={'/library?kind=file' as Href} label="文件" category={usage?.files} unit="个文件" />
         <CategoryRow href={'/library?kind=image' as Href} label="图像" category={usage?.images} unit="张图像" />

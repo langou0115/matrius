@@ -39,7 +39,6 @@ export function AuthUnlockScreen({ onUnlock }: { onUnlock: (secret: string) => P
           <BrandMark size={40} />
           <h1 id="auth-unlock-title">Matrius</h1>
         </div>
-        <p className="auth-unlock-description">请输入访问密钥（AUTH_SECRET）以进入你的工作区。</p>
         <label className="auth-unlock-field">
           <span className="sr-only">访问密钥</span>
           <div className="auth-unlock-input-wrap">
@@ -48,7 +47,7 @@ export function AuthUnlockScreen({ onUnlock }: { onUnlock: (secret: string) => P
               type={visible ? 'text' : 'password'}
               value={secret}
               onChange={(event) => setSecret(event.target.value)}
-              placeholder="输入访问密钥"
+              placeholder="输入访问密钥（AUTH_SECRET）"
               autoFocus
               autoComplete="current-password"
               autoCapitalize="none"

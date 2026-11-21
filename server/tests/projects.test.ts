@@ -71,6 +71,7 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
   });
   const sshHost = serializeWorkHost(sshHostRow);
 
+  let wslState: 'Running' | 'Stopped' = 'Running';
   const commandCalls: Array<{ command: string; args: string[]; env?: Record<string, string> }> = [];
   const hostFs = createHostFsService({
     db,
@@ -80,7 +81,14 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     homeDir: browseRoot,
     async runCommand(command, args, opts) {
       commandCalls.push({ command, args, env: opts?.env });
-      if (command === 'wsl.exe') {
+      if (command === 'wsl.exe' && args[0] === '-l') {
+        return {
+          code: 0,
+          stdout: Buffer.from(`  NAME            STATE           VERSION\r\n* Ubuntu-24.04    ${wslState}         2\r\n`, 'utf16le'),
+          stderr: Buffer.alloc(0),
+        };
+      }
+      if (command === 'wsl.exe' && args[0] === '-d') {
         return {
           code: 0,
           stdout: Buffer.from('PWD\0/home/ubuntu/workspace\0d\0repo\0f\0todo.txt\0', 'utf8'),
@@ -123,15 +131,25 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
       assert.equal(forbiddenRes.statusCode, 403);
     }
 
-    // 2. WSL browse invokes wsl.exe with distro argument.
+    // 2. WSL browse checks running status first and invokes wsl.exe -d only when Running.
     const wslRes = await app.inject({
       method: 'GET',
       url: `/api/hosts/${encodeURIComponent(wslHost.id)}/fs?path=${encodeURIComponent('~/workspace')}`,
     });
     assert.equal(wslRes.statusCode, 200);
     assert.equal(wslRes.json().path, '/home/ubuntu/workspace');
-    assert.equal(commandCalls[0].command, 'wsl.exe');
-    assert.equal(commandCalls[0].args[1], 'Ubuntu-24.04');
+    const wslBrowseCall = commandCalls.find((call) => call.command === 'wsl.exe' && call.args[0] === '-d');
+    assert.ok(wslBrowseCall);
+    assert.equal(wslBrowseCall.args[1], 'Ubuntu-24.04');
+
+    wslState = 'Stopped';
+    const stoppedBeforeCount = commandCalls.filter((call) => call.command === 'wsl.exe' && call.args[0] === '-d').length;
+    const wslStoppedRes = await app.inject({
+      method: 'GET',
+      url: `/api/hosts/${encodeURIComponent(wslHost.id)}/fs?path=${encodeURIComponent('~/workspace')}`,
+    });
+    assert.equal(wslStoppedRes.statusCode, 502);
+    assert.equal(commandCalls.filter((call) => call.command === 'wsl.exe' && call.args[0] === '-d').length, stoppedBeforeCount);
 
     // 3. SSH password browse passes secret via SSH_ASKPASS env (never argv).
     const sshRes = await app.inject({
@@ -140,10 +158,11 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     });
     assert.equal(sshRes.statusCode, 200);
     assert.equal(sshRes.json().path, '/srv/projects');
-    assert.equal(commandCalls[1].command, 'ssh');
-    assert.equal(commandCalls[1].env?.MATRIUS_SSH_PASS, 'ssh-pass-123');
-    assert.equal(commandCalls[1].env?.SSH_ASKPASS_REQUIRE, 'force');
-    assert.equal(commandCalls[1].args.join(' ').includes('ssh-pass-123'), false);
+    const sshCall = commandCalls.find((call) => call.command === 'ssh');
+    assert.ok(sshCall);
+    assert.equal(sshCall.env?.MATRIUS_SSH_PASS, 'ssh-pass-123');
+    assert.equal(sshCall.env?.SSH_ASKPASS_REQUIRE, 'force');
+    assert.equal(sshCall.args.join(' ').includes('ssh-pass-123'), false);
 
     // 4. Create work project bound to WSL host + directory.
     const createdRes = await app.inject({
@@ -168,22 +187,92 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     });
     assert.equal(badHostRes.statusCode, 422);
 
-    // 6. List and delete work project.
+    // 6. List, update (with revision conflict check), and delete work project.
     const listRes = await app.inject({ method: 'GET', url: '/api/projects' });
     assert.equal(listRes.statusCode, 200);
     assert.equal(listRes.json().items.length, 1);
 
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${project.id}`,
+      payload: {
+        name: 'matrius-renamed',
+        hostId: project.hostId,
+        directory: project.directory,
+        baseRevision: project.revision,
+      },
+    });
+    assert.equal(patchRes.statusCode, 200);
+    const updated = patchRes.json();
+    assert.equal(updated.name, 'matrius-renamed');
+    assert.equal(updated.revision, project.revision + 1);
+
+    const stalePatchRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${project.id}`,
+      payload: {
+        name: 'matrius-stale',
+        hostId: project.hostId,
+        directory: project.directory,
+        baseRevision: project.revision,
+      },
+    });
+    assert.equal(stalePatchRes.statusCode, 409);
+
     const delRes = await app.inject({
       method: 'DELETE',
-      url: `/api/projects/${project.id}?baseRevision=${project.revision}`,
+      url: `/api/projects/${project.id}?baseRevision=${updated.revision}`,
     });
     assert.equal(delRes.statusCode, 204);
     assert.deepEqual((await app.inject({ method: 'GET', url: '/api/projects' })).json().items, []);
   } finally {
     await app.close();
+    db.close();
     if (process.getuid && process.getuid() !== 0) {
       chmodSync(lockedDir, 0o755);
     }
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(browseRoot, { recursive: true, force: true });
+  }
+});
+
+test('local filesystem browser exposes Windows drive selection via upward navigation and normalizes drive roots', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'matrius-roots-data-'));
+  const browseRoot = mkdtempSync(join(tmpdir(), 'matrius-roots-fs-'));
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+
+  try {
+    const winFs = createHostFsService({
+      db,
+      currentPlatform: 'win32',
+      homeDir: browseRoot,
+      listWindowsDrives: async () => ['C:\\', 'D:\\'],
+    });
+    const drivesView = await winFs.listEntries('local', '此电脑');
+    assert.equal(drivesView.path, '此电脑');
+    assert.equal(drivesView.parentPath, null);
+    assert.equal(drivesView.selectable, false);
+    assert.deepEqual(
+      drivesView.entries.map((entry) => [entry.kind, entry.name, entry.path]),
+      [
+        ['directory', 'C:\\', 'C:\\'],
+        ['directory', 'D:\\', 'D:\\'],
+      ],
+    );
+
+    const slashDrives = await winFs.listEntries('local', '/');
+    assert.equal(slashDrives.path, '此电脑');
+
+    if (process.platform === 'win32') {
+      const systemDrive = `${(process.env.SystemDrive ?? 'C:').replace(/\\$/u, '')}\\`;
+      const driveRoot = await winFs.listEntries('local', systemDrive.slice(0, 2).toLowerCase());
+      assert.equal(driveRoot.path.toUpperCase(), systemDrive.toUpperCase());
+      assert.equal(driveRoot.parentPath, '此电脑');
+    }
+  } finally {
+    db.close();
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(browseRoot, { recursive: true, force: true });
   }

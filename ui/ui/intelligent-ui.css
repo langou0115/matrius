@@ -971,6 +971,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  margin-left: auto;
   padding: 8px 16px;
   border-radius: 999px;
   background: var(--primary);

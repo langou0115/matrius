@@ -1,15 +1,14 @@
-import type { HostDirectoryListing, WorkHostEntry } from '@contract/work-projects';
+import { LOCAL_WORK_HOST_ID, WINDOWS_DRIVES_ROOT, type HostDirectoryListing, type WorkHostEntry } from '@contract/work-projects';
 import {
-  AlertCircle,
   ArrowUp,
   Check,
   ChevronRight,
-  CornerDownLeft,
   Eye,
   EyeOff,
   FileText,
   Folder,
   LoaderCircle,
+  Monitor,
   RefreshCw,
   Search,
 } from 'lucide-react';
@@ -19,6 +18,7 @@ import { Dialog } from '@/components/web/dialog';
 import { useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { browseHostDirectory } from './work-api';
+import { WorkErrorDialog } from './work-error-dialog';
 
 type Props = {
   hostId: string;
@@ -79,18 +79,56 @@ const PREVIEW_TREE: Record<string, { parentPath: string | null; entries: WorkHos
       { kind: 'directory', name: 'home', path: '/home', accessible: true },
     ],
   },
+  [WINDOWS_DRIVES_ROOT]: {
+    parentPath: null,
+    entries: [
+      { kind: 'directory', name: 'C:\\', path: 'C:\\', accessible: true },
+      { kind: 'directory', name: 'D:\\', path: 'D:\\', accessible: true },
+    ],
+  },
+  'C:\\': {
+    parentPath: WINDOWS_DRIVES_ROOT,
+    entries: [
+      { kind: 'directory', name: 'Users', path: 'C:\\Users', accessible: true },
+    ],
+  },
+  'C:\\Users': {
+    parentPath: 'C:\\',
+    entries: [
+      { kind: 'directory', name: 'dev', path: 'C:\\Users\\dev', accessible: true },
+    ],
+  },
+  'C:\\Users\\dev': {
+    parentPath: 'C:\\Users',
+    entries: [
+      { kind: 'directory', name: 'Desktop', path: 'C:\\Users\\dev\\Desktop', accessible: true },
+    ],
+  },
+  'D:\\': {
+    parentPath: WINDOWS_DRIVES_ROOT,
+    entries: [
+      { kind: 'directory', name: 'Engineer', path: 'D:\\Engineer', accessible: true },
+    ],
+  },
+  'D:\\Engineer': {
+    parentPath: 'D:\\',
+    entries: [
+      { kind: 'directory', name: 'matrius', path: 'D:\\Engineer\\matrius', accessible: true },
+    ],
+  },
 };
 
 function previewListing(hostId: string, requestedPath?: string): HostDirectoryListing {
   if (requestedPath && !PREVIEW_TREE[requestedPath]) {
     throw new Error(`无法访问目录：${requestedPath}`);
   }
-  const key = requestedPath ?? '/home/dev';
+  const key = requestedPath ?? (hostId === LOCAL_WORK_HOST_ID ? 'C:\\Users\\dev' : '/home/dev');
   const node = PREVIEW_TREE[key];
   return {
     hostId,
     path: key,
     parentPath: node.parentPath,
+    ...(key === WINDOWS_DRIVES_ROOT ? { selectable: false } : {}),
     truncated: false,
     entries: node.entries,
   };
@@ -228,7 +266,13 @@ export function DirectoryBrowserDialog({
   }
 
   const upPath = listing ? listing.parentPath : fallbackParentPath(pathInput);
-  const effectiveChoice = selectedPath ?? listing?.path ?? '';
+  const currentLocation = listing?.path ?? pathInput.trim();
+  const isWindowsLocal = hostId === LOCAL_WORK_HOST_ID && (
+    currentLocation === WINDOWS_DRIVES_ROOT
+    || /^[A-Za-z]:(?:[\\/]|$)/u.test(currentLocation)
+  );
+  const effectiveChoice = selectedPath ?? (listing?.selectable === false ? '' : (listing?.path ?? ''));
+  const canConfirm = !loading && Boolean(effectiveChoice);
 
   return (
     <>
@@ -243,6 +287,19 @@ export function DirectoryBrowserDialog({
       </div>
 
       <form className="work-browser-nav" onSubmit={handleNavigateSubmit}>
+        {isWindowsLocal && (
+          <button
+            type="button"
+            className={`work-browser-pc${listing?.path === WINDOWS_DRIVES_ROOT ? ' is-active' : ''}`}
+            aria-label="此电脑"
+            aria-pressed={listing?.path === WINDOWS_DRIVES_ROOT}
+            disabled={loading || listing?.path === WINDOWS_DRIVES_ROOT}
+            onClick={() => void loadDirectory(WINDOWS_DRIVES_ROOT)}
+          >
+            <Monitor size={15} strokeWidth={1.75} aria-hidden="true" />
+            <span>此电脑</span>
+          </button>
+        )}
         <button
           type="button"
           className="icon-button work-browser-up"
@@ -261,14 +318,6 @@ export function DirectoryBrowserDialog({
           spellCheck={false}
           onChange={(event) => setPathInput(event.target.value)}
         />
-        <button
-          type="submit"
-          className="secondary-button work-browser-go"
-          disabled={loading || !pathInput.trim()}
-        >
-          <CornerDownLeft size={14} strokeWidth={1.75} aria-hidden="true" />
-          前往
-        </button>
         <button
           type="button"
           className="icon-button work-browser-refresh"
@@ -363,9 +412,8 @@ export function DirectoryBrowserDialog({
       </div>
 
       <div className="work-browser-footer">
-        <div className="work-browser-selection" title={effectiveChoice}>
-          <span>{selectedPath ? '已选中：' : '当前目录：'}</span>
-          <code>{effectiveChoice || '—'}</code>
+        <div className="work-browser-selection" title={effectiveChoice || undefined}>
+          <code>{effectiveChoice || (listing?.selectable === false ? '请选择磁盘或目录' : '—')}</code>
         </div>
         <div className="dialog-footer">
           <button type="button" className="secondary-button" onClick={onClose}>取消</button>
@@ -373,7 +421,7 @@ export function DirectoryBrowserDialog({
             type="button"
             className="primary-button"
             data-autofocus
-            disabled={loading || !effectiveChoice}
+            disabled={!canConfirm}
             onClick={() => {
               if (!effectiveChoice) return;
               onSelect(effectiveChoice, listing?.path ?? effectiveChoice);
@@ -387,26 +435,11 @@ export function DirectoryBrowserDialog({
       </Dialog>
 
       {error && (
-        <Dialog
+        <WorkErrorDialog
           title="无法访问目录"
+          message={error}
           onClose={() => setError(null)}
-          className="compact-dialog work-browser-error-dialog"
-        >
-          <div className="work-browser-error-row" role="alert">
-            <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
-            <p className="dialog-description">{error}</p>
-          </div>
-          <div className="dialog-footer">
-            <button
-              type="button"
-              className="primary-button"
-              data-autofocus
-              onClick={() => setError(null)}
-            >
-              知道了
-            </button>
-          </div>
-        </Dialog>
+        />
       )}
     </>
   );

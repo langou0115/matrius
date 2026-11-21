@@ -11,7 +11,6 @@ type DebugTabId = 'mock' | 'tools';
 type DebugTab = {
   id: DebugTabId;
   label: string;
-  description: string;
   icon: IconName;
 };
 
@@ -20,13 +19,11 @@ const DEBUG_TABS: readonly DebugTab[] = [
   {
     id: 'mock',
     label: 'Mock 预览',
-    description: '用真实界面组件预览渲染效果',
     icon: 'sparkle',
   },
   {
     id: 'tools',
     label: '工具测试',
-    description: '测试 Search、Fetch 等服务端工具',
     icon: 'code',
   },
 ];
@@ -76,9 +73,7 @@ export default function DebugScreen() {
       <div className="settings-scroll">
         <div className="settings-content">
           <div className="settings-heading">
-            <span className="eyebrow">开发调试</span>
             <h1>Debug</h1>
-            <p>仅在开发阶段存在。切换栏目以预览 Mock 界面或测试服务端工具是否正常。</p>
           </div>
 
           <div className="debug-tabs" role="tablist" aria-label="Debug 栏目">

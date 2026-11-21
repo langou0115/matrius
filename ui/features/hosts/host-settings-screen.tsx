@@ -175,8 +175,8 @@ function formatCheckedAt(ms: number | null): string {
   return new Date(ms).toLocaleTimeString('zh-CN', { hour12: false });
 }
 
-function authLabel(host: WorkHost): string {
-  if (host.kind === 'wsl') return 'WSL 本机环境';
+function authLabel(host: WorkHost): string | null {
+  if (host.kind === 'wsl') return null;
   if (host.authMethod === 'key') {
     return host.privateKeyPath ? `私钥 ${host.privateKeyPath}` : '私钥认证';
   }
@@ -500,9 +500,7 @@ export default function HostSettingsScreen() {
   }
 
   return (
-    <SettingsPage title="主机" description="管理已连接的 SSH 主机与 WSL 发行版，测试连通性或断开连接。">
-      <p className="settings-footnote">仅桌面端可用；主机配置保存在服务端本机数据目录中，密码或私钥口令不会回传到前端。</p>
-
+    <SettingsPage title="主机">
       <section className="settings-section" aria-labelledby="hosts-heading">
         <div className="hosts-section-header">
           <div className="hosts-heading-row">
@@ -566,6 +564,7 @@ export default function HostSettingsScreen() {
           <div className="host-list" aria-label="主机列表">
             {visibleHosts.map((host) => {
               const busy = busyId === host.id;
+              const auth = authLabel(host);
               const checkedTime = formatCheckedAt(host.lastCheckedAt);
               return (
                 <article className="host-card" key={host.id}>
@@ -577,7 +576,6 @@ export default function HostSettingsScreen() {
                           : <Server size={16} strokeWidth={1.75} />}
                       </span>
                       <strong className="host-card-name">{host.name}</strong>
-                      <span className="debug-engine-tag">{host.kind === 'wsl' ? 'WSL' : 'SSH'}</span>
                       <span className={`task-status-btn host-status-pill ${statusClass(host.status)}`}>
                         <span className="task-status-dot" aria-hidden="true" />
                         {statusLabel(host.status)}
@@ -585,11 +583,12 @@ export default function HostSettingsScreen() {
                     </div>
 
                     <p className="host-card-meta">
-                      <span>{formatWorkHostAddress(host)}</span>
-                      <span> · {authLabel(host)}</span>
+                      <span>{host.kind === 'wsl' ? 'WSL' : 'SSH'}</span>
+                      <span> · {formatWorkHostAddress(host)}</span>
+                      {auth && <span> · {auth}</span>}
                     </p>
 
-                    {(host.statusMessage || checkedTime) && (
+                    {host.status === 'error' && (host.statusMessage || checkedTime) && (
                       <p className="host-card-status">
                         {host.statusMessage}
                         {host.statusMessage && checkedTime ? ` · 检测于 ${checkedTime}` : checkedTime ? `检测于 ${checkedTime}` : ''}
@@ -657,7 +656,6 @@ export default function HostSettingsScreen() {
           <div className="provider-empty-state">
             <span className="provider-empty-icon"><Server size={22} strokeWidth={1.6} aria-hidden="true" /></span>
             <strong>{filter === 'all' ? '还没有已配置的主机' : `还没有 ${filter.toUpperCase()} 主机`}</strong>
-            <p>添加 SSH 远程主机或导入本机 WSL 发行版，便于工作区统一管理连接状态。</p>
             <div className="tasks-placeholder-actions">
               <button type="button" className="primary-button" disabled={saving} onClick={() => openAdd(filter === 'wsl' ? 'wsl' : 'ssh')}>
                 <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -792,7 +790,7 @@ export default function HostSettingsScreen() {
                           type={secretVisible ? 'text' : 'password'}
                           value={form.secret}
                           onChange={(event) => updateForm({ secret: event.target.value })}
-                          placeholder={form.hasSecret ? '已保存；留空保持不变' : '保存在服务端本机，不回传明文'}
+                          placeholder={form.hasSecret ? '已保存；留空保持不变' : '输入密码'}
                           autoComplete="new-password"
                           autoCapitalize="none"
                           spellCheck={false}
@@ -826,7 +824,6 @@ export default function HostSettingsScreen() {
                       spellCheck={false}
                       maxLength={120}
                     />
-                    <span>需与 `wsl -l -v` 中的发行版名称一致。</span>
                   </label>
                   <label className="model-form-field">
                     登录用户（可选）
@@ -883,7 +880,6 @@ export default function HostSettingsScreen() {
           onClose={closeDiscoverDialog}
           className="catalog-dialog hosts-discovery-dialog"
         >
-          <p className="dialog-description">检测本机可用的 WSL 发行版，可直接添加到主机列表进行连接测试与管理。</p>
           {discoverError && <p className="model-form-error" role="alert">{discoverError}</p>}
           {discovering ? (
             <p className="catalog-status" role="status">正在检测本机 WSL 发行版…</p>
@@ -899,13 +895,11 @@ export default function HostSettingsScreen() {
                   return (
                     <div className="hosts-discovery-item" key={distro.name}>
                       <div className="hosts-discovery-copy">
-                        <strong>
-                          {distro.name}
-                          {distro.isDefault && <span className="debug-engine-tag">默认</span>}
-                        </strong>
+                        <strong>{distro.name}</strong>
                         <span>
                           {distro.state}
                           {distro.version ? ` · WSL ${distro.version}` : ''}
+                          {distro.isDefault ? ' · 默认' : ''}
                         </span>
                       </div>
                       <button

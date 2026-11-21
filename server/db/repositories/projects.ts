@@ -65,21 +65,23 @@ export function requireWorkProjectRow(db: AppDatabase, instanceId: number, proje
   return row;
 }
 
+function resolveProjectHostId(db: AppDatabase, instanceId: number, rawHostId: string): string {
+  if (rawHostId === LOCAL_WORK_HOST_ID) return rawHostId;
+  let hostRow;
+  try {
+    hostRow = getWorkHostRow(db, instanceId, rawHostId);
+  } catch {
+    hostRow = undefined;
+  }
+  if (!hostRow) {
+    throw invalid('所选主机不存在，请先在「设置 → 工作 → 主机」中配置。');
+  }
+  return fromDbUuid(hostRow.id);
+}
+
 export function createWorkProjectRow(db: AppDatabase, instanceId: number, input: WorkProjectInput): WorkProjectRow {
   const normalized = normalizeValidated(input);
-  let resolvedHostId = normalized.hostId;
-  if (resolvedHostId !== LOCAL_WORK_HOST_ID) {
-    let hostRow;
-    try {
-      hostRow = getWorkHostRow(db, instanceId, resolvedHostId);
-    } catch {
-      hostRow = undefined;
-    }
-    if (!hostRow) {
-      throw invalid('所选主机不存在，请先在「设置 → 工作 → 主机」中配置。');
-    }
-    resolvedHostId = fromDbUuid(hostRow.id);
-  }
+  const resolvedHostId = resolveProjectHostId(db, instanceId, normalized.hostId);
 
   const id = toDbUuid(randomUUID());
   const now = toDbTimestamp();
@@ -94,6 +96,38 @@ export function createWorkProjectRow(db: AppDatabase, instanceId: number, input:
     .get(id, instanceId) as WorkProjectRow | undefined;
   if (!created) throw new Error('Failed to load work_projects row after insert.');
   return created;
+}
+
+export function updateWorkProjectRow(
+  db: AppDatabase,
+  instanceId: number,
+  projectId: string,
+  input: WorkProjectInput & { baseRevision?: number },
+): WorkProjectRow {
+  const current = requireWorkProjectRow(db, instanceId, projectId);
+  if (input.baseRevision !== undefined && current.revision !== input.baseRevision) {
+    throw conflict('项目列表已在其他页面更新，请刷新后重试。', serializeWorkProject(current));
+  }
+  const normalized = normalizeValidated(input);
+  const resolvedHostId = resolveProjectHostId(db, instanceId, normalized.hostId);
+  const now = toDbTimestamp();
+
+  const result = input.baseRevision !== undefined
+    ? db.prepare(`
+        UPDATE work_projects
+        SET name = ?, host_id = ?, directory = ?, revision = revision + 1, updated_at = ?
+        WHERE id = ? AND instance_id = ? AND revision = ?
+      `).run(normalized.name, resolvedHostId, normalized.directory, now, current.id, instanceId, input.baseRevision)
+    : db.prepare(`
+        UPDATE work_projects
+        SET name = ?, host_id = ?, directory = ?, revision = revision + 1, updated_at = ?
+        WHERE id = ? AND instance_id = ?
+      `).run(normalized.name, resolvedHostId, normalized.directory, now, current.id, instanceId);
+
+  if (result.changes === 0) {
+    throw conflict('项目列表已在其他页面更新，请刷新后重试。');
+  }
+  return requireWorkProjectRow(db, instanceId, projectId);
 }
 
 export function deleteWorkProjectRow(db: AppDatabase, instanceId: number, projectId: string, baseRevision?: number): void {

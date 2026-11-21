@@ -1,5 +1,5 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from '@/router';
-import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, Server, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, Server, SlidersHorizontal, Terminal, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
@@ -22,6 +22,7 @@ const categoryIcons: Record<string, LucideIcon> = {
   appearance: Palette,
   personalization: SlidersHorizontal,
   models: Cpu,
+  'work-general': Terminal,
   hosts: Server,
   about: Info,
   storage: HardDrive,
@@ -37,7 +38,7 @@ function CategoryIcon({ id, size = 18 }: { id: string; size?: number }) {
 /** Desktop settings shell shared by every category: a fixed category rail on the left and the
     active category's content on the right. Categories are ordinary routes, so browser history
     and direct refreshes keep working while switching only swaps this page's content. */
-export function SettingsPage({ title, description, children }: PropsWithChildren<{ title: string; description: string }>) {
+export function SettingsPage({ title, children }: PropsWithChildren<{ title: string }>) {
   const [query, setQuery] = useState('');
   const { focus } = useLocalSearchParams<{ focus?: string }>();
   const preview = useIsPreview();
@@ -145,7 +146,7 @@ export function SettingsPage({ title, description, children }: PropsWithChildren
       <Link href={root} asChild><LinkAnchor className="settings-stack-back"><ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" />返回设置</LinkAnchor></Link>
       <div className="settings-scroll">
         <div className="settings-content">
-          <div className="settings-heading"><h1>{title}</h1><p>{description}</p></div>
+          <div className="settings-heading"><h1>{title}</h1></div>
           {children}
         </div>
       </div>

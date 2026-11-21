@@ -23,6 +23,9 @@ function developmentMiddleware(): Plugin {
         if (devApiProxy.handleDevApi(request, response)) return;
         next();
       });
+      server.httpServer?.on('upgrade', (request, socket, head) => {
+        devApiProxy.handleDevUpgrade(request, socket, head);
+      });
     },
   };
 }

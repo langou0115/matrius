@@ -478,7 +478,7 @@ export default function TasksScreen() {
   return (
     <main className="library-main" id="main-content" tabIndex={-1}>
       <header className="library-topbar">
-        {!sidebarOpen && (
+        {mobile && !sidebarOpen && (
           <button
             className="sidebar-expand"
             type="button"
@@ -531,10 +531,7 @@ export default function TasksScreen() {
       </header>
 
       <header className="library-heading tasks-heading">
-        <div>
-          <h1>定时任务</h1>
-          <p>按设定的周期或时间自动发起对话，可按状态筛选并随时调整。</p>
-        </div>
+        <h1>定时任务</h1>
         <button
           type="button"
           className="primary-button tasks-create-btn"

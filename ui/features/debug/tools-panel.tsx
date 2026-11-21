@@ -72,7 +72,6 @@ function StatusBadge({ status, tookMs }: { status: ToolStatus; tookMs?: number }
 function ToolCard({
   id,
   title,
-  description,
   icon,
   status,
   tookMs,
@@ -80,7 +79,6 @@ function ToolCard({
 }: {
   id: string;
   title: string;
-  description: string;
   icon: IconName;
   status: ToolStatus;
   tookMs?: number;
@@ -95,7 +93,6 @@ function ToolCard({
             <h3 id={`debug-tool-${id}`}>{title}</h3>
             <code className="debug-tool-id">{id}</code>
           </div>
-          <p>{description}</p>
         </div>
         <StatusBadge status={status} tookMs={tookMs} />
       </div>
@@ -141,10 +138,7 @@ export function ToolsPanel() {
   return (
     <section className="settings-section" aria-labelledby="debug-tools-heading">
       <div className="debug-section-bar">
-        <div>
-          <h2 id="debug-tools-heading">工具连通性测试</h2>
-          <p className="debug-section-note">直接调用服务端工具链，验证当前网络、代理与解析是否正常。</p>
-        </div>
+        <h2 id="debug-tools-heading">工具连通性测试</h2>
         <button
           type="button"
           className="debug-run-all-btn"
@@ -160,7 +154,6 @@ export function ToolsPanel() {
         <ToolCard
           id="web_search"
           title="Search 工具"
-          description="测试搜索引擎请求、代理配置与结果解析（DuckDuckGo / Bing RSS）。"
           icon="search"
           status={searchStatus}
           tookMs={searchResult?.tookMs}
@@ -234,7 +227,6 @@ export function ToolsPanel() {
         <ToolCard
           id="web_fetch"
           title="Fetch 工具"
-          description="测试网页抓取、重定向跟随、字符编码识别与正文提取。"
           icon="bolt"
           status={fetchStatus}
           tookMs={fetchResult?.tookMs}

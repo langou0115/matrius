@@ -61,12 +61,9 @@ function isQuestionAnswered(
   return hasPreset || (rawSelected.includes(CUSTOM_OPTION_ID) && hasCustomText);
 }
 
-function questionKindLabel(question: AskQuestionItem): string {
-  if (question.type === 'text') {
-    return question.required ? '必填文本' : '可选文本';
-  }
-  const base = question.type === 'multi' ? '多选' : '单选';
-  return question.required === false ? `${base} · 可选` : base;
+function questionKindLabel(question: AskQuestionItem): string | null {
+  const isRequired = question.type === 'text' ? question.required === true : question.required !== false;
+  return isRequired ? null : '可选';
 }
 
 export type AskQuestionCardProps = {
@@ -158,10 +155,6 @@ export function AskQuestionCard({
     });
   };
 
-  const countLabel = isSubmitted
-    ? '已发送'
-    : `${data.questions.length} 个问题`;
-
   return (
     <section
       className={`iui-card iui-ask-card${isSubmitted ? ' is-submitted' : ''}`}
@@ -179,9 +172,7 @@ export function AskQuestionCard({
             </svg>
             <strong>{data.title ?? 'Ask Question'}</strong>
           </span>
-          <span className={`iui-ask-badge${isSubmitted ? ' is-done' : ''}`}>
-            {countLabel}
-          </span>
+          {isSubmitted && <span className="iui-ask-badge is-done">已发送</span>}
         </div>
         {data.description && <p className="iui-ask-description">{data.description}</p>}
       </header>
@@ -192,6 +183,7 @@ export function AskQuestionCard({
           const customSelected = selectedIds.includes(CUSTOM_OPTION_ID);
           const customValue = customTexts[question.id] ?? '';
           const options = question.options ?? [];
+          const kindLabel = questionKindLabel(question);
 
           return (
             <fieldset key={question.id} className="iui-ask-question" disabled={isLocked}>
@@ -199,7 +191,7 @@ export function AskQuestionCard({
                 <span>
                   {qIndex + 1}. {question.prompt}
                 </span>
-                <span className="iui-ask-kind">{questionKindLabel(question)}</span>
+                {kindLabel && <span className="iui-ask-kind">{kindLabel}</span>}
               </legend>
 
               {question.type !== 'text' ? (
@@ -322,13 +314,9 @@ export function AskQuestionCard({
       </div>
 
       <footer className="iui-ask-footer">
-        <span className="iui-ask-status">
-          {isSubmitted
-            ? '已直接发送，无需在输入框重复输入'
-            : missingRequiredCount > 0
-              ? `还有 ${missingRequiredCount} 项必选未完成`
-              : '所有问题一次性提交'}
-        </span>
+        {!isSubmitted && missingRequiredCount > 0 && (
+          <span className="iui-ask-status">{`还有 ${missingRequiredCount} 项必选未完成`}</span>
+        )}
         <button
           type="button"
           className="iui-ask-submit-btn"

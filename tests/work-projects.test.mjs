@@ -97,8 +97,24 @@ test('work sidebar creates projects by selecting host and browsing directories/f
 
     const createDialog = dom.document.querySelector('.work-project-dialog[open]');
     assert.ok(createDialog);
-    assert.match(createDialog.textContent ?? '', /设置 → 工作 → 主机/);
+    assert.match(createDialog.textContent ?? '', /主机设置/);
     assert.doesNotMatch(createDialog.textContent ?? '', /或文件/);
+
+    // Submitting without selecting a directory raises a modal alert instead of an inline form error.
+    const emptySubmitForm = createDialog.querySelector('form');
+    assert.ok(emptySubmitForm);
+    const emptySubmitKey = Object.keys(emptySubmitForm).find((key) => key.startsWith('__reactProps'));
+    assert.ok(emptySubmitKey);
+    await act(async () => { await emptySubmitForm[emptySubmitKey].onSubmit({ preventDefault() {} }); });
+    const missingDirDialog = dom.document.querySelector('.work-project-error-dialog[open]');
+    assert.ok(missingDirDialog);
+    assert.match(missingDirDialog.textContent ?? '', /请先选择项目目录。/);
+    assert.equal(createDialog.querySelector('.model-form-error'), null);
+    const missingDirAckBtn = Array.from(missingDirDialog.querySelectorAll('.dialog-footer button'))
+      .find((btn) => btn.textContent?.includes('知道了'));
+    assert.ok(missingDirAckBtn);
+    await act(async () => { missingDirAckBtn.click(); });
+    assert.equal(dom.document.querySelector('.work-project-error-dialog[open]'), null);
 
     // Check host options include local host + configured hosts from 设置 -> 工作 -> 主机.
     const hostTrigger = createDialog.querySelector('.select-field-trigger');
@@ -178,6 +194,59 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.match(projectItem.textContent ?? '', /matrius/);
     assert.match(projectItem.textContent ?? '', /开发服务器/);
 
+    // Selecting the project row keeps it active without an expand toggle or child terminal list.
+    const selectBtn = projectItem.querySelector('.work-project-select');
+    assert.ok(selectBtn);
+    assert.equal(selectBtn.getAttribute('aria-current'), 'true');
+    assert.equal(projectItem.querySelector('.work-project-chevron'), null);
+    assert.equal(selectBtn.getAttribute('aria-controls'), null);
+    await act(async () => { selectBtn.click(); });
+    assert.equal(selectBtn.getAttribute('aria-current'), 'true');
+
+    // Verify three-dots menu opens project settings (rename) and remove confirmation.
+    const moreBtn = projectItem.querySelector('.work-project-more');
+    assert.ok(moreBtn);
+    await act(async () => { moreBtn.click(); });
+    const projectMenu = dom.document.getElementById('work-project-menu');
+    assert.ok(projectMenu);
+    const settingsMenuItem = Array.from(projectMenu.querySelectorAll('[role="menuitem"]'))
+      .find((item) => item.textContent?.includes('项目设置'));
+    assert.ok(settingsMenuItem);
+    await act(async () => { settingsMenuItem.click(); });
+
+    const editDialog = dom.document.querySelector('.work-project-dialog[open]');
+    assert.ok(editDialog);
+    const nameInput = editDialog.querySelector('input.text-field');
+    const editForm = editDialog.querySelector('form.provider-edit-form');
+    assert.ok(nameInput && editForm);
+    const namePropsKey = Object.keys(nameInput).find((key) => key.startsWith('__reactProps'));
+    const editFormPropsKey = Object.keys(editForm).find((key) => key.startsWith('__reactProps'));
+    assert.ok(namePropsKey && editFormPropsKey);
+    await act(async () => {
+      nameInput.value = 'matrius-core';
+      nameInput[namePropsKey].onChange({ target: nameInput });
+    });
+    await act(async () => {
+      await editForm[editFormPropsKey].onSubmit({ preventDefault() {} });
+    });
+    assert.equal(dom.document.querySelector('.work-project-dialog[open]'), null);
+    assert.match(dom.document.querySelector('.work-project-item.is-active')?.textContent ?? '', /matrius-core/);
+
+    const updatedMoreBtn = dom.document.querySelector('.work-project-item.is-active .work-project-more');
+    assert.ok(updatedMoreBtn);
+    await act(async () => { updatedMoreBtn.click(); });
+    const removeMenuItem = Array.from(dom.document.querySelectorAll('#work-project-menu [role="menuitem"]'))
+      .find((item) => item.textContent?.includes('移除项目'));
+    assert.ok(removeMenuItem);
+    await act(async () => { removeMenuItem.click(); });
+
+    const removeDialog = dom.document.querySelector('.compact-dialog[open]');
+    assert.ok(removeDialog);
+    const confirmRemoveBtn = removeDialog.querySelector('.danger-button');
+    assert.ok(confirmRemoveBtn);
+    await act(async () => { confirmRemoveBtn.click(); });
+    assert.equal(dom.document.querySelectorAll('.work-project-item').length, 0);
+
     // Re-open create dialog and verify selecting a file directly inside directory browser works too.
     await act(async () => { openCreateBtn.click(); });
     const secondDialog = dom.document.querySelector('.work-project-dialog[open]');
@@ -222,6 +291,31 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.equal(footerButtons[0].textContent?.trim(), '知道了');
     await act(async () => { footerButtons[0].click(); });
     assert.equal(dom.document.querySelector('.work-browser-error-dialog[open]'), null);
+    const closeThirdBrowserBtn = thirdBrowser.querySelector('.dialog-header .icon-button');
+    assert.ok(closeThirdBrowserBtn);
+    await act(async () => { closeThirdBrowserBtn.click(); });
+
+    // Switch host to 本机 (Windows) and verify the `此电脑` button jumps directly to drive selection.
+    const secondHostTrigger = secondDialog.querySelector('.select-field-trigger');
+    assert.ok(secondHostTrigger);
+    await act(async () => { secondHostTrigger.click(); });
+    const localOption = Array.from(secondDialog.querySelectorAll('.select-field-popover button'))
+      .find((btn) => btn.textContent?.includes('本机'));
+    assert.ok(localOption);
+    await act(async () => { localOption.click(); });
+
+    await act(async () => { secondDialog.querySelector('.work-dir-picker').click(); });
+    const winBrowser = dom.document.querySelector('.work-browser-dialog[open]');
+    assert.ok(winBrowser);
+    const pcBtn = winBrowser.querySelector('button[aria-label="此电脑"]');
+    assert.ok(pcBtn);
+    await act(async () => { pcBtn.click(); });
+    assert.match(winBrowser.textContent ?? '', /D:\\/);
+    const dDriveBtn = Array.from(winBrowser.querySelectorAll('.work-browser-item'))
+      .find((btn) => btn.textContent?.includes('D:\\'));
+    assert.ok(dDriveBtn);
+    await act(async () => { dDriveBtn.click(); });
+    assert.match(winBrowser.textContent ?? '', /Engineer/);
   } finally {
     await act(async () => { root.unmount(); });
     resetWorkStateForTests();

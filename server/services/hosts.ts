@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import net from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +10,7 @@ import type {
   WslDiscoveryResult,
 } from '../../contract/work-hosts';
 import type { AppDatabase } from '../db/client';
+import { fromDbUuid } from '../db/codecs';
 import {
   createWorkHostRow,
   deleteWorkHostRow,
@@ -19,12 +19,13 @@ import {
   serializeWorkHost,
   updateWorkHostConnectionRow,
   updateWorkHostRow,
+  updateWorkHostSecretRow,
   type WorkHostRow,
 } from '../db/repositories/hosts';
+import { invalid } from '../errors';
 
 const INSTANCE_ID = 1;
 const PROBE_TIMEOUT_MS = 8_000;
-const WSL_WIN32_DEFAULT = '/mnt/c/Windows/System32/wsl.exe';
 
 export type HostCommandResult = {
   code: number | null;
@@ -51,6 +52,7 @@ export type WorkHostService = {
   create(input: WorkHostInput): WorkHost;
   update(hostId: string, input: WorkHostInput & { baseRevision: number }): WorkHost;
   remove(hostId: string, baseRevision?: number): void;
+  unlock(hostId: string, secret: string, persist?: boolean): WorkHost;
   connect(hostId: string): Promise<WorkHost>;
   disconnect(hostId: string): WorkHost;
   discoverWsl(): Promise<WslDiscoveryResult>;
@@ -178,12 +180,62 @@ export function expandHomePath(value: string): string {
   return value;
 }
 
-export function resolveWslCommand(platform = process.platform, env = process.env): string | null {
-  if (platform === 'win32') return 'wsl.exe';
-  if (platform === 'linux' && (env.WSL_DISTRO_NAME || env.WSL_INTEROP)) {
-    return existsSync(WSL_WIN32_DEFAULT) ? WSL_WIN32_DEFAULT : 'wsl.exe';
+export type WslListOutcome =
+  | { ok: true; distros: DiscoveredWslDistro[] }
+  | { ok: false; code: 'enoent' | 'timed_out' | 'failed'; message: string };
+
+export async function queryWslDistros(
+  wslCommand: string,
+  runCommand: HostCommandRunner,
+): Promise<WslListOutcome> {
+  const result = await runCommand(wslCommand, ['-l', '-v'], {
+    timeoutMs: 6_000,
+    env: { WSL_UTF8: '1' },
+  });
+  if (result.errorCode === 'ENOENT') {
+    return {
+      ok: false,
+      code: 'enoent',
+      message: '本机未安装或未启用 WSL（找不到 wsl.exe）。',
+    };
   }
-  return null;
+  if (result.timedOut) {
+    return {
+      ok: false,
+      code: 'timed_out',
+      message: 'WSL 列表探测超时，请确认 WSL 服务状态。',
+    };
+  }
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      code: 'failed',
+      message: summarizeError(result.stderr, '未能获取本机 WSL 发行版列表。'),
+    };
+  }
+  return { ok: true, distros: parseWslListOutput(result.stdout) };
+}
+
+export async function ensureWslDistroRunning(
+  wslCommand: string,
+  distro: string,
+  runCommand: HostCommandRunner,
+): Promise<{ ok: true } | { ok: false; code: 'enoent' | 'timed_out' | 'failed' | 'not_found' | 'stopped'; message: string }> {
+  const listing = await queryWslDistros(wslCommand, runCommand);
+  if (!listing.ok) return listing;
+  const match = listing.distros.find((item) => item.name === distro)
+    ?? listing.distros.find((item) => item.name.toLowerCase() === distro.toLowerCase());
+  if (!match) {
+    return { ok: false, code: 'not_found', message: `未找到 WSL 发行版 ${distro}，请确认已安装。` };
+  }
+  if (match.state.toLowerCase() !== 'running') {
+    return { ok: false, code: 'stopped', message: `WSL 发行版 ${match.name} 未启动（${match.state}）。` };
+  }
+  return { ok: true };
+}
+
+export function resolveWslCommand(platform = process.platform): string | null {
+  return platform === 'win32' ? 'wsl.exe' : null;
 }
 
 export function createWorkHostService(options: {
@@ -191,16 +243,18 @@ export function createWorkHostService(options: {
   runCommand?: HostCommandRunner;
   probeSshBanner?: SshBannerProber;
   wslCommand?: string | null;
+  runtimeHostSecrets?: Map<string, string>;
 }): WorkHostService {
   const { db } = options;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const probeSshBanner = options.probeSshBanner ?? defaultProbeSshBanner;
   const wslCommand = options.wslCommand !== undefined ? options.wslCommand : resolveWslCommand();
+  const runtimeHostSecrets = options.runtimeHostSecrets ?? new Map<string, string>();
 
   async function probeSsh(row: WorkHostRow): Promise<{ status: 'connected' | 'error'; message: string }> {
     const startedAt = Date.now();
     if (row.auth_method === 'password') {
-      if (!row.secret_value) {
+      if (!row.secret_value && !runtimeHostSecrets.get(fromDbUuid(row.id))) {
         return { status: 'error', message: '未保存 SSH 密码，请先编辑主机并填写密码。' };
       }
       const probe = await probeSshBanner(row.host, row.port, 5_000);
@@ -246,8 +300,13 @@ export function createWorkHostService(options: {
 
   async function probeWsl(row: WorkHostRow): Promise<{ status: 'connected' | 'error'; message: string }> {
     if (!wslCommand) {
-      return { status: 'error', message: '当前非 Windows / WSL 环境，无法检测本机 WSL 发行版。' };
+      return { status: 'error', message: '当前仅支持在 Windows 主机检测 WSL 发行版。' };
     }
+    const runningCheck = await ensureWslDistroRunning(wslCommand, row.distro, runCommand);
+    if (!runningCheck.ok) {
+      return { status: 'error', message: runningCheck.message };
+    }
+
     const startedAt = Date.now();
     const args = ['-d', row.distro];
     if (row.username) args.push('--user', row.username);
@@ -262,7 +321,7 @@ export function createWorkHostService(options: {
       return { status: 'error', message: '未找到 wsl.exe，请确认系统已启用 WSL。' };
     }
     if (result.timedOut) {
-      return { status: 'error', message: `WSL 发行版 ${row.distro} 启动超时。` };
+      return { status: 'error', message: `WSL 发行版 ${row.distro} 执行检测超时。` };
     }
     if (result.code === 0 && decodeWslText(result.stdout).includes('matrius-ok')) {
       return { status: 'connected', message: `WSL 发行版连接正常（${elapsed} ms）` };
@@ -283,11 +342,38 @@ export function createWorkHostService(options: {
     },
 
     update(hostId, input) {
-      return db.transaction(() => serializeWorkHost(updateWorkHostRow(db, INSTANCE_ID, hostId, input)));
+      return db.transaction(() => {
+        const updated = serializeWorkHost(updateWorkHostRow(db, INSTANCE_ID, hostId, input));
+        if (input.clearSecret || updated.kind === 'wsl' || updated.authMethod === 'agent') {
+          runtimeHostSecrets.delete(updated.id);
+        } else if (typeof input.secret === 'string' && input.secret.trim()) {
+          runtimeHostSecrets.set(updated.id, input.secret.trim());
+        }
+        return updated;
+      });
     },
 
     remove(hostId, baseRevision) {
+      const targetId = fromDbUuid(requireWorkHostRow(db, INSTANCE_ID, hostId).id);
+      runtimeHostSecrets.delete(targetId);
       db.transaction(() => deleteWorkHostRow(db, INSTANCE_ID, hostId, baseRevision));
+    },
+
+    unlock(hostId, secret, persist = false) {
+      const trimmed = secret.trim();
+      if (!trimmed) {
+        throw invalid('请输入主机密码。');
+      }
+      const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
+      const serialized = serializeWorkHost(row);
+      if (row.kind !== 'ssh') {
+        throw invalid('仅 SSH 主机支持密码解锁。');
+      }
+      runtimeHostSecrets.set(serialized.id, trimmed);
+      if (persist && row.auth_method === 'password') {
+        return db.transaction(() => serializeWorkHost(updateWorkHostSecretRow(db, INSTANCE_ID, hostId, trimmed)));
+      }
+      return serialized;
     },
 
     async connect(hostId) {
@@ -302,6 +388,8 @@ export function createWorkHostService(options: {
     },
 
     disconnect(hostId) {
+      const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
+      runtimeHostSecrets.delete(serializeWorkHost(row).id);
       return db.transaction(() => serializeWorkHost(updateWorkHostConnectionRow(db, INSTANCE_ID, hostId, {
         status: 'disconnected',
         statusMessage: '已断开连接',
@@ -313,37 +401,20 @@ export function createWorkHostService(options: {
         return {
           available: false,
           distros: [],
-          message: '当前运行环境不支持本机 WSL 探测，可在 Windows 桌面端自动扫描或手动添加。',
+          message: '当前仅支持在 Windows 宿主上自动扫描本机 WSL 发行版。',
         };
       }
-      const result = await runCommand(wslCommand, ['-l', '-v'], {
-        timeoutMs: 6_000,
-        env: { WSL_UTF8: '1' },
-      });
-      if (result.errorCode === 'ENOENT') {
+      const listing = await queryWslDistros(wslCommand, runCommand);
+      if (!listing.ok) {
         return {
           available: false,
           distros: [],
-          message: '本机未安装或未启用 WSL（找不到 wsl.exe）。',
-        };
-      }
-      if (result.timedOut) {
-        return {
-          available: false,
-          distros: [],
-          message: 'WSL 列表探测超时，请确认 WSL 服务状态。',
-        };
-      }
-      if (result.code !== 0) {
-        return {
-          available: false,
-          distros: [],
-          message: summarizeError(result.stderr, '未能获取本机 WSL 发行版列表。'),
+          message: listing.message,
         };
       }
       return {
         available: true,
-        distros: parseWslListOutput(result.stdout),
+        distros: listing.distros,
       };
     },
   };

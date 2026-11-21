@@ -11,6 +11,7 @@ Matrius 是 React 19 + TypeScript（Vite 8）UI 与单 Node/TypeScript 后端的
 | --- | --- |
 | 产品边界与开发顺序 | [产品](doc/product.md) |
 | 页面、模块与文件职责 | [客户端结构](doc/client-structure.md) |
+| 界面视觉与交互规范 | [UI 风格](doc/ui-style.md) |
 | 存储与数据访问 | [存储与数据](doc/data.md) |
 | 实例访问与功能开关 | [实例访问](doc/instance.md) |
 | 后端接口与数据模型 | [后端架构](doc/backend.md)、[server/README.md](server/README.md) |

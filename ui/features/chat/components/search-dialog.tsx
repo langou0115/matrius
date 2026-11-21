@@ -25,7 +25,12 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
   const [keyboardSelected, setKeyboardSelected] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const listRef = useRef<HTMLDivElement>(null);
-  const results = useMemo(() => searchConversations(conversations, query), [conversations, query]);
+  const trimmedQuery = query.trim();
+  const hasQuery = trimmedQuery.length > 0;
+  const results = useMemo(
+    () => (hasQuery ? searchConversations(conversations, trimmedQuery) : []),
+    [conversations, hasQuery, trimmedQuery],
+  );
   const visibleResults = results.slice(0, visibleCount);
   const hasMore = visibleCount < results.length;
   // Results shrink as the query narrows; keep the highlight inside the rendered page.
@@ -87,8 +92,8 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
       <input
         aria-activedescendant={activeResult ? `conversation-search-result-${active}` : undefined}
         aria-autocomplete="list"
-        aria-controls="conversation-search-results"
-        aria-expanded={results.length > 0}
+        aria-controls={hasQuery ? 'conversation-search-results' : undefined}
+        aria-expanded={hasQuery && results.length > 0}
         aria-label="搜索对话"
         placeholder="搜索对话…"
         role="combobox"
@@ -98,41 +103,42 @@ export function SearchDialog({ onClose }: { onClose: () => void }) {
       />
       <button type="button" className="icon-button search-close" aria-label="关闭搜索" onClick={onClose}><Icon name="close" size={18} /></button>
     </div>
-    <div
-      ref={listRef}
-      id="conversation-search-results"
-      className={`search-results${keyboardSelected ? ' is-keyboard-nav' : ''}`}
-      role={results.length > 0 ? 'listbox' : undefined}
-      aria-label={results.length > 0 ? '搜索结果' : undefined}
-      onMouseLeave={() => { if (!keyboardSelected) setActiveIndex(-1); }}
-      onScroll={handleScroll}
-    >
-      {results.length > 0 ? visibleResults.map((item, index) => <button
-        type="button"
-        role="option"
-        id={`conversation-search-result-${index}`}
-        aria-selected={index === active}
-        aria-setsize={results.length}
-        aria-posinset={index + 1}
-        tabIndex={-1}
-        className={`search-result ${keyboardSelected && index === active ? 'is-keyboard-selected' : ''}`}
-        key={item.id}
-        onMouseEnter={() => { setActiveIndex(index); setKeyboardSelected(false); }}
-        onClick={() => open(item.id)}
+    {hasQuery && (
+      <div
+        ref={listRef}
+        id="conversation-search-results"
+        className={`search-results${keyboardSelected ? ' is-keyboard-nav' : ''}`}
+        role={results.length > 0 ? 'listbox' : undefined}
+        aria-label={results.length > 0 ? '搜索结果' : undefined}
+        onMouseLeave={() => { if (!keyboardSelected) setActiveIndex(-1); }}
+        onScroll={handleScroll}
       >
-        <span className="search-result-copy">
-          <span className="search-result-heading">
-            <span className="search-result-title"><Highlighted text={item.title} query={query} /></span>
-            <span className="search-result-time">{formatRelativeTime(item.updatedAt)}</span>
+        {results.length > 0 ? visibleResults.map((item, index) => <button
+          type="button"
+          role="option"
+          id={`conversation-search-result-${index}`}
+          aria-selected={index === active}
+          aria-setsize={results.length}
+          aria-posinset={index + 1}
+          tabIndex={-1}
+          className={`search-result ${keyboardSelected && index === active ? 'is-keyboard-selected' : ''}`}
+          key={item.id}
+          onMouseEnter={() => { setActiveIndex(index); setKeyboardSelected(false); }}
+          onClick={() => open(item.id)}
+        >
+          <span className="search-result-copy">
+            <span className="search-result-heading">
+              <span className="search-result-title"><Highlighted text={item.title} query={query} /></span>
+              <span className="search-result-time">{formatRelativeTime(item.updatedAt)}</span>
+            </span>
+            {item.snippet && <span className="search-result-sub"><Highlighted text={item.snippet} query={query} /></span>}
           </span>
-          {item.snippet && <span className="search-result-sub"><Highlighted text={item.snippet} query={query} /></span>}
-        </span>
-      </button>) : <div className="search-empty">
-        <span className="search-empty-icon"><Icon name="search" size={19} /></span>
-        <strong>{query.trim() ? '没有找到相关对话' : '还没有可搜索的对话'}</strong>
-        {query.trim() && <p>换个关键词试试，标题和消息内容都可以搜索。</p>}
-      </div>}
-    </div>
-    <span className="sr-only" role="status" aria-live="polite">{query.trim() ? `找到 ${results.length} 个对话` : ''}</span>
+        </button>) : <div className="search-empty">
+          <span className="search-empty-icon"><Icon name="search" size={19} /></span>
+          <strong>没有找到相关对话</strong>
+        </div>}
+      </div>
+    )}
+    <span className="sr-only" role="status" aria-live="polite">{hasQuery ? `找到 ${results.length} 个对话` : ''}</span>
   </Dialog>;
 }

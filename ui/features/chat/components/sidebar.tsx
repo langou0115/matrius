@@ -1,7 +1,7 @@
 import { useMobile } from '@/components/web/use-mobile';
 import { Link, router, usePathname, type Href } from '@/router';
 import { LinkAnchor } from '@/components/web/link-anchor';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Clock, FolderOpen, SquarePen } from 'lucide-react';
 
 import { BrandMark } from '@/components/web/brand-mark';
@@ -15,8 +15,11 @@ import { ConversationMenu } from './conversation-menu';
 import { ConversationSelect } from './conversation-select';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { isDesktopTarget } from '@/core/platform/target';
-import { WorkSidebarPanel } from '@/features/work/work-sidebar-panel';
 import { useSidebarTab, writeSidebarTab, type SidebarTab } from '../sidebar-mode';
+
+const WorkSidebarPanel = lazy(() =>
+  import('@/features/work/work-sidebar-panel').then((module) => ({ default: module.WorkSidebarPanel })),
+);
 import { useChatRuntime } from '../chat-runtime';
 import { conversationHref } from '../conversation-href';
 import { writeLastRoute } from '../last-conversation';
@@ -185,8 +188,90 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
     </>
   );
 
+  const settingsHref = preview ? '/mock/chat/settings' : '/settings';
+  const onSettings = pathname === settingsHref || pathname.startsWith(`${settingsHref}/`);
+  const onChatNew = activeId === null && !onLibrary && !onTasks && !onSettings;
+
+  if (sidebarCollapsed && !mobile) {
+    return (
+      <aside className="sidebar is-collapsed" aria-label={activeTab === 'work' ? '工作导航' : '对话导航'}>
+        <div className="sidebar-rail-header">
+          <button
+            type="button"
+            className="sidebar-rail-btn"
+            aria-label="展开侧栏"
+            aria-expanded={false}
+            onClick={() => dispatch({ type: 'sidebar' })}
+          >
+            <Icon name="sidebar" size={20} />
+          </button>
+        </div>
+        <div className="sidebar-rail-divider" aria-hidden="true" />
+        <div className="sidebar-rail-top">
+          {activeTab === 'work' ? (
+            <Suspense fallback={null}>
+              <WorkSidebarPanel collapsed />
+            </Suspense>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`sidebar-rail-btn ${onChatNew ? 'is-active' : ''}`}
+                aria-label="新对话"
+                onClick={() => select(null)}
+              >
+                <SquarePen size={20} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+              {showLibrary && (
+                <Link href={libraryHref as Href} asChild>
+                  <LinkAnchor
+                    className={`sidebar-rail-btn ${onLibrary ? 'is-active' : ''}`}
+                    aria-current={onLibrary ? 'page' : undefined}
+                    aria-label="打开资料库"
+                  >
+                    <FolderOpen size={20} strokeWidth={1.75} aria-hidden="true" />
+                  </LinkAnchor>
+                </Link>
+              )}
+              {showTasks && (
+                <Link href={tasksHref as Href} asChild>
+                  <LinkAnchor
+                    className={`sidebar-rail-btn ${onTasks ? 'is-active' : ''}`}
+                    aria-current={onTasks ? 'page' : undefined}
+                    aria-label="打开定时任务"
+                  >
+                    <Clock size={20} strokeWidth={1.75} aria-hidden="true" />
+                  </LinkAnchor>
+                </Link>
+              )}
+              <button
+                type="button"
+                className="sidebar-rail-btn"
+                aria-label="搜索对话"
+                onClick={onSearch}
+              >
+                <Icon name="search" size={20} />
+              </button>
+            </>
+          )}
+        </div>
+        <div className="sidebar-rail-bottom">
+          <Link href={settingsHref as Href} asChild>
+            <LinkAnchor
+              className={`sidebar-rail-btn ${onSettings ? 'is-active' : ''}`}
+              aria-current={onSettings ? 'page' : undefined}
+              aria-label="打开设置"
+            >
+              <Icon name="settings" size={20} />
+            </LinkAnchor>
+          </Link>
+        </div>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="sidebar" aria-label="对话导航" inert={sidebarCollapsed || undefined}>
+    <aside className="sidebar" aria-label="对话导航">
       <div className="sidebar-header">
         <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => { switchTab('chat'); dispatch({ type: 'select', id: null }); if (!preview) writeLastRoute(null); }}><BrandMark size={30} />Matrius</LinkAnchor></Link>
         <div className="sidebar-header-actions">
@@ -230,7 +315,9 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
             role="tabpanel"
             aria-labelledby="sidebar-tab-work"
           >
-            <WorkSidebarPanel />
+            <Suspense fallback={null}>
+              <WorkSidebarPanel />
+            </Suspense>
           </div>
         ) : (
           <div
@@ -245,7 +332,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
       </> : chatNavigation}
       <Link href={preview ? '/mock/chat/settings' : '/settings'} asChild><LinkAnchor className="sidebar-settings-entry" aria-label="打开设置">
         <span className="sidebar-settings-icon"><Icon name="settings" size={18} /></span>
-        <span className="sidebar-settings-entry-text"><strong>设置</strong><span>模型、偏好与实例数据</span></span>
+        <span className="sidebar-settings-entry-text">设置</span>
       </LinkAnchor></Link>
       {menu && menuConversation && <ConversationMenu conversation={menuConversation} anchor={menu.anchor} onClose={closeMenu}
         onPin={() => { dispatch({ type: 'pin', id: menuConversation.id }); closeMenu(); }}

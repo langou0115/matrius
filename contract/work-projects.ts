@@ -4,6 +4,7 @@
  */
 
 export const LOCAL_WORK_HOST_ID = 'local';
+export const WINDOWS_DRIVES_ROOT = '此电脑';
 
 export type WorkEntryKind = 'directory' | 'file';
 
@@ -20,6 +21,7 @@ export type HostDirectoryListing = {
   parentPath: string | null;
   truncated: boolean;
   entries: WorkHostEntry[];
+  selectable?: boolean;
 };
 
 export type WorkProject = {

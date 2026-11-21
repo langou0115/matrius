@@ -15,7 +15,7 @@ import { displayModes } from './settings-catalog';
 export function AppearanceSettingsScreen() {
   const { mode, setMode, themeId, setThemeId } = useAppearance();
   const resolvedMode = useResolvedColorMode();
-  return <SettingsPage title="外观" description="调整显示模式与配色主题。">
+  return <SettingsPage title="外观">
     <section className="settings-section" aria-labelledby="display-heading">
       <h2 id="display-heading">显示模式</h2>
       <div className="settings-mode-row">
@@ -40,7 +40,7 @@ export function AppearanceSettingsScreen() {
 export function AboutSettingsScreen() {
   const instance = useInstance();
   const preview = useIsPreview();
-  return <SettingsPage title="关于 Matrius" description="应用信息与实例存储说明。">
+  return <SettingsPage title="关于 Matrius">
       <section className="settings-section" aria-labelledby="about-heading"><h2 id="about-heading">关于</h2>
         <div className="about-card"><span className="about-logo"><BrandMark size={38} /></span><div><h3>Matrius</h3><p>一个安静、自由的 AI 对话空间。</p></div><span className="version-label">v1.0.0</span></div>
       </section>
@@ -49,9 +49,8 @@ export function AboutSettingsScreen() {
           <div className="settings-row">
             <span className="settings-row-copy">
               <strong>访问密钥已启用</strong>
-              <small>锁定当前浏览器后需要重新输入 AUTH_SECRET 解锁。</small>
             </span>
-            <button type="button" className="secondary-button settings-row-action" onClick={() => void instance.lock()}>锁定访问</button>
+            <button type="button" className="secondary-button settings-row-action" onClick={() => void instance.lock()}>锁定当前浏览器</button>
           </div>
         </div>
       </section>}

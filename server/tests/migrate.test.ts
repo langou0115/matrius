@@ -33,7 +33,7 @@ test('a fresh database gets the baseline and the singleton instance', () => {
 
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
       .map((row) => row.name);
-    for (const table of ['conversations', 'messages', 'files', 'profiles', 'preferences', 'token_usage_daily', 'scheduled_tasks', 'model_configs', 'work_hosts', 'work_projects']) {
+    for (const table of ['conversations', 'messages', 'files', 'profiles', 'preferences', 'token_usage_daily', 'scheduled_tasks', 'model_configs', 'work_hosts', 'work_projects', 'work_terminals', 'work_settings']) {
       assert.ok(tables.includes(table), `missing table ${table}`);
     }
 

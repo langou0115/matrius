@@ -1,11 +1,21 @@
 const http = require('node:http');
+const net = require('node:net');
+
+function resolveTarget(target) {
+  if (!target) return null;
+  let origin;
+  try { origin = new URL(target); } catch { origin = {}; }
+  if (origin.origin !== target || origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1') {
+    return null;
+  }
+  return origin;
+}
 
 /** Same-origin API forwarding for Vite. Model relay is handled before this middleware. */
 function handleDevApi(req, res, target = process.env.MATRIUS_DEV_API_URL) {
   if (!target || !req.url?.startsWith('/api/')) return false;
-  let origin;
-  try { origin = new URL(target); } catch { origin = {}; }
-  if (origin.origin !== target || origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1') {
+  const origin = resolveTarget(target);
+  if (!origin) {
     res.statusCode = 502;
     res.end('Invalid development API address.');
     return true;
@@ -27,4 +37,35 @@ function handleDevApi(req, res, target = process.env.MATRIUS_DEV_API_URL) {
   return true;
 }
 
-module.exports = { handleDevApi };
+/** Forward `/api/` WebSocket upgrades (used by desktop work terminals) to the Node API. */
+function handleDevUpgrade(req, socket, head, target = process.env.MATRIUS_DEV_API_URL) {
+  if (!target || !req.url?.startsWith('/api/')) return false;
+  const origin = resolveTarget(target);
+  if (!origin) {
+    socket.destroy();
+    return true;
+  }
+  const port = Number(origin.port || 80);
+  const upstream = net.connect({ host: origin.hostname, port }, () => {
+    const headerLines = [`${req.method || 'GET'} ${req.url} HTTP/${req.httpVersion || '1.1'}`];
+    for (let index = 0; index < req.rawHeaders.length; index += 2) {
+      const name = req.rawHeaders[index];
+      const value = req.rawHeaders[index + 1];
+      if (name.toLowerCase() === 'host') {
+        headerLines.push(`Host: ${origin.host}`);
+      } else {
+        headerLines.push(`${name}: ${value}`);
+      }
+    }
+    headerLines.push('', '');
+    upstream.write(headerLines.join('\r\n'));
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  upstream.on('error', () => socket.destroy());
+  socket.on('error', () => upstream.destroy());
+  return true;
+}
+
+module.exports = { handleDevApi, handleDevUpgrade };

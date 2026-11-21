@@ -1,12 +1,9 @@
-import { LOCAL_WORK_HOST_ID, type WorkProject } from '@contract/work-projects';
+import { LOCAL_WORK_HOST_ID, deriveProjectName, type WorkProject } from '@contract/work-projects';
 import type { WorkHost } from '@contract/work-hosts';
 import {
-  ArrowUpRight,
-  ChevronRight,
   FolderOpen,
   Laptop,
   Server,
-  Settings2,
   Terminal,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
@@ -20,12 +17,14 @@ import { writeSidebarTab } from '@/features/chat/sidebar-mode';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { router, usePathname } from '@/router';
 import { DirectoryBrowserDialog } from './directory-browser-dialog';
-import { createPreviewWorkHosts, createWorkProject } from './work-api';
+import { createPreviewWorkHosts, createWorkProject, updateWorkProject } from './work-api';
+import { WorkErrorDialog } from './work-error-dialog';
 
 type Props = {
+  project?: WorkProject | null;
   initialHosts?: WorkHost[];
   onHostsSync?: (hosts: WorkHost[]) => void;
-  onCreated: (project: WorkProject) => void;
+  onSaved: (project: WorkProject) => void;
   onClose: () => void;
 };
 
@@ -43,44 +42,29 @@ function defaultHostSelection(items: WorkHost[]): string {
 }
 
 function hostSummaryLabel(host: WorkHost): string {
-  const kindText = host.kind === 'wsl' ? 'WSL' : 'SSH';
-  const statusText = host.status === 'connected' ? ' · 已连接' : host.status === 'error' ? ' · 异常' : '';
-  return `${host.name}（${kindText}${statusText}）`;
+  return host.status === 'error' ? `${host.name} · 异常` : host.name;
 }
 
-function hostDetailHint(hostId: string, hosts: WorkHost[]): string {
-  if (hostId === LOCAL_WORK_HOST_ID) {
-    return '使用当前运行环境（本机）文件系统';
-  }
-  const host = hosts.find((item) => item.id === hostId);
-  if (!host) return '来自「设置 → 工作 → 主机」';
-  if (host.kind === 'wsl') {
-    return `WSL 发行版：${host.distro}${host.username ? ` · 用户 ${host.username}` : ''}`;
-  }
-  const userPrefix = host.username ? `${host.username}@` : '';
-  return `SSH 主机：${userPrefix}${host.host}:${host.port}`;
-}
-
-export function CreateProjectDialog({ initialHosts, onHostsSync, onCreated, onClose }: Props) {
+export function CreateProjectDialog({ project = null, initialHosts, onHostsSync, onSaved, onClose }: Props) {
   const instance = useInstance();
   const preview = useIsPreview();
   const pathname = usePathname();
+  const editing = Boolean(project);
 
   const seedHosts = useMemo(
     () => (preview ? sortHosts(initialHosts ?? createPreviewWorkHosts()) : sortHosts(initialHosts ?? [])),
     [initialHosts, preview],
   );
   const [hosts, setHosts] = useState<WorkHost[]>(seedHosts);
-  const [hostsLoaded, setHostsLoaded] = useState(() => preview || instance.status !== 'ready');
-  const [hostId, setHostId] = useState<string>(() => defaultHostSelection(seedHosts));
-  const [directory, setDirectory] = useState('');
-  const [browseDir, setBrowseDir] = useState('');
+  const [name, setName] = useState(() => project?.name ?? '');
+  const [hostId, setHostId] = useState<string>(() => project?.hostId ?? defaultHostSelection(seedHosts));
+  const [directory, setDirectory] = useState(() => project?.directory ?? '');
+  const [browseDir, setBrowseDir] = useState(() => project?.directory ?? '');
   const [browsing, setBrowsing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const canFetchHosts = !preview && instance.status === 'ready';
-  const loadingHosts = canFetchHosts && !hostsLoaded;
 
   useEffect(() => {
     if (!canFetchHosts) return;
@@ -92,23 +76,22 @@ export function CreateProjectDialog({ initialHosts, onHostsSync, onCreated, onCl
         const sorted = sortHosts(res.items);
         setHosts(sorted);
         onHostsSync?.(sorted);
-        setHostsLoaded(true);
-        setHostId((current) => (current === LOCAL_WORK_HOST_ID ? defaultHostSelection(sorted) : current));
+        if (!project) {
+          setHostId((current) => (current === LOCAL_WORK_HOST_ID ? defaultHostSelection(sorted) : current));
+        }
       })
-      .catch(() => {
-        if (!cancelled) setHostsLoaded(true);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [canFetchHosts, instance.request, onHostsSync]);
+  }, [canFetchHosts, instance.request, onHostsSync, project]);
 
   const hostOptions: SelectFieldOption[] = useMemo(() => {
     const items: SelectFieldOption[] = [
       {
         id: LOCAL_WORK_HOST_ID,
-        label: '本机（当前主机）',
+        label: '本机',
         icon: <Laptop size={15} strokeWidth={1.75} />,
       },
     ];
@@ -149,33 +132,53 @@ export function CreateProjectDialog({ initialHosts, onHostsSync, onCreated, onCl
       setError('请先选择项目目录。');
       return;
     }
+    const trimmedName = name.trim();
 
     if (preview) {
       const now = Date.now();
-      const parts = trimmedDir.replace(/[\\/]+$/u, '').split(/[\\/]/u).filter(Boolean);
-      onCreated({
-        id: `mock-project-${now}`,
-        name: parts.at(-1) ?? trimmedDir,
-        hostId,
-        directory: trimmedDir,
-        revision: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
+      const resolvedName = trimmedName || deriveProjectName(trimmedDir);
+      if (project) {
+        onSaved({
+          ...project,
+          name: resolvedName,
+          hostId,
+          directory: trimmedDir,
+          revision: project.revision + 1,
+          updatedAt: now,
+        });
+      } else {
+        onSaved({
+          id: `mock-project-${now}`,
+          name: resolvedName,
+          hostId,
+          directory: trimmedDir,
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
       onClose();
       return;
     }
 
     setSaving(true);
     try {
-      const created = await createWorkProject(instance.request, {
-        hostId,
-        directory: trimmedDir,
-      });
-      onCreated(created);
+      const saved = project
+        ? await updateWorkProject(instance.request, project.id, {
+            hostId,
+            directory: trimmedDir,
+            ...(trimmedName ? { name: trimmedName } : {}),
+            baseRevision: project.revision,
+          })
+        : await createWorkProject(instance.request, {
+            hostId,
+            directory: trimmedDir,
+            ...(trimmedName ? { name: trimmedName } : {}),
+          });
+      onSaved(saved);
       onClose();
     } catch (reason) {
-      setError(reason instanceof Error && reason.message ? reason.message : '创建项目失败，请重试。');
+      setError(reason instanceof Error && reason.message ? reason.message : `${editing ? '保存' : '创建'}项目失败，请重试。`);
     } finally {
       setSaving(false);
     }
@@ -184,13 +187,25 @@ export function CreateProjectDialog({ initialHosts, onHostsSync, onCreated, onCl
   return (
     <>
       <Dialog
-        title="创建项目"
+        title={editing ? '项目设置' : '创建项目'}
         onClose={() => { if (!saving) onClose(); }}
-        className="model-form-dialog work-project-dialog"
+        className="compact-dialog work-project-dialog"
       >
-        <p className="dialog-description work-project-intro">选择运行环境主机与项目目录，快速建立工作项目。</p>
         <form className="provider-edit-form" onSubmit={(event) => void handleSubmit(event)}>
           <fieldset disabled={saving}>
+            {editing && (
+              <label className="model-form-field">
+                项目名称
+                <input
+                  className="text-field"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder={directory ? deriveProjectName(directory) : '项目名称'}
+                  maxLength={120}
+                />
+              </label>
+            )}
+
             <div className="work-field-block">
               <div className="work-field-header">
                 <span className="work-field-title">主机</span>
@@ -199,9 +214,7 @@ export function CreateProjectDialog({ initialHosts, onHostsSync, onCreated, onCl
                   className="work-settings-link"
                   onClick={openHostSettings}
                 >
-                  <Settings2 size={13} strokeWidth={1.75} aria-hidden="true" />
-                  <span>设置 → 工作 → 主机</span>
-                  <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" />
+                  主机设置
                 </button>
               </div>
               <SelectField
@@ -218,9 +231,6 @@ export function CreateProjectDialog({ initialHosts, onHostsSync, onCreated, onCl
                   }
                 }}
               />
-              <span className="work-field-hint">
-                {loadingHosts ? '正在同步主机配置…' : hostDetailHint(hostId, hosts)}
-              </span>
             </div>
 
             <div className="work-field-block">
@@ -240,22 +250,29 @@ export function CreateProjectDialog({ initialHosts, onHostsSync, onCreated, onCl
                 <span className="work-dir-picker-text">
                   {directory || '选择项目目录'}
                 </span>
-                <ChevronRight size={16} strokeWidth={1.75} className="work-dir-picker-chevron" aria-hidden="true" />
               </button>
-              <span className="work-field-hint">点击选择所选主机上的项目目录。</span>
             </div>
-
-            {error && <p className="model-form-error" role="alert">{error}</p>}
 
             <div className="dialog-footer">
               <button type="button" className="secondary-button" onClick={onClose}>取消</button>
               <button type="submit" className="primary-button" disabled={saving}>
-                {saving ? '创建中…' : '创建项目'}
+                {saving
+                  ? (editing ? '保存中…' : '创建中…')
+                  : (editing ? '保存' : '创建项目')}
               </button>
             </div>
           </fieldset>
         </form>
       </Dialog>
+
+      {error && (
+        <WorkErrorDialog
+          title={editing ? '无法保存项目' : '提示'}
+          message={error}
+          className="work-project-error-dialog"
+          onClose={() => setError(null)}
+        />
+      )}
 
       {browsing && (
         <DirectoryBrowserDialog

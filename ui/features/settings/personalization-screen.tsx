@@ -150,7 +150,7 @@ export default function PersonalizationSettingsScreen() {
   const { preferences, update } = usePersonalization();
   const models = useModels();
   const [modelError, setModelError] = useState<string | null>(null);
-  return <SettingsPage title="个性化" description="管理记忆、自定义指令与你希望模型了解的个人信息。">
+  return <SettingsPage title="个性化">
     <section className="settings-section" aria-labelledby="title-model-heading">
       <h2 id="title-model-heading">标题生成模型</h2>
       <div className="personalization-fields">

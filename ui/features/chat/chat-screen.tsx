@@ -273,7 +273,7 @@ export default function ChatScreen() {
 
   return <div className={`chat-screen${(researchGroup || sourcePanel) && wideViewport ? ' has-research-panel' : ''}`}><main ref={mobile && hasMessages ? undefined : messageScroller} data-conversation-key={`${draftKey}-${mobile}-${hasMessages}`} className={`chat-main ${hasMessages ? 'has-messages' : 'is-empty'}`} id="main-content" tabIndex={-1}>
     <header className="chat-topbar">
-      {!sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
+      {mobile && !sidebarOpen && <button className="sidebar-expand" type="button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="展开侧栏" aria-expanded={false}><Icon name="sidebar" size={22} /></button>}
       {conversation && <ConversationTitle key={conversation.id} title={conversation.title}
         onRename={(title) => dispatch({ type: 'rename', id: conversation.id, title })} />}
     </header>
