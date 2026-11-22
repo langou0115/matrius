@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { LOCAL_WORK_HOST_ID } from '../../contract/work-projects';
 import { buildApp } from '../app';
 import { loadSettings } from '../config';
 import { openDatabase } from '../db/client';
@@ -33,6 +34,76 @@ test('parseWslListOutput handles UTF-16LE and UTF-8 wsl.exe output', () => {
   ]);
 
   assert.deepEqual(parseWslListOutput(sample), parsed);
+});
+
+test('host file preview returns bounded UTF-8 text without caching', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'matrius-host-preview-'));
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: directory, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+  const { app } = await buildApp({ settings, db });
+  try {
+    const path = join(directory, "测试 & 'preview'.ts");
+    const url = `/api/hosts/${LOCAL_WORK_HOST_ID}/fs/preview?${new URLSearchParams({ path })}`;
+    const text = 'const message = "你好";\r\n';
+    writeFileSync(path, text);
+    const preview = await app.inject({ url });
+    assert.equal(preview.statusCode, 200);
+    assert.equal(preview.headers['cache-control'], 'no-store');
+    const revision = preview.json().revision;
+    assert.match(revision, /^[a-f0-9]{64}$/u);
+    assert.equal(preview.json().text, text);
+
+    writeFileSync(path, '');
+    assert.equal((await app.inject({ url })).json().text, '');
+    writeFileSync(path, Buffer.from([0, 0xff]));
+    assert.equal((await app.inject({ url })).statusCode, 415);
+    writeFileSync(path, Buffer.alloc(256 * 1024 + 1, 'a'));
+    assert.equal((await app.inject({ url })).statusCode, 413);
+  } finally {
+    await app.close();
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('project file save replaces text, rejects stale revisions, and stays inside the local project', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'matrius-file-save-'));
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: directory, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+  const { app } = await buildApp({ settings, db });
+  try {
+    const projectDirectory = join(directory, 'project');
+    mkdirSync(projectDirectory);
+    const project = await app.inject({
+      method: 'POST', url: '/api/projects', payload: { directory: projectDirectory, hostId: LOCAL_WORK_HOST_ID },
+    });
+    assert.equal(project.statusCode, 201);
+    const url = `/api/projects/${project.json().id}/files/text`;
+    const path = join(projectDirectory, 'file.txt');
+    writeFileSync(path, '\uFEFFold\r\n');
+    const preview = await app.inject({ url: `/api/hosts/${LOCAL_WORK_HOST_ID}/fs/preview?${new URLSearchParams({ path })}` });
+    const baseRevision = preview.json().revision;
+    const save = (payload: { path: string; text: string; baseRevision: string }) =>
+      app.inject({ method: 'PUT', url, payload });
+
+    const first = await save({ path, text: 'new\r\n', baseRevision });
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(first.json().text, 'new\r\n');
+    assert.equal(readFileSync(path, 'utf8'), '\uFEFFnew\r\n');
+    assert.equal((await save({ path, text: 'stale', baseRevision })).statusCode, 409);
+    assert.equal(readFileSync(path, 'utf8'), '\uFEFFnew\r\n');
+
+    const outside = join(directory, 'outside.txt');
+    writeFileSync(outside, 'outside');
+    assert.equal((await save({ path: outside, text: 'outside-change', baseRevision })).statusCode, 403);
+    assert.equal(readFileSync(outside, 'utf8'), 'outside');
+  } finally {
+    await app.close();
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('hosts API persists SSH/WSL configs without exposing secrets and enforces baseRevision', async () => {

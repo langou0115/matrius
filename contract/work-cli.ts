@@ -230,6 +230,24 @@ function stripControlChars(text: string): string {
   return out;
 }
 
+export const NEW_CLI_SESSION_TITLE = '新对话';
+
+const FALLBACK_CLI_SESSION_TITLES = new Set<string>([
+  NEW_CLI_SESSION_TITLE,
+  'CLI 对话',
+  'Claude Code',
+  'Codex',
+  'Antigravity',
+  'Claude Code 对话',
+  'Codex 对话',
+  'Antigravity 对话',
+]);
+
+export function isFallbackCliSessionTitle(title: string | null | undefined): boolean {
+  const trimmed = typeof title === 'string' ? title.replace(/\s+/gu, ' ').trim() : '';
+  return !trimmed || FALLBACK_CLI_SESSION_TITLES.has(trimmed);
+}
+
 export function formatCliTerminalTitle(
   rawTitle: string,
   provider: WorkCliProvider,

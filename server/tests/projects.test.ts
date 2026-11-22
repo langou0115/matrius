@@ -164,7 +164,7 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     assert.equal(sshCall.env?.SSH_ASKPASS_REQUIRE, 'force');
     assert.equal(sshCall.args.join(' ').includes('ssh-pass-123'), false);
 
-    // 4. Create work project bound to WSL host + directory + per-CLI proxy URLs.
+    // 4. Create work project bound to WSL host + directory + per-CLI proxy URLs & launch args.
     const createdRes = await app.inject({
       method: 'POST',
       url: '/api/projects',
@@ -175,6 +175,10 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
           codex: '127.0.0.1:7890',
           antigravity: 'socks5://127.0.0.1:1080',
           claude: 'http://127.0.0.1:8899',
+        },
+        cliArgs: {
+          codex: '--dangerously-bypass-approvals-and-sandbox',
+          claude: '--dangerously-skip-permissions',
         },
       },
     });
@@ -188,6 +192,10 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
       antigravity: 'socks5://127.0.0.1:1080',
       claude: 'http://127.0.0.1:8899',
     });
+    assert.deepEqual(project.cliArgs, {
+      codex: '--dangerously-bypass-approvals-and-sandbox',
+      claude: '--dangerously-skip-permissions',
+    });
 
     const badProxyRes = await app.inject({
       method: 'POST',
@@ -199,6 +207,17 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
       },
     });
     assert.equal(badProxyRes.statusCode, 422);
+
+    const badArgsRes = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      payload: {
+        hostId: wslHost.id,
+        directory: '/home/ubuntu/workspace/repo',
+        cliArgs: { claude: '--flag\nrm -rf /' },
+      },
+    });
+    assert.equal(badArgsRes.statusCode, 422);
 
     // 5. Reject unknown hostId on project creation.
     const badHostRes = await app.inject({
@@ -258,7 +277,25 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
     assert.equal(updated.hostId, wslHost.id);
     assert.equal(updated.directory, '/home/ubuntu/workspace/repo');
     assert.equal(updated.cliProxies, undefined);
+    // Patching cliProxies alone preserves existing cliArgs.
+    assert.deepEqual(updated.cliArgs, {
+      codex: '--dangerously-bypass-approvals-and-sandbox',
+      claude: '--dangerously-skip-permissions',
+    });
     assert.equal(updated.revision, project.revision + 1);
+
+    const clearArgsRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${project.id}`,
+      payload: {
+        cliArgs: {},
+        baseRevision: updated.revision,
+      },
+    });
+    assert.equal(clearArgsRes.statusCode, 200);
+    const clearedArgs = clearArgsRes.json();
+    assert.equal(clearedArgs.cliArgs, undefined);
+    assert.equal(clearedArgs.revision, updated.revision + 1);
 
     const stalePatchRes = await app.inject({
       method: 'PATCH',
@@ -272,7 +309,7 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
 
     const delRes = await app.inject({
       method: 'DELETE',
-      url: `/api/projects/${project.id}?baseRevision=${updated.revision}`,
+      url: `/api/projects/${project.id}?baseRevision=${clearedArgs.revision}`,
     });
     assert.equal(delRes.statusCode, 204);
     assert.deepEqual((await app.inject({ method: 'GET', url: '/api/projects' })).json().items, []);

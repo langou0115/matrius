@@ -12,6 +12,7 @@ import { useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { deleteWorkTerminal, resumeWorkTerminal, workTerminalWsUrl } from './work-api';
 import {
+  bumpCliSessionsRefresh,
   bumpHostUnlockVersion,
   detectPreviewPlatform,
   removeWorkTerminal,
@@ -21,9 +22,83 @@ import {
 } from './work-state';
 
 type XtermInstance = import('@xterm/xterm').Terminal;
+type XtermLink = import('@xterm/xterm').ILink;
 type XtermTheme = import('@xterm/xterm').ITheme;
 type XtermWindowsPty = import('@xterm/xterm').IWindowsPty;
 type FitAddonInstance = import('@xterm/addon-fit').FitAddon;
+
+const TERMINAL_HTTP_URL_RE = /https?:\/\/[^\s<>"'`]+/gu;
+const TRAILING_URL_PUNCTUATION_RE = /[.,;:!?)}\]>'"]+$/u;
+
+function stripTrailingControlChars(text: string): string {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) {
+      return text.slice(0, index);
+    }
+  }
+  return text;
+}
+
+export function openTerminalExternalLink(
+  uri: string,
+  openFn: (url: string, target: string, features: string) => unknown = (url, target, features) =>
+    window.open(url, target, features),
+): boolean {
+  try {
+    const parsed = new URL(uri.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    openFn(parsed.href, '_blank', 'noopener,noreferrer');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function registerTerminalUrlLinkProvider(terminal: XtermInstance): { dispose(): void } {
+  return terminal.registerLinkProvider({
+    provideLinks(bufferLineNumber, callback) {
+      const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      const text = line.translateToString(true);
+      if (!text.includes('http://') && !text.includes('https://')) {
+        callback(undefined);
+        return;
+      }
+      const directClick = terminal.modes.mouseTrackingMode === 'none';
+      const links: XtermLink[] = [];
+      TERMINAL_HTTP_URL_RE.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = TERMINAL_HTTP_URL_RE.exec(text)) !== null) {
+        const cleaned = stripTrailingControlChars(match[0]).replace(TRAILING_URL_PUNCTUATION_RE, '');
+        if (!cleaned) continue;
+        const startX = match.index + 1;
+        const endX = match.index + cleaned.length;
+        links.push({
+          range: {
+            start: { x: startX, y: bufferLineNumber },
+            end: { x: endX, y: bufferLineNumber },
+          },
+          text: cleaned,
+          decorations: {
+            pointerCursor: directClick,
+            underline: directClick,
+          },
+          activate(event, linkText) {
+            if (terminal.modes.mouseTrackingMode !== 'none' && !event.ctrlKey && !event.metaKey) {
+              return;
+            }
+            openTerminalExternalLink(linkText);
+          },
+        });
+      }
+      callback(links.length > 0 ? links : undefined);
+    },
+  });
+}
 
 function resolveWindowsPty(
   hostId: string,
@@ -253,8 +328,15 @@ function WorkTerminalPane({
     }
   }, [windowsPty]);
 
-  const initialCwd = session.cwd;
-  const initialCommand = session.command;
+  const previewCwdRef = useRef(session.cwd);
+  const previewCommandRef = useRef(session.command);
+  const presetRef = useRef(session.preset);
+
+  useEffect(() => {
+    previewCwdRef.current = session.cwd;
+    previewCommandRef.current = session.command;
+    presetRef.current = session.preset;
+  }, [session.command, session.cwd, session.preset]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -265,6 +347,22 @@ function WorkTerminalPane({
     let observer: ResizeObserver | null = null;
     let themeObserver: MutationObserver | null = null;
     let pendingClearTimer: ReturnType<typeof setTimeout> | null = null;
+    let cliRefreshShortTimer: ReturnType<typeof setTimeout> | null = null;
+    let cliRefreshFollowupTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleCliRefreshOnSubmit = (data: string) => {
+      if (presetRef.current === 'shell') return;
+      if (!data.includes('\r') && !data.includes('\n')) return;
+      if (cliRefreshShortTimer !== null) clearTimeout(cliRefreshShortTimer);
+      if (cliRefreshFollowupTimer !== null) clearTimeout(cliRefreshFollowupTimer);
+      cliRefreshShortTimer = setTimeout(() => {
+        cliRefreshShortTimer = null;
+        bumpCliSessionsRefresh();
+      }, 650);
+      cliRefreshFollowupTimer = setTimeout(() => {
+        cliRefreshFollowupTimer = null;
+        bumpCliSessionsRefresh();
+      }, 2_200);
+    };
     let clipboardCleanup: (() => void) | null = null;
     const parserDisposables: Array<{ dispose(): void }> = [];
     let previewLine = '';
@@ -290,10 +388,16 @@ function WorkTerminalPane({
         smoothScrollDuration: 100,
         allowTransparency: false,
         theme: buildTerminalTheme(),
+        linkHandler: {
+          activate(_event, text) {
+            openTerminalExternalLink(text);
+          },
+        },
         ...(windowsPtyRef.current ? { windowsPty: windowsPtyRef.current } : {}),
       });
       term.loadAddon(fitAddon);
       term.open(container);
+      parserDisposables.push(registerTerminalUrlLinkProvider(term));
       termRef.current = term;
       fitRef.current = fitAddon;
 
@@ -427,12 +531,14 @@ function WorkTerminalPane({
       });
 
       if (preview) {
-        const promptDir = initialCwd || '~';
-        const banner = initialCommand
-          ? `\x1b[36m${promptDir}\x1b[0m \x1b[90m›\x1b[0m ${initialCommand}\r\n`
+        const promptDir = previewCwdRef.current || '~';
+        const commandBanner = previewCommandRef.current;
+        const banner = commandBanner
+          ? `\x1b[36m${promptDir}\x1b[0m \x1b[90m›\x1b[0m ${commandBanner}\r\n`
           : `\x1b[36m${promptDir}\x1b[0m \x1b[90m$\x1b[0m `;
         term.write(banner);
         term.onData((data) => {
+          scheduleCliRefreshOnSubmit(data);
           if (data === '\r') {
             const cmd = previewLine.trim();
             previewLine = '';
@@ -504,6 +610,7 @@ function WorkTerminalPane({
       });
 
       term.onData((data) => {
+        scheduleCliRefreshOnSubmit(data);
         sendInput(data);
       });
 
@@ -522,6 +629,12 @@ function WorkTerminalPane({
       if (pendingClearTimer !== null) {
         clearTimeout(pendingClearTimer);
       }
+      if (cliRefreshShortTimer !== null) {
+        clearTimeout(cliRefreshShortTimer);
+      }
+      if (cliRefreshFollowupTimer !== null) {
+        clearTimeout(cliRefreshFollowupTimer);
+      }
       for (const disposable of parserDisposables) {
         disposable.dispose();
       }
@@ -535,7 +648,7 @@ function WorkTerminalPane({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [initialCommand, initialCwd, preview, session.id]);
+  }, [preview, session.id]);
 
   const performResume = useCallback(async (options?: { password?: string; rememberPassword?: boolean }) => {
     if (restarting) return;

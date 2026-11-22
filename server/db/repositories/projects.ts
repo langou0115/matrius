@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   LOCAL_WORK_HOST_ID,
+  serializeWorkProjectCliArgs,
   serializeWorkProjectCliProxies,
   validateWorkProjectInput,
   type WorkProject,
@@ -22,6 +23,9 @@ export type WorkProjectRow = {
   codex_proxy_url: string;
   antigravity_proxy_url: string;
   claude_proxy_url: string;
+  codex_cli_args: string;
+  antigravity_cli_args: string;
+  claude_cli_args: string;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -41,12 +45,18 @@ export function serializeWorkProject(row: WorkProjectRow): WorkProject {
     antigravity: row.antigravity_proxy_url || row.proxy_url,
     claude: row.claude_proxy_url || row.proxy_url,
   });
+  const cliArgs = serializeWorkProjectCliArgs({
+    codex: row.codex_cli_args ?? '',
+    antigravity: row.antigravity_cli_args ?? '',
+    claude: row.claude_cli_args ?? '',
+  });
   return {
     id: fromDbUuid(row.id),
     name: row.name,
     hostId: row.host_id,
     directory: row.directory,
     ...(cliProxies ? { cliProxies } : {}),
+    ...(cliArgs ? { cliArgs } : {}),
     revision: row.revision,
     createdAt: toMs(row.created_at) ?? Date.now(),
     updatedAt: toMs(row.updated_at) ?? Date.now(),
@@ -98,8 +108,11 @@ export function createWorkProjectRow(db: AppDatabase, instanceId: number, input:
   const now = toDbTimestamp();
   db.prepare(`
     INSERT INTO work_projects (
-      id, instance_id, name, host_id, directory, proxy_url, codex_proxy_url, antigravity_proxy_url, claude_proxy_url, revision, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, 1, ?, ?)
+      id, instance_id, name, host_id, directory, proxy_url,
+      codex_proxy_url, antigravity_proxy_url, claude_proxy_url,
+      codex_cli_args, antigravity_cli_args, claude_cli_args,
+      revision, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 1, ?, ?)
   `).run(
     id,
     instanceId,
@@ -109,6 +122,9 @@ export function createWorkProjectRow(db: AppDatabase, instanceId: number, input:
     normalized.cliProxies.codex,
     normalized.cliProxies.antigravity,
     normalized.cliProxies.claude,
+    normalized.cliArgs.codex,
+    normalized.cliArgs.antigravity,
+    normalized.cliArgs.claude,
     now,
     now,
   );
@@ -130,15 +146,15 @@ export function updateWorkProjectRow(
   if (input.baseRevision !== undefined && current.revision !== input.baseRevision) {
     throw conflict('项目列表已在其他页面更新，请刷新后重试。', serializeWorkProject(current));
   }
-  // Project name, host, and directory are immutable after creation; only CLI proxies may be updated.
+  // Project name, host, and directory are immutable after creation; only AI config (CLI proxies/args) may be updated.
   if (input.name !== undefined && input.name.trim() !== current.name) {
-    throw invalid('项目创建后仅可配置网络代理，项目名称不可修改。');
+    throw invalid('项目创建后仅可修改 AI 配置，项目名称不可修改。');
   }
   if (input.hostId !== undefined && input.hostId.trim() !== current.host_id) {
-    throw invalid('项目创建后仅可配置网络代理，运行主机不可修改。');
+    throw invalid('项目创建后仅可修改 AI 配置，运行主机不可修改。');
   }
   if (input.directory !== undefined && input.directory.trim() !== current.directory) {
-    throw invalid('项目创建后仅可配置网络代理，项目目录不可修改。');
+    throw invalid('项目创建后仅可修改 AI 配置，项目目录不可修改。');
   }
   const normalized = normalizeValidated({
     hostId: current.host_id,
@@ -156,18 +172,33 @@ export function updateWorkProjectRow(
           ...(input.cliProxies !== undefined ? { cliProxies: input.cliProxies } : {}),
           ...(input.proxyUrl !== undefined ? { proxyUrl: input.proxyUrl } : {}),
         }),
+    ...(input.cliArgs === undefined
+      ? {
+          cliArgs: {
+            codex: current.codex_cli_args ?? '',
+            antigravity: current.antigravity_cli_args ?? '',
+            claude: current.claude_cli_args ?? '',
+          },
+        }
+      : { cliArgs: input.cliArgs }),
   });
   const now = toDbTimestamp();
 
   const result = input.baseRevision !== undefined
     ? db.prepare(`
         UPDATE work_projects
-        SET proxy_url = '', codex_proxy_url = ?, antigravity_proxy_url = ?, claude_proxy_url = ?, revision = revision + 1, updated_at = ?
+        SET proxy_url = '',
+            codex_proxy_url = ?, antigravity_proxy_url = ?, claude_proxy_url = ?,
+            codex_cli_args = ?, antigravity_cli_args = ?, claude_cli_args = ?,
+            revision = revision + 1, updated_at = ?
         WHERE id = ? AND instance_id = ? AND revision = ?
       `).run(
         normalized.cliProxies.codex,
         normalized.cliProxies.antigravity,
         normalized.cliProxies.claude,
+        normalized.cliArgs.codex,
+        normalized.cliArgs.antigravity,
+        normalized.cliArgs.claude,
         now,
         current.id,
         instanceId,
@@ -175,12 +206,18 @@ export function updateWorkProjectRow(
       )
     : db.prepare(`
         UPDATE work_projects
-        SET proxy_url = '', codex_proxy_url = ?, antigravity_proxy_url = ?, claude_proxy_url = ?, revision = revision + 1, updated_at = ?
+        SET proxy_url = '',
+            codex_proxy_url = ?, antigravity_proxy_url = ?, claude_proxy_url = ?,
+            codex_cli_args = ?, antigravity_cli_args = ?, claude_cli_args = ?,
+            revision = revision + 1, updated_at = ?
         WHERE id = ? AND instance_id = ?
       `).run(
         normalized.cliProxies.codex,
         normalized.cliProxies.antigravity,
         normalized.cliProxies.claude,
+        normalized.cliArgs.codex,
+        normalized.cliArgs.antigravity,
+        normalized.cliArgs.claude,
         now,
         current.id,
         instanceId,

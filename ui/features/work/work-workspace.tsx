@@ -1,4 +1,4 @@
-import { LOCAL_WORK_HOST_ID } from '@contract/work-projects';
+import { LOCAL_WORK_HOST_ID, type WorkHostEntry } from '@contract/work-projects';
 import {
   WINDOWS_SHELL_OPTIONS,
   defaultTerminalTitle,
@@ -8,7 +8,9 @@ import {
 } from '@contract/work-terminals';
 import {
   ChevronDown,
+  FileText,
   PanelRight,
+  GitBranch,
   Pencil,
   Pin,
   PinOff,
@@ -22,11 +24,12 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
   type FormEvent,
 } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
-import { useInstance } from '@/features/instance/instance-state';
+import { useFeature, useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { TerminalPresetIcon } from './terminal-preset-icon';
 import {
@@ -36,6 +39,9 @@ import {
   updateWorkTerminal,
 } from './work-api';
 import { WorkErrorDialog } from './work-error-dialog';
+import { WorkGitView } from './work-git-view';
+import { WorkFilePreview } from './work-file-preview';
+import { useWorkFileSave } from './work-file-save';
 import { WorkFilesPanel } from './work-files-panel';
 import { loadWorkSettings } from './work-shell-preference';
 import {
@@ -44,9 +50,15 @@ import {
   addWorkTerminal,
   bumpCliSessionsRefresh,
   detectPreviewPlatform,
+  closeWorkFiles,
+  openWorkFile,
+  openWorkGit,
+  closeWorkGit,
+  isFileDraftDirty,
   hydrateWorkSettings,
   isWindowsPlatform,
   removeWorkTerminals,
+  reorderWorkTerminals,
   selectWorkTerminal,
   setWorkFilesPanelWidth,
   setWorkServerPlatform,
@@ -56,6 +68,20 @@ import {
   useWorkState,
 } from './work-state';
 import { WorkTerminalView } from './work-terminal-view';
+
+function resolveTabDragPosition(
+  event: DragEvent<HTMLElement>,
+  fromIndex: number,
+  toIndex: number,
+): 'before' | 'after' {
+  const rect = typeof event.currentTarget?.getBoundingClientRect === 'function'
+    ? event.currentTarget.getBoundingClientRect()
+    : null;
+  if (rect && rect.width > 0 && event.clientX > 0) {
+    return event.clientX > rect.left + rect.width / 2 ? 'after' : 'before';
+  }
+  return fromIndex < toIndex ? 'after' : 'before';
+}
 
 function createPreviewTerminalSession(input: {
   projectId: string;
@@ -83,17 +109,27 @@ function createPreviewTerminalSession(input: {
 export function WorkWorkspace() {
   const instance = useInstance();
   const preview = useIsPreview();
+  const hasGitFeature = useFeature('work-git');
+  const gitEnabled = preview || hasGitFeature;
+  const saveFile = useWorkFileSave();
   const {
     projects,
     activeProjectId,
     terminals,
     activeTerminalId,
+    fileTabsByProject,
+    gitTabsByProject,
+    editorFontSize,
+    hostUnlockVersion,
     filesPanelOpen,
     filesPanelWidth,
     serverPlatform,
     defaultWindowsShell,
     defaultWindowsShellLoaded,
   } = useWorkState();
+  const hasUnsavedFiles = Object.values(fileTabsByProject).some((tabs) =>
+    Array.from(tabs.drafts.values()).some(isFileDraftDirty),
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -106,22 +142,53 @@ export function WorkWorkspace() {
   } | null>(null);
   const [renaming, setRenaming] = useState<WorkTerminalSession | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
+  const [draggingTerminalId, setDraggingTerminalId] = useState<string | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<{
+    terminalId: string;
+    position: 'before' | 'after';
+  } | null>(null);
 
+  const activeFileTabRef = useRef<HTMLButtonElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const addControlRef = useRef<HTMLDivElement>(null);
   const addCaretRef = useRef<HTMLButtonElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const tabMenuRef = useRef<HTMLDivElement>(null);
+  const dragTerminalIdRef = useRef<string | null>(null);
+
+  const clearTabDragState = useCallback(() => {
+    dragTerminalIdRef.current = null;
+    setDraggingTerminalId(null);
+    setTabDropTarget(null);
+  }, []);
 
   const activeProject = projects.find((item) => item.id === activeProjectId) ?? projects[0] ?? null;
   const projectTerminals = activeProject
     ? terminals.filter((item) => item.projectId === activeProject.id)
     : [];
+  const fileTabs = activeProject ? fileTabsByProject[activeProject.id] : undefined;
+  const gitTab = gitEnabled && activeProject ? gitTabsByProject[activeProject.id] : undefined;
+  const gitActive = gitTab === 'active';
+  const activeFile = gitActive ? undefined : fileTabs?.entries.find((entry) => entry.path === fileTabs.activePath);
+  const filePaths = fileTabs?.entries.map((entry) => entry.path) ?? [];
+  useLayoutEffect(() => {
+    if (activeFile) activeFileTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeFile]);
   const menuTerminal = tabMenu
     ? projectTerminals.find((item) => item.id === tabMenu.terminalId) ?? null
     : null;
   const effectivePlatform = preview ? (serverPlatform ?? detectPreviewPlatform()) : serverPlatform;
   const isWindowsLocal = activeProject?.hostId === LOCAL_WORK_HOST_ID && isWindowsPlatform(effectivePlatform);
+
+  useEffect(() => {
+    if (!hasUnsavedFiles) return;
+    function warnAboutUnsavedFiles(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = true;
+    }
+    window.addEventListener('beforeunload', warnAboutUnsavedFiles);
+    return () => window.removeEventListener('beforeunload', warnAboutUnsavedFiles);
+  }, [hasUnsavedFiles]);
 
   useEffect(() => {
     if (preview) {
@@ -261,6 +328,26 @@ export function WorkWorkspace() {
     }
   }
 
+  function handleOpenFile(entry: WorkHostEntry): void {
+    if (!activeProject) return;
+    if (entry.path === activeFile?.path) {
+      screenRef.current?.querySelector<HTMLTextAreaElement>('.work-code-input textarea')?.focus({ preventScroll: true });
+    }
+    openWorkFile(activeProject.id, entry);
+  }
+
+  function handleCloseFiles(projectId: string, paths: readonly string[]): boolean {
+    const drafts = fileTabsByProject[projectId]?.drafts;
+    if (paths.some((path) => drafts?.get(path)?.saving)) {
+      setNotice('文件正在保存，请稍后关闭标签。');
+      return false;
+    }
+    const hasChanges = paths.some((path) => isFileDraftDirty(drafts?.get(path)));
+    if (hasChanges && !window.confirm('关闭标签会丢弃未保存的文件修改。继续关闭吗？')) return false;
+    closeWorkFiles(projectId, paths);
+    return true;
+  }
+
   function handleCloseTabs(terminalIds: readonly string[]) {
     if (terminalIds.length === 0) return;
     const hasCli = terminals.some((item) => terminalIds.includes(item.id) && item.preset !== 'shell');
@@ -301,7 +388,7 @@ export function WorkWorkspace() {
     }
     const targetId = renaming.id;
     const previousTitle = renaming.title;
-    updateWorkTerminalMeta(targetId, { title: normalized });
+    updateWorkTerminalMeta(targetId, { title: normalized }, { manualRename: true });
     setRenaming(null);
     if (!preview) {
       try {
@@ -326,18 +413,87 @@ export function WorkWorkspace() {
       ref={screenRef}
       className={`work-screen${filesPanelOpen ? ' has-files-panel' : ''}${resizingFiles ? ' is-resizing' : ''}`}
       style={screenStyle}
+      onKeyDown={(event) => {
+        if (activeProject?.hostId !== LOCAL_WORK_HOST_ID || !activeFile || event.nativeEvent.isComposing) return;
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+          event.preventDefault();
+          void saveFile(activeProject.id, activeFile.path);
+        }
+      }}
     >
       <div className="work-workspace">
         <header className="work-topbar">
           <div className="work-tabs" role="tablist" aria-label="终端标签页">
-            {projectTerminals.map((session) => {
-              const isActive = session.id === activeTerminalId;
+            {projectTerminals.map((session, tabIndex) => {
+              const isActive = !gitActive && !activeFile && session.id === activeTerminalId;
               const isPinned = Boolean(session.pinned);
+              const isDraggingTab = draggingTerminalId === session.id;
+              const tabDropPos = tabDropTarget?.terminalId === session.id
+                ? tabDropTarget.position
+                : null;
               const ownerProject = projects.find((item) => item.id === session.projectId);
               return (
                 <div
                   key={session.id}
-                  className={`work-tab${isActive ? ' is-active' : ''}${isPinned ? ' is-pinned' : ''}`}
+                  data-terminal-id={session.id}
+                  className={`work-tab${isActive ? ' is-active' : ''}${isPinned ? ' is-pinned' : ''}${isDraggingTab ? ' is-dragging' : ''}${tabDropPos === 'before' ? ' is-drop-before' : ''}${tabDropPos === 'after' ? ' is-drop-after' : ''}`}
+                  draggable
+                  onDragStart={(event) => {
+                    if (event.target instanceof HTMLElement && event.target.closest('.work-tab-pin-btn, .work-tab-close')) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setTabMenu(null);
+                    setAddMenuOpen(false);
+                    dragTerminalIdRef.current = session.id;
+                    setDraggingTerminalId(session.id);
+                    if (event.dataTransfer) {
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('application/x-matrius-terminal-tab', session.id);
+                    }
+                  }}
+                  onDragOver={(event) => {
+                    const sourceId = dragTerminalIdRef.current;
+                    if (!sourceId || sourceId === session.id) return;
+                    const fromIndex = projectTerminals.findIndex((item) => item.id === sourceId);
+                    if (fromIndex < 0) return;
+                    if (Boolean(projectTerminals[fromIndex].pinned) !== isPinned) return;
+                    event.preventDefault();
+                    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                    const position = resolveTabDragPosition(event, fromIndex, tabIndex);
+                    setTabDropTarget((prev) => (
+                      prev?.terminalId === session.id && prev.position === position
+                        ? prev
+                        : { terminalId: session.id, position }
+                    ));
+                  }}
+                  onDragLeave={(event) => {
+                    const nextTarget = event.relatedTarget as Node | null;
+                    if (nextTarget && event.currentTarget.contains(nextTarget)) return;
+                    setTabDropTarget((prev) => (
+                      prev?.terminalId === session.id ? null : prev
+                    ));
+                  }}
+                  onDrop={(event) => {
+                    const sourceId = dragTerminalIdRef.current
+                      ?? event.dataTransfer?.getData('application/x-matrius-terminal-tab')
+                      ?? '';
+                    const fromIndex = projectTerminals.findIndex((item) => item.id === sourceId);
+                    if (
+                      !sourceId
+                      || sourceId === session.id
+                      || fromIndex < 0
+                      || Boolean(projectTerminals[fromIndex].pinned) !== isPinned
+                    ) {
+                      clearTabDragState();
+                      return;
+                    }
+                    event.preventDefault();
+                    const position = resolveTabDragPosition(event, fromIndex, tabIndex);
+                    clearTabDragState();
+                    reorderWorkTerminals(sourceId, session.id, position);
+                  }}
+                  onDragEnd={clearTabDragState}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setAddMenuOpen(false);
@@ -368,6 +524,7 @@ export function WorkWorkspace() {
                       className="icon-button work-tab-pin-btn"
                       aria-label={`取消固定：${session.title}`}
                       title="取消固定"
+                      draggable={false}
                       onClick={() => void handleTogglePin(session)}
                     >
                       <Pin size={12} strokeWidth={1.75} aria-hidden="true" />
@@ -377,6 +534,7 @@ export function WorkWorkspace() {
                       type="button"
                       className="icon-button work-tab-close"
                       aria-label={`关闭终端：${session.title}`}
+                      draggable={false}
                       onClick={() => void handleCloseTabs([session.id])}
                     >
                       <X size={13} strokeWidth={1.75} aria-hidden="true" />
@@ -385,6 +543,44 @@ export function WorkWorkspace() {
                 </div>
               );
             })}
+            {activeProject && fileTabs?.entries.map((entry) => (
+              <div key={entry.path} className={`work-tab${entry.path === activeFile?.path ? ' is-active' : ''}`}>
+                <button
+                  type="button"
+                  role="tab"
+                  className="work-tab-select"
+                  aria-selected={entry.path === activeFile?.path}
+                  ref={entry.path === activeFile?.path ? activeFileTabRef : undefined}
+                  title={entry.path}
+                  onClick={() => handleOpenFile(entry)}
+                >
+                  <FileText size={14} aria-hidden="true" />
+                  <span className="work-tab-title">{entry.name}</span>
+                  {isFileDraftDirty(fileTabs.drafts.get(entry.path)) && (
+                    <span className="work-file-dirty" role="img" aria-label="未保存" title="未保存" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="icon-button work-tab-close"
+                  aria-label={`关闭文件：${entry.name}`}
+                  onClick={() => handleCloseFiles(activeProject.id, [entry.path])}
+                >
+                  <X size={13} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+            {activeProject && gitTab && (
+              <div className={`work-tab${gitActive ? ' is-active' : ''}`}>
+                <button type="button" role="tab" aria-selected={gitActive} className="work-tab-select" onClick={() => openWorkGit(activeProject.id)}>
+                  <GitBranch size={14} aria-hidden="true" />
+                  <span className="work-tab-title">Git</span>
+                </button>
+                <button type="button" className="icon-button work-tab-close" aria-label="关闭 Git 标签" onClick={() => closeWorkGit(activeProject.id)}>
+                  <X size={13} aria-hidden="true" />
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="work-topbar-actions">
@@ -481,6 +677,19 @@ export function WorkWorkspace() {
               )}
             </div>
 
+            {gitEnabled && (
+              <button
+                type="button"
+                className={`icon-button work-topbar-btn${gitActive ? ' is-active' : ''}`}
+                aria-label="打开 Git 查看器"
+                title="Git"
+                aria-pressed={gitActive}
+                disabled={!activeProject}
+                onClick={() => { if (activeProject) openWorkGit(activeProject.id); }}
+              >
+                <GitBranch size={17} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            )}
             <button
               type="button"
               className={`icon-button work-topbar-btn${filesPanelOpen ? ' is-active' : ''}`}
@@ -499,7 +708,20 @@ export function WorkWorkspace() {
               terminals={terminals}
               activeProjectId={activeProject?.id ?? null}
               activeTerminalId={activeTerminalId}
-              hidden={projectTerminals.length === 0}
+              hidden={gitActive || Boolean(activeFile) || projectTerminals.length === 0}
+            />
+          )}
+          {activeProject && gitTab && (
+            <WorkGitView key={activeProject.id} projectId={activeProject.id} active={gitActive} />
+          )}
+          {activeProject && activeFile && (
+            <WorkFilePreview
+              key={JSON.stringify([activeProject.id, activeFile.path, hostUnlockVersion])}
+              hostId={activeProject.hostId}
+              projectId={activeProject.id}
+              file={activeFile}
+              draft={fileTabs?.drafts.get(activeFile.path)}
+              fontSize={editorFontSize}
             />
           )}
         </main>
@@ -507,7 +729,9 @@ export function WorkWorkspace() {
 
       {filesPanelOpen && (
         <WorkFilesPanel
+          key={activeProject?.id}
           project={activeProject}
+          onOpenFile={handleOpenFile}
           width={filesPanelWidth}
           getMaxWidth={getMaxFilesPanelWidth}
           onResize={(nextWidth, maxWidth) => setWorkFilesPanelWidth(nextWidth, maxWidth)}
@@ -558,9 +782,10 @@ export function WorkWorkspace() {
             role="menuitem"
             type="button"
             data-action="close-others"
-            disabled={otherClosableIds.length === 0}
+            disabled={otherClosableIds.length === 0 && filePaths.length === 0}
             onClick={() => {
               setTabMenu(null);
+              if (activeProject && !handleCloseFiles(activeProject.id, filePaths)) return;
               void handleCloseTabs(otherClosableIds);
             }}
           >
@@ -571,9 +796,10 @@ export function WorkWorkspace() {
             role="menuitem"
             type="button"
             data-action="close-all"
-            disabled={allClosableIds.length === 0}
+            disabled={allClosableIds.length === 0 && filePaths.length === 0}
             onClick={() => {
               setTabMenu(null);
+              if (activeProject && !handleCloseFiles(activeProject.id, filePaths)) return;
               void handleCloseTabs(allClosableIds);
             }}
           >

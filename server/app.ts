@@ -250,7 +250,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   });
   const terminals = options.terminals ?? createWorkTerminalService({ db, runtimeHostSecrets });
   const cliSessions = options.cliSessions ?? createWorkCliSessionService({ db, runtimeHostSecrets });
-  registerProjectRoutes(app, { db, terminals, cliSessions });
+  registerProjectRoutes(app, { db, terminals, cliSessions, runtimeHostSecrets, ...(options.hostFs ? { hostFs: options.hostFs } : {}) });
   registerTerminalRoutes(app, { db, terminals });
   registerUsageRoutes(app, { db });
   registerTaskRoutes(app, { db });

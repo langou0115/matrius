@@ -1,0 +1,2 @@
+ALTER TABLE work_settings ADD COLUMN editor_font_size INTEGER NOT NULL DEFAULT 14;
+ALTER TABLE work_settings ADD COLUMN editor_auto_save INTEGER NOT NULL DEFAULT 0;

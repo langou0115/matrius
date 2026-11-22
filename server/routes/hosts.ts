@@ -98,6 +98,22 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     return hostFs.listEntries(request.params.hostId, query.path);
   });
 
+  app.get<{ Params: { hostId: string } }>('/api/hosts/:hostId/fs/preview', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path } = fsQuerySchema.required().parse(request.query ?? {});
+    return hostFs.readPreview(request.params.hostId, path);
+  });
+
+  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/text', { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path, text, baseRevision } = z.object({
+      path: z.string().min(1).max(1000),
+      text: z.string().max(256 * 1024),
+      baseRevision: z.string().regex(/^[a-f0-9]{64}$/u),
+    }).parse(request.body ?? {});
+    return hostFs.savePreview(request.params.projectId, path, text, baseRevision);
+  });
+
   app.delete<{ Params: { hostId: string } }>('/api/hosts/:hostId', async (request, reply) => {
     const query = deleteHostQuerySchema.parse(request.query ?? {});
     hosts.remove(request.params.hostId, query.baseRevision);

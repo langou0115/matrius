@@ -1,10 +1,13 @@
 import type { WorkCliProvider } from '@contract/work-cli';
 import {
   LOCAL_WORK_HOST_ID,
-  WORK_PROJECT_PROXY_CLI_ITEMS,
+  WORK_PROJECT_AI_CLI_ITEMS,
   deriveProjectName,
-  normalizeWorkProjectCliProxies,
+  normalizeProjectCliArgs,
+  normalizeProjectProxyUrl,
+  serializeWorkProjectCliArgs,
   serializeWorkProjectCliProxies,
+  type NormalizedWorkProjectCliArgs,
   type NormalizedWorkProjectCliProxies,
   type WorkProject,
 } from '@contract/work-projects';
@@ -30,6 +33,11 @@ import { DirectoryBrowserDialog } from './directory-browser-dialog';
 import { TerminalPresetIcon } from './terminal-preset-icon';
 import { createPreviewWorkHosts, createWorkProject, updateWorkProject } from './work-api';
 import { WorkErrorDialog } from './work-error-dialog';
+import {
+  setWorkProjectAiGroupExpanded,
+  toggleWorkProjectAiGroupExpanded,
+  useWorkState,
+} from './work-state';
 
 type Props = {
   project?: WorkProject | null;
@@ -56,6 +64,12 @@ function hostSummaryLabel(host: WorkHost): string {
   return host.status === 'error' ? `${host.name} · 异常` : host.name;
 }
 
+const CLI_ARGS_PLACEHOLDERS: Record<WorkCliProvider, string> = {
+  claude: '例如：--dangerously-skip-permissions（留空按默认启动）',
+  codex: '例如：--dangerously-bypass-approvals-and-sandbox（留空按默认启动）',
+  antigravity: '例如：命令行启动参数（留空按默认启动）',
+};
+
 export function CreateProjectDialog({ project = null, initialHosts, onHostsSync, onSaved, onClose }: Props) {
   const instance = useInstance();
   const preview = useIsPreview();
@@ -74,14 +88,21 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
     antigravity: project?.cliProxies?.antigravity ?? '',
     claude: project?.cliProxies?.claude ?? '',
   }));
-  const [proxyExpanded, setProxyExpanded] = useState(() => Boolean(project));
+  const [cliArgs, setCliArgs] = useState<Record<WorkCliProvider, string>>(() => ({
+    codex: project?.cliArgs?.codex ?? '',
+    antigravity: project?.cliArgs?.antigravity ?? '',
+    claude: project?.cliArgs?.claude ?? '',
+  }));
+  const [aiConfigExpanded, setAiConfigExpanded] = useState(() => Boolean(project));
+  const { projectAiExpandedGroups: expandedCliGroups } = useWorkState();
   const [browseDir, setBrowseDir] = useState(() => project?.directory ?? '');
   const [browsing, setBrowsing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const configuredProxyCount = WORK_PROJECT_PROXY_CLI_ITEMS.filter(
-    (item) => Boolean(cliProxies[item.id].trim()),
-  ).length;
+  const configuredAiCount = WORK_PROJECT_AI_CLI_ITEMS.reduce(
+    (count, item) => count + (cliProxies[item.id].trim() ? 1 : 0) + (cliArgs[item.id].trim() ? 1 : 0),
+    0,
+  );
 
   const canFetchHosts = !preview && instance.status === 'ready';
 
@@ -151,15 +172,29 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
       setError('请先选择项目目录。');
       return;
     }
-    let normalizedProxies: NormalizedWorkProjectCliProxies;
-    try {
-      normalizedProxies = normalizeWorkProjectCliProxies(cliProxies);
-    } catch (reason) {
-      setProxyExpanded(true);
-      setError(reason instanceof Error && reason.message ? reason.message : '请输入合法的网络代理地址。');
-      return;
+    const normalizedProxies: NormalizedWorkProjectCliProxies = {
+      codex: '',
+      antigravity: '',
+      claude: '',
+    };
+    const normalizedArgs: NormalizedWorkProjectCliArgs = {
+      codex: '',
+      antigravity: '',
+      claude: '',
+    };
+    for (const item of WORK_PROJECT_AI_CLI_ITEMS) {
+      try {
+        normalizedProxies[item.id] = normalizeProjectProxyUrl(cliProxies[item.id], item.label);
+        normalizedArgs[item.id] = normalizeProjectCliArgs(cliArgs[item.id], item.label);
+      } catch (reason) {
+        setAiConfigExpanded(true);
+        setWorkProjectAiGroupExpanded(item.id, true);
+        setError(reason instanceof Error && reason.message ? reason.message : 'AI 配置不合法。');
+        return;
+      }
     }
     const serializedProxies = serializeWorkProjectCliProxies(normalizedProxies);
+    const serializedArgs = serializeWorkProjectCliArgs(normalizedArgs);
 
     if (preview) {
       const now = Date.now();
@@ -167,6 +202,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
         onSaved({
           ...project,
           ...(serializedProxies ? { cliProxies: serializedProxies } : { cliProxies: undefined }),
+          ...(serializedArgs ? { cliArgs: serializedArgs } : { cliArgs: undefined }),
           revision: project.revision + 1,
           updatedAt: now,
         });
@@ -177,6 +213,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
           hostId,
           directory: trimmedDir,
           ...(serializedProxies ? { cliProxies: serializedProxies } : {}),
+          ...(serializedArgs ? { cliArgs: serializedArgs } : {}),
           revision: 1,
           createdAt: now,
           updatedAt: now,
@@ -191,12 +228,14 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
       const saved = project
         ? await updateWorkProject(instance.request, project.id, {
             cliProxies: normalizedProxies,
+            cliArgs: normalizedArgs,
             baseRevision: project.revision,
           })
         : await createWorkProject(instance.request, {
             hostId,
             directory: trimmedDir,
             ...(serializedProxies ? { cliProxies: serializedProxies } : {}),
+            ...(serializedArgs ? { cliArgs: serializedArgs } : {}),
           });
       onSaved(saved);
       onClose();
@@ -215,7 +254,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
         className="compact-dialog work-project-dialog"
       >
         <form className="provider-edit-form" onSubmit={(event) => void handleSubmit(event)}>
-          <fieldset disabled={saving}>
+          <fieldset className="work-project-form-body" disabled={saving}>
             {editing && project && (
               <label className="model-form-field">
                 项目名称
@@ -245,6 +284,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
               <SelectField
                 label="主机"
                 hideLabel
+                fixedPopover
                 value={editing && project ? project.hostId : hostId}
                 options={hostOptions}
                 disabled={editing}
@@ -286,55 +326,99 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
               <button
                 type="button"
                 className="work-proxy-toggle"
-                aria-expanded={proxyExpanded}
+                aria-expanded={aiConfigExpanded}
                 aria-controls="work-project-proxy-fields"
-                onClick={() => setProxyExpanded((open) => !open)}
+                onClick={() => setAiConfigExpanded((open) => !open)}
               >
-                <span className="work-field-title">网络代理</span>
+                <span className="work-field-title">AI 配置</span>
                 <span className="work-proxy-toggle-meta">
-                  {configuredProxyCount > 0 && <span>已配置 {configuredProxyCount} 项</span>}
+                  {configuredAiCount > 0 && <span>已配置 {configuredAiCount} 项</span>}
                   <ChevronRight size={15} strokeWidth={1.75} className="work-proxy-chevron" aria-hidden="true" />
                 </span>
               </button>
-              {proxyExpanded && (
+              {aiConfigExpanded && (
                 <div id="work-project-proxy-fields" className="work-proxy-fields">
-                  {WORK_PROJECT_PROXY_CLI_ITEMS.map((item) => {
-                    const inputId = `work-project-proxy-${item.id}`;
+                  {WORK_PROJECT_AI_CLI_ITEMS.map((item) => {
+                    const proxyInputId = `work-project-proxy-${item.id}`;
+                    const argsInputId = `work-project-args-${item.id}`;
+                    const groupPanelId = `work-project-ai-group-${item.id}`;
+                    const groupExpanded = Boolean(expandedCliGroups[item.id]);
+                    const groupConfiguredCount =
+                      (cliProxies[item.id].trim() ? 1 : 0) + (cliArgs[item.id].trim() ? 1 : 0);
                     return (
-                      <div key={item.id} className="work-proxy-cli-field">
-                        <label className="work-proxy-cli-label" htmlFor={inputId}>
-                          <TerminalPresetIcon preset={item.id} size={14} />
-                          <span>{item.label}</span>
-                        </label>
-                        <input
-                          id={inputId}
-                          className="text-field work-proxy-input"
-                          value={cliProxies[item.id]}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setCliProxies((current) => ({ ...current, [item.id]: value }));
-                          }}
-                          placeholder="例如：http://127.0.0.1:7890（留空不上代理）"
-                          autoCapitalize="none"
-                          spellCheck={false}
-                          maxLength={500}
-                        />
+                      <div key={item.id} className="work-ai-cli-group" data-cli-provider={item.id}>
+                        <button
+                          type="button"
+                          className="work-ai-cli-group-toggle"
+                          aria-expanded={groupExpanded}
+                          aria-controls={groupPanelId}
+                          onClick={() => toggleWorkProjectAiGroupExpanded(item.id)}
+                        >
+                          <span className="work-ai-cli-group-header">
+                            <TerminalPresetIcon preset={item.id} size={14} />
+                            <span>{item.label}</span>
+                          </span>
+                          <span className="work-proxy-toggle-meta">
+                            {groupConfiguredCount > 0 && <span>已配置 {groupConfiguredCount} 项</span>}
+                            <ChevronRight size={14} strokeWidth={1.75} className="work-proxy-chevron" aria-hidden="true" />
+                          </span>
+                        </button>
+                        {groupExpanded && (
+                          <div id={groupPanelId} className="work-ai-cli-group-fields">
+                            <div className="work-proxy-cli-field">
+                              <label className="work-proxy-cli-label" htmlFor={proxyInputId}>
+                                网络代理
+                              </label>
+                              <input
+                                id={proxyInputId}
+                                className="text-field work-proxy-input"
+                                value={cliProxies[item.id]}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setCliProxies((current) => ({ ...current, [item.id]: value }));
+                                }}
+                                placeholder="例如：http://127.0.0.1:7890（留空不上代理）"
+                                autoCapitalize="none"
+                                spellCheck={false}
+                                maxLength={500}
+                              />
+                            </div>
+                            <div className="work-proxy-cli-field">
+                              <label className="work-proxy-cli-label" htmlFor={argsInputId}>
+                                启动参数
+                              </label>
+                              <input
+                                id={argsInputId}
+                                className="text-field work-proxy-input"
+                                value={cliArgs[item.id]}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setCliArgs((current) => ({ ...current, [item.id]: value }));
+                                }}
+                                placeholder={CLI_ARGS_PLACEHOLDERS[item.id]}
+                                autoCapitalize="none"
+                                spellCheck={false}
+                                maxLength={500}
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               )}
             </div>
-
-            <div className="dialog-footer">
-              <button type="button" className="secondary-button" onClick={onClose}>取消</button>
-              <button type="submit" className="primary-button" disabled={saving}>
-                {saving
-                  ? (editing ? '保存中…' : '创建中…')
-                  : (editing ? '保存' : '创建项目')}
-              </button>
-            </div>
           </fieldset>
+
+          <div className="dialog-footer">
+            <button type="button" className="secondary-button" disabled={saving} onClick={onClose}>取消</button>
+            <button type="submit" className="primary-button" disabled={saving}>
+              {saving
+                ? (editing ? '保存中…' : '创建中…')
+                : (editing ? '保存' : '创建项目')}
+            </button>
+          </div>
         </form>
       </Dialog>
 

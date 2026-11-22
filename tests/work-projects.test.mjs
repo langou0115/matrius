@@ -239,14 +239,20 @@ test('work sidebar creates projects by selecting host and browsing directories/f
 
     const editDialog = dom.document.querySelector('.work-project-dialog[open]');
     assert.ok(editDialog);
+    const editHeader = editDialog.querySelector('.dialog-header');
+    const editBody = editDialog.querySelector('.work-project-form-body');
+    const editFooter = editDialog.querySelector('.dialog-footer');
+    assert.ok(editHeader && editBody && editFooter);
+    assert.equal(editBody.contains(editHeader), false);
+    assert.equal(editBody.contains(editFooter), false);
     const nameInput = editDialog.querySelector('input.text-field');
     const editHostTrigger = editDialog.querySelector('.select-field-trigger');
     const editDirBtn = editDialog.querySelector('.work-dir-picker');
     const editProxyToggle = editDialog.querySelector('.work-proxy-toggle');
-    const editCodexProxyInput = editDialog.querySelector('#work-project-proxy-codex');
     const editForm = editDialog.querySelector('form.provider-edit-form');
-    assert.ok(nameInput && editHostTrigger && editDirBtn && editProxyToggle && editCodexProxyInput && editForm);
-    // Project name, host, and directory are locked after creation; only network proxy fields remain editable.
+    assert.ok(nameInput && editHostTrigger && editDirBtn && editProxyToggle && editForm);
+    assert.match(editProxyToggle.textContent ?? '', /AI 配置/);
+    // Project name, host, and directory are locked after creation; only AI config (proxies/args) remains editable.
     assert.equal(nameInput.disabled, true);
     assert.equal(nameInput.value, 'matrius');
     assert.equal(editHostTrigger.disabled, true);
@@ -258,20 +264,82 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.equal(dom.document.querySelector('.work-browser-dialog[open]'), null);
     assert.match(editDirBtn.textContent ?? '', /\/home\/dev\/projects\/matrius/);
     assert.equal(editProxyToggle.getAttribute('aria-expanded'), 'true');
-    assert.equal(editCodexProxyInput.disabled, false);
 
+    // Each CLI group under AI 配置 starts collapsed when empty and can be expanded/collapsed independently.
+    const editCodexToggle = editDialog.querySelector('.work-ai-cli-group[data-cli-provider="codex"] .work-ai-cli-group-toggle');
+    const editAgyToggle = editDialog.querySelector('.work-ai-cli-group[data-cli-provider="antigravity"] .work-ai-cli-group-toggle');
+    const editClaudeToggle = editDialog.querySelector('.work-ai-cli-group[data-cli-provider="claude"] .work-ai-cli-group-toggle');
+    assert.ok(editCodexToggle && editAgyToggle && editClaudeToggle);
+    assert.equal(editCodexToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(editAgyToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(editClaudeToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(editDialog.querySelector('#work-project-proxy-codex'), null);
+
+    await act(async () => { editCodexToggle.click(); });
+    await act(async () => { editClaudeToggle.click(); });
+    assert.equal(editCodexToggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(editClaudeToggle.getAttribute('aria-expanded'), 'true');
+    const editCodexProxyInput = editDialog.querySelector('#work-project-proxy-codex');
+    const editClaudeArgsInput = editDialog.querySelector('#work-project-args-claude');
+    assert.ok(editCodexProxyInput && editClaudeArgsInput);
+    assert.equal(editCodexProxyInput.disabled, false);
+    assert.equal(editClaudeArgsInput.disabled, false);
+
+    // Collapsing a group hides its inputs again without discarding values, and re-expanding preserves them.
     const editCodexKey = Object.keys(editCodexProxyInput).find((key) => key.startsWith('__reactProps'));
+    const editClaudeArgsKey = Object.keys(editClaudeArgsInput).find((key) => key.startsWith('__reactProps'));
     const editFormPropsKey = Object.keys(editForm).find((key) => key.startsWith('__reactProps'));
-    assert.ok(editCodexKey && editFormPropsKey);
+    assert.ok(editCodexKey && editClaudeArgsKey && editFormPropsKey);
     await act(async () => {
       editCodexProxyInput.value = 'http://127.0.0.1:7890';
       editCodexProxyInput[editCodexKey].onChange({ target: editCodexProxyInput });
+      editClaudeArgsInput.value = '--dangerously-skip-permissions';
+      editClaudeArgsInput[editClaudeArgsKey].onChange({ target: editClaudeArgsInput });
     });
+    await act(async () => { editCodexToggle.click(); });
+    assert.equal(editCodexToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(editDialog.querySelector('#work-project-proxy-codex'), null);
+    assert.match(editCodexToggle.textContent ?? '', /已配置 1 项/);
     await act(async () => {
       await editForm[editFormPropsKey].onSubmit({ preventDefault() {} });
     });
     assert.equal(dom.document.querySelector('.work-project-dialog[open]'), null);
     assert.match(dom.document.querySelector('.work-project-item.is-active')?.textContent ?? '', /matrius/);
+
+    // Re-opening project settings remembers each AI group's expanded/collapsed state (codex collapsed, claude expanded).
+    const reopenItem = dom.document.querySelector('.work-project-item.is-active');
+    const reopenKey = Object.keys(reopenItem).find((key) => key.startsWith('__reactProps'));
+    await act(async () => {
+      reopenItem[reopenKey].onContextMenu({
+        clientX: 84,
+        clientY: 120,
+        currentTarget: reopenItem,
+        preventDefault() {},
+      });
+    });
+    const reopenSettingsBtn = Array.from(dom.document.querySelectorAll('#work-project-menu [role="menuitem"]'))
+      .find((item) => item.textContent?.includes('项目设置'));
+    assert.ok(reopenSettingsBtn);
+    await act(async () => { reopenSettingsBtn.click(); });
+    const reopenedDialog = dom.document.querySelector('.work-project-dialog[open]');
+    assert.ok(reopenedDialog);
+    assert.equal(
+      reopenedDialog.querySelector('.work-ai-cli-group[data-cli-provider="codex"] .work-ai-cli-group-toggle')?.getAttribute('aria-expanded'),
+      'false',
+    );
+    assert.equal(
+      reopenedDialog.querySelector('.work-ai-cli-group[data-cli-provider="claude"] .work-ai-cli-group-toggle')?.getAttribute('aria-expanded'),
+      'true',
+    );
+    assert.equal(reopenedDialog.querySelector('#work-project-args-claude')?.value, '--dangerously-skip-permissions');
+    // Collapse Claude again before closing so the next dialog assertion verifies remembered collapsed state too.
+    await act(async () => {
+      reopenedDialog.querySelector('.work-ai-cli-group[data-cli-provider="claude"] .work-ai-cli-group-toggle')?.click();
+    });
+    await act(async () => {
+      reopenedDialog.querySelector('.dialog-header .icon-button')?.click();
+    });
+    assert.equal(dom.document.querySelector('.work-project-dialog[open]'), null);
 
     const updatedProjectItem = dom.document.querySelector('.work-project-item.is-active');
     const updatedItemKey = Object.keys(updatedProjectItem).find((key) => key.startsWith('__reactProps'));
@@ -370,22 +438,37 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.ok(selectDriveDirBtn);
     await act(async () => { selectDriveDirBtn.click(); });
 
-    // Expandable network proxy section starts collapsed and configures Codex, Antigravity, Claude Code separately.
+    // Expandable AI config section starts collapsed and configures proxy + launch args for Codex, Antigravity, Claude Code.
     const proxyToggle = secondDialog.querySelector('.work-proxy-toggle');
     assert.ok(proxyToggle);
+    assert.match(proxyToggle.textContent ?? '', /AI 配置/);
     assert.equal(proxyToggle.getAttribute('aria-expanded'), 'false');
     assert.equal(secondDialog.querySelector('#work-project-proxy-fields'), null);
 
     await act(async () => { proxyToggle.click(); });
     assert.equal(proxyToggle.getAttribute('aria-expanded'), 'true');
+    const codexGroupToggle = secondDialog.querySelector('.work-ai-cli-group[data-cli-provider="codex"] .work-ai-cli-group-toggle');
+    const agyGroupToggle = secondDialog.querySelector('.work-ai-cli-group[data-cli-provider="antigravity"] .work-ai-cli-group-toggle');
+    const claudeGroupToggle = secondDialog.querySelector('.work-ai-cli-group[data-cli-provider="claude"] .work-ai-cli-group-toggle');
+    assert.ok(codexGroupToggle && agyGroupToggle && claudeGroupToggle);
+    assert.equal(codexGroupToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(agyGroupToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(claudeGroupToggle.getAttribute('aria-expanded'), 'false');
+    await act(async () => { codexGroupToggle.click(); });
+    await act(async () => { agyGroupToggle.click(); });
+    await act(async () => { claudeGroupToggle.click(); });
     const codexProxyInput = secondDialog.querySelector('#work-project-proxy-codex');
     const agyProxyInput = secondDialog.querySelector('#work-project-proxy-antigravity');
     const claudeProxyInput = secondDialog.querySelector('#work-project-proxy-claude');
-    assert.ok(codexProxyInput && agyProxyInput && claudeProxyInput);
+    const codexArgsInput = secondDialog.querySelector('#work-project-args-codex');
+    const agyArgsInput = secondDialog.querySelector('#work-project-args-antigravity');
+    const claudeArgsInput = secondDialog.querySelector('#work-project-args-claude');
+    assert.ok(codexProxyInput && agyProxyInput && claudeProxyInput && codexArgsInput && agyArgsInput && claudeArgsInput);
 
     const codexKey = Object.keys(codexProxyInput).find((key) => key.startsWith('__reactProps'));
     const claudeKey = Object.keys(claudeProxyInput).find((key) => key.startsWith('__reactProps'));
-    assert.ok(codexKey && claudeKey);
+    const claudeArgsKey = Object.keys(claudeArgsInput).find((key) => key.startsWith('__reactProps'));
+    assert.ok(codexKey && claudeKey && claudeArgsKey);
     const createForm = secondDialog.querySelector('form');
     const createFormKey = Object.keys(createForm).find((key) => key.startsWith('__reactProps'));
     await act(async () => {
@@ -403,7 +486,10 @@ test('work sidebar creates projects by selecting host and browsing directories/f
       codexProxyInput[codexKey].onChange({ target: codexProxyInput });
       claudeProxyInput.value = 'socks5://127.0.0.1:1080';
       claudeProxyInput[claudeKey].onChange({ target: claudeProxyInput });
+      claudeArgsInput.value = '--dangerously-skip-permissions';
+      claudeArgsInput[claudeArgsKey].onChange({ target: claudeArgsInput });
     });
+    assert.match(proxyToggle.textContent ?? '', /已配置 3 项/);
     await act(async () => { await createForm[createFormKey].onSubmit({ preventDefault() {} }); });
     const createdItem = dom.document.querySelector('.work-project-item.is-active');
     assert.ok(createdItem);

@@ -291,6 +291,7 @@ const schemas: Record<string, Schema> = {
     hostId: str(),
     directory: str(),
     cliProxies: obj({ codex: str(), antigravity: str(), claude: str() }),
+    cliArgs: obj({ codex: str(), antigravity: str(), claude: str() }),
     revision: int(),
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -507,6 +508,86 @@ export const openApiDocument = {
         responses: { ...ok(ref('HostDirectoryListing')), ...errorResponses },
       },
     },
+    '/api/hosts/{hostId}/fs/preview': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Read a UTF-8 text file up to 256 KiB',
+        parameters: [
+          { name: 'hostId', in: 'path', required: true, schema: str() },
+          { name: 'path', in: 'query', required: true, schema: str() },
+        ],
+        responses: { ...ok(obj({ text: str(), revision: str() }, ['text', 'revision'])), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/files/text': {
+      put: {
+        tags: ['hosts'],
+        summary: 'Save a local work project text file if its revision matches',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        requestBody: jsonBody(obj({ path: str(), text: str(), baseRevision: str() }, ['path', 'text', 'baseRevision'])),
+        responses: { ...ok(obj({ text: str(), revision: str() }, ['text', 'revision'])), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Read local and remote-tracking Git refs and worktree status',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        responses: { ...ok(obj({
+          root: str(), branch: nullable(str()), upstream: nullable(str()), ahead: int(), behind: int(),
+          localBranches: arr(str()), remoteBranches: arr(str()),
+          changes: arr(obj({ path: str(), index: str(), workingTree: str() }, ['path', 'index', 'workingTree'])),
+        })), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/graph': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Read up to 100 Git commits with parent links and refs',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        responses: { ...ok(arr(obj({ oid: str(), parents: arr(str()), refs: arr(str()), subject: str(), author: str(), date: str() }))), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/commits/{oid}/diff': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Read changes introduced by a Git commit',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: str() },
+          { name: 'oid', in: 'path', required: true, schema: str() },
+        ],
+        responses: { ...ok(obj({ patch: str(), truncated: bool() }, ['patch', 'truncated'])), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/diff': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Read a single Git file diff from the index or working tree',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: str() },
+          { name: 'path', in: 'query', required: true, schema: str() },
+          { name: 'scope', in: 'query', required: true, schema: { type: 'string', enum: ['index', 'worktree'] } },
+        ],
+        responses: { ...ok(obj({ patch: str(), truncated: bool() }, ['patch', 'truncated'])), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/fetch': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Fetch configured Git remotes and refresh their tracking branches',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        responses: { ...ok(), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/commits': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Commit only the selected changed paths',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        requestBody: jsonBody(obj({ message: str(), paths: arr(str()) }, ['message', 'paths'])),
+        responses: { ...created(obj({ oid: str() }, ['oid'])), ...errorResponses },
+      },
+    },
     '/api/projects': {
       get: {
         tags: ['hosts'],
@@ -521,6 +602,7 @@ export const openApiDocument = {
           directory: str(),
           name: str(),
           cliProxies: obj({ codex: str(), antigravity: str(), claude: str() }),
+          cliArgs: obj({ codex: str(), antigravity: str(), claude: str() }),
         }, ['hostId', 'directory'])),
         responses: { ...created(ref('WorkProject')), ...errorResponses },
       },
@@ -528,10 +610,11 @@ export const openApiDocument = {
     '/api/projects/{projectId}': {
       patch: {
         tags: ['hosts'],
-        summary: 'Update proxy configuration for a desktop work project',
+        summary: 'Update AI configuration (proxies and launch arguments) for a desktop work project',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: id }],
         requestBody: jsonBody(obj({
           cliProxies: obj({ codex: str(), antigravity: str(), claude: str() }),
+          cliArgs: obj({ codex: str(), antigravity: str(), claude: str() }),
           baseRevision: int(),
         })),
         responses: { ...ok(ref('WorkProject')), ...errorResponses },
@@ -573,8 +656,11 @@ export const openApiDocument = {
           filesPanelOpen: bool(),
           filesPanelWidth: nullable(int()),
           persistTerminalScrollback: bool(),
+          editorFontSize: { type: 'integer', minimum: 10, maximum: 32 },
+          editorAutoSave: bool(),
           projectOrder: arr(id),
           cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
+          terminalOrder: arr(id),
         })),
       },
       put: {
@@ -587,8 +673,11 @@ export const openApiDocument = {
           filesPanelOpen: bool(),
           filesPanelWidth: nullable(int()),
           persistTerminalScrollback: bool(),
+          editorFontSize: { type: 'integer', minimum: 10, maximum: 32 },
+          editorAutoSave: bool(),
           projectOrder: arr(id),
           cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
+          terminalOrder: arr(id),
         })),
         responses: ok(obj({
           defaultWindowsShell: { type: 'string', enum: ['powershell', 'cmd'] },
@@ -597,8 +686,11 @@ export const openApiDocument = {
           filesPanelOpen: bool(),
           filesPanelWidth: nullable(int()),
           persistTerminalScrollback: bool(),
+          editorFontSize: { type: 'integer', minimum: 10, maximum: 32 },
+          editorAutoSave: bool(),
           projectOrder: arr(id),
           cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
+          terminalOrder: arr(id),
         })),
       },
     },
@@ -637,9 +729,9 @@ export const openApiDocument = {
     '/api/work/terminals/{terminalId}': {
       patch: {
         tags: ['hosts'],
-        summary: 'Rename or pin a PTY terminal session',
+        summary: 'Rename, pin, or bind a CLI session on a PTY terminal session',
         parameters: [{ name: 'terminalId', in: 'path', required: true, schema: id }],
-        requestBody: jsonBody(obj({ title: str(), pinned: bool() })),
+        requestBody: jsonBody(obj({ title: str(), pinned: bool(), cliSessionId: str() })),
         responses: { ...ok(ref('WorkTerminalSession')), ...errorResponses },
       },
       delete: {

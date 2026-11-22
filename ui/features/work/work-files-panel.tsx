@@ -27,11 +27,13 @@ function WorkTreeBranch({
   expanded,
   treeCache,
   onToggleDir,
+  onOpenFile,
 }: {
   entries: readonly WorkHostEntry[];
   depth: number;
   expanded: Readonly<Record<string, boolean>>;
   treeCache: Readonly<TreeCache>;
+  onOpenFile: (entry: WorkHostEntry) => void;
   onToggleDir: (entry: WorkHostEntry) => void;
 }) {
   return (
@@ -45,9 +47,12 @@ function WorkTreeBranch({
 
         if (!isDir) {
           return (
-            <div
+            <button
               key={entry.path}
-              className="work-tree-row is-file"
+              type="button"
+              className={`work-tree-row is-file${accessible ? '' : ' is-disabled'}`}
+              disabled={!accessible}
+              onClick={() => onOpenFile(entry)}
               style={{ paddingLeft }}
               title={entry.path}
             >
@@ -56,7 +61,7 @@ function WorkTreeBranch({
                 <FileTypeIcon file={{ name: entry.name, type: '' }} />
               </span>
               <span className="work-tree-name">{entry.name}</span>
-            </div>
+            </button>
           );
         }
 
@@ -98,6 +103,7 @@ function WorkTreeBranch({
                     expanded={expanded}
                     treeCache={treeCache}
                     onToggleDir={onToggleDir}
+                    onOpenFile={onOpenFile}
                   />
                 ) : (
                   <span className="work-tree-empty" style={{ paddingLeft: paddingLeft + 22 }}>空目录</span>
@@ -118,12 +124,14 @@ export function WorkFilesPanel({
   onResize,
   onResizeStateChange,
   onClose,
+  onOpenFile,
 }: {
   project: WorkProject | null;
   width: number | null;
   getMaxWidth: () => number;
   onResize: (nextWidth: number, maxWidth: number) => void;
   onResizeStateChange: (resizing: boolean) => void;
+  onOpenFile: (entry: WorkHostEntry) => void;
   onClose: () => void;
 }) {
   const headingId = useId();
@@ -390,6 +398,7 @@ export function WorkFilesPanel({
               expanded={expanded}
               treeCache={treeCache}
               onToggleDir={(entry) => void toggleDirectory(entry)}
+              onOpenFile={onOpenFile}
             />
           </div>
         ) : (

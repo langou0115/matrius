@@ -8,7 +8,19 @@ import {
   WORK_CLI_PROVIDER_LABELS,
   type WorkCliProvider,
 } from './work-cli';
-import type { WorkTerminalPreset } from './work-terminals';
+import { defaultTerminalCommand, type WorkTerminalPreset } from './work-terminals';
+
+export const DEFAULT_WORK_EDITOR_FONT_SIZE = 14;
+export const MIN_WORK_EDITOR_FONT_SIZE = 10;
+export const MAX_WORK_EDITOR_FONT_SIZE = 32;
+
+export function normalizeWorkEditorFontSize(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)
+    || value < MIN_WORK_EDITOR_FONT_SIZE || value > MAX_WORK_EDITOR_FONT_SIZE) {
+    return DEFAULT_WORK_EDITOR_FONT_SIZE;
+  }
+  return value;
+}
 
 export const LOCAL_WORK_HOST_ID = 'local';
 export const WINDOWS_DRIVES_ROOT = '此电脑';
@@ -21,6 +33,8 @@ export type WorkHostEntry = {
   path: string;
   accessible: boolean;
 };
+
+export type HostFilePreview = { text: string; revision: string };
 
 export type HostDirectoryListing = {
   hostId: string;
@@ -35,13 +49,19 @@ export type WorkProjectCliProxies = Partial<Record<WorkCliProvider, string>>;
 
 export type NormalizedWorkProjectCliProxies = Record<WorkCliProvider, string>;
 
-export const WORK_PROJECT_PROXY_CLI_ITEMS: ReadonlyArray<{
+export type WorkProjectCliArgs = Partial<Record<WorkCliProvider, string>>;
+
+export type NormalizedWorkProjectCliArgs = Record<WorkCliProvider, string>;
+
+export const WORK_PROJECT_AI_CLI_ITEMS: ReadonlyArray<{
   id: WorkCliProvider;
   label: string;
 }> = WORK_CLI_PROVIDERS.map((id) => ({
   id,
   label: WORK_CLI_PROVIDER_LABELS[id],
 }));
+
+export const WORK_PROJECT_PROXY_CLI_ITEMS = WORK_PROJECT_AI_CLI_ITEMS;
 
 export function normalizeWorkProjectOrder(raw: readonly unknown[] | undefined): string[] {
   if (!Array.isArray(raw)) return [];
@@ -80,6 +100,7 @@ export type WorkProject = {
   hostId: string;
   directory: string;
   cliProxies?: WorkProjectCliProxies;
+  cliArgs?: WorkProjectCliArgs;
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -90,12 +111,14 @@ export type WorkProjectInput = {
   directory: string;
   name?: string;
   cliProxies?: WorkProjectCliProxies;
+  cliArgs?: WorkProjectCliArgs;
   /** @deprecated Legacy single proxy field retained for backward compatibility; applies only to CLIs, never shell. */
   proxyUrl?: string;
 };
 
 export type WorkProjectUpdateInput = {
   cliProxies?: WorkProjectCliProxies;
+  cliArgs?: WorkProjectCliArgs;
   /** @deprecated Legacy single proxy field retained for backward compatibility; applies only to CLIs, never shell. */
   proxyUrl?: string;
 };
@@ -105,6 +128,7 @@ export type NormalizedWorkProjectInput = {
   directory: string;
   name: string;
   cliProxies: NormalizedWorkProjectCliProxies;
+  cliArgs: NormalizedWorkProjectCliArgs;
 };
 
 function hasControlChars(text: string): boolean {
@@ -197,6 +221,62 @@ export function resolveWorkTerminalProxyUrl(
   return value || undefined;
 }
 
+export function normalizeProjectCliArgs(raw: string | undefined, label?: string): string {
+  const prefix = label ? `${label} ` : '';
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return '';
+  if (hasControlChars(trimmed)) throw new Error(`${prefix}启动参数不能包含控制字符。`);
+  if (trimmed.length > 500) throw new Error(`${prefix}启动参数不能超过 500 个字符。`);
+  return trimmed;
+}
+
+export function normalizeWorkProjectCliArgs(
+  raw: WorkProjectCliArgs | undefined,
+): NormalizedWorkProjectCliArgs {
+  const values: NormalizedWorkProjectCliArgs = {
+    codex: '',
+    antigravity: '',
+    claude: '',
+  };
+  if (!raw) return values;
+  for (const item of WORK_PROJECT_AI_CLI_ITEMS) {
+    values[item.id] = normalizeProjectCliArgs(raw[item.id], item.label);
+  }
+  return values;
+}
+
+export function serializeWorkProjectCliArgs(
+  values: NormalizedWorkProjectCliArgs,
+): WorkProjectCliArgs | undefined {
+  const next: WorkProjectCliArgs = {};
+  for (const item of WORK_PROJECT_AI_CLI_ITEMS) {
+    const value = values[item.id]?.trim();
+    if (value) next[item.id] = value;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+export function resolveWorkTerminalCommand(
+  project: Pick<WorkProject, 'cliArgs'>,
+  preset: WorkTerminalPreset,
+  baseCommand: string,
+): string {
+  const trimmedBase = baseCommand.trim();
+  // Regular shell terminals never inherit CLI launch arguments.
+  if (preset === 'shell') return trimmedBase;
+  const extraArgs = project.cliArgs?.[preset]?.trim();
+  if (!extraArgs) return trimmedBase;
+  const effectiveBase = trimmedBase || defaultTerminalCommand(preset);
+  if (!effectiveBase) return extraArgs;
+  if (preset === 'codex') {
+    const resumeMatch = /^(codex\s+resume)\s+(.+)$/u.exec(effectiveBase);
+    if (resumeMatch) {
+      return `${resumeMatch[1]} ${extraArgs} ${resumeMatch[2]}`;
+    }
+  }
+  return `${effectiveBase} ${extraArgs}`;
+}
+
 export function validateWorkProjectInput(raw: WorkProjectInput): NormalizedWorkProjectInput {
   const hostId = (raw.hostId ?? '').trim();
   if (!hostId) throw new Error('请选择项目运行主机。');
@@ -212,11 +292,13 @@ export function validateWorkProjectInput(raw: WorkProjectInput): NormalizedWorkP
   if (rawName.length > 120) throw new Error('项目名称不能超过 120 个字符。');
 
   const cliProxies = normalizeWorkProjectCliProxies(raw.cliProxies, raw.proxyUrl);
+  const cliArgs = normalizeWorkProjectCliArgs(raw.cliArgs);
 
   return {
     hostId,
     directory,
     name: rawName || deriveProjectName(directory),
     cliProxies,
+    cliArgs,
   };
 }

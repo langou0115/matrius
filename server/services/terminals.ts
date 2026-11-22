@@ -6,19 +6,33 @@ import { release } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { IPty, IWindowsPtyForkOptions } from 'node-pty';
 
-import { WORK_CLI_PROVIDER_LABELS, type WorkCliProvider } from '../../contract/work-cli';
-import { LOCAL_WORK_HOST_ID, resolveWorkTerminalProxyUrl } from '../../contract/work-projects';
+import {
+  WORK_CLI_PROVIDER_LABELS,
+  buildCliResumeCommand,
+  validateCliSessionId,
+  type WorkCliProvider,
+} from '../../contract/work-cli';
+import {
+  LOCAL_WORK_HOST_ID,
+  resolveWorkTerminalCommand,
+  resolveWorkTerminalProxyUrl,
+} from '../../contract/work-projects';
 import {
   DEFAULT_WINDOWS_SHELL,
+  advanceTerminalModeState,
+  buildTerminalSnapshotWithModes,
   clampTerminalCols,
   clampTerminalRows,
+  createTerminalModeState,
   defaultTerminalCommand,
+  normalizeConptyClearChunk,
   normalizeTerminalPreset,
   normalizeWorkTerminalTitle,
-  trimScrollbackAtEraseSavedLines,
   validateWorkTerminalInput,
   type WindowsTerminalShell,
+  type WorkTerminalAltScreenMode,
   type WorkTerminalCreateInput,
+  type WorkTerminalModeState,
   type WorkTerminalPatchInput,
   type WorkTerminalPreset,
   type WorkTerminalResumeInput,
@@ -67,6 +81,8 @@ type ActiveTerminal = {
   session: WorkTerminalSession;
   pty: PtyProcess | null;
   scrollback: string;
+  modeState: WorkTerminalModeState;
+  scrollbackBaseAltScreen: WorkTerminalAltScreenMode | null;
   cols: number;
   rows: number;
   dirtySnapshot: boolean;
@@ -541,6 +557,8 @@ export function createWorkTerminalService(options: {
       session,
       pty: null,
       scrollback: persistScrollback ? (row.scrollback ?? '') : '',
+      modeState: createTerminalModeState(),
+      scrollbackBaseAltScreen: null,
       cols: clampTerminalCols(row.cols),
       rows: clampTerminalRows(row.rows),
       dirtySnapshot: false,
@@ -593,10 +611,28 @@ export function createWorkTerminalService(options: {
   }
 
   function appendScrollback(entry: ActiveTerminal, chunk: string): void {
-    const next = trimScrollbackAtEraseSavedLines(entry.scrollback + chunk);
-    entry.scrollback = next.length > MAX_SCROLLBACK_CHARS
-      ? next.slice(next.length - MAX_SCROLLBACK_CHARS)
-      : next;
+    entry.modeState = advanceTerminalModeState(entry.modeState, chunk);
+    const combined = entry.scrollback + chunk;
+    const lastClearIndex = combined.lastIndexOf('\x1b[3J');
+    const afterClear = lastClearIndex >= 0 ? combined.slice(lastClearIndex) : combined;
+    const normalized = normalizeConptyClearChunk(afterClear);
+    const overflow = normalized.length > MAX_SCROLLBACK_CHARS
+      ? normalized.length - MAX_SCROLLBACK_CHARS
+      : 0;
+    const nextScrollback = overflow > 0 ? normalized.slice(overflow) : normalized;
+
+    if (lastClearIndex > 0 || overflow > 0) {
+      let droppedState = createTerminalModeState({ altScreen: entry.scrollbackBaseAltScreen });
+      if (lastClearIndex > 0) {
+        droppedState = advanceTerminalModeState(droppedState, combined.slice(0, lastClearIndex));
+      }
+      if (overflow > 0) {
+        droppedState = advanceTerminalModeState(droppedState, normalized.slice(0, overflow));
+      }
+      entry.scrollbackBaseAltScreen = droppedState.altScreen;
+    }
+
+    entry.scrollback = nextScrollback;
   }
 
   function requireEntry(terminalId: string): ActiveTerminal {
@@ -762,6 +798,8 @@ export function createWorkTerminalService(options: {
     childPty.onExit(({ exitCode }) => {
       if (entry.pty !== childPty) return;
       entry.pty = null;
+      entry.modeState = createTerminalModeState();
+      entry.scrollbackBaseAltScreen = null;
       if (entry.session.status === 'running') {
         entry.session.status = 'exited';
         entry.session.exitCode = Number.isFinite(exitCode) ? exitCode : null;
@@ -869,6 +907,7 @@ export function createWorkTerminalService(options: {
         }
       }
 
+      const launchCommand = resolveWorkTerminalCommand(project, normalized.preset, normalized.command);
       const spawned = await spawnTerminalPty({
         projectId: project.id,
         hostId: project.hostId,
@@ -877,7 +916,7 @@ export function createWorkTerminalService(options: {
         proxyUrl: resolveWorkTerminalProxyUrl(project, normalized.preset),
         preset: normalized.preset,
         shell: normalized.shell,
-        command: normalized.command,
+        command: launchCommand,
         cols: normalized.cols,
         rows: normalized.rows,
       });
@@ -902,6 +941,8 @@ export function createWorkTerminalService(options: {
         session,
         pty: spawned.pty,
         scrollback: '',
+        modeState: createTerminalModeState(),
+        scrollbackBaseAltScreen: null,
         cols: normalized.cols,
         rows: normalized.rows,
         dirtySnapshot: false,
@@ -933,6 +974,7 @@ export function createWorkTerminalService(options: {
       entry.cols = cols;
       entry.rows = rows;
 
+      const launchCommand = resolveWorkTerminalCommand(project, entry.session.preset, entry.session.command);
       const spawned = await spawnTerminalPty({
         projectId: project.id,
         hostId: project.hostId,
@@ -941,7 +983,7 @@ export function createWorkTerminalService(options: {
         proxyUrl: resolveWorkTerminalProxyUrl(project, entry.session.preset),
         preset: entry.session.preset,
         shell: entry.session.shell,
-        command: entry.session.command,
+        command: launchCommand,
         cols,
         rows,
         passwordOverride: rawInput.password,
@@ -954,6 +996,8 @@ export function createWorkTerminalService(options: {
       }
       entry.session.status = 'running';
       entry.session.exitCode = null;
+      entry.modeState = createTerminalModeState();
+      entry.scrollbackBaseAltScreen = null;
       delete entry.session.errorMessage;
       delete entry.session.errorCode;
 
@@ -979,6 +1023,22 @@ export function createWorkTerminalService(options: {
 
     update(terminalId, patch) {
       const entry = requireEntry(terminalId);
+      let nextCliSessionId: string | undefined;
+      let nextCommand: string | undefined;
+      if (patch.cliSessionId !== undefined) {
+        if (entry.session.preset === 'shell') {
+          throw invalid('普通终端不支持绑定 CLI 对话标识。');
+        }
+        try {
+          nextCliSessionId = validateCliSessionId(patch.cliSessionId);
+        } catch (error) {
+          throw invalid(error instanceof Error ? error.message : 'CLI 对话标识不合法。');
+        }
+        if (!nextCliSessionId) {
+          throw invalid('CLI 对话标识不能为空。');
+        }
+        nextCommand = buildCliResumeCommand(entry.session.preset, nextCliSessionId);
+      }
       if (patch.title !== undefined) {
         try {
           entry.session.title = normalizeWorkTerminalTitle(patch.title);
@@ -989,9 +1049,14 @@ export function createWorkTerminalService(options: {
       if (patch.pinned !== undefined) {
         entry.session.pinned = Boolean(patch.pinned);
       }
+      if (nextCliSessionId !== undefined && nextCommand !== undefined) {
+        entry.session.cliSessionId = nextCliSessionId;
+        entry.session.command = nextCommand;
+      }
       updateWorkTerminalMetaRow(db, INSTANCE_ID, terminalId, {
         ...(patch.title !== undefined ? { title: entry.session.title } : {}),
         ...(patch.pinned !== undefined ? { pinned: Boolean(entry.session.pinned) } : {}),
+        ...(nextCliSessionId !== undefined ? { cliSessionId: nextCliSessionId, command: nextCommand } : {}),
       });
       return { ...entry.session };
     },
@@ -1000,7 +1065,12 @@ export function createWorkTerminalService(options: {
       const entry = requireEntry(terminalId);
       entry.listeners.add(listener);
       return {
-        snapshot: entry.scrollback,
+        snapshot: buildTerminalSnapshotWithModes(
+          entry.scrollback,
+          entry.modeState,
+          entry.scrollbackBaseAltScreen,
+          entry.session.status === 'running',
+        ),
         session: { ...entry.session },
         detach: () => {
           entry.listeners.delete(listener);

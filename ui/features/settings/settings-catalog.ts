@@ -26,6 +26,7 @@ export const settingsItems: readonly SettingsItem[] = [
   { id: 'personalization', title: '个性化', description: '记忆助手、自定义指令、称呼、个人信息、对话标题与网页搜索。', group: '偏好', keywords: '个性化 自定义 指令 提示词 回复 风格 偏好 记忆 记忆助手 摘要 记住 忘记 称呼 职业 关于你 标题 命名 生成 网页 网络 搜索 联网 personalization instructions prompt profile memory title web search' },
   { id: 'models', title: '模型服务', description: '在服务器本机管理服务商、API key 与模型。', group: '偏好', keywords: '模型 服务商 接入 密钥 地址 协议 base url api key openai anthropic responses' },
   { id: 'work-general', title: '常规', description: '配置桌面端工作区的默认终端与历史输出保存。', group: '工作', desktopOnly: true, keywords: '工作 常规 默认终端 windows powershell cmd terminal shell 历史 输出 回滚 快照 scrollback' },
+  { id: 'work-editor', title: '编辑器', description: '设置工作区文本编辑器的字号和自动保存。', group: '工作', desktopOnly: true, keywords: '工作 编辑器 字体 字号 自动保存 editor font autosave' },
   { id: 'hosts', title: '主机', description: '管理已连接的 SSH 主机与 WSL 发行版。', group: '工作', desktopOnly: true, keywords: '工作 主机 ssh wsl 远程 服务器 终端 连接 密钥 端口 host remote' },
   { id: 'about', title: '关于 Matrius', description: '查看应用版本、单用户实例与访问锁定。', group: '应用', keywords: '版本 本地 存储 数据 浏览器 服务器 密钥 锁定 隐私 about version' },
 ];
@@ -68,6 +69,8 @@ export const settingsTargets = [
   { id: 'models-provider', title: '服务商', description: '添加服务商、接口协议与 API key', category: 'models', sectionId: 'providers-heading', keywords: '服务商 添加 编辑 删除 连接 接口 协议 密钥 api key base url 地址 获取模型列表 手动添加' },
   { id: 'models-detail', title: '模型配置', description: '模型 ID、上下文窗口与最大输出', category: 'models', sectionId: 'providers-heading', keywords: '模型 模型id model id 上下文 窗口 context window 最大输出 max output token 显示名称 添加 删除' },
   { id: 'work-default-terminal', title: '默认终端', description: '设置 Windows 本机工作区默认新建 PowerShell 或 CMD', category: 'work-general', sectionId: 'work-default-terminal', keywords: '工作 常规 默认终端 windows powershell cmd terminal shell' },
+  { id: 'work-editor-font-size', title: '字体大小', description: '调整工作区编辑器与文件预览字号', category: 'work-editor', sectionId: 'work-editor-font-size', keywords: '编辑器 字体 大小 字号 editor font size' },
+  { id: 'work-editor-auto-save', title: '自动保存', description: '停止输入后自动保存本机文件', category: 'work-editor', sectionId: 'work-editor-auto-save', keywords: '编辑器 自动保存 editor autosave' },
   { id: 'work-terminal-scrollback', title: '保留终端历史输出', description: '控制是否将终端历史输出快照保存到数据库以便重启服务后恢复回放', category: 'work-general', sectionId: 'work-terminal-scrollback', keywords: '工作 常规 终端 历史 输出 回滚 快照 缓存 scrollback' },
   { id: 'hosts-ssh', title: 'SSH 主机', description: '添加、测试、断开或删除已连接的 SSH 主机', category: 'hosts', sectionId: 'hosts-heading', keywords: '工作 主机 ssh 远程 服务器 端口 用户名 私钥 密码 连接 断开' },
   { id: 'hosts-wsl', title: 'WSL 发行版', description: '检测并管理本机已连接的 WSL 发行版', category: 'hosts', sectionId: 'hosts-heading', keywords: '工作 主机 wsl windows linux ubuntu debian 发行版 检测 连接' },

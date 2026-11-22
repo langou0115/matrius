@@ -13,10 +13,19 @@ import { MemoryProvider } from '../ui/features/memory/memory-state.tsx';
 import { NetworkToolsProvider } from '../ui/features/instance/network-tools-state.tsx';
 import { ModelProvider } from '../ui/features/models/model-state.tsx';
 import { PersonalizationProvider } from '../ui/features/settings/personalization-state.tsx';
+import { WorkEditorScreen } from '../ui/features/work/work-editor-screen.tsx';
 import { WorkGeneralScreen } from '../ui/features/work/work-general-screen.tsx';
 import { WorkSidebarPanel } from '../ui/features/work/work-sidebar-panel.tsx';
-import { attachTerminalClipboard } from '../ui/features/work/work-terminal-view.tsx';
+import { WorkWorkspace } from '../ui/features/work/work-workspace.tsx';
+import { createPreviewCliSessions } from '../ui/features/work/work-api.ts';
 import {
+  attachTerminalClipboard,
+  openTerminalExternalLink,
+} from '../ui/features/work/work-terminal-view.tsx';
+import {
+  advanceTerminalModeState,
+  buildTerminalSnapshotWithModes,
+  createTerminalModeState,
   normalizeConptyClearChunk,
   trimScrollbackAtEraseSavedLines,
 } from '../contract/work-terminals.ts';
@@ -25,13 +34,18 @@ import {
   hydrateWorkSettings,
   reorderWorkCliProviders,
   reorderWorkProjects,
+  reorderWorkTerminals,
   resetWorkStateForTests,
   setDefaultWindowsShell,
   setWorkPlatformForTests,
+  setWorkEditorSettings,
+  setWorkFileDraft,
   setWorkProjectCliSessions,
   setWorkProjects,
   setWorkServerPlatform,
   setWorkTerminals,
+  toggleWorkCliGroupCollapsed,
+  updateWorkTerminalMeta,
   updateWorkTerminalStatus,
   upsertWorkProject,
 } from '../ui/features/work/work-state.ts';
@@ -137,6 +151,119 @@ function renderDesktopWorkspace() {
   );
 }
 
+test('local file tabs open directly in the editor and automatically save when enabled', async (t) => {
+  const dom = setupDom();
+  const root = createRoot(dom.document.getElementById('root'));
+  try {
+    upsertWorkProject({
+      id: 'preview-project',
+      name: 'matrius',
+      hostId: 'local',
+      directory: '/home/dev/projects/matrius',
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await act(async () => { root.render(renderDesktopWorkspace()); });
+    const file = dom.document.querySelector('.work-tree-row.is-file[title$="README.md"]');
+    assert.ok(file);
+    const { codeToTokensWithThemes } = await import('shiki');
+    await codeToTokensWithThemes('# Matrius', { lang: 'md', themes: { light: 'one-light', dark: 'one-dark-pro' } });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await act(async () => { file.click(); file.click(); });
+    await act(async () => { t.mock.timers.tick(100); });
+    assert.equal(dom.document.querySelectorAll('.work-tab-select[title$="README.md"]').length, 1);
+    assert.equal(dom.document.querySelector('.work-tab-select[title$="README.md"]').getAttribute('aria-selected'), 'true');
+    const input = dom.document.querySelector('[aria-label="编辑 README.md"]');
+    assert.ok(input);
+    assert.equal(dom.document.querySelector('.work-code-gutter').textContent, '1\n2\n3\n4');
+    assert.equal(dom.document.querySelector('.work-file-preview button'), null);
+    const paintLayer = dom.document.querySelector('.work-code-paint');
+    assert.match(paintLayer.textContent, /# Matrius/u);
+    const originalText = paintLayer.textContent;
+    const editedText = originalText.replace('Matrius', 'Matrius editor');
+    const heading = [...paintLayer.querySelectorAll('.work-preview-token')].find((node) => node.textContent.includes('Matrius'));
+    assert.ok(heading);
+    const headingColor = heading.style.getPropertyValue('--preview-light');
+    const path = file.getAttribute('title');
+    await act(async () => {
+      setWorkFileDraft('preview-project', path, { base: { text: originalText, revision: 'demo' }, text: editedText });
+    });
+    assert.ok(dom.document.querySelector('.work-file-dirty'));
+    assert.equal(dom.document.querySelector('.work-code-paint'), paintLayer);
+    assert.equal(paintLayer.textContent, editedText);
+    assert.match(heading.textContent, /Matrius editor/u);
+    assert.equal(heading.style.getPropertyValue('--preview-light'), headingColor);
+    const saveShortcut = new dom.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.assign(saveShortcut, { key: 's', ctrlKey: true });
+    const tab = dom.document.querySelector('.work-tab-select[title$="README.md"]');
+    await act(async () => { tab.dispatchEvent(saveShortcut); });
+    assert.equal(saveShortcut.defaultPrevented, true);
+    assert.equal(getWorkState().fileTabsByProject['preview-project'].drafts.get(path).base.text, editedText);
+    assert.equal(dom.document.querySelector('.work-file-dirty'), null);
+
+    await act(async () => {
+      setWorkEditorSettings({ editorFontSize: 19, editorAutoSave: true });
+      setWorkFileDraft('preview-project', path, { base: { text: '# Matrius', revision: 'demo' }, text: 'Updated' });
+    });
+    assert.equal(dom.document.querySelector('.work-file-preview').style.getPropertyValue('--work-editor-font-size'), '19px');
+    assert.ok(dom.document.querySelector('.work-file-dirty'));
+    await act(async () => { t.mock.timers.tick(800); });
+    assert.equal(getWorkState().fileTabsByProject['preview-project'].drafts.get(path).base.text, 'Updated');
+    assert.equal(dom.document.querySelector('.work-file-dirty'), null);
+    assert.equal(dom.document.querySelector('[aria-label="编辑 README.md"]').value, 'Updated');
+    await act(async () => { dom.document.querySelector('[aria-label="关闭文件：README.md"]').click(); });
+    assert.equal(dom.document.querySelector('.work-file-preview'), null);
+    assert.equal(dom.document.querySelector('.work-tab-select[title$="README.md"]'), null);
+  } finally {
+    await act(async () => { root.unmount(); });
+    dom.restore();
+  }
+});
+
+test('Git opens in its own project tab between terminal creation and the files panel', async () => {
+  const dom = setupDom();
+  const root = createRoot(dom.document.getElementById('root'));
+  try {
+    upsertWorkProject({
+      id: 'git-project', name: 'matrius', hostId: 'local', directory: '/home/dev/projects/matrius',
+      revision: 1, createdAt: 1, updatedAt: 1,
+    });
+    await act(async () => { root.render(renderDesktopWorkspace()); });
+    const button = dom.document.querySelector('[aria-label="打开 Git 查看器"]');
+    assert.equal(button.previousElementSibling.className, 'work-add-control');
+    assert.equal(button.nextElementSibling.getAttribute('aria-label'), '收起工作目录');
+    await act(async () => { button.click(); button.click(); });
+    assert.equal(dom.document.querySelectorAll('.work-tab-select[aria-selected="true"]').length, 1);
+    assert.equal(dom.document.querySelector('.work-tab-select[aria-selected="true"]').textContent, 'Git');
+    assert.match(dom.document.querySelector('.work-git-view').textContent, /origin\/main/u);
+    const graphButton = dom.document.querySelector('.work-git-header > button:first-child');
+    assert.equal(graphButton.getAttribute('aria-label'), '查看提交图');
+    assert.ok(dom.document.querySelector('.work-git-graph-lines path'));
+    assert.match(dom.document.querySelector('.work-git-graph-row').textContent, /HEAD -> main/u);
+    await act(async () => { dom.document.querySelector('.work-git-graph-subject').click(); });
+    assert.equal(dom.document.querySelector('.work-git-diff-cell.add code').textContent, 'Updated content');
+    await act(async () => { graphButton.click(); });
+    const changedFile = dom.document.querySelector('.work-git-change button[title="README.md"]');
+    assert.ok(changedFile);
+    await act(async () => { changedFile.click(); });
+    assert.match(dom.document.querySelector('.work-git-review').textContent, /暂存区.*工作区/u);
+    assert.equal(dom.document.querySelector('.work-git-diff-cell.delete code').textContent, 'Initial content');
+    assert.equal(dom.document.querySelector('.work-git-diff-cell.add code').textContent, 'Updated content');
+    const inline = [...dom.document.querySelectorAll('.work-git-review-modes button')].find((mode) => mode.textContent === '行内');
+    await act(async () => { inline.click(); });
+    assert.equal(dom.document.querySelector('.work-git-diff-inline.add code').textContent, 'Updated content');
+    await act(async () => { graphButton.click(); });
+    assert.equal(graphButton.getAttribute('aria-pressed'), 'true');
+    assert.ok(dom.document.querySelector('.work-git-graph-lines path'));
+    await act(async () => { dom.document.querySelector('[aria-label="关闭 Git 标签"]').click(); });
+    assert.equal(dom.document.querySelector('.work-git-view'), null);
+  } finally {
+    await act(async () => { root.unmount(); });
+    dom.restore();
+  }
+});
+
 test('work workspace separates project selection from explicit expand, shows CLI sessions with status and show-more, and enables Claude/Codex/Antigravity', async () => {
   const dom = setupDom();
   const root = createRoot(dom.document.getElementById('root'));
@@ -196,7 +323,32 @@ test('work workspace separates project selection from explicit expand, shows CLI
     assert.equal(agyGroup.querySelectorAll('.work-cli-session-btn').length, 2);
     assert.equal(claudeGroup.querySelectorAll('.work-cli-session-btn').length, 2);
     assert.ok(codexGroup.querySelector('.work-cli-status.is-running .conversation-spinner'));
-    assert.ok(codexGroup.querySelector('.work-cli-status.is-completed svg'));
+    // Historical completed sessions do NOT show a completed indicator initially; only sessions transitioning
+    // from running -> completed while unread show the Web-style unread dot until clicked.
+    assert.equal(codexGroup.querySelector('.work-cli-status.is-completed'), null);
+    assert.equal(agyGroup.querySelector('.work-cli-status.is-completed'), null);
+    assert.equal(claudeGroup.querySelector('.work-cli-status.is-completed'), null);
+
+    // Transitioning proj-1-codex-1 from running -> completed while user has not clicked it shows the unread dot,
+    // and clicking the session row clears the unread dot.
+    const nextCliPayload = createPreviewCliSessions('proj-1');
+    nextCliPayload.items = nextCliPayload.items.map((item) => (
+      item.id === 'proj-1-codex-1' ? { ...item, status: 'completed' } : item
+    ));
+    await act(async () => {
+      setWorkProjectCliSessions('proj-1', nextCliPayload);
+    });
+    const unreadBtn = codexGroup.querySelector('.work-cli-session-btn[data-cli-session-id="proj-1-codex-1"]');
+    assert.ok(unreadBtn);
+    assert.ok(unreadBtn.querySelector('.work-cli-status.is-completed.conversation-completed-indicator'));
+    assert.equal(unreadBtn.querySelector('.work-cli-status.is-completed svg'), null);
+    await act(async () => { unreadBtn.click(); });
+    assert.equal(unreadBtn.querySelector('.work-cli-status.is-completed'), null);
+    // Clean up the opened tab from clicking unreadBtn before subsequent assertions.
+    await act(async () => { dom.document.querySelector('.work-topbar .work-tab .work-tab-close').click(); });
+    await act(async () => {
+      setWorkProjectCliSessions('proj-1', createPreviewCliSessions('proj-1'));
+    });
 
     assert.equal(agyGroup.querySelector('.work-project-show-more'), null);
     assert.equal(claudeGroup.querySelector('.work-project-show-more'), null);
@@ -284,34 +436,45 @@ test('work workspace separates project selection from explicit expand, shows CLI
 
     await act(async () => { claudeAddBtn.click(); });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 2);
-    assert.match(dom.document.querySelectorAll('.work-topbar .work-tab')[1].textContent ?? '', /Claude Code/);
+    assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab')[1].querySelector('.work-tab-title')?.textContent, '新对话');
+    assert.equal(emptyChildren.querySelectorAll('.work-cli-group[data-cli-provider="claude"] .work-cli-session-draft[data-cli-draft="true"]').length, 1);
+    assert.equal(
+      emptyChildren.querySelector('.work-cli-group[data-cli-provider="claude"] .work-cli-session-draft')?.textContent,
+      '新对话',
+    );
 
     // Repeating clicks on the same group's `+` must reuse its existing new conversation tab rather than spawning a second one.
     await act(async () => { claudeAddBtn.click(); });
     await act(async () => { claudeAddBtn.click(); });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 2);
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab')[1].classList.contains('is-active'), true);
+    assert.equal(emptyChildren.querySelectorAll('.work-cli-group[data-cli-provider="claude"] .work-cli-session-draft').length, 1);
 
     await act(async () => { codexAddBtn.click(); });
     await act(async () => { codexAddBtn.click(); });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 3);
-    assert.match(dom.document.querySelectorAll('.work-topbar .work-tab')[2].textContent ?? '', /Codex/);
+    assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab')[2].querySelector('.work-tab-title')?.textContent, '新对话');
+    assert.equal(emptyChildren.querySelectorAll('.work-cli-group[data-cli-provider="codex"] .work-cli-session-draft').length, 1);
 
     await act(async () => { agyAddBtn.click(); });
     await act(async () => { agyAddBtn.click(); });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 4);
-    assert.match(dom.document.querySelectorAll('.work-topbar .work-tab')[3].textContent ?? '', /Antigravity/);
+    assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab')[3].querySelector('.work-tab-title')?.textContent, '新对话');
+    assert.equal(emptyChildren.querySelectorAll('.work-cli-group[data-cli-provider="antigravity"] .work-cli-session-draft').length, 1);
 
     for (let i = 0; i < 3; i += 1) {
       await act(async () => { dom.document.querySelectorAll('.work-topbar .work-tab')[1].querySelector('.work-tab-close').click(); });
     }
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 1);
+    assert.equal(emptyChildren.querySelectorAll('.work-cli-session-draft').length, 0);
 
-    // Clicking Claude `+` again after closing that tab starts a fresh new conversation tab.
+    // Clicking Claude `+` again after closing that tab starts a fresh new conversation tab and sidebar draft row.
     await act(async () => { claudeAddBtn.click(); });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 2);
+    assert.equal(emptyChildren.querySelectorAll('.work-cli-group[data-cli-provider="claude"] .work-cli-session-draft').length, 1);
     await act(async () => { dom.document.querySelectorAll('.work-topbar .work-tab')[1].querySelector('.work-tab-close').click(); });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 1);
+    assert.equal(emptyChildren.querySelectorAll('.work-cli-session-draft').length, 0);
 
     await act(async () => { toggleBtn.click(); });
 
@@ -472,6 +635,89 @@ test('work workspace separates project selection from explicit expand, shows CLI
     });
     await act(async () => {
       dom.document.querySelector('#work-tab-menu button[data-action="close-all"]').click();
+    });
+    assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 1);
+    assert.match(dom.document.querySelectorAll('.work-topbar .work-tab')[0].textContent ?? '', /主构建终端/);
+
+    // Add two more tabs, pin one, and verify BOTH pinned tabs and unpinned tabs can be dragged to reorder.
+    await act(async () => { addBtn.click(); });
+    await act(async () => { addBtn.click(); });
+    assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 3);
+    const secondForPin = dom.document.querySelectorAll('.work-topbar .work-tab')[1];
+    const secondForPinKey = Object.keys(secondForPin).find((key) => key.startsWith('__reactProps'));
+    await act(async () => {
+      secondForPin[secondForPinKey].onContextMenu({ clientX: 160, clientY: 24, preventDefault() {} });
+    });
+    await act(async () => {
+      dom.document.querySelector('#work-tab-menu button[data-action="pin"]').click();
+    });
+    await act(async () => { addBtn.click(); });
+    const beforeTabDrag = Array.from(dom.document.querySelectorAll('.work-topbar .work-tab'));
+    assert.equal(beforeTabDrag.length, 4);
+    assert.equal(beforeTabDrag[0].classList.contains('is-pinned'), true);
+    assert.equal(beforeTabDrag[1].classList.contains('is-pinned'), true);
+    assert.equal(beforeTabDrag[2].classList.contains('is-pinned'), false);
+    assert.equal(beforeTabDrag[3].classList.contains('is-pinned'), false);
+    assert.equal(beforeTabDrag[0].getAttribute('draggable'), 'true');
+    assert.equal(beforeTabDrag[1].getAttribute('draggable'), 'true');
+    const pinnedFirstTitle = beforeTabDrag[0].querySelector('.work-tab-title').textContent;
+    const pinnedSecondTitle = beforeTabDrag[1].querySelector('.work-tab-title').textContent;
+    const unpinnedFirstTitle = beforeTabDrag[2].querySelector('.work-tab-title').textContent;
+    const unpinnedSecondTitle = beforeTabDrag[3].querySelector('.work-tab-title').textContent;
+
+    // Drag second pinned tab before first pinned tab.
+    const p0Key = Object.keys(beforeTabDrag[0]).find((key) => key.startsWith('__reactProps'));
+    const p1Key = Object.keys(beforeTabDrag[1]).find((key) => key.startsWith('__reactProps'));
+    await act(async () => {
+      beforeTabDrag[1][p1Key].onDragStart({ target: beforeTabDrag[1], preventDefault() {} });
+    });
+    await act(async () => {
+      beforeTabDrag[0][p0Key].onDragOver({ clientX: 0, currentTarget: beforeTabDrag[0], preventDefault() {} });
+      beforeTabDrag[0][p0Key].onDrop({ clientX: 0, currentTarget: beforeTabDrag[0], preventDefault() {} });
+    });
+    const afterPinnedDrag = Array.from(dom.document.querySelectorAll('.work-topbar .work-tab'));
+    assert.equal(afterPinnedDrag[0].querySelector('.work-tab-title').textContent, pinnedSecondTitle);
+    assert.equal(afterPinnedDrag[1].querySelector('.work-tab-title').textContent, pinnedFirstTitle);
+
+    // Dragging a pinned tab onto an unpinned tab must NOT move it across the pinned boundary.
+    const pinned0 = afterPinnedDrag[0];
+    const unpinned2 = afterPinnedDrag[2];
+    const pinned0Key = Object.keys(pinned0).find((key) => key.startsWith('__reactProps'));
+    const unpinned2Key = Object.keys(unpinned2).find((key) => key.startsWith('__reactProps'));
+    await act(async () => {
+      pinned0[pinned0Key].onDragStart({ target: pinned0, preventDefault() {} });
+    });
+    await act(async () => {
+      unpinned2[unpinned2Key].onDragOver({ clientX: 0, currentTarget: unpinned2, preventDefault() {} });
+      unpinned2[unpinned2Key].onDrop({ clientX: 0, currentTarget: unpinned2, preventDefault() {} });
+    });
+    const afterCrossAttempt = Array.from(dom.document.querySelectorAll('.work-topbar .work-tab'));
+    assert.equal(afterCrossAttempt[0].querySelector('.work-tab-title').textContent, pinnedSecondTitle);
+    assert.equal(afterCrossAttempt[1].querySelector('.work-tab-title').textContent, pinnedFirstTitle);
+
+    // Drag second unpinned tab before first unpinned tab.
+    const u0 = afterCrossAttempt[2];
+    const u1 = afterCrossAttempt[3];
+    const u0Key = Object.keys(u0).find((key) => key.startsWith('__reactProps'));
+    const u1Key = Object.keys(u1).find((key) => key.startsWith('__reactProps'));
+    await act(async () => {
+      u1[u1Key].onDragStart({ target: u1, preventDefault() {} });
+    });
+    await act(async () => {
+      u0[u0Key].onDragOver({ clientX: 0, currentTarget: u0, preventDefault() {} });
+      u0[u0Key].onDrop({ clientX: 0, currentTarget: u0, preventDefault() {} });
+    });
+    const afterUnpinnedDrag = Array.from(dom.document.querySelectorAll('.work-topbar .work-tab'));
+    assert.equal(afterUnpinnedDrag[2].querySelector('.work-tab-title').textContent, unpinnedSecondTitle);
+    assert.equal(afterUnpinnedDrag[3].querySelector('.work-tab-title').textContent, unpinnedFirstTitle);
+
+    // Clean up extra unpinned tabs and second pinned tab back to just 主构建终端.
+    await act(async () => { afterUnpinnedDrag[3].querySelector('.work-tab-close').click(); });
+    await act(async () => { dom.document.querySelectorAll('.work-topbar .work-tab')[2].querySelector('.work-tab-close').click(); });
+    await act(async () => { dom.document.querySelectorAll('.work-topbar .work-tab')[0].querySelector('.work-tab-pin-btn').click(); });
+    await act(async () => {
+      const remainingUnpinned = Array.from(dom.document.querySelectorAll('.work-topbar .work-tab')).find((el) => !el.classList.contains('is-pinned'));
+      remainingUnpinned.querySelector('.work-tab-close').click();
     });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 1);
     assert.match(dom.document.querySelectorAll('.work-topbar .work-tab')[0].textContent ?? '', /主构建终端/);
@@ -674,6 +920,157 @@ test('WorkGeneralScreen enables Windows default terminal selector only on Window
   }
 });
 
+test('WorkEditorScreen supports typing, clamping, stepping, and escaping editor font size', async () => {
+  const dom = setupDom();
+  const root = createRoot(dom.document.getElementById('root'));
+
+  function wrap(children) {
+    return createElement(
+      AppearanceProvider,
+      null,
+      createElement(
+        InstanceProvider,
+        { preview: true },
+        createElement(
+          PreviewContext.Provider,
+          { value: true },
+          createElement(ChatProvider, { initialState: { conversations: [], activeId: null, sidebarOpen: true } }, children),
+        ),
+      ),
+    );
+  }
+
+  function reactProps(element) {
+    const key = Object.keys(element).find((prop) => prop.startsWith('__reactProps'));
+    assert.ok(key);
+    return element[key];
+  }
+
+  try {
+    await act(async () => { root.render(wrap(createElement(WorkEditorScreen))); });
+    const getInput = () => dom.document.querySelector('#work-editor-font-size-input');
+    const getDecBtn = () => dom.document.querySelector('button[aria-label="减小字体大小"]');
+    const getIncBtn = () => dom.document.querySelector('button[aria-label="增大字体大小"]');
+
+    assert.ok(getInput());
+    assert.equal(getInput().type, 'number');
+    assert.equal(getInput().value, '14');
+    assert.equal(getDecBtn().disabled, false);
+    assert.equal(getIncBtn().disabled, false);
+
+    // Partial typing ("", "1") stays intact without snapping back; completing "18" applies immediately.
+    await act(async () => {
+      reactProps(getInput()).onFocus({ currentTarget: getInput() });
+      getInput().value = '';
+      reactProps(getInput()).onChange({ target: getInput() });
+    });
+    assert.equal(getInput().value, '');
+    assert.equal(getWorkState().editorFontSize, 14);
+
+    await act(async () => {
+      getInput().value = '1';
+      reactProps(getInput()).onChange({ target: getInput() });
+    });
+    assert.equal(getInput().value, '1');
+    assert.equal(getWorkState().editorFontSize, 14);
+
+    await act(async () => {
+      getInput().value = '18';
+      reactProps(getInput()).onChange({ target: getInput() });
+    });
+    assert.equal(getInput().value, '18');
+    assert.equal(getWorkState().editorFontSize, 18);
+
+    // ArrowUp / ArrowDown and +/- step by 1px.
+    await act(async () => {
+      reactProps(getInput()).onKeyDown({
+        key: 'ArrowUp',
+        currentTarget: getInput(),
+        preventDefault() {},
+      });
+    });
+    assert.equal(getInput().value, '19');
+    assert.equal(getWorkState().editorFontSize, 19);
+
+    await act(async () => { getDecBtn().click(); });
+    assert.equal(getInput().value, '18');
+    assert.equal(getWorkState().editorFontSize, 18);
+
+    // Pressing Escape discards uncommitted draft and restores the active value.
+    await act(async () => {
+      getInput().value = '99';
+      reactProps(getInput()).onChange({ target: getInput() });
+    });
+    assert.equal(getInput().value, '99');
+    await act(async () => {
+      reactProps(getInput()).onKeyDown({
+        key: 'Escape',
+        currentTarget: getInput(),
+        preventDefault() {},
+      });
+      reactProps(getInput()).onBlur({ currentTarget: getInput() });
+    });
+    assert.equal(getInput().value, '18');
+    assert.equal(getWorkState().editorFontSize, 18);
+
+    // Out-of-range low clamps to MIN (10) on Enter and disables decrement button.
+    await act(async () => {
+      reactProps(getInput()).onFocus({ currentTarget: getInput() });
+      getInput().value = '5';
+      reactProps(getInput()).onChange({ target: getInput() });
+    });
+    await act(async () => {
+      reactProps(getInput()).onKeyDown({
+        key: 'Enter',
+        currentTarget: getInput(),
+        preventDefault() {},
+      });
+    });
+    assert.equal(getInput().value, '10');
+    assert.equal(getWorkState().editorFontSize, 10);
+    assert.equal(getDecBtn().disabled, true);
+
+    // Out-of-range high clamps to MAX (32) on blur and disables increment button.
+    await act(async () => {
+      getInput().value = '50';
+      reactProps(getInput()).onChange({ target: getInput() });
+    });
+    await act(async () => {
+      reactProps(getInput()).onBlur({ currentTarget: getInput() });
+    });
+    assert.equal(getInput().value, '32');
+    assert.equal(getWorkState().editorFontSize, 32);
+    assert.equal(getIncBtn().disabled, true);
+
+    // Clearing the input and blurring reverts to the current valid size (32).
+    await act(async () => {
+      reactProps(getInput()).onFocus({ currentTarget: getInput() });
+      getInput().value = '';
+      reactProps(getInput()).onChange({ target: getInput() });
+    });
+    await act(async () => {
+      reactProps(getInput()).onBlur({ currentTarget: getInput() });
+    });
+    assert.equal(getInput().value, '32');
+    assert.equal(getWorkState().editorFontSize, 32);
+
+    // Auto-save toggle remains responsive.
+    const autoSaveToggle = dom.document.querySelector('#work-editor-auto-save input[type="checkbox"]');
+    assert.ok(autoSaveToggle);
+    assert.equal(autoSaveToggle.checked, false);
+    await act(async () => {
+      autoSaveToggle.checked = true;
+      reactProps(autoSaveToggle).onChange({ target: autoSaveToggle });
+    });
+    assert.equal(getWorkState().editorAutoSave, true);
+  } finally {
+    await act(async () => { root.unmount(); });
+    resetWorkStateForTests();
+    resetSidebarTabForTests();
+    dom.restore();
+  }
+});
+
 test('SQLite work settings hydration preserves activeProjectId and per-project active/pinned/renamed tabs on restart', () => {
   const dom = setupDom();
   try {
@@ -690,24 +1087,37 @@ test('SQLite work settings hydration preserves activeProjectId and per-project a
       persistTerminalScrollback: true,
       projectOrder: ['proj-b', 'proj-a'],
       cliProviderOrder: ['claude', 'codex', 'antigravity'],
+      terminalOrder: ['term-a3', 'term-a2', 'term-a1', 'term-b1'],
     });
     setWorkTerminals([
       { id: 'term-a1', projectId: 'proj-a', hostId: 'local', title: 'PowerShell', preset: 'shell', shell: 'powershell', command: '', cwd: 'D:\\A', status: 'restored', exitCode: null, pinned: false, createdAt: 1 },
       { id: 'term-a2', projectId: 'proj-a', hostId: 'local', title: '构建标签', preset: 'shell', shell: 'cmd', command: '', cwd: 'D:\\A\\ui', status: 'restored', exitCode: null, pinned: true, createdAt: 2 },
-      { id: 'term-b1', projectId: 'proj-b', hostId: 'local', title: '服务日志', preset: 'shell', shell: 'cmd', command: '', cwd: 'D:\\B', status: 'restored', exitCode: null, pinned: true, createdAt: 3 },
+      { id: 'term-a3', projectId: 'proj-a', hostId: 'local', title: '固定日志', preset: 'shell', shell: 'cmd', command: '', cwd: 'D:\\A\\api', status: 'restored', exitCode: null, pinned: true, createdAt: 3 },
+      { id: 'term-b1', projectId: 'proj-b', hostId: 'local', title: '服务日志', preset: 'shell', shell: 'cmd', command: '', cwd: 'D:\\B', status: 'restored', exitCode: null, pinned: true, createdAt: 4 },
     ]);
 
     const snapshot = getWorkState();
     assert.deepEqual(snapshot.projects.map((item) => item.id), ['proj-b', 'proj-a']);
     assert.deepEqual(snapshot.cliProviderOrder, ['claude', 'codex', 'antigravity']);
+    assert.deepEqual(snapshot.terminalOrder, ['term-a3', 'term-a2', 'term-a1', 'term-b1']);
     assert.equal(snapshot.activeProjectId, 'proj-b');
     assert.equal(snapshot.activeTerminalId, 'term-b1');
     assert.equal(snapshot.defaultWindowsShell, 'cmd');
     assert.equal(snapshot.filesPanelOpen, false);
     assert.equal(snapshot.filesPanelWidth, 420);
     assert.equal(snapshot.persistTerminalScrollback, true);
-    assert.equal(snapshot.terminals[0].title, '构建标签');
+    assert.deepEqual(
+      snapshot.terminals.filter((item) => item.projectId === 'proj-a').map((item) => item.id),
+      ['term-a3', 'term-a2', 'term-a1'],
+    );
+    assert.equal(snapshot.terminals[0].title, '固定日志');
     assert.equal(snapshot.terminals[0].pinned, true);
+
+    reorderWorkTerminals('term-a2', 'term-a3', 'before');
+    assert.deepEqual(
+      getWorkState().terminals.filter((item) => item.projectId === 'proj-a').map((item) => item.id),
+      ['term-a2', 'term-a3', 'term-a1'],
+    );
   } finally {
     resetWorkStateForTests();
     resetSidebarTabForTests();
@@ -921,6 +1331,7 @@ test('WorkSidebarPanel opens error dialog without creating a tab when CLI is not
         persistTerminalScrollback: false,
         projectOrder: [],
         cliProviderOrder: ['codex', 'antigravity', 'claude'],
+        terminalOrder: [],
       });
     }
     if (url.pathname === '/api/projects/proj-err/cli-sessions') {
@@ -987,6 +1398,194 @@ test('WorkSidebarPanel opens error dialog without creating a tab when CLI is not
       root.unmount();
     });
     globalThis.fetch = previousFetch;
+    resetWorkStateForTests();
+    resetSidebarTabForTests();
+    dom.restore();
+  }
+});
+
+test('terminal mode tracker and external link handler preserve interactive TUI modes and links', () => {
+  let state = createTerminalModeState();
+  state = advanceTerminalModeState(state, '\x1b[?1003;');
+  state = advanceTerminalModeState(state, '1006;2004h\x1b[?1049hhello');
+  assert.equal(state.mouseProtocol, 1003);
+  assert.equal(state.mouseEncoding, 1006);
+  assert.equal(state.bracketedPaste, true);
+  assert.equal(state.altScreen, 1049);
+
+  const rebuilt = buildTerminalSnapshotWithModes('hello', state, 1049, true);
+  assert.equal(rebuilt, '\x1b[?1049hhello\x1b[?1003;1006;2004h');
+  assert.equal(buildTerminalSnapshotWithModes('hello', state, 1049, false), 'hello');
+
+  state = advanceTerminalModeState(state, '\x1b[?1003l\x1b[?1006l\x1b[?1049l');
+  assert.equal(state.mouseProtocol, null);
+  assert.equal(state.mouseEncoding, null);
+  assert.equal(state.altScreen, null);
+
+  state = advanceTerminalModeState(state, '\x1b[?1000;1006;1004;1;66h\x1bc');
+  assert.equal(state.mouseProtocol, null);
+  assert.equal(state.mouseEncoding, null);
+  assert.equal(state.focusEvents, false);
+  assert.equal(state.applicationCursorKeys, false);
+  assert.equal(state.applicationKeypad, false);
+
+  const opened = [];
+  assert.equal(
+    openTerminalExternalLink('https://openai.com/codex', (url, target, features) => {
+      opened.push({ url, target, features });
+    }),
+    true,
+  );
+  assert.deepEqual(opened, [
+    { url: 'https://openai.com/codex', target: '_blank', features: 'noopener,noreferrer' },
+  ]);
+  assert.equal(openTerminalExternalLink('javascript:alert(1)', () => { throw new Error('must not open'); }), false);
+});
+
+test('new CLI conversation sidebar draft auto-expands collapsed group, binds on first turn, and syncs live title updates unless manually renamed', async () => {
+  const dom = setupDom();
+  const rootEl = dom.document.getElementById('root');
+  const root = createRoot(rootEl);
+
+  const project = {
+    id: 'proj-sync',
+    hostId: 'local',
+    name: 'Sync Project',
+    directory: 'D:\\Engineer\\sync',
+    createdAt: 1000,
+    updatedAt: 1000,
+  };
+  const oldSession = {
+    id: 'codex-old-1',
+    provider: 'codex',
+    projectId: project.id,
+    title: '历史 Codex 对话',
+    status: 'completed',
+    updatedAt: Date.now() - 60_000,
+  };
+
+  setWorkServerPlatform('win32');
+  setWorkProjects([project]);
+  setWorkProjectCliSessions(project.id, {
+    projectId: project.id,
+    items: [oldSession],
+    total: 1,
+    hasMore: false,
+  });
+  toggleWorkCliGroupCollapsed(project.id, 'codex');
+
+  try {
+    await act(async () => {
+      root.render(
+        createElement(
+          InstanceProvider,
+          { preview: true },
+          createElement(
+            PreviewContext.Provider,
+            { value: true },
+            createElement(
+              'div',
+              null,
+              createElement(WorkSidebarPanel, null),
+              createElement(WorkWorkspace, null),
+            ),
+          ),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const expandBtn = dom.document.querySelector('[aria-label="展开项目：Sync Project"]');
+    assert.ok(expandBtn);
+    await act(async () => { expandBtn.click(); });
+
+    const codexGroup = dom.document.querySelector('.work-cli-group[data-cli-provider="codex"]');
+    assert.ok(codexGroup);
+    assert.equal(codexGroup.querySelector('.work-cli-group-items'), null);
+
+    const addCodexBtn = codexGroup.querySelector('.work-cli-group-add[data-cli-provider="codex"]');
+    assert.ok(addCodexBtn);
+    await act(async () => { addCodexBtn.click(); });
+
+    // Collapsed Codex group auto-expands and shows a single 新对话 draft row plus 新对话 tab.
+    assert.equal(codexGroup.querySelectorAll('.work-cli-session-draft').length, 1);
+    assert.equal(codexGroup.querySelector('.work-cli-session-draft')?.textContent, '新对话');
+    assert.equal(dom.document.querySelector('.work-topbar .work-tab.is-active .work-tab-title')?.textContent, '新对话');
+
+    const draftTerminal = getWorkState().terminals.find((item) => item.preset === 'codex' && !item.cliSessionId);
+    assert.ok(draftTerminal);
+
+    // Discovery of the new session before a real title arrives binds cliSessionId while keeping 新对话.
+    const startedAt = Date.now() + 10;
+    let patches = [];
+    await act(async () => {
+      patches = setWorkProjectCliSessions(project.id, {
+        projectId: project.id,
+        items: [
+          { id: 'codex-new-1', provider: 'codex', projectId: project.id, title: 'Codex 对话', status: 'running', updatedAt: startedAt },
+          oldSession,
+        ],
+        total: 2,
+        hasMore: false,
+      });
+    });
+    assert.deepEqual(patches, [{ terminalId: draftTerminal.id, patch: { cliSessionId: 'codex-new-1' } }]);
+    assert.equal(codexGroup.querySelectorAll('.work-cli-session-draft').length, 0);
+    assert.equal(dom.document.querySelector('.work-topbar .work-tab.is-active .work-tab-title')?.textContent, '新对话');
+
+    // First real title updates both sidebar and open terminal tab in real time.
+    await act(async () => {
+      patches = setWorkProjectCliSessions(project.id, {
+        projectId: project.id,
+        items: [
+          { id: 'codex-new-1', provider: 'codex', projectId: project.id, title: '优化新对话实时标题', status: 'running', updatedAt: startedAt + 500 },
+          oldSession,
+        ],
+        total: 2,
+        hasMore: false,
+      });
+    });
+    assert.deepEqual(patches, [{ terminalId: draftTerminal.id, patch: { title: '优化新对话实时标题' } }]);
+    assert.equal(dom.document.querySelector('.work-topbar .work-tab.is-active .work-tab-title')?.textContent, '优化新对话实时标题');
+    assert.equal(
+      codexGroup.querySelector('[data-cli-session-id="codex-new-1"] .work-cli-session-title')?.textContent,
+      '优化新对话实时标题',
+    );
+
+    // Subsequent title refinement keeps updating the open tab.
+    await act(async () => {
+      patches = setWorkProjectCliSessions(project.id, {
+        projectId: project.id,
+        items: [
+          { id: 'codex-new-1', provider: 'codex', projectId: project.id, title: '细化后的 AI 标题', status: 'completed', updatedAt: startedAt + 1_200 },
+          oldSession,
+        ],
+        total: 2,
+        hasMore: false,
+      });
+    });
+    assert.deepEqual(patches, [{ terminalId: draftTerminal.id, patch: { title: '细化后的 AI 标题' } }]);
+    assert.equal(dom.document.querySelector('.work-topbar .work-tab.is-active .work-tab-title')?.textContent, '细化后的 AI 标题');
+
+    // Manual rename blocks further auto-title overwrites on the tab.
+    await act(async () => {
+      updateWorkTerminalMeta(draftTerminal.id, { title: '我的手动命名' }, { manualRename: true });
+      patches = setWorkProjectCliSessions(project.id, {
+        projectId: project.id,
+        items: [
+          { id: 'codex-new-1', provider: 'codex', projectId: project.id, title: '后续自动标题', status: 'completed', updatedAt: startedAt + 2_000 },
+          oldSession,
+        ],
+        total: 2,
+        hasMore: false,
+      });
+    });
+    assert.deepEqual(patches, []);
+    assert.equal(dom.document.querySelector('.work-topbar .work-tab.is-active .work-tab-title')?.textContent, '我的手动命名');
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
     resetWorkStateForTests();
     resetSidebarTabForTests();
     dom.restore();

@@ -3,12 +3,13 @@ import {
   normalizeWorkCliProviderOrder,
   type WorkCliProvider,
 } from '../../../contract/work-cli';
-import { normalizeWorkProjectOrder } from '../../../contract/work-projects';
+import { DEFAULT_WORK_EDITOR_FONT_SIZE, normalizeWorkEditorFontSize, normalizeWorkProjectOrder } from '../../../contract/work-projects';
 import {
   DEFAULT_WINDOWS_SHELL,
   normalizeOptionalWindowsShell,
   normalizeTerminalPreset,
   normalizeWindowsShell,
+  normalizeWorkTerminalOrder,
   type WindowsTerminalShell,
   type WorkTerminalSession,
   type WorkTerminalStatus,
@@ -123,6 +124,8 @@ export function updateWorkTerminalMetaRow(
   patch: {
     title?: string;
     pinned?: boolean;
+    cliSessionId?: string | null;
+    command?: string;
     cwd?: string;
     cols?: number;
     rows?: number;
@@ -140,6 +143,14 @@ export function updateWorkTerminalMetaRow(
   if (patch.pinned !== undefined) {
     sets.push('pinned = ?');
     params.push(patch.pinned ? 1 : 0);
+  }
+  if (patch.cliSessionId !== undefined) {
+    sets.push('cli_session_id = ?');
+    params.push(patch.cliSessionId);
+  }
+  if (patch.command !== undefined) {
+    sets.push('command = ?');
+    params.push(patch.command);
   }
   if (patch.cwd !== undefined) {
     sets.push('cwd = ?');
@@ -214,8 +225,11 @@ export type PersistedWorkSettings = {
   filesPanelOpen: boolean;
   filesPanelWidth: number | null;
   persistTerminalScrollback: boolean;
+  editorFontSize: number;
+  editorAutoSave: boolean;
   projectOrder: string[];
   cliProviderOrder: WorkCliProvider[];
+  terminalOrder: string[];
 };
 
 type WorkSettingsRow = {
@@ -226,8 +240,11 @@ type WorkSettingsRow = {
   files_panel_open: number;
   files_panel_width: number | null;
   persist_terminal_scrollback: number;
+  editor_font_size: number;
+  editor_auto_save: number;
   project_order_json: string;
   cli_provider_order_json: string;
+  terminal_order_json: string;
   updated_at_ms: number;
 };
 
@@ -263,6 +280,16 @@ function parseProjectOrderJson(raw: string | null | undefined): string[] {
   }
 }
 
+function parseTerminalOrderJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? normalizeWorkTerminalOrder(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 function parseCliProviderOrderJson(raw: string | null | undefined): WorkCliProvider[] {
   if (!raw) return [...WORK_CLI_PROVIDERS];
   try {
@@ -285,8 +312,11 @@ export function getWorkSettingsRow(db: AppDatabase, instanceId: number): Persist
       filesPanelOpen: true,
       filesPanelWidth: null,
       persistTerminalScrollback: false,
+      editorFontSize: DEFAULT_WORK_EDITOR_FONT_SIZE,
+      editorAutoSave: false,
       projectOrder: [],
       cliProviderOrder: [...WORK_CLI_PROVIDERS],
+      terminalOrder: [],
     };
   }
   return {
@@ -296,8 +326,11 @@ export function getWorkSettingsRow(db: AppDatabase, instanceId: number): Persist
     filesPanelOpen: existing.files_panel_open !== 0,
     filesPanelWidth: clampPanelWidth(existing.files_panel_width),
     persistTerminalScrollback: Boolean(existing.persist_terminal_scrollback),
+    editorFontSize: normalizeWorkEditorFontSize(existing.editor_font_size),
+    editorAutoSave: Boolean(existing.editor_auto_save),
     projectOrder: parseProjectOrderJson(existing.project_order_json),
     cliProviderOrder: parseCliProviderOrderJson(existing.cli_provider_order_json),
+    terminalOrder: parseTerminalOrderJson(existing.terminal_order_json),
   };
 }
 
@@ -326,19 +359,24 @@ export function updateWorkSettingsRow(
     persistTerminalScrollback: patch.persistTerminalScrollback !== undefined
       ? Boolean(patch.persistTerminalScrollback)
       : current.persistTerminalScrollback,
+    editorFontSize: normalizeWorkEditorFontSize(patch.editorFontSize ?? current.editorFontSize),
+    editorAutoSave: patch.editorAutoSave ?? current.editorAutoSave,
     projectOrder: patch.projectOrder !== undefined
       ? normalizeWorkProjectOrder(patch.projectOrder)
       : current.projectOrder,
     cliProviderOrder: patch.cliProviderOrder !== undefined
       ? normalizeWorkCliProviderOrder(patch.cliProviderOrder)
       : current.cliProviderOrder,
+    terminalOrder: patch.terminalOrder !== undefined
+      ? normalizeWorkTerminalOrder(patch.terminalOrder)
+      : current.terminalOrder,
   };
   db.prepare(`
     INSERT INTO work_settings (
       instance_id, default_windows_shell, active_project_id, active_terminals_json,
-      files_panel_open, files_panel_width, persist_terminal_scrollback,
-      project_order_json, cli_provider_order_json, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      files_panel_open, files_panel_width, persist_terminal_scrollback, editor_font_size, editor_auto_save,
+      project_order_json, cli_provider_order_json, terminal_order_json, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(instance_id) DO UPDATE SET
       default_windows_shell = excluded.default_windows_shell,
       active_project_id = excluded.active_project_id,
@@ -346,8 +384,11 @@ export function updateWorkSettingsRow(
       files_panel_open = excluded.files_panel_open,
       files_panel_width = excluded.files_panel_width,
       persist_terminal_scrollback = excluded.persist_terminal_scrollback,
+      editor_font_size = excluded.editor_font_size,
+      editor_auto_save = excluded.editor_auto_save,
       project_order_json = excluded.project_order_json,
       cli_provider_order_json = excluded.cli_provider_order_json,
+      terminal_order_json = excluded.terminal_order_json,
       updated_at_ms = excluded.updated_at_ms
   `).run(
     instanceId,
@@ -357,8 +398,11 @@ export function updateWorkSettingsRow(
     next.filesPanelOpen ? 1 : 0,
     next.filesPanelWidth,
     next.persistTerminalScrollback ? 1 : 0,
+    next.editorFontSize,
+    next.editorAutoSave ? 1 : 0,
     JSON.stringify(next.projectOrder),
     JSON.stringify(next.cliProviderOrder),
+    JSON.stringify(next.terminalOrder),
     Date.now(),
   );
   return next;

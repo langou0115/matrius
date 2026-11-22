@@ -276,6 +276,7 @@ async function readLocalClaudeSessions(options: {
       if (headLines.some((item) => item.isSidechain === true)) continue;
 
       let customTitle: string | undefined = idxMeta?.customTitle;
+      let aiTitle: string | undefined;
       let summaryTitle: string | undefined = idxMeta?.summary;
       let firstUserPrompt: string | undefined = idxMeta?.firstPrompt;
       let hasConversationTurn = false;
@@ -284,6 +285,8 @@ async function readLocalClaudeSessions(options: {
         if (rec.type === 'user' || rec.type === 'assistant') hasConversationTurn = true;
         if (rec.type === 'custom-title' && typeof rec.customTitle === 'string') {
           customTitle = rec.customTitle;
+        } else if (rec.type === 'ai-title' && typeof rec.aiTitle === 'string') {
+          aiTitle = rec.aiTitle;
         } else if (rec.type === 'summary' && typeof rec.summary === 'string') {
           summaryTitle = rec.summary;
         } else if (rec.type === 'user' && !rec.isMeta && !firstUserPrompt) {
@@ -300,6 +303,8 @@ async function readLocalClaudeSessions(options: {
         if (rec.type === 'user' || rec.type === 'assistant') hasConversationTurn = true;
         if (rec.type === 'custom-title' && typeof rec.customTitle === 'string') {
           customTitle = rec.customTitle;
+        } else if (rec.type === 'ai-title' && typeof rec.aiTitle === 'string') {
+          aiTitle = rec.aiTitle;
         } else if (rec.type === 'summary' && typeof rec.summary === 'string') {
           summaryTitle = rec.summary;
         }
@@ -309,7 +314,7 @@ async function readLocalClaudeSessions(options: {
         }
       }
 
-      if (!hasConversationTurn && !customTitle && !summaryTitle && !activeSessionIds.has(sessionId)) {
+      if (!hasConversationTurn && !customTitle && !aiTitle && !summaryTitle && !activeSessionIds.has(sessionId)) {
         continue;
       }
 
@@ -320,7 +325,13 @@ async function readLocalClaudeSessions(options: {
       for (let i = tailLines.length - 1; i >= 0; i -= 1) {
         const rec = tailLines[i];
         const type = rec.type;
-        if (type === 'file-history-snapshot' || type === 'summary' || type === 'custom-title' || type === 'queue-operation') {
+        if (
+          type === 'file-history-snapshot'
+          || type === 'summary'
+          || type === 'custom-title'
+          || type === 'ai-title'
+          || type === 'queue-operation'
+        ) {
           continue;
         }
         if (type === 'system' && rec.subtype === 'turn_duration') {
@@ -348,7 +359,7 @@ async function readLocalClaudeSessions(options: {
       }
 
       const title = normalizeCliSessionTitle(
-        customTitle || summaryTitle || firstUserPrompt,
+        customTitle || aiTitle || summaryTitle || firstUserPrompt,
         'Claude Code 对话',
       );
       const existing = results.get(sessionId);
@@ -374,21 +385,53 @@ function isCodexSubagentSource(source: string | null | undefined): boolean {
   return trimmed.startsWith('{"subagent"') || trimmed.startsWith('{"subagent":');
 }
 
+function extractFirstCodexUserMessage(lines: readonly Record<string, unknown>[]): string | undefined {
+  for (const rec of lines) {
+    if (rec.type === 'event_msg') {
+      const ev = rec.payload as { type?: unknown; message?: unknown } | undefined;
+      if (ev?.type === 'user_message' && typeof ev.message === 'string' && ev.message.trim()) {
+        return ev.message;
+      }
+    }
+  }
+  return undefined;
+}
+
+async function readCodexSessionIndexMap(codexDir: string): Promise<Map<string, string>> {
+  const titleByThread = new Map<string, string>();
+  const indexPath = join(codexDir, 'session_index.jsonl');
+  if (!existsSync(indexPath)) return titleByThread;
+  try {
+    const content = await readFile(indexPath, 'utf8');
+    for (const rec of parseJsonLines(content)) {
+      if (typeof rec.id === 'string' && typeof rec.thread_name === 'string' && rec.thread_name.trim()) {
+        titleByThread.set(rec.id, rec.thread_name);
+      }
+    }
+  } catch {
+    // Ignore unreadable session_index.jsonl.
+  }
+  return titleByThread;
+}
+
 async function detectCodexRolloutStatus(
   rolloutPath: string | null | undefined,
   turnStatus: string | null | undefined,
   updatedAtMs: number,
   nowMs: number,
-): Promise<{ status: WorkCliSessionStatus; mtimeMs: number }> {
+): Promise<{ status: WorkCliSessionStatus; mtimeMs: number; firstUserMessage?: string }> {
   let fileMtimeMs = 0;
   let tailStatus: WorkCliSessionStatus | null = null;
+  let firstUserMessage: string | undefined;
 
   if (rolloutPath) {
     const cleanPath = stripWindowsExtendedPathPrefix(rolloutPath);
-    const slices = await readHeadAndTail(cleanPath, 4096, TAIL_READ_BYTES);
+    const slices = await readHeadAndTail(cleanPath);
     if (slices) {
       fileMtimeMs = slices.mtimeMs;
-      const tailLines = parseJsonLines(slices.tail);
+      const headLines = parseJsonLines(slices.head);
+      const tailLines = slices.tail === slices.head ? headLines : parseJsonLines(slices.tail);
+      firstUserMessage = extractFirstCodexUserMessage(headLines) ?? extractFirstCodexUserMessage(tailLines);
       for (let i = tailLines.length - 1; i >= 0; i -= 1) {
         const rec = tailLines[i];
         if (rec.type !== 'event_msg') continue;
@@ -413,16 +456,16 @@ async function detectCodexRolloutStatus(
   }
 
   if (tailStatus) {
-    return { status: tailStatus, mtimeMs: fileMtimeMs };
+    return { status: tailStatus, mtimeMs: fileMtimeMs, firstUserMessage };
   }
   if (turnStatus === 'completed') {
-    return { status: 'completed', mtimeMs: fileMtimeMs };
+    return { status: 'completed', mtimeMs: fileMtimeMs, firstUserMessage };
   }
   if (turnStatus === 'inProgress' || turnStatus === 'running' || turnStatus === 'pending') {
     const fresh = nowMs - Math.max(fileMtimeMs, updatedAtMs) < RUNNING_STALE_MS;
-    return { status: fresh ? 'running' : 'idle', mtimeMs: fileMtimeMs };
+    return { status: fresh ? 'running' : 'idle', mtimeMs: fileMtimeMs, firstUserMessage };
   }
-  return { status: 'idle', mtimeMs: fileMtimeMs };
+  return { status: 'idle', mtimeMs: fileMtimeMs, firstUserMessage };
 }
 
 async function readCodexFallbackJsonlSessions(options: {
@@ -436,20 +479,7 @@ async function readCodexFallbackJsonlSessions(options: {
   const sessionsRoot = join(codexDir, 'sessions');
   if (!existsSync(sessionsRoot)) return [];
 
-  const titleByThread = new Map<string, string>();
-  const indexPath = join(codexDir, 'session_index.jsonl');
-  if (existsSync(indexPath)) {
-    try {
-      const content = await readFile(indexPath, 'utf8');
-      for (const rec of parseJsonLines(content)) {
-        if (typeof rec.id === 'string' && typeof rec.thread_name === 'string') {
-          titleByThread.set(rec.id, rec.thread_name);
-        }
-      }
-    } catch {
-      // Ignore unreadable session_index.jsonl.
-    }
-  }
+  const titleByThread = await readCodexSessionIndexMap(codexDir);
 
   const rolloutFiles: string[] = [];
   async function walk(dir: string, depth: number): Promise<void> {
@@ -487,16 +517,7 @@ async function readCodexFallbackJsonlSessions(options: {
     const sessionId = typeof payload.id === 'string' ? payload.id : '';
     if (!isValidCliSessionId(sessionId)) continue;
 
-    let firstUser = '';
-    for (const rec of headLines) {
-      if (rec.type === 'event_msg') {
-        const ev = rec.payload as { type?: unknown; message?: unknown } | undefined;
-        if (ev?.type === 'user_message' && typeof ev.message === 'string') {
-          firstUser = ev.message;
-          break;
-        }
-      }
-    }
+    const firstUser = extractFirstCodexUserMessage(headLines) ?? '';
 
     const detected = await detectCodexRolloutStatus(filePath, null, slices.mtimeMs, nowMs);
     out.push({
@@ -598,6 +619,7 @@ async function readLocalCodexSessions(options: {
     }
   }
 
+  const indexTitles = await readCodexSessionIndexMap(codexDir);
   const sessions: WorkCliSession[] = [];
   for (const row of matched) {
     const dbUpdatedAt = parseIsoTimestampMs(row.updated_at_ms || row.updated_at);
@@ -613,7 +635,7 @@ async function readLocalCodexSessions(options: {
       provider: 'codex',
       projectId,
       title: normalizeCliSessionTitle(
-        row.name || row.title || row.first_user_message || row.preview,
+        row.name || indexTitles.get(row.id) || row.title || row.first_user_message || row.preview || detected.firstUserMessage,
         'Codex 对话',
       ),
       status: detected.status,
@@ -839,10 +861,11 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '      if not ht: continue',
   '      hl = parse_jsonl(ht[0]); tl = hl if ht[1] == ht[0] else parse_jsonl(ht[1])',
   '      if any(r.get("isSidechain") is True for r in hl): continue',
-  '      ct, st, fu, has_turn = im.get("customTitle"), im.get("summary"), im.get("firstPrompt"), False',
+  '      ct, ait, st, fu, has_turn = im.get("customTitle"), None, im.get("summary"), im.get("firstPrompt"), False',
   '      for r in hl:',
   '        if r.get("type") in ("user", "assistant"): has_turn = True',
   '        if r.get("type") == "custom-title" and isinstance(r.get("customTitle"), str): ct = r["customTitle"]',
+  '        elif r.get("type") == "ai-title" and isinstance(r.get("aiTitle"), str): ait = r["aiTitle"]',
   '        elif r.get("type") == "summary" and isinstance(r.get("summary"), str): st = r["summary"]',
   '        elif r.get("type") == "user" and not r.get("isMeta") and not fu:',
   '          mc = (r.get("message") or {}).get("content")',
@@ -852,23 +875,31 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '      for r in tl:',
   '        if r.get("type") in ("user", "assistant"): has_turn = True',
   '        if r.get("type") == "custom-title" and isinstance(r.get("customTitle"), str): ct = r["customTitle"]',
+  '        elif r.get("type") == "ai-title" and isinstance(r.get("aiTitle"), str): ait = r["aiTitle"]',
   '        elif r.get("type") == "summary" and isinstance(r.get("summary"), str): st = r["summary"]',
   '        ts = max(ts, parse_ts(r.get("timestamp")))',
-  '      if not has_turn and not ct and not st and sid not in active_claude: continue',
+  '      if not has_turn and not ct and not ait and not st and sid not in active_claude: continue',
   '      status = "idle"',
   '      is_act = sid in active_claude; fresh = (now_ms - ts) < STALE_MS',
   '      for r in reversed(tl):',
   '        tp = r.get("type")',
-  '        if tp in ("file-history-snapshot", "summary", "custom-title", "queue-operation"): continue',
+  '        if tp in ("file-history-snapshot", "summary", "custom-title", "ai-title", "queue-operation"): continue',
   '        if tp == "system" and r.get("subtype") == "turn_duration": status = "completed"; break',
   '        if tp == "assistant":',
   '          sr = (r.get("message") or {}).get("stop_reason")',
   '          status = "completed" if sr in ("end_turn", "stop_sequence", "max_tokens") else ("running" if (is_act or fresh) else "idle")',
   '          break',
   '        if tp in ("user", "progress"): status = "running" if (is_act or fresh) else "idle"; break',
-  '      items.append({"id": sid, "provider": "claude", "title": clean_title(ct or st or fu, "Claude Code 对话"), "status": status, "updatedAt": ts})',
+  '      items.append({"id": sid, "provider": "claude", "title": clean_title(ct or ait or st or fu, "Claude Code 对话"), "status": status, "updatedAt": ts})',
   '# 2. Codex',
   'codex_dir = os.environ.get("CODEX_HOME") or os.path.join(home, ".codex")',
+  'codex_idx = {}',
+  'codex_idx_p = os.path.join(codex_dir, "session_index.jsonl")',
+  'if os.path.isfile(codex_idx_p):',
+  '  try:',
+  '    for r in parse_jsonl(open(codex_idx_p, "r", encoding="utf-8", errors="ignore").read()):',
+  '      if isinstance(r.get("id"), str) and isinstance(r.get("thread_name"), str) and r["thread_name"].strip(): codex_idx[r["id"]] = r["thread_name"]',
+  '  except Exception: pass',
   'state_db_p = os.path.join(codex_dir, "state_5.sqlite")',
   'if os.path.isfile(state_db_p):',
   '  try:',
@@ -884,12 +915,16 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '      if hdb:',
   '        row_t = hdb.execute("SELECT status FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1", (tid,)).fetchone()',
   '        if row_t: turn_st = row_t[0]',
-  '      st = "idle"; mtime = 0',
+  '      st = "idle"; mtime = 0; fum_rollout = None',
   '      if rp and os.path.isfile(rp):',
-  '        ht = read_head_tail(rp, 4096, 32768)',
+  '        ht = read_head_tail(rp, 16384, 32768)',
   '        if ht:',
   '          mtime = ht[2]',
-  '          for r in reversed(parse_jsonl(ht[1])):',
+  '          hl = parse_jsonl(ht[0]); tl = hl if ht[1] == ht[0] else parse_jsonl(ht[1])',
+  '          for r in (hl + tl):',
+  '            if r.get("type") == "event_msg" and (r.get("payload") or {}).get("type") == "user_message" and isinstance((r.get("payload") or {}).get("message"), str) and (r.get("payload") or {}).get("message").strip():',
+  '              fum_rollout = r["payload"]["message"]; break',
+  '          for r in reversed(tl):',
   '            if r.get("type") != "event_msg": continue',
   '            pt = (r.get("payload") or {}).get("type")',
   '            if pt == "task_complete": st = "completed"; break',
@@ -900,7 +935,7 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '              break',
   '      if st == "idle" and turn_st == "completed": st = "completed"',
   '      elif st == "idle" and turn_st in ("inProgress", "running", "pending") and (now_ms - max(mtime, uat_ms)) < STALE_MS: st = "running"',
-  '      items.append({"id": tid, "provider": "codex", "title": clean_title(name or title or fum or preview, "Codex 对话"), "status": st, "updatedAt": max(uat_ms, mtime)})',
+  '      items.append({"id": tid, "provider": "codex", "title": clean_title(name or codex_idx.get(tid) or title or fum or preview or fum_rollout, "Codex 对话"), "status": st, "updatedAt": max(uat_ms, mtime)})',
   '    if hdb: hdb.close()',
   '    sdb.close()',
   '  except Exception: pass',

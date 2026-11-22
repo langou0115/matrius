@@ -1,18 +1,21 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, writeFileSync } from 'node:fs';
-import { access, constants as fsConstants, lstat, readdir, realpath, stat } from 'node:fs/promises';
+import { access, constants as fsConstants, lstat, open, readdir, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, posix, resolve } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
 import {
   LOCAL_WORK_HOST_ID,
   WINDOWS_DRIVES_ROOT,
   validateBrowsePath,
   type HostDirectoryListing,
+  type HostFilePreview,
   type WorkHostEntry,
 } from '../../contract/work-projects';
 import type { AppDatabase } from '../db/client';
 import { fromDbUuid } from '../db/codecs';
 import { requireWorkHostRow, type WorkHostRow } from '../db/repositories/hosts';
+import { requireWorkProjectRow } from '../db/repositories/projects';
 import { AppError, invalid } from '../errors';
 import {
   decodeWslText,
@@ -21,6 +24,7 @@ import {
   expandHomePath,
   resolveWslCommand,
   type HostCommandRunner,
+  type HostCommandResult,
 } from './hosts';
 
 const INSTANCE_ID = 1;
@@ -55,7 +59,64 @@ const POSIX_BROWSE_SCRIPT = [
   'done',
 ].join('\n');
 
+const MAX_PREVIEW_BYTES = 256 * 1024;
+const POSIX_PREVIEW_SCRIPT = [
+  '[ -f "$1" ] || exit 2',
+  'head -c ' + (MAX_PREVIEW_BYTES + 1) + ' < "$1"',
+].join('\n');
+
+function decodeFilePreview(bytes: Buffer): HostFilePreview {
+  if (bytes.length > MAX_PREVIEW_BYTES) {
+    throw new AppError(413, 'file_preview_too_large', '文件超过 256 KiB，无法预览。');
+  }
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    if (/[\x00-\x08\x0e-\x1a\x1c-\x1f]/u.test(text)) throw new Error();
+    return { text, revision: createHash('sha256').update(bytes).digest('hex') };
+  } catch {
+    throw new AppError(415, 'file_preview_unsupported', '此文件无法作为 UTF-8 文本预览。');
+  }
+}
+
+async function readLocalPreviewBytes(path: string): Promise<Buffer> {
+  try {
+    if (!(await stat(path)).isFile()) throw invalid('只能预览普通文件。');
+    const file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    try {
+      if (!(await file.stat()).isFile()) throw invalid('只能预览普通文件。');
+      const bytes = Buffer.alloc(MAX_PREVIEW_BYTES + 1);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, offset);
+        if (!bytesRead) break;
+        offset += bytesRead;
+      }
+      return bytes.subarray(0, offset);
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') throw new AppError(404, 'path_not_found', '文件不存在。');
+    if (code === 'EACCES' || code === 'EPERM') {
+      throw new AppError(403, 'path_forbidden', '没有权限读取文件。');
+    }
+    throw invalid('无法读取文件。');
+  }
+}
+
+const POSIX_PROJECT_GIT = [
+  'directory=$1',
+  'shift',
+  'case "$directory" in "~") directory=$HOME ;; "~/"*) directory="$HOME/${directory#~/}" ;; esac',
+  'GIT_TERMINAL_PROMPT=0 exec git --literal-pathspecs -c core.fsmonitor=false -C "$directory" "$@"',
+].join('\n');
+
 export type HostFsService = {
+  runProjectGit(hostId: string, directory: string, args: string[]): Promise<HostCommandResult>;
+  savePreview(projectId: string, path: string, text: string, baseRevision: string): Promise<HostFilePreview>;
+  readPreview(hostId: string, path: string): Promise<HostFilePreview>;
   listEntries(hostId: string, rawPath?: string): Promise<HostDirectoryListing>;
 };
 
@@ -286,7 +347,7 @@ export function createHostFsService(options: {
   const listWindowsDrives = options.listWindowsDrives ?? defaultListWindowsDrives;
   const runtimeHostSecrets = options.runtimeHostSecrets ?? new Map<string, string>();
 
-  async function listWslFs(hostId: string, row: WorkHostRow, rawPath: string): Promise<HostDirectoryListing> {
+  async function runWslFs(row: WorkHostRow, rawPath: string, script: string, scriptArgs: string[] = [], timeoutMs = BROWSE_TIMEOUT_MS) {
     if (!wslCommand) {
       throw new AppError(400, 'wsl_unavailable', '当前运行环境无法浏览该 WSL 发行版目录。');
     }
@@ -300,10 +361,10 @@ export function createHostFsService(options: {
 
     const args = ['-d', row.distro];
     if (row.username) args.push('--user', row.username);
-    args.push('--exec', 'sh', '-c', POSIX_BROWSE_SCRIPT, '_', rawPath);
+    args.push('--exec', 'sh', '-c', script, '_', rawPath, ...scriptArgs);
 
     const result = await runCommand(wslCommand, args, {
-      timeoutMs: BROWSE_TIMEOUT_MS,
+      timeoutMs,
       env: { WSL_UTF8: '1' },
     });
 
@@ -313,17 +374,10 @@ export function createHostFsService(options: {
     if (result.timedOut) {
       throw new AppError(504, 'host_browse_timeout', `读取 WSL 发行版 ${row.distro} 目录超时。`);
     }
-    if (result.stdout.includes('PWD\0') || result.stdout.includes('ERR\0')) {
-      return parsePosixBrowseOutput(hostId, result.stdout);
-    }
-    throw new AppError(
-      502,
-      'host_browse_failed',
-      summarizeBrowseFailure(result.stderr, `无法读取 WSL 发行版 ${row.distro} 的目录。`),
-    );
+    return result;
   }
 
-  async function listSshFs(hostId: string, row: WorkHostRow, rawPath: string): Promise<HostDirectoryListing> {
+  async function runSshFs(row: WorkHostRow, rawPath: string, script: string, scriptArgs: string[] = [], timeoutMs = BROWSE_TIMEOUT_MS) {
     const resolvedSecret = runtimeHostSecrets.get(fromDbUuid(row.id)) || row.secret_value;
     if (row.auth_method === 'password' && !resolvedSecret) {
       throw new AppError(401, 'ssh_auth_required', '未保存 SSH 密码，请输入密码以浏览工作目录。');
@@ -351,11 +405,11 @@ export function createHostFsService(options: {
     }
 
     const target = row.username ? `${row.username}@${row.host}` : row.host;
-    const remoteCommand = `sh -c ${posixSingleQuote(POSIX_BROWSE_SCRIPT)} _ ${posixSingleQuote(rawPath)}`;
+    const remoteCommand = `sh -c ${posixSingleQuote(script)} _ ${[rawPath, ...scriptArgs].map(posixSingleQuote).join(' ')}`;
     args.push('--', target, remoteCommand);
 
     const result = await runCommand('ssh', args, {
-      timeoutMs: BROWSE_TIMEOUT_MS,
+      timeoutMs,
       env: cmdEnv,
     });
 
@@ -365,17 +419,109 @@ export function createHostFsService(options: {
     if (result.timedOut) {
       throw new AppError(504, 'host_browse_timeout', `读取远程主机 ${row.name} 目录超时。`);
     }
-    if (result.stdout.includes('PWD\0') || result.stdout.includes('ERR\0')) {
-      return parsePosixBrowseOutput(hostId, result.stdout);
+    return result;
+  }
+
+  function runRemoteFs(row: WorkHostRow, path: string, script: string, scriptArgs?: string[], timeoutMs?: number) {
+    return row.kind === 'wsl' ? runWslFs(row, path, script, scriptArgs, timeoutMs) : runSshFs(row, path, script, scriptArgs, timeoutMs);
+  }
+
+  const savingPaths = new Set<string>();
+  function assertRevision(bytes: Buffer, expected: string): HostFilePreview {
+    const current = decodeFilePreview(bytes);
+    if (current.revision !== expected) {
+      throw new AppError(409, 'file_preview_conflict', '文件已在其他地方修改。请先复制当前草稿，再重新打开文件。');
     }
-    throw new AppError(
-      502,
-      'host_browse_failed',
-      summarizeBrowseFailure(result.stderr, `无法连接到 SSH 主机 ${row.name} 或读取目录失败。`),
-    );
+    return current;
   }
 
   return {
+    async runProjectGit(hostId, directory, args) {
+      const timeoutMs = args[0] === 'fetch' || args[0] === 'commit' ? 30_000 : BROWSE_TIMEOUT_MS;
+      if (hostId === LOCAL_WORK_HOST_ID) {
+        const target = resolveLocalTarget(directory, homeDir, currentPlatform);
+        return runCommand('git', ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-C', target, ...args], { timeoutMs, env: { GIT_TERMINAL_PROMPT: '0' } });
+      }
+      const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
+      return runRemoteFs(row, directory, POSIX_PROJECT_GIT, args, timeoutMs);
+    },
+
+    async savePreview(projectId, path, text, baseRevision) {
+      const project = requireWorkProjectRow(db, INSTANCE_ID, projectId);
+      if (project.host_id !== LOCAL_WORK_HOST_ID) {
+        throw new AppError(403, 'file_editor_unavailable', '当前仅支持编辑本机项目中的文件。');
+      }
+      if (!isAbsolute(path) || path.includes('\0') || (currentPlatform === 'win32' && !/^[a-z]:[\\/][^:]*$/iu.test(path))) {
+        throw invalid('文件路径不合法。');
+      }
+      const [root, target] = await Promise.all([
+        realpath(resolveLocalTarget(project.directory, homeDir, currentPlatform)),
+        realpath(path),
+      ]).catch(() => { throw invalid('无法访问项目目录或文件。'); });
+      const within = relative(root, target);
+      if (!within || isAbsolute(within) || within === '..' || within.startsWith('..' + sep)) {
+        throw new AppError(403, 'path_forbidden', '只能编辑项目目录中的普通文件。');
+      }
+
+      const lockPath = currentPlatform === 'win32' ? target.toLowerCase() : target;
+      if (savingPaths.has(lockPath)) throw new AppError(409, 'file_preview_busy', '文件正在保存，请稍后重试。');
+      savingPaths.add(lockPath);
+      const tempPath = join(dirname(target), `.matrius-save-${randomUUID()}.tmp`);
+      let tempCreated = false;
+      try {
+        const original = await readLocalPreviewBytes(target);
+        const current = assertRevision(original, baseRevision);
+        const bom = original.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]));
+        const replacement = Buffer.from((bom ? '\uFEFF' : '') + text, 'utf8');
+        const saved = decodeFilePreview(replacement);
+        if (current.revision === saved.revision) return current;
+        await access(target, fsConstants.W_OK);
+        const { mode } = await stat(target);
+        const temp = await open(tempPath, 'wx', 0o600);
+        tempCreated = true;
+        try {
+          await temp.writeFile(replacement);
+          await temp.chmod(mode & 0o777);
+          await temp.sync();
+        } finally {
+          await temp.close();
+        }
+        assertRevision(await readLocalPreviewBytes(target), baseRevision);
+        await rename(tempPath, target);
+        tempCreated = false;
+        return saved;
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw invalid('保存文件失败，请检查文件与目录权限。');
+      } finally {
+        savingPaths.delete(lockPath);
+        if (tempCreated) await unlink(tempPath).catch(() => {});
+      }
+    },
+
+    async readPreview(hostId, path) {
+      try {
+        validateBrowsePath(path);
+        if (path.includes('\0')) throw new Error();
+      } catch {
+        throw invalid('文件路径不合法。');
+      }
+      if (hostId === LOCAL_WORK_HOST_ID) {
+        if (!isAbsolute(path) || (currentPlatform === 'win32' && !/^[a-z]:[\\/][^:]*$/iu.test(path))) {
+          throw invalid('文件路径不合法。');
+        }
+        return decodeFilePreview(await readLocalPreviewBytes(path));
+      }
+      if (!posix.isAbsolute(path)) throw invalid('文件路径不合法。');
+      const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
+      const result = await runRemoteFs(row, path, POSIX_PREVIEW_SCRIPT);
+      if (result.code === 2) throw invalid('文件不存在或不是普通文件。');
+      if (result.code !== 0) {
+        throw new AppError(502, 'host_preview_failed', summarizeBrowseFailure(result.stderr, '无法读取主机文件。'));
+      }
+      return decodeFilePreview(result.stdout);
+    },
+
     async listEntries(hostId, rawPath) {
       let cleanPath: string;
       try {
@@ -389,10 +535,14 @@ export function createHostFsService(options: {
       }
 
       const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
-      if (row.kind === 'wsl') {
-        return listWslFs(hostId, row, cleanPath);
+      const result = await runRemoteFs(row, cleanPath, POSIX_BROWSE_SCRIPT);
+      if (result.stdout.includes('PWD\0') || result.stdout.includes('ERR\0')) {
+        return parsePosixBrowseOutput(hostId, result.stdout);
       }
-      return listSshFs(hostId, row, cleanPath);
+      const fallback = row.kind === 'wsl'
+        ? `无法读取 WSL 发行版 ${row.distro} 的目录。`
+        : `无法连接到 SSH 主机 ${row.name} 或读取目录失败。`;
+      throw new AppError(502, 'host_browse_failed', summarizeBrowseFailure(result.stderr, fallback));
     },
   };
 }

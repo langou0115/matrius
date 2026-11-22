@@ -1,5 +1,5 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from '@/router';
-import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, Palette, Search, Server, SlidersHorizontal, Terminal, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, FileCode, Palette, Search, Server, SlidersHorizontal, Terminal, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
@@ -23,6 +23,7 @@ const categoryIcons: Record<string, LucideIcon> = {
   personalization: SlidersHorizontal,
   models: Cpu,
   'work-general': Terminal,
+  'work-editor': FileCode,
   hosts: Server,
   about: Info,
   storage: HardDrive,

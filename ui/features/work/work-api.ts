@@ -1,3 +1,4 @@
+import type { WorkGitCommit, WorkGitCommitNode, WorkGitDiff, WorkGitDiffRequest, WorkGitStatus } from '@contract/work-git';
 import {
   CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
   type WorkProjectCliSessionsResponse,
@@ -5,6 +6,7 @@ import {
 import type { WorkHost } from '@contract/work-hosts';
 import type {
   HostDirectoryListing,
+  HostFilePreview,
   WorkHostEntry,
   WorkProject,
   WorkProjectInput,
@@ -159,6 +161,27 @@ export function createPreviewCliSessions(projectId: string): WorkProjectCliSessi
     total: items.length,
     hasMore: false,
   };
+}
+
+export function readHostFilePreview(
+  request: ApiRequest,
+  hostId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<HostFilePreview> {
+  const query = new URLSearchParams({ path });
+  return request<HostFilePreview>(`/api/hosts/${encodeURIComponent(hostId)}/fs/preview?${query}`, { signal });
+}
+
+export function saveWorkFile(
+  request: ApiRequest,
+  projectId: string,
+  input: { path: string; text: string; baseRevision: string },
+): Promise<HostFilePreview> {
+  return request<HostFilePreview>(`/api/projects/${encodeURIComponent(projectId)}/files/text`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
 }
 
 export function browseHostDirectory(
@@ -372,4 +395,36 @@ export function createPreviewWorkHosts(): WorkHost[] {
       updatedAt: now,
     },
   ];
+}
+
+export function readWorkGit(request: ApiRequest, projectId: string, signal?: AbortSignal): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git`, { signal });
+}
+
+export function commitWorkGit(request: ApiRequest, projectId: string, input: WorkGitCommit): Promise<{ oid: string }> {
+  return request<{ oid: string }>(`/api/projects/${encodeURIComponent(projectId)}/git/commits`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export function fetchWorkGit(request: ApiRequest, projectId: string): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/fetch`, { method: 'POST' });
+}
+
+export function readWorkGitDiff(
+  request: ApiRequest,
+  projectId: string,
+  file: WorkGitDiffRequest,
+  signal?: AbortSignal,
+): Promise<WorkGitDiff> {
+  const query = new URLSearchParams(file);
+  return request<WorkGitDiff>(`/api/projects/${encodeURIComponent(projectId)}/git/diff?${query}`, { signal });
+}
+
+export function readWorkGitGraph(request: ApiRequest, projectId: string, signal?: AbortSignal): Promise<WorkGitCommitNode[]> {
+  return request<WorkGitCommitNode[]>(`/api/projects/${encodeURIComponent(projectId)}/git/graph`, { signal });
+}
+
+export function readWorkGitCommitDiff(request: ApiRequest, projectId: string, oid: string, signal?: AbortSignal): Promise<WorkGitDiff> {
+  return request<WorkGitDiff>(`/api/projects/${encodeURIComponent(projectId)}/git/commits/${encodeURIComponent(oid)}/diff`, { signal });
 }

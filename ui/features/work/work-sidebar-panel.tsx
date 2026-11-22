@@ -2,22 +2,23 @@ import {
   CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
   CLI_SESSIONS_INITIAL_VISIBLE,
   CLI_SESSIONS_PAGE_STEP,
+  NEW_CLI_SESSION_TITLE,
   WORK_CLI_PROVIDER_LABELS,
   buildCliResumeCommand,
   formatCliTerminalTitle,
+  isFallbackCliSessionTitle,
   normalizeWorkCliProviderOrder,
   workCliGroupKey,
   type WorkCliProvider,
   type WorkCliSession,
 } from '@contract/work-cli';
-import { LOCAL_WORK_HOST_ID, type WorkProject } from '@contract/work-projects';
+import { LOCAL_WORK_HOST_ID, resolveWorkTerminalCommand, type WorkProject } from '@contract/work-projects';
 import type { WorkHost } from '@contract/work-hosts';
 import {
   defaultTerminalCommand,
-  defaultTerminalTitle,
   type WorkTerminalSession,
 } from '@contract/work-terminals';
-import { Check, ChevronRight, FolderPlus, Plus, Settings2 } from 'lucide-react';
+import { ChevronRight, FolderPlus, Plus, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
@@ -36,6 +37,7 @@ import {
   listProjectCliSessions,
   listWorkProjects,
   listWorkTerminals,
+  updateWorkTerminal,
 } from './work-api';
 import { WorkErrorDialog } from './work-error-dialog';
 import { loadWorkSettings, saveWorkSettings } from './work-shell-preference';
@@ -52,9 +54,11 @@ import {
   reorderWorkProjects,
   selectWorkTerminal,
   setWorkHosts,
+  setWorkCliGroupCollapsed,
   setWorkProjectCliSessions,
   setWorkProjectCliSessionsError,
   setWorkProjectCliSessionsLoading,
+  setWorkProjectExpanded,
   setWorkProjects,
   setWorkProjectsError,
   setWorkServerPlatform,
@@ -68,6 +72,7 @@ import {
   writeActiveProjectId,
 } from './work-state';
 
+const CLI_POLL_FAST_INTERVAL_MS = 1_500;
 const CLI_POLL_INTERVAL_MS = 3_500;
 const CLI_FETCH_PAGE_STEP = 60;
 
@@ -100,7 +105,7 @@ function createPreviewResumedTerminal(project: WorkProject, session: WorkCliSess
     title: formatCliTerminalTitle(session.title, session.provider),
     preset: session.provider,
     cliSessionId: session.id,
-    command: buildCliResumeCommand(session.provider, session.id),
+    command: resolveWorkTerminalCommand(project, session.provider, buildCliResumeCommand(session.provider, session.id)),
     cwd: project.directory,
     status: 'running',
     exitCode: null,
@@ -114,9 +119,9 @@ function createPreviewNewCliTerminal(project: WorkProject, provider: WorkCliProv
     id: `mock-terminal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     projectId: project.id,
     hostId: project.hostId,
-    title: defaultTerminalTitle(provider, 0),
+    title: NEW_CLI_SESSION_TITLE,
     preset: provider,
-    command: defaultTerminalCommand(provider),
+    command: resolveWorkTerminalCommand(project, provider, defaultTerminalCommand(provider)),
     cwd: project.directory,
     status: 'running',
     exitCode: null,
@@ -136,6 +141,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     filesPanelWidth,
     projectOrder,
     cliProviderOrder,
+    terminalOrder,
     projects,
     projectsLoaded,
     projectsError,
@@ -209,6 +215,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
             filesPanelWidth: workSettings.filesPanelWidth,
             projectOrder: workSettings.projectOrder,
             cliProviderOrder: workSettings.cliProviderOrder,
+            terminalOrder: workSettings.terminalOrder,
           });
           hydrateWorkSettings(workSettings);
         }
@@ -232,6 +239,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       filesPanelWidth,
       projectOrder,
       cliProviderOrder,
+      terminalOrder,
     });
     if (serialized === lastSavedSelectionRef.current) return;
     const timer = setTimeout(() => {
@@ -243,6 +251,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
         filesPanelWidth,
         projectOrder,
         cliProviderOrder,
+        terminalOrder,
       }).catch(() => {});
     }, 100);
     return () => clearTimeout(timer);
@@ -257,6 +266,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     instance.request,
     projectOrder,
     projectsLoaded,
+    terminalOrder,
   ]);
 
   const expandedList = useMemo(
@@ -283,7 +293,10 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     }
     try {
       const result = await listProjectCliSessions(instance.request, projectId, limit);
-      setWorkProjectCliSessions(projectId, result, limit);
+      const patches = setWorkProjectCliSessions(projectId, result, limit);
+      for (const item of patches) {
+        void updateWorkTerminal(instance.request, item.terminalId, item.patch).catch(() => {});
+      }
     } catch (reason) {
       if (!options.silent || !getWorkState().cliSessionsByProject[projectId]?.loaded) {
         setWorkProjectCliSessionsError(
@@ -321,11 +334,31 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     preview,
   ]);
 
-  // Periodically poll expanded projects while visible so running/completed state stays live.
+  // Periodically poll expanded projects while visible so running/completed state and titles stay live.
   useEffect(() => {
     if (collapsed || preview || !canUseServer || !expandedKey) return;
     const ids = expandedKey.split(',').filter(Boolean);
     if (ids.length === 0) return;
+
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const hasFastCliPoll = () => {
+      const currentState = getWorkState();
+      for (const projectId of ids) {
+        if (currentState.terminals.some((item) => (
+          item.projectId === projectId
+          && item.preset !== 'shell'
+          && (!item.cliSessionId || item.status === 'running')
+        ))) {
+          return true;
+        }
+        if ((currentState.cliSessionsByProject[projectId]?.items ?? []).some((item) => item.status === 'running')) {
+          return true;
+        }
+      }
+      return false;
+    };
 
     const refreshAll = (silent: boolean) => {
       if (typeof document !== 'undefined' && document.hidden) return;
@@ -337,7 +370,16 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       }
     };
 
-    const timer = setInterval(() => refreshAll(true), CLI_POLL_INTERVAL_MS);
+    const scheduleNext = () => {
+      if (disposed) return;
+      const delay = hasFastCliPoll() ? CLI_POLL_FAST_INTERVAL_MS : CLI_POLL_INTERVAL_MS;
+      timer = setTimeout(() => {
+        refreshAll(true);
+        scheduleNext();
+      }, delay);
+    };
+
+    scheduleNext();
     const onVisibility = () => {
       if (!document.hidden) refreshAll(true);
     };
@@ -345,7 +387,8 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       document.addEventListener('visibilitychange', onVisibility);
     }
     return () => {
-      clearInterval(timer);
+      disposed = true;
+      if (timer !== null) clearTimeout(timer);
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisibility);
       }
@@ -423,6 +466,9 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     const newKey = workCliGroupKey(project.id, provider);
     if (pendingNewCliKeysRef.current.has(newKey)) return;
 
+    setWorkProjectExpanded(project.id, true);
+    setWorkCliGroupCollapsed(project.id, provider, false);
+
     const currentTerminals = getWorkState().terminals;
     const existing = currentTerminals.find((item) => (
       item.projectId === project.id
@@ -448,7 +494,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       const created = await createWorkTerminal(instance.request, {
         projectId: project.id,
         preset: provider,
-        title: defaultTerminalTitle(provider, 0),
+        title: NEW_CLI_SESSION_TITLE,
       });
       addWorkTerminal(created);
       bumpCliSessionsRefresh();
@@ -553,9 +599,18 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                       if (bucket) bucket.push(session);
                       else sessionsByProvider.set(session.provider, [session]);
                     }
+                    const draftTerminalByProvider = new Map<WorkCliProvider, WorkTerminalSession>();
+                    for (const term of terminals) {
+                      if (term.projectId === project.id && term.preset !== 'shell' && !term.cliSessionId) {
+                        if (!draftTerminalByProvider.has(term.preset)) {
+                          draftTerminalByProvider.set(term.preset, term);
+                        }
+                      }
+                    }
                     const cliGroups = normalizedProviderOrder.map((provider) => ({
                       provider,
                       sessions: sessionsByProvider.get(provider) ?? [],
+                      draftTerminal: draftTerminalByProvider.get(provider) ?? null,
                     }));
                     const showChildren = isExpanded;
                     const isDraggingProject = draggingProjectId === project.id;
@@ -679,7 +734,8 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                               <p className="work-cli-error" role="alert">{cliState.error}</p>
                             )}
                             {cliGroups.map((group, groupIndex) => {
-                              const { provider, sessions: groupSessions } = group;
+                              const { provider, sessions: groupSessions, draftTerminal } = group;
+                              const hasGroupItems = Boolean(draftTerminal) || groupSessions.length > 0;
                               const groupKey = workCliGroupKey(project.id, provider);
                               const isGroupCollapsed = Boolean(collapsedCliGroups[groupKey]);
                               const visibleLimit = cliVisibleCounts[groupKey] ?? CLI_SESSIONS_INITIAL_VISIBLE;
@@ -772,14 +828,14 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                                     <button
                                       type="button"
                                       className="work-cli-group-toggle"
-                                      aria-expanded={groupSessions.length > 0 ? !isGroupCollapsed : undefined}
+                                      aria-expanded={hasGroupItems ? !isGroupCollapsed : undefined}
                                       onClick={() => {
-                                        if (groupSessions.length > 0) {
+                                        if (hasGroupItems) {
                                           toggleWorkCliGroupCollapsed(project.id, provider);
                                         }
                                       }}
                                     >
-                                      {groupSessions.length > 0 ? (
+                                      {hasGroupItems ? (
                                         <ChevronRight
                                           size={12}
                                           strokeWidth={1.75}
@@ -810,13 +866,39 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                                     </button>
                                   </div>
 
-                                  {groupSessions.length > 0 && !isGroupCollapsed && (
+                                  {hasGroupItems && !isGroupCollapsed && (
                                     <div className="work-cli-group-items">
+                                        {draftTerminal && (
+                                          <button
+                                            key={draftTerminal.id}
+                                            type="button"
+                                            className={`work-cli-session-btn work-cli-session-draft${isActive && activeTerminalId === draftTerminal.id ? ' is-active' : ''}`}
+                                            aria-current={isActive && activeTerminalId === draftTerminal.id ? 'true' : undefined}
+                                            data-cli-provider={provider}
+                                            data-cli-draft="true"
+                                            data-cli-terminal-id={draftTerminal.id}
+                                            title={draftTerminal.title || NEW_CLI_SESSION_TITLE}
+                                            onClick={() => {
+                                              writeActiveProjectId(project.id);
+                                              selectWorkTerminal(draftTerminal.id);
+                                            }}
+                                          >
+                                            <span className="work-cli-session-title">{draftTerminal.title || NEW_CLI_SESSION_TITLE}</span>
+                                          </button>
+                                        )}
                                         {visibleGroupSessions.map((session) => {
                                           const cliKey = workCliSessionKey(project.id, session.provider, session.id);
                                           const isSessionActive = isActive
                                             && activeTerminal?.preset === session.provider
                                             && activeTerminal?.cliSessionId === session.id;
+                                          const boundTerminal = terminals.find((item) => (
+                                            item.projectId === project.id
+                                            && item.preset === session.provider
+                                            && item.cliSessionId === session.id
+                                          ));
+                                          const displayTitle = isFallbackCliSessionTitle(session.title) && boundTerminal?.title === NEW_CLI_SESSION_TITLE
+                                            ? NEW_CLI_SESSION_TITLE
+                                            : session.title;
                                           const isUnread = Boolean(unreadCompletedCliKeys[cliKey]);
                                           return (
                                             <button
@@ -830,19 +912,17 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                                               disabled={openingCliKey === cliKey}
                                               onClick={() => void handleOpenCliSession(project, session)}
                                             >
-                                              <span className="work-cli-session-title">{session.title}</span>
+                                              <span className="work-cli-session-title">{displayTitle}</span>
                                               {session.status === 'running' ? (
                                                 <span className="work-cli-status is-running" role="status" aria-label="加载中">
                                                   <span className="conversation-spinner" aria-hidden="true" />
                                                 </span>
-                                              ) : session.status === 'completed' ? (
+                                              ) : session.status === 'completed' && isUnread ? (
                                                 <span
-                                                  className={`work-cli-status is-completed${isUnread ? ' is-unread' : ''}`}
+                                                  className="work-cli-status is-completed conversation-completed-indicator"
                                                   role="img"
-                                                  aria-label="已完成"
-                                                >
-                                                  <Check size={13} strokeWidth={2} aria-hidden="true" />
-                                                </span>
+                                                  aria-label="已完成，尚未查看"
+                                                />
                                               ) : null}
                                             </button>
                                           );

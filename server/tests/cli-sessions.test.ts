@@ -294,3 +294,103 @@ test('cli-sessions service queries WSL and SSH hosts safely via python3 probe', 
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('extracts Claude ai-title and Codex rollout user_message / session_index fallback titles cleanly', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'matrius-cli-titles-data-'));
+  const homeDir = mkdtempSync(join(tmpdir(), 'matrius-cli-titles-home-'));
+  const projectDir = join(homeDir, 'workspace', 'titles-demo');
+  mkdirSync(projectDir, { recursive: true });
+
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+  const project = serializeWorkProject(createWorkProjectRow(db, 1, {
+    hostId: 'local',
+    directory: projectDir,
+  }));
+  const nowMs = 1_800_000_000_000;
+
+  const claudeSlugDir = join(homeDir, '.claude', 'projects', claudeProjectSlug(projectDir));
+  mkdirSync(claudeSlugDir, { recursive: true });
+  writeFileSync(
+    join(claudeSlugDir, 'claude-ai-title-1.jsonl'),
+    [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: '初始提示词应该被 AI 标题覆盖' }, timestamp: new Date(nowMs - 8_000).toISOString() }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] }, timestamp: new Date(nowMs - 4_000).toISOString() }),
+      JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 1200, timestamp: new Date(nowMs - 4_000).toISOString() }),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Claude 自动标题' }),
+    ].join('\n') + '\n',
+  );
+
+  const codexDir = join(homeDir, '.codex');
+  const rolloutDir = join(codexDir, 'sessions', '2026', '11', '22');
+  mkdirSync(rolloutDir, { recursive: true });
+  const rolloutFromPrompt = join(rolloutDir, 'rollout-prompt.jsonl');
+  writeFileSync(
+    rolloutFromPrompt,
+    [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'codex-rollout-prompt', cwd: projectDir } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: '来自 rollout 的首句标题' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete' } }),
+    ].join('\n') + '\n',
+  );
+  const rolloutIndexed = join(rolloutDir, 'rollout-indexed.jsonl');
+  writeFileSync(
+    rolloutIndexed,
+    [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'codex-indexed-1', cwd: projectDir } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: '旧首句' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete' } }),
+    ].join('\n') + '\n',
+  );
+  writeFileSync(
+    join(codexDir, 'session_index.jsonl'),
+    JSON.stringify({ id: 'codex-indexed-1', thread_name: '索引最新线程名' }) + '\n',
+  );
+
+  const stateDb = new DatabaseSync(join(codexDir, 'state_5.sqlite'));
+  stateDb.exec(`
+    CREATE TABLE threads (
+      id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      source TEXT NOT NULL, model_provider TEXT NOT NULL, cwd TEXT NOT NULL, title TEXT NOT NULL,
+      sandbox_policy TEXT NOT NULL, approval_mode TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0,
+      first_user_message TEXT NOT NULL DEFAULT '', updated_at_ms INTEGER, preview TEXT NOT NULL DEFAULT '',
+      name TEXT, attached_thread_parent_id TEXT
+    );
+  `);
+  const insertThread = stateDb.prepare(
+    `INSERT INTO threads (id, rollout_path, created_at, updated_at, source, model_provider, cwd, title, sandbox_policy, approval_mode, archived, first_user_message, updated_at_ms, preview, name, attached_thread_parent_id)
+     VALUES (?, ?, ?, ?, 'cli', 'openai', ?, '', '{}', 'on-request', 0, '', ?, '', NULL, NULL)`,
+  );
+  insertThread.run('codex-rollout-prompt', rolloutFromPrompt, 1799998, 1799998, projectDir, nowMs - 2_000);
+  insertThread.run('codex-indexed-1', rolloutIndexed, 1799999, 1799999, projectDir, nowMs - 1_000);
+  stateDb.close();
+
+  const cliSessions = createWorkCliSessionService({
+    db,
+    homeDir,
+    currentPlatform: process.platform,
+    now: () => nowMs,
+  });
+  const { app } = await buildApp({ settings, db, cliSessions });
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/cli-sessions?limit=20`,
+    });
+    assert.equal(res.statusCode, 200);
+    const byId = new Map(
+      res.json<{ items: Array<{ id: string; title: string; status: string }> }>().items.map((item) => [item.id, item]),
+    );
+    assert.equal(byId.get('claude-ai-title-1')?.title, 'Claude 自动标题');
+    assert.equal(byId.get('claude-ai-title-1')?.status, 'completed');
+    assert.equal(byId.get('codex-rollout-prompt')?.title, '来自 rollout 的首句标题');
+    assert.equal(byId.get('codex-indexed-1')?.title, '索引最新线程名');
+  } finally {
+    await app.close();
+    db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});

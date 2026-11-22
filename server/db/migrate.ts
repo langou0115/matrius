@@ -30,6 +30,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { id: '0011_work_terminal_cli_session', file: '0011_work_terminal_cli_session.sql' },
   { id: '0012_work_project_cli_proxies', file: '0012_work_project_cli_proxies.sql' },
   { id: '0013_work_order_preferences', file: '0013_work_order_preferences.sql' },
+  { id: '0014_work_ai_args_and_terminal_order', file: '0014_work_ai_args_and_terminal_order.sql' },
+  { id: '0015_work_editor_settings', file: '0015_work_editor_settings.sql' },
 ];
 
 export const HEAD_REVISION = MIGRATIONS[MIGRATIONS.length - 1].id;

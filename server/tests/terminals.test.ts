@@ -376,8 +376,11 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
         filesPanelOpen: false,
         filesPanelWidth: 420,
         persistTerminalScrollback: true,
+        editorFontSize: 19,
+        editorAutoSave: true,
         projectOrder: [sshProject.id, localProject.id],
         cliProviderOrder: ['claude', 'codex', 'antigravity'],
+        terminalOrder: [wslId, localId, sshId],
       },
     });
     spawned1[0].pty.emitData(`${subDir}>\r\n`);
@@ -431,8 +434,11 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
       filesPanelOpen: false,
       filesPanelWidth: 420,
       persistTerminalScrollback: true,
+      editorFontSize: 19,
+      editorAutoSave: true,
       projectOrder: [sshProject.id, localProject.id],
       cliProviderOrder: ['claude', 'codex', 'antigravity'],
+      terminalOrder: [wslId, localId, sshId],
     });
     const profileFieldsRes = await secondBuilt.app.inject({ method: 'GET', url: '/api/profile/fields' });
     assert.deepEqual(profileFieldsRes.json(), { items: [] });
@@ -545,6 +551,11 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
       antigravity: 'http://127.0.0.1:7891',
       claude: 'http://127.0.0.1:7892',
     },
+    cliArgs: {
+      codex: '--dangerously-bypass-approvals-and-sandbox',
+      antigravity: '--verbose',
+      claude: '--dangerously-skip-permissions',
+    },
   }));
   const sshProject = serializeWorkProject(createWorkProjectRow(db, 1, {
     hostId: sshHost.id,
@@ -552,6 +563,9 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
     cliProxies: {
       codex: 'socks5://127.0.0.1:1080',
       claude: 'http://127.0.0.1:8899',
+    },
+    cliArgs: {
+      claude: '--dangerously-skip-permissions',
     },
   }));
 
@@ -572,7 +586,7 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
   });
   const { app } = await buildApp({ settings, db, terminals });
   try {
-    // Plain shell terminals never inherit CLI proxy settings by default.
+    // Plain shell terminals never inherit CLI proxy or launch arg settings by default.
     const localRes = await app.inject({
       method: 'POST',
       url: '/api/work/terminals',
@@ -582,6 +596,7 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
     assert.equal(spawned[0].env?.HTTP_PROXY, undefined);
     assert.equal(spawned[0].env?.HTTPS_PROXY, undefined);
     assert.equal(spawned[0].env?.ALL_PROXY, undefined);
+    assert.equal(spawned[0].args.some((arg) => arg.includes('--dangerously')), false);
 
     const codexRes = await app.inject({
       method: 'POST',
@@ -592,6 +607,7 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
     assert.equal(spawned[1].env?.HTTP_PROXY, 'http://127.0.0.1:7890');
     assert.equal(spawned[1].env?.HTTPS_PROXY, 'http://127.0.0.1:7890');
     assert.equal(spawned[1].env?.ALL_PROXY, 'http://127.0.0.1:7890');
+    assert.ok(spawned[1].args.some((arg) => arg.includes('codex --dangerously-bypass-approvals-and-sandbox')));
 
     // Re-creating a non-resumed CLI session for the same project+group returns the existing session (no duplicate spawn).
     const dupCodexRes = await app.inject({
@@ -610,16 +626,55 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
     });
     assert.equal(agyRes.statusCode, 201);
     assert.equal(spawned[2].env?.HTTP_PROXY, 'http://127.0.0.1:7891');
+    assert.ok(spawned[2].args.some((arg) => arg.includes('agy --verbose')));
+
+    const codexResumeRes = await app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: {
+        projectId: localProject.id,
+        preset: 'codex',
+        cliSessionId: 'codex-sess-42',
+        command: 'codex resume codex-sess-42',
+      },
+    });
+    assert.equal(codexResumeRes.statusCode, 201);
+    assert.ok(spawned[3].args.some((arg) => arg.includes('codex resume --dangerously-bypass-approvals-and-sandbox codex-sess-42')));
 
     const sshRes = await app.inject({
       method: 'POST',
       url: '/api/work/terminals',
-      payload: { projectId: sshProject.id, preset: 'claude' },
+      payload: {
+        projectId: sshProject.id,
+        preset: 'claude',
+        cliSessionId: 'claude-sess-77',
+        command: 'claude --resume claude-sess-77',
+      },
     });
     assert.equal(sshRes.statusCode, 201);
-    assert.ok(spawned[3].args.some((arg) => arg.includes("HTTP_PROXY='http://127.0.0.1:8899'")));
-    assert.ok(spawned[3].args.some((arg) => arg.includes("HTTPS_PROXY='http://127.0.0.1:8899'")));
-    assert.equal(spawned[3].args.some((arg) => arg.includes('1080')), false);
+    assert.ok(spawned[4].args.some((arg) => arg.includes("HTTP_PROXY='http://127.0.0.1:8899'")));
+    assert.ok(spawned[4].args.some((arg) => arg.includes("HTTPS_PROXY='http://127.0.0.1:8899'")));
+    assert.ok(spawned[4].args.some((arg) => arg.includes('claude --resume claude-sess-77 --dangerously-skip-permissions')));
+    assert.equal(spawned[4].args.some((arg) => arg.includes('1080')), false);
+
+    // Updating project cliArgs takes effect when resuming an exited/restored terminal.
+    const claudeId = sshRes.json<{ id: string }>().id;
+    spawned[4].pty.emitExit(0);
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${sshProject.id}`,
+      payload: {
+        cliArgs: { claude: '--dangerously-skip-permissions --verbose' },
+        baseRevision: sshProject.revision,
+      },
+    });
+    const resumeClaudeRes = await app.inject({
+      method: 'POST',
+      url: `/api/work/terminals/${claudeId}/resume`,
+      payload: { cols: 100, rows: 30 },
+    });
+    assert.equal(resumeClaudeRes.statusCode, 200);
+    assert.ok(spawned[5].args.some((arg) => arg.includes('claude --resume claude-sess-77 --dangerously-skip-permissions --verbose')));
 
     // Scrollback DB persistence defaults to off (live attach still gets startup buffer, SQLite & restart stay empty).
     const defaultSettingsRes = await app.inject({ method: 'GET', url: '/api/work/settings' });
@@ -700,9 +755,117 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
     if (process.platform === 'win32') {
       assert.equal(typeof listed.windowsBuild, 'number');
     }
+
+    // Reattaching after >128KB output or ED 3 preserves active DEC mouse/paste/alt-screen modes across chunks.
+    const mousePty = spawned[0].pty;
+    mousePty.emitData('\x1b[?1003;');
+    mousePty.emitData('1006;2004h\x1b[?1049h');
+    mousePty.emitData('x'.repeat(135_000));
+    const reattachedSnap = terminals.attach(localId, () => {});
+    assert.ok(reattachedSnap.snapshot.startsWith('\x1b[?1049h'));
+    assert.ok(reattachedSnap.snapshot.endsWith('\x1b[?1003;1006;2004h'));
+    reattachedSnap.detach();
+
+    mousePty.emitData('\x1b[?1003;1006;1049l');
+    const exitedAppSnap = terminals.attach(localId, () => {});
+    assert.ok(exitedAppSnap.snapshot.endsWith('\x1b[?1003;1006;1049l\x1b[?2004h'));
+    assert.equal(exitedAppSnap.snapshot.includes('1003;1006;2004h'), false);
+    exitedAppSnap.detach();
+
+    mousePty.emitData('\x1b[3Jnormal prompt>');
+    const clearedSnap = terminals.attach(localId, () => {});
+    assert.equal(clearedSnap.snapshot, '\x1b[3Jnormal prompt>\x1b[?2004h');
+    clearedSnap.detach();
   } finally {
     await app.close();
     db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true });
+    rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+test('binds cliSessionId and title via PATCH /api/work/terminals/:terminalId and persists across restart', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'matrius-term-bind-data-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'matrius-term-bind-cwd-'));
+  const binDir = mkdtempSync(join(tmpdir(), 'matrius-term-bind-bin-'));
+  writeFileSync(join(binDir, 'codex.cmd'), '@echo off\r\n');
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
+  const dbPath = settings.databasePath;
+
+  const db1 = openDatabase(dbPath, { busyTimeoutMs: 1000 });
+  migrate(db1);
+  const project = serializeWorkProject(createWorkProjectRow(db1, 1, { hostId: 'local', directory: workDir }));
+  const service1 = createWorkTerminalService({
+    db: db1,
+    ptySpawn: () => createFakePty(),
+    currentPlatform: 'win32',
+    env: { ...process.env, PATH: `${binDir};${process.env.PATH ?? ''}`, ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+  });
+  const first = await buildApp({ settings, db: db1, terminals: service1 });
+  let codexTermId = '';
+  let shellTermId = '';
+
+  try {
+    const createCodex = await first.app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: project.id, preset: 'codex' },
+    });
+    assert.equal(createCodex.statusCode, 201);
+    const createdCodex = createCodex.json<{ id: string; title: string; cliSessionId?: string; command: string }>();
+    codexTermId = createdCodex.id;
+    assert.equal(createdCodex.title, '新对话');
+    assert.equal(createdCodex.cliSessionId, undefined);
+
+    const patchCodex = await first.app.inject({
+      method: 'PATCH',
+      url: `/api/work/terminals/${codexTermId}`,
+      payload: { cliSessionId: 'codex-thread-99', title: '修复新对话标题' },
+    });
+    assert.equal(patchCodex.statusCode, 200);
+    const patched = patchCodex.json<{ cliSessionId?: string; title: string; command: string }>();
+    assert.equal(patched.cliSessionId, 'codex-thread-99');
+    assert.equal(patched.title, '修复新对话标题');
+    assert.equal(patched.command, 'codex resume codex-thread-99');
+
+    const createShell = await first.app.inject({
+      method: 'POST',
+      url: '/api/work/terminals',
+      payload: { projectId: project.id, preset: 'shell', title: '终端' },
+    });
+    shellTermId = createShell.json<{ id: string }>().id;
+    const rejectShellBind = await first.app.inject({
+      method: 'PATCH',
+      url: `/api/work/terminals/${shellTermId}`,
+      payload: { cliSessionId: 'codex-thread-99' },
+    });
+    assert.equal(rejectShellBind.statusCode, 422);
+  } finally {
+    await first.app.close();
+    db1.close();
+  }
+
+  const db2 = openDatabase(dbPath, { busyTimeoutMs: 1000 });
+  const service2 = createWorkTerminalService({
+    db: db2,
+    ptySpawn: () => createFakePty(),
+    currentPlatform: 'win32',
+    env: { ...process.env, PATH: `${binDir};${process.env.PATH ?? ''}`, ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+  });
+  const second = await buildApp({ settings, db: db2, terminals: service2 });
+  try {
+    const listed = await second.app.inject({ method: 'GET', url: `/api/work/terminals?projectId=${project.id}` });
+    assert.equal(listed.statusCode, 200);
+    const reloaded = listed.json<{ items: Array<{ id: string; cliSessionId?: string; title: string; command: string }> }>().items
+      .find((item) => item.id === codexTermId);
+    assert.ok(reloaded);
+    assert.equal(reloaded.cliSessionId, 'codex-thread-99');
+    assert.equal(reloaded.title, '修复新对话标题');
+    assert.equal(reloaded.command, 'codex resume codex-thread-99');
+  } finally {
+    await second.app.close();
+    db2.close();
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(workDir, { recursive: true, force: true });
     rmSync(binDir, { recursive: true, force: true });

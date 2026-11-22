@@ -17,6 +17,7 @@ const LibraryScreen = lazy(() => import('@/features/files/library-screen'));
 const TasksScreen = lazy(() => import('@/features/tasks/tasks-screen'));
 const StorageScreen = lazy(() => import('@/features/files/storage-screen'));
 const ModelSettingsScreen = lazy(() => import('@/features/models/model-settings-screen'));
+const WorkEditorScreen = lazy(() => import('@/features/work/work-editor-screen'));
 const WorkGeneralScreen = lazy(() => import('@/features/work/work-general-screen'));
 const HostSettingsScreen = lazy(() => import('@/features/hosts/host-settings-screen'));
 const PersonalizationScreen = lazy(() => import('@/features/settings/personalization-screen'));
@@ -57,6 +58,7 @@ export function AppRoutes() {
         <Route path="settings/display" element={<AppearanceRedirect />} />
         <Route path="settings/models" element={<ModelSettingsScreen />} />
         <Route path="settings/work-general" element={<DesktopOnly><WorkGeneralScreen /></DesktopOnly>} />
+        <Route path="settings/work-editor" element={<DesktopOnly><WorkEditorScreen /></DesktopOnly>} />
         <Route path="settings/hosts" element={<DesktopOnly><HostSettingsScreen /></DesktopOnly>} />
         <Route path="settings/personalization" element={<PersonalizationScreen />} />
         <Route path="settings/storage" element={<StorageScreen />} />
@@ -74,6 +76,7 @@ export function AppRoutes() {
         <Route path="mock/chat/settings/display" element={<DevOnly><AppearanceRedirect /></DevOnly>} />
         <Route path="mock/chat/settings/models" element={<DevOnly><ModelSettingsScreen /></DevOnly>} />
         <Route path="mock/chat/settings/work-general" element={<DevOnly><DesktopOnly><WorkGeneralScreen /></DesktopOnly></DevOnly>} />
+        <Route path="mock/chat/settings/work-editor" element={<DevOnly><DesktopOnly><WorkEditorScreen /></DesktopOnly></DevOnly>} />
         <Route path="mock/chat/settings/hosts" element={<DevOnly><DesktopOnly><HostSettingsScreen /></DesktopOnly></DevOnly>} />
         <Route path="mock/chat/settings/personalization" element={<DevOnly><PersonalizationScreen /></DevOnly>} />
         <Route path="mock/chat/settings/about" element={<DevOnly><AboutScreen /></DevOnly>} />

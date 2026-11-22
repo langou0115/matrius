@@ -3,6 +3,9 @@ import {
   CLI_SESSIONS_INITIAL_VISIBLE,
   CLI_SESSIONS_PAGE_STEP,
   WORK_CLI_PROVIDERS,
+  buildCliResumeCommand,
+  formatCliTerminalTitle,
+  isFallbackCliSessionTitle,
   normalizeWorkCliProviderOrder,
   reorderStringList,
   workCliGroupKey,
@@ -12,14 +15,20 @@ import {
 } from '@contract/work-cli';
 import type { WorkHost } from '@contract/work-hosts';
 import {
+  DEFAULT_WORK_EDITOR_FONT_SIZE,
+  normalizeWorkEditorFontSize,
   normalizeWorkProjectOrder,
   sortWorkProjectsByOrder,
+  type HostFilePreview,
+  type WorkHostEntry,
   type WorkProject,
 } from '@contract/work-projects';
 import {
   DEFAULT_WINDOWS_SHELL,
   normalizeOptionalWindowsShell,
+  normalizeWorkTerminalOrder,
   normalizeWorkTerminalTitle,
+  sortWorkTerminalsByOrder,
   type WindowsTerminalShell,
   type WorkTerminalPatchInput,
   type WorkTerminalSession,
@@ -32,7 +41,9 @@ const ACTIVE_TERMINALS_KEY = 'matrius:work-active-terminals';
 const EXPANDED_PROJECTS_KEY = 'matrius:work-expanded-projects';
 const PROJECT_ORDER_KEY = 'matrius:work-project-order';
 const CLI_PROVIDER_ORDER_KEY = 'matrius:work-cli-provider-order';
+const TERMINAL_ORDER_KEY = 'matrius:work-terminal-order';
 const COLLAPSED_CLI_GROUPS_KEY = 'matrius:work-collapsed-cli-groups';
+const PROJECT_AI_EXPANDED_GROUPS_KEY = 'matrius:work-project-ai-expanded-groups';
 const FILES_PANEL_WIDTH_KEY = 'matrius:work-files-width';
 const DEFAULT_WINDOWS_SHELL_KEY = 'matrius:work-default-windows-shell';
 
@@ -78,14 +89,18 @@ export type WorkStoreSnapshot = {
   projectsError: string | null;
   projectOrder: string[];
   cliProviderOrder: WorkCliProvider[];
+  terminalOrder: string[];
   expandedProjectIds: Record<string, boolean>;
   collapsedCliGroups: Record<string, boolean>;
+  projectAiExpandedGroups: Record<WorkCliProvider, boolean>;
   cliVisibleCounts: Record<string, number>;
   cliSessionsByProject: Record<string, WorkProjectCliSessionsState>;
   unreadCompletedCliKeys: Record<string, boolean>;
   cliRefreshTick: number;
   hosts: WorkHost[];
   terminals: WorkTerminalSession[];
+  gitTabsByProject: Record<string, 'active' | 'inactive'>;
+  fileTabsByProject: Record<string, { entries: WorkHostEntry[]; activePath: string | null; drafts: Map<string, WorkFileDraft> }>;
   activeTerminalId: string | null;
   activeTerminalByProject: Record<string, string | null>;
   filesPanelOpen: boolean;
@@ -95,6 +110,8 @@ export type WorkStoreSnapshot = {
   defaultWindowsShell: WindowsTerminalShell;
   defaultWindowsShellLoaded: boolean;
   persistTerminalScrollback: boolean;
+  editorFontSize: number;
+  editorAutoSave: boolean;
   hostUnlockVersion: number;
 };
 
@@ -151,8 +168,26 @@ function readStoredCliProviderOrder(): WorkCliProvider[] {
   return Array.isArray(parsed) ? normalizeWorkCliProviderOrder(parsed) : [...WORK_CLI_PROVIDERS];
 }
 
+function readStoredTerminalOrder(): string[] {
+  const parsed = readStoredJson(TERMINAL_ORDER_KEY);
+  return Array.isArray(parsed) ? normalizeWorkTerminalOrder(parsed) : [];
+}
+
 function readStoredCollapsedCliGroups(): Record<string, boolean> {
   return readStoredBooleanMap(COLLAPSED_CLI_GROUPS_KEY);
+}
+
+function defaultProjectAiExpandedGroups(): Record<WorkCliProvider, boolean> {
+  return { codex: false, antigravity: false, claude: false };
+}
+
+function readStoredProjectAiExpandedGroups(): Record<WorkCliProvider, boolean> {
+  const map = readStoredBooleanMap(PROJECT_AI_EXPANDED_GROUPS_KEY);
+  return {
+    codex: Boolean(map.codex),
+    antigravity: Boolean(map.antigravity),
+    claude: Boolean(map.claude),
+  };
 }
 
 function readSessionProjectId(): string | null {
@@ -229,14 +264,18 @@ function createInitialState(): WorkStoreSnapshot {
     projectsError: null,
     projectOrder: readStoredProjectOrder(),
     cliProviderOrder: readStoredCliProviderOrder(),
+    terminalOrder: readStoredTerminalOrder(),
     expandedProjectIds: readStoredExpandedProjects(),
     collapsedCliGroups: readStoredCollapsedCliGroups(),
+    projectAiExpandedGroups: readStoredProjectAiExpandedGroups(),
     cliVisibleCounts: {},
     cliSessionsByProject: {},
     unreadCompletedCliKeys: {},
     cliRefreshTick: 0,
     hosts: [],
     terminals: [],
+    gitTabsByProject: {},
+    fileTabsByProject: {},
     activeTerminalId: null,
     activeTerminalByProject: readStoredActiveTerminals(),
     filesPanelOpen: true,
@@ -246,6 +285,8 @@ function createInitialState(): WorkStoreSnapshot {
     defaultWindowsShell: readStoredDefaultWindowsShell(),
     defaultWindowsShellLoaded: false,
     persistTerminalScrollback: false,
+    editorFontSize: DEFAULT_WORK_EDITOR_FONT_SIZE,
+    editorAutoSave: false,
     hostUnlockVersion: 0,
   };
 }
@@ -294,12 +335,26 @@ export function writeActiveProjectId(projectId: string | null): void {
   if (nextMap !== state.activeTerminalByProject) {
     persistActiveTerminals(nextMap);
   }
-  if (state.activeProjectId !== projectId || state.activeTerminalId !== nextActiveTerminalId) {
+  const activeTerminal = nextActiveTerminalId
+    ? state.terminals.find((item) => item.id === nextActiveTerminalId) ?? null
+    : null;
+  let unreadChanged = false;
+  let nextUnread = state.unreadCompletedCliKeys;
+  if (activeTerminal && activeTerminal.preset !== 'shell' && activeTerminal.cliSessionId) {
+    const key = workCliSessionKey(activeTerminal.projectId, activeTerminal.preset, activeTerminal.cliSessionId);
+    if (nextUnread[key]) {
+      nextUnread = { ...nextUnread };
+      delete nextUnread[key];
+      unreadChanged = true;
+    }
+  }
+  if (state.activeProjectId !== projectId || state.activeTerminalId !== nextActiveTerminalId || unreadChanged) {
     emit({
       ...state,
       activeProjectId: projectId,
       activeTerminalId: nextActiveTerminalId,
       activeTerminalByProject: nextMap,
+      ...(unreadChanged ? { unreadCompletedCliKeys: nextUnread } : {}),
     });
   }
 }
@@ -381,7 +436,16 @@ export function removeWorkProject(projectId: string): void {
   if (nextProjectOrder.length !== state.projectOrder.length) {
     persistStoredJson(PROJECT_ORDER_KEY, nextProjectOrder);
   }
+  const removedTerminalIds = new Set(
+    state.terminals.filter((item) => item.projectId === projectId).map((item) => item.id),
+  );
   const nextTerminals = state.terminals.filter((item) => item.projectId !== projectId);
+  const nextTerminalOrder = removedTerminalIds.size > 0
+    ? state.terminalOrder.filter((id) => !removedTerminalIds.has(id))
+    : state.terminalOrder;
+  if (nextTerminalOrder.length !== state.terminalOrder.length) {
+    persistStoredJson(TERMINAL_ORDER_KEY, nextTerminalOrder);
+  }
   const nextMap = { ...state.activeTerminalByProject };
   delete nextMap[projectId];
   persistActiveTerminals(nextMap);
@@ -420,8 +484,14 @@ export function removeWorkProject(projectId: string): void {
   for (const key of Object.keys(nextUnread)) {
     if (key.startsWith(prefix)) delete nextUnread[key];
   }
+  const fileTabsByProject = { ...state.fileTabsByProject };
+  delete fileTabsByProject[projectId];
+  const gitTabsByProject = { ...state.gitTabsByProject };
+  delete gitTabsByProject[projectId];
   emit({
     ...state,
+    fileTabsByProject,
+    gitTabsByProject,
     projects: nextProjects,
     projectOrder: nextProjectOrder,
     expandedProjectIds: nextExpanded,
@@ -430,6 +500,7 @@ export function removeWorkProject(projectId: string): void {
     cliSessionsByProject: nextCliSessions,
     unreadCompletedCliKeys: nextUnread,
     terminals: nextTerminals,
+    terminalOrder: nextTerminalOrder,
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId,
     activeTerminalByProject: nextMap,
@@ -472,11 +543,17 @@ export function reorderWorkCliProviders(
   });
 }
 
-export function toggleWorkCliGroupCollapsed(projectId: string, provider: WorkCliProvider): void {
+export function setWorkCliGroupCollapsed(
+  projectId: string,
+  provider: WorkCliProvider,
+  collapsed: boolean,
+): void {
   const key = workCliGroupKey(projectId, provider);
+  const current = Boolean(state.collapsedCliGroups[key]);
+  if (current === collapsed) return;
   const next = { ...state.collapsedCliGroups };
-  if (next[key]) delete next[key];
-  else next[key] = true;
+  if (collapsed) next[key] = true;
+  else delete next[key];
   persistStoredJson(COLLAPSED_CLI_GROUPS_KEY, next);
   emit({
     ...state,
@@ -484,18 +561,94 @@ export function toggleWorkCliGroupCollapsed(projectId: string, provider: WorkCli
   });
 }
 
-function sortPinnedTerminals(items: readonly WorkTerminalSession[]): WorkTerminalSession[] {
-  const pinned: WorkTerminalSession[] = [];
-  const unpinned: WorkTerminalSession[] = [];
-  for (const item of items) {
-    if (item.pinned) pinned.push(item);
-    else unpinned.push(item);
+export function toggleWorkCliGroupCollapsed(projectId: string, provider: WorkCliProvider): void {
+  const key = workCliGroupKey(projectId, provider);
+  setWorkCliGroupCollapsed(projectId, provider, !state.collapsedCliGroups[key]);
+}
+
+export function setWorkProjectAiGroupExpanded(provider: WorkCliProvider, expanded: boolean): void {
+  if (Boolean(state.projectAiExpandedGroups[provider]) === expanded) return;
+  const next: Record<WorkCliProvider, boolean> = {
+    ...state.projectAiExpandedGroups,
+    [provider]: expanded,
+  };
+  persistStoredJson(PROJECT_AI_EXPANDED_GROUPS_KEY, next);
+  emit({
+    ...state,
+    projectAiExpandedGroups: next,
+  });
+}
+
+export function toggleWorkProjectAiGroupExpanded(provider: WorkCliProvider): void {
+  setWorkProjectAiGroupExpanded(provider, !state.projectAiExpandedGroups[provider]);
+}
+
+export function reorderWorkTerminals(
+  draggedId: string,
+  targetId: string,
+  position?: 'before' | 'after',
+): void {
+  const dragged = state.terminals.find((item) => item.id === draggedId);
+  const target = state.terminals.find((item) => item.id === targetId);
+  if (!dragged || !target || dragged.id === target.id) return;
+  if (dragged.projectId !== target.projectId) return;
+  if (Boolean(dragged.pinned) !== Boolean(target.pinned)) return;
+
+  const currentIds = state.terminals.map((item) => item.id);
+  const nextIds = reorderStringList(currentIds, draggedId, targetId, position);
+  if (nextIds.length === currentIds.length && nextIds.every((id, index) => id === currentIds[index])) {
+    return;
   }
-  return [...pinned, ...unpinned];
+  const nextTerminals = sortWorkTerminalsByOrder(state.terminals, nextIds);
+  const nextTerminalOrder = nextTerminals.map((item) => item.id);
+  persistStoredJson(TERMINAL_ORDER_KEY, nextTerminalOrder);
+  emit({
+    ...state,
+    terminalOrder: nextTerminalOrder,
+    terminals: nextTerminals,
+  });
+}
+
+let draftBaselineSessionIdsByTerminalId = new Map<string, Set<string>>();
+let lastAutoTitleByTerminalId = new Map<string, string>();
+let manuallyRenamedTerminalIds = new Set<string>();
+
+function pruneTerminalTracking(activeTerminals: readonly WorkTerminalSession[]): void {
+  const activeIds = new Set(activeTerminals.map((item) => item.id));
+  for (const id of draftBaselineSessionIdsByTerminalId.keys()) {
+    if (!activeIds.has(id)) draftBaselineSessionIdsByTerminalId.delete(id);
+  }
+  for (const id of lastAutoTitleByTerminalId.keys()) {
+    if (!activeIds.has(id)) lastAutoTitleByTerminalId.delete(id);
+  }
+  for (const id of manuallyRenamedTerminalIds) {
+    if (!activeIds.has(id)) manuallyRenamedTerminalIds.delete(id);
+  }
 }
 
 export function setWorkTerminals(terminals: WorkTerminalSession[]): void {
-  const ordered = sortPinnedTerminals(terminals);
+  const ordered = sortWorkTerminalsByOrder(terminals, state.terminalOrder);
+  pruneTerminalTracking(ordered);
+  for (const item of ordered) {
+    if (item.preset !== 'shell' && !item.cliSessionId && !draftBaselineSessionIdsByTerminalId.has(item.id)) {
+      const cliState = state.cliSessionsByProject[item.projectId];
+      if (cliState?.loaded) {
+        draftBaselineSessionIdsByTerminalId.set(
+          item.id,
+          new Set(
+            cliState.items
+              .filter((session) => session.provider === item.preset)
+              .map((session) => session.id),
+          ),
+        );
+      }
+    }
+    if (item.preset !== 'shell' && !manuallyRenamedTerminalIds.has(item.id) && !lastAutoTitleByTerminalId.has(item.id)) {
+      if (isFallbackCliSessionTitle(item.title)) {
+        lastAutoTitleByTerminalId.set(item.id, item.title);
+      }
+    }
+  }
   const nextActiveTerminalId = resolveProjectActiveTerminal(
     ordered,
     state.activeProjectId,
@@ -512,10 +665,36 @@ export function setWorkTerminals(terminals: WorkTerminalSession[]): void {
 
 export function addWorkTerminal(terminal: WorkTerminalSession): void {
   hasExplicitProjectChoice = true;
-  const nextTerminals = sortPinnedTerminals([
-    ...state.terminals.filter((item) => item.id !== terminal.id),
-    terminal,
-  ]);
+  if (terminal.preset !== 'shell' && !terminal.cliSessionId) {
+    const cliState = state.cliSessionsByProject[terminal.projectId];
+    if (cliState?.loaded) {
+      draftBaselineSessionIdsByTerminalId.set(
+        terminal.id,
+        new Set(
+          cliState.items
+            .filter((session) => session.provider === terminal.preset)
+            .map((session) => session.id),
+        ),
+      );
+    }
+  } else {
+    draftBaselineSessionIdsByTerminalId.delete(terminal.id);
+  }
+  if (terminal.preset !== 'shell' && !manuallyRenamedTerminalIds.has(terminal.id)) {
+    lastAutoTitleByTerminalId.set(terminal.id, terminal.title);
+  }
+  const nextTerminals = sortWorkTerminalsByOrder(
+    [
+      ...state.terminals.filter((item) => item.id !== terminal.id),
+      terminal,
+    ],
+    state.terminalOrder,
+  );
+  let nextTerminalOrder = state.terminalOrder;
+  if (state.terminalOrder.length > 0 && !state.terminalOrder.includes(terminal.id)) {
+    nextTerminalOrder = nextTerminals.map((item) => item.id);
+    persistStoredJson(TERMINAL_ORDER_KEY, nextTerminalOrder);
+  }
   const nextMap = {
     ...state.activeTerminalByProject,
     [terminal.projectId]: terminal.id,
@@ -533,8 +712,11 @@ export function addWorkTerminal(terminal: WorkTerminalSession): void {
   emit({
     ...state,
     terminals: nextTerminals,
+    terminalOrder: nextTerminalOrder,
     activeTerminalId: terminal.id,
     activeProjectId: terminal.projectId,
+    fileTabsByProject: deactivateWorkFile(terminal.projectId),
+    gitTabsByProject: deactivateWorkGit(terminal.projectId),
     activeTerminalByProject: nextMap,
     unreadCompletedCliKeys: nextUnread,
   });
@@ -542,10 +724,11 @@ export function addWorkTerminal(terminal: WorkTerminalSession): void {
 
 export function replaceWorkTerminalSession(updated: WorkTerminalSession): void {
   const exists = state.terminals.some((item) => item.id === updated.id);
-  const nextTerminals = sortPinnedTerminals(
+  const nextTerminals = sortWorkTerminalsByOrder(
     exists
       ? state.terminals.map((item) => (item.id === updated.id ? updated : item))
       : [...state.terminals, updated],
+    state.terminalOrder,
   );
   emit({
     ...state,
@@ -553,8 +736,17 @@ export function replaceWorkTerminalSession(updated: WorkTerminalSession): void {
   });
 }
 
-export function updateWorkTerminalMeta(terminalId: string, patch: WorkTerminalPatchInput): void {
+export function updateWorkTerminalMeta(
+  terminalId: string,
+  patch: WorkTerminalPatchInput,
+  options?: { manualRename?: boolean },
+): void {
+  if (options?.manualRename && patch.title !== undefined) {
+    manuallyRenamedTerminalIds.add(terminalId);
+    lastAutoTitleByTerminalId.delete(terminalId);
+  }
   let changed = false;
+  let pinnedChanged = false;
   const updated = state.terminals.map((item) => {
     if (item.id !== terminalId) return item;
     let nextTitle = item.title;
@@ -563,16 +755,117 @@ export function updateWorkTerminalMeta(terminalId: string, patch: WorkTerminalPa
       nextTitle = normalized;
     }
     const nextPinned = patch.pinned !== undefined ? Boolean(patch.pinned) : Boolean(item.pinned);
-    if (nextTitle !== item.title || nextPinned !== Boolean(item.pinned)) {
+    const nextCliSessionId = patch.cliSessionId !== undefined ? patch.cliSessionId : item.cliSessionId;
+    const nextCommand = (
+      patch.cliSessionId !== undefined
+      && item.preset !== 'shell'
+    )
+      ? buildCliResumeCommand(item.preset, patch.cliSessionId)
+      : item.command;
+    if (
+      nextTitle !== item.title
+      || nextPinned !== Boolean(item.pinned)
+      || nextCliSessionId !== item.cliSessionId
+      || nextCommand !== item.command
+    ) {
       changed = true;
-      return { ...item, title: nextTitle, pinned: nextPinned };
+      if (nextPinned !== Boolean(item.pinned)) pinnedChanged = true;
+      return {
+        ...item,
+        title: nextTitle,
+        pinned: nextPinned,
+        ...(nextCliSessionId !== undefined ? { cliSessionId: nextCliSessionId } : {}),
+        command: nextCommand,
+      };
     }
     return item;
   });
   if (!changed) return;
+  const nextTerminals = sortWorkTerminalsByOrder(updated, state.terminalOrder);
+  let nextTerminalOrder = state.terminalOrder;
+  if (pinnedChanged) {
+    nextTerminalOrder = nextTerminals.map((item) => item.id);
+    persistStoredJson(TERMINAL_ORDER_KEY, nextTerminalOrder);
+  }
   emit({
     ...state,
-    terminals: sortPinnedTerminals(updated),
+    terminalOrder: nextTerminalOrder,
+    terminals: nextTerminals,
+  });
+}
+
+export type WorkFileDraft = { text: string; base: HostFilePreview; saving?: boolean; composing?: boolean; error?: string };
+
+export function isFileDraftDirty(draft: WorkFileDraft | undefined): boolean {
+  return Boolean(draft && draft.text !== draft.base.text.replace(/\r\n?/gu, '\n'));
+}
+
+export function setWorkFileDraft(
+  projectId: string,
+  path: string,
+  draft?: WorkFileDraft,
+  expected?: WorkFileDraft,
+): void {
+  const tabs = state.fileTabsByProject[projectId];
+  if (!tabs?.entries.some((entry) => entry.path === path)) return;
+  if (expected && tabs.drafts.get(path) !== expected) return;
+  const drafts = new Map(tabs.drafts);
+  if (draft) drafts.set(path, draft);
+  else drafts.delete(path);
+  emit({ ...state, fileTabsByProject: { ...state.fileTabsByProject, [projectId]: { ...tabs, drafts } } });
+}
+
+function deactivateWorkFile(projectId: string): WorkStoreSnapshot['fileTabsByProject'] {
+  const tabs = state.fileTabsByProject[projectId];
+  if (!tabs?.activePath) return state.fileTabsByProject;
+  return { ...state.fileTabsByProject, [projectId]: { ...tabs, activePath: null } };
+}
+
+function deactivateWorkGit(projectId: string): WorkStoreSnapshot['gitTabsByProject'] {
+  if (state.gitTabsByProject[projectId] !== 'active') return state.gitTabsByProject;
+  return { ...state.gitTabsByProject, [projectId]: 'inactive' };
+}
+
+export function openWorkGit(projectId: string): void {
+  if (state.gitTabsByProject[projectId] === 'active') return;
+  emit({ ...state, gitTabsByProject: { ...state.gitTabsByProject, [projectId]: 'active' } });
+}
+
+export function closeWorkGit(projectId: string): void {
+  if (!state.gitTabsByProject[projectId]) return;
+  const gitTabsByProject = { ...state.gitTabsByProject };
+  delete gitTabsByProject[projectId];
+  emit({ ...state, gitTabsByProject });
+}
+
+export function openWorkFile(projectId: string, entry: WorkHostEntry): void {
+  const entries = state.fileTabsByProject[projectId]?.entries ?? [];
+  emit({
+    ...state,
+    gitTabsByProject: deactivateWorkGit(projectId),
+    fileTabsByProject: {
+      ...state.fileTabsByProject,
+      [projectId]: {
+        entries: entries.some((file) => file.path === entry.path) ? entries : [...entries, entry],
+        activePath: entry.path,
+        drafts: state.fileTabsByProject[projectId]?.drafts ?? new Map(),
+      },
+    },
+  });
+}
+
+export function closeWorkFiles(projectId: string, paths: readonly string[]): void {
+  const tabs = state.fileTabsByProject[projectId];
+  if (!tabs || !paths.length) return;
+  const entries = tabs.entries.filter((file) => !paths.includes(file.path));
+  const activePath = tabs.activePath && paths.includes(tabs.activePath)
+    ? entries.at(-1)?.path ?? null
+    : tabs.activePath;
+  const drafts = new Map(tabs.drafts);
+  paths.forEach((path) => { drafts.delete(path); });
+  emit({
+    ...state,
+    fileTabsByProject: { ...state.fileTabsByProject, [projectId]: { entries, activePath, drafts } },
   });
 }
 
@@ -606,6 +899,8 @@ export function selectWorkTerminal(terminalId: string | null): void {
     ...state,
     activeTerminalId: terminalId,
     activeProjectId: target.projectId,
+    fileTabsByProject: deactivateWorkFile(target.projectId),
+    gitTabsByProject: deactivateWorkGit(target.projectId),
     activeTerminalByProject: nextMap,
     unreadCompletedCliKeys: nextUnread,
   });
@@ -645,6 +940,11 @@ export function removeWorkTerminals(terminalIds: readonly string[]): void {
   if (!existing.some((item) => targets.has(item.id))) return;
 
   const nextTerminals = existing.filter((item) => !targets.has(item.id));
+  pruneTerminalTracking(nextTerminals);
+  const nextTerminalOrder = state.terminalOrder.filter((id) => !targets.has(id));
+  if (nextTerminalOrder.length !== state.terminalOrder.length) {
+    persistStoredJson(TERMINAL_ORDER_KEY, nextTerminalOrder);
+  }
   const nextMap = { ...state.activeTerminalByProject };
   for (const [projectId, storedId] of Object.entries(nextMap)) {
     if (storedId && targets.has(storedId)) {
@@ -668,11 +968,31 @@ export function removeWorkTerminals(terminalIds: readonly string[]): void {
   }
   persistActiveTerminals(nextMap);
 
+  const nextActiveTerminal = nextActive
+    ? nextTerminals.find((item) => item.id === nextActive) ?? null
+    : null;
+  let unreadChanged = false;
+  let nextUnread = state.unreadCompletedCliKeys;
+  if (nextActiveTerminal && nextActiveTerminal.preset !== 'shell' && nextActiveTerminal.cliSessionId) {
+    const key = workCliSessionKey(
+      nextActiveTerminal.projectId,
+      nextActiveTerminal.preset,
+      nextActiveTerminal.cliSessionId,
+    );
+    if (nextUnread[key]) {
+      nextUnread = { ...nextUnread };
+      delete nextUnread[key];
+      unreadChanged = true;
+    }
+  }
+
   emit({
     ...state,
     terminals: nextTerminals,
+    terminalOrder: nextTerminalOrder,
     activeTerminalId: nextActive,
     activeTerminalByProject: nextMap,
+    ...(unreadChanged ? { unreadCompletedCliKeys: nextUnread } : {}),
   });
 }
 
@@ -724,6 +1044,14 @@ export function setPersistTerminalScrollback(enabled: boolean): void {
   emit({ ...state, persistTerminalScrollback: next });
 }
 
+export function setWorkEditorSettings(settings: { editorFontSize: number; editorAutoSave: boolean }): void {
+  emit({
+    ...state,
+    editorFontSize: normalizeWorkEditorFontSize(settings.editorFontSize),
+    editorAutoSave: settings.editorAutoSave,
+  });
+}
+
 export function hydrateWorkSettings(settings: {
   defaultWindowsShell: WindowsTerminalShell;
   activeProjectId: string | null;
@@ -731,8 +1059,11 @@ export function hydrateWorkSettings(settings: {
   filesPanelOpen?: boolean;
   filesPanelWidth?: number | null;
   persistTerminalScrollback?: boolean;
+  editorFontSize?: number;
+  editorAutoSave?: boolean;
   projectOrder?: string[];
   cliProviderOrder?: WorkCliProvider[];
+  terminalOrder?: string[];
 }): void {
   const normalizedShell = normalizeOptionalWindowsShell(settings.defaultWindowsShell) ?? DEFAULT_WINDOWS_SHELL;
   const mergedTerminals = {
@@ -752,10 +1083,15 @@ export function hydrateWorkSettings(settings: {
   const nextCliProviderOrder = settings.cliProviderOrder !== undefined
     ? normalizeWorkCliProviderOrder(settings.cliProviderOrder)
     : state.cliProviderOrder;
+  const nextTerminalOrder = settings.terminalOrder !== undefined
+    ? normalizeWorkTerminalOrder(settings.terminalOrder)
+    : state.terminalOrder;
   if (settings.projectOrder !== undefined) persistStoredJson(PROJECT_ORDER_KEY, nextProjectOrder);
   if (settings.cliProviderOrder !== undefined) persistStoredJson(CLI_PROVIDER_ORDER_KEY, nextCliProviderOrder);
+  if (settings.terminalOrder !== undefined) persistStoredJson(TERMINAL_ORDER_KEY, nextTerminalOrder);
 
   const orderedProjects = sortWorkProjectsByOrder(state.projects, nextProjectOrder);
+  const orderedTerminals = sortWorkTerminalsByOrder(state.terminals, nextTerminalOrder);
 
   // Only keep an existing activeProjectId if the user explicitly switched/selected one
   // in this session; otherwise restore the server-persisted activeProjectId from SQLite.
@@ -773,7 +1109,7 @@ export function hydrateWorkSettings(settings: {
     }
   }
   const nextActiveTerminalId = resolveProjectActiveTerminal(
-    state.terminals,
+    orderedTerminals,
     nextActiveProjectId,
     nextActiveProjectId ? mergedTerminals[nextActiveProjectId] : null,
   );
@@ -795,11 +1131,15 @@ export function hydrateWorkSettings(settings: {
   emit({
     ...state,
     projects: orderedProjects,
+    terminals: orderedTerminals,
     projectOrder: nextProjectOrder,
     cliProviderOrder: nextCliProviderOrder,
+    terminalOrder: nextTerminalOrder,
     defaultWindowsShell: normalizedShell,
     defaultWindowsShellLoaded: true,
     persistTerminalScrollback: Boolean(settings.persistTerminalScrollback),
+    editorFontSize: normalizeWorkEditorFontSize(settings.editorFontSize ?? state.editorFontSize),
+    editorAutoSave: settings.editorAutoSave ?? state.editorAutoSave,
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId,
     activeTerminalByProject: mergedTerminals,
@@ -890,18 +1230,134 @@ export function setWorkProjectCliSessionsLoading(
   });
 }
 
+export type CliTerminalSyncPatch = {
+  terminalId: string;
+  patch: WorkTerminalPatchInput;
+};
+
+const DRAFT_SESSION_CLOCK_SKEW_MS = 5_000;
+
 export function setWorkProjectCliSessions(
   projectId: string,
   payload: WorkProjectCliSessionsResponse,
   requestedLimit = CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
-): void {
+): CliTerminalSyncPatch[] {
   const prev = state.cliSessionsByProject[projectId];
   const prevByKey = new Map<string, WorkCliSession>();
   for (const item of prev?.items ?? []) {
     prevByKey.set(workCliSessionKey(projectId, item.provider, item.id), item);
   }
+
+  // 1. Bind any open unbound "新对话" terminal to newly created on-disk CLI sessions
+  //    and keep open CLI terminal titles synced with real-time session titles.
+  const boundSessionKeys = new Set<string>();
+  for (const item of state.terminals) {
+    if (item.projectId === projectId && item.preset !== 'shell' && item.cliSessionId) {
+      boundSessionKeys.add(`${item.preset}:${item.cliSessionId}`);
+    }
+  }
+  const unboundDrafts = state.terminals
+    .filter((item) => item.projectId === projectId && item.preset !== 'shell' && !item.cliSessionId)
+    .sort((left, right) => left.createdAt - right.createdAt);
+
+  const pendingBind = new Map<string, WorkCliSession>();
+  for (const draft of unboundDrafts) {
+    let baseline = draftBaselineSessionIdsByTerminalId.get(draft.id);
+    if (!baseline) {
+      baseline = new Set(
+        payload.items
+          .filter((item) => item.provider === draft.preset && item.updatedAt < draft.createdAt - DRAFT_SESSION_CLOCK_SKEW_MS)
+          .map((item) => item.id),
+      );
+      draftBaselineSessionIdsByTerminalId.set(draft.id, baseline);
+    }
+    const candidates = payload.items
+      .filter((item) => (
+        item.provider === draft.preset
+        && !boundSessionKeys.has(`${item.provider}:${item.id}`)
+        && !baseline.has(item.id)
+        && item.updatedAt >= draft.createdAt - DRAFT_SESSION_CLOCK_SKEW_MS
+      ))
+      .sort((left, right) => {
+        const leftRunning = left.status === 'running' ? 0 : 1;
+        const rightRunning = right.status === 'running' ? 0 : 1;
+        if (leftRunning !== rightRunning) return leftRunning - rightRunning;
+        return left.updatedAt - right.updatedAt;
+      });
+    const matched = candidates[0];
+    if (matched) {
+      boundSessionKeys.add(`${matched.provider}:${matched.id}`);
+      pendingBind.set(draft.id, matched);
+      draftBaselineSessionIdsByTerminalId.delete(draft.id);
+    }
+  }
+
+  const sessionByProviderId = new Map<string, WorkCliSession>();
+  for (const item of payload.items) {
+    sessionByProviderId.set(`${item.provider}:${item.id}`, item);
+  }
+
+  let terminalsChanged = false;
+  const serverPatches: CliTerminalSyncPatch[] = [];
+  const nextTerminals = state.terminals.map((term) => {
+    if (term.projectId !== projectId || term.preset === 'shell') return term;
+    const newlyMatched = pendingBind.get(term.id);
+    const effectiveCliSessionId = newlyMatched?.id ?? term.cliSessionId;
+    if (!effectiveCliSessionId) return term;
+
+    const matchedSession = newlyMatched ?? sessionByProviderId.get(`${term.preset}:${effectiveCliSessionId}`);
+    let nextTitle = term.title;
+    let titleUpdated = false;
+
+    if (matchedSession && !manuallyRenamedTerminalIds.has(term.id)) {
+      const formatted = formatCliTerminalTitle(matchedSession.title, matchedSession.provider);
+      const prevSession = prevByKey.get(workCliSessionKey(projectId, matchedSession.provider, matchedSession.id));
+      const prevFormatted = prevSession ? formatCliTerminalTitle(prevSession.title, prevSession.provider) : null;
+      const recordedAutoTitle = lastAutoTitleByTerminalId.get(term.id);
+      const isFallbackCurrent = isFallbackCliSessionTitle(term.title);
+
+      if (!isFallbackCliSessionTitle(matchedSession.title)) {
+        const canAutoUpdate = (
+          recordedAutoTitle === term.title
+          || isFallbackCurrent
+          || prevFormatted === term.title
+          || (recordedAutoTitle === undefined && !prevSession && term.title === formatted)
+        );
+        if (canAutoUpdate) {
+          lastAutoTitleByTerminalId.set(term.id, formatted);
+          if (formatted !== term.title) {
+            nextTitle = formatted;
+            titleUpdated = true;
+          }
+        }
+      } else if (recordedAutoTitle === undefined && (isFallbackCurrent || prevFormatted === term.title)) {
+        lastAutoTitleByTerminalId.set(term.id, term.title);
+      }
+    }
+
+    if (!newlyMatched && !titleUpdated) return term;
+
+    terminalsChanged = true;
+    const patch: WorkTerminalPatchInput = {
+      ...(newlyMatched ? { cliSessionId: newlyMatched.id } : {}),
+      ...(titleUpdated ? { title: nextTitle } : {}),
+    };
+    serverPatches.push({ terminalId: term.id, patch });
+
+    return {
+      ...term,
+      title: nextTitle,
+      ...(newlyMatched
+        ? {
+            cliSessionId: newlyMatched.id,
+            command: buildCliResumeCommand(newlyMatched.provider, newlyMatched.id),
+          }
+        : {}),
+    };
+  });
+
   const activeTerm = state.activeTerminalId
-    ? state.terminals.find((item) => item.id === state.activeTerminalId) ?? null
+    ? nextTerminals.find((item) => item.id === state.activeTerminalId) ?? null
     : null;
 
   let unreadChanged = false;
@@ -931,6 +1387,7 @@ export function setWorkProjectCliSessions(
 
   emit({
     ...state,
+    ...(terminalsChanged ? { terminals: nextTerminals } : {}),
     cliSessionsByProject: {
       ...state.cliSessionsByProject,
       [projectId]: {
@@ -946,6 +1403,8 @@ export function setWorkProjectCliSessions(
     },
     ...(unreadChanged ? { unreadCompletedCliKeys: nextUnread } : {}),
   });
+
+  return serverPatches;
 }
 
 export function setWorkProjectCliSessionsError(projectId: string, message: string): void {
@@ -984,13 +1443,18 @@ export function resetWorkStateForTests(): void {
   hasExplicitProjectChoice = false;
   hasExplicitFilesPanelOpen = false;
   hasExplicitFilesPanelWidth = false;
+  draftBaselineSessionIdsByTerminalId = new Map();
+  lastAutoTitleByTerminalId = new Map();
+  manuallyRenamedTerminalIds = new Set();
   try {
     globalThis.sessionStorage?.removeItem(ACTIVE_PROJECT_KEY);
     globalThis.localStorage?.removeItem(ACTIVE_TERMINALS_KEY);
     globalThis.localStorage?.removeItem(EXPANDED_PROJECTS_KEY);
     globalThis.localStorage?.removeItem(PROJECT_ORDER_KEY);
     globalThis.localStorage?.removeItem(CLI_PROVIDER_ORDER_KEY);
+    globalThis.localStorage?.removeItem(TERMINAL_ORDER_KEY);
     globalThis.localStorage?.removeItem(COLLAPSED_CLI_GROUPS_KEY);
+    globalThis.localStorage?.removeItem(PROJECT_AI_EXPANDED_GROUPS_KEY);
     globalThis.localStorage?.removeItem(FILES_PANEL_WIDTH_KEY);
     globalThis.localStorage?.removeItem(DEFAULT_WINDOWS_SHELL_KEY);
   } catch {
@@ -1003,14 +1467,18 @@ export function resetWorkStateForTests(): void {
     projectsError: null,
     projectOrder: [],
     cliProviderOrder: [...WORK_CLI_PROVIDERS],
+    terminalOrder: [],
     expandedProjectIds: {},
     collapsedCliGroups: {},
+    projectAiExpandedGroups: defaultProjectAiExpandedGroups(),
     cliVisibleCounts: {},
     cliSessionsByProject: {},
     unreadCompletedCliKeys: {},
     cliRefreshTick: 0,
     hosts: [],
     terminals: [],
+    gitTabsByProject: {},
+    fileTabsByProject: {},
     activeTerminalId: null,
     activeTerminalByProject: {},
     filesPanelOpen: true,
@@ -1020,6 +1488,8 @@ export function resetWorkStateForTests(): void {
     defaultWindowsShell: DEFAULT_WINDOWS_SHELL,
     defaultWindowsShellLoaded: false,
     persistTerminalScrollback: false,
+    editorFontSize: DEFAULT_WORK_EDITOR_FONT_SIZE,
+    editorAutoSave: false,
     hostUnlockVersion: 0,
   });
 }

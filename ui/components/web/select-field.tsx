@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 
 import { Icon } from './icon';
 
@@ -16,6 +16,8 @@ type SelectFieldProps = {
   onChange: (id: string) => void;
   disabled?: boolean;
   hideLabel?: boolean;
+  /** Render the popover with fixed viewport coords so scrollable dialogs never clip it. */
+  fixedPopover?: boolean;
 };
 
 const NAVIGATION_KEYS = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
@@ -26,13 +28,58 @@ const NAVIGATION_KEYS = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
  * radius the rest of the form uses; this rebuilds it: a text-field-shaped
  * trigger, and a list of plain option names.
  */
-export function SelectField({ disabled = false, hideLabel = false, label, onChange, options, value }: SelectFieldProps) {
+export function SelectField({
+  disabled = false,
+  fixedPopover = false,
+  hideLabel = false,
+  label,
+  onChange,
+  options,
+  value,
+}: SelectFieldProps) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLDivElement>(null);
   const labelId = useId();
   const valueId = useId();
   const current = options.find((option) => option.id === value) ?? options[0];
+
+  useLayoutEffect(() => {
+    if (!open || !fixedPopover) return;
+    function updatePosition() {
+      const triggerEl = trigger.current;
+      const popEl = popover.current;
+      if (!triggerEl || !popEl || typeof triggerEl.getBoundingClientRect !== 'function') return;
+      const rect = triggerEl.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const viewportH = window.innerHeight || 768;
+      const spaceBelow = viewportH - rect.bottom - 12;
+      const spaceAbove = rect.top - 12;
+      const maxH = Math.min(320, Math.floor(viewportH * 0.5));
+      const popH = Math.min(popEl.scrollHeight || maxH, maxH);
+      const openUpward = spaceBelow < popH && spaceAbove > spaceBelow;
+      popEl.style.position = 'fixed';
+      popEl.style.zIndex = '20';
+      popEl.style.left = `${rect.left}px`;
+      popEl.style.width = `${rect.width}px`;
+      popEl.style.right = 'auto';
+      popEl.style.maxHeight = `${Math.max(120, Math.min(maxH, openUpward ? spaceAbove : spaceBelow))}px`;
+      if (openUpward) {
+        popEl.style.top = 'auto';
+        popEl.style.bottom = `${viewportH - rect.top + 6}px`;
+      } else {
+        popEl.style.bottom = 'auto';
+        popEl.style.top = `${rect.bottom + 6}px`;
+      }
+    }
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [fixedPopover, open, options.length]);
 
   useEffect(() => {
     if (!open) return;
