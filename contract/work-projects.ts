@@ -41,6 +41,21 @@ export type WorkHostEntry = {
   accessible: boolean;
 };
 
+export type WorkFileTab = WorkHostEntry & {
+  localOutsideProject?: boolean;
+};
+
+export function workFileTabPath(file: WorkFileTab): string {
+  return file.localOutsideProject ? `local:\0${file.path}` : file.path;
+}
+
+export type WorkFileSearchResponse = {
+  items: WorkFileTab[];
+  source: 'everything' | 'local';
+  indexing: boolean;
+  limited: boolean;
+};
+
 export type HostFilePreview = { text: string; revision: string };
 
 export type HostDirectoryListing = {

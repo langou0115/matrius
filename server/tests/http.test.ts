@@ -98,3 +98,24 @@ test('the HTTP client follows redirects with unended bodies and truncates safely
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }
 });
+
+test('the HTTP client uses proxy changes without being recreated', async (t) => {
+  const server = createServer((request, response) => {
+    response.end(request.url?.startsWith('http://') ? 'proxied' : 'direct');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${port}`;
+  const settings = loadSettings({ APP_ENV: 'test' });
+  const client = createHttpClient(settings);
+  t.after(async () => {
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  const request = () => client.get(url, { timeoutMs: 3000, maxBytes: 1024 });
+  assert.equal((await request()).body.toString(), 'direct');
+  settings.WEBTOOL_PROXY_URL = url;
+  assert.equal((await request()).body.toString(), 'proxied');
+  settings.WEBTOOL_PROXY_URL = '';
+  assert.equal((await request()).body.toString(), 'direct');
+});

@@ -225,7 +225,7 @@ async function probeWindowsDrivesFallback(): Promise<string[]> {
   return checks.filter((item): item is string => item !== null);
 }
 
-async function defaultListWindowsDrives(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+export async function defaultListWindowsDrives(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
   // Query logical drives via fsutil.exe (GetLogicalDrives) instead of stat()-ing A:\..Z:\
   // in Node's libuv threadpool, which otherwise stalls all 4 worker threads on disconnected
   // or sleeping network drives.
@@ -282,7 +282,7 @@ function isWindowsDrivesRequest(rawPath: string, currentPlatform: NodeJS.Platfor
   return rawPath === WINDOWS_DRIVES_ROOT || rawPath === '/' || rawPath === '\\';
 }
 
-function resolveLocalTarget(rawPath: string, homeDir: string, currentPlatform: NodeJS.Platform): string {
+export function resolveLocalTarget(rawPath: string, homeDir: string, currentPlatform: NodeJS.Platform): string {
   if (!rawPath || rawPath === '~') return homeDir;
   if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) return join(homeDir, rawPath.slice(2));
   if (currentPlatform === 'win32' && /^[A-Za-z]:$/u.test(rawPath)) {

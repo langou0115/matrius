@@ -117,6 +117,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     return {
       title: await generateConversationTitle({
         config,
+        logTrace: (trace) => request.log.info({ trace }, 'Matrius Agent title'),
         apiKey: resolveApiKey(db, config.providerId, payload.apiKey, config.requiresApiKey),
         content: payload.content,
         ...(payload.quote ? { quote: payload.quote } : {}),
@@ -135,6 +136,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     return {
       summary: await generateMemorySummary({
         config,
+        logTrace: (trace) => request.log.info({ trace }, 'Matrius Agent memory'),
         apiKey: resolveApiKey(db, config.providerId, payload.apiKey, config.requiresApiKey),
         instruction: payload.instruction,
         currentSummary: payload.currentSummary,

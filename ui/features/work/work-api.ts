@@ -17,6 +17,7 @@ import type {
   HostDirectoryListing,
   HostFilePreview,
   WorkHostEntry,
+  WorkFileSearchResponse,
   WorkProject,
   WorkProjectInput,
   WorkProjectUpdateInput,
@@ -170,6 +171,11 @@ export function createPreviewCliSessions(projectId: string): WorkProjectCliSessi
     total: items.length,
     hasMore: false,
   };
+}
+
+export function searchWorkFiles(request: ApiRequest, projectId: string, query: string, signal: AbortSignal) {
+  const params = new URLSearchParams({ q: query });
+  return request<WorkFileSearchResponse>(`/api/projects/${encodeURIComponent(projectId)}/file-search?${params}`, { signal });
 }
 
 export function readHostFilePreview(

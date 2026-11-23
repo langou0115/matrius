@@ -6,7 +6,11 @@
 
 npm ci 安装依赖；npm run start 默认按 .env.local 的 API_PORT（默认 8000）启动单进程服务；开发热更新时 npm run dev（等价于 `npm run dev:web`）默认以 Web 端常驻启动 Node API 与 Vite，启动时自动迁移开发库，默认 Web 8081、API 8000，通过 .env.local 的 WEB_PORT / API_PORT 配置。Vite 将 /api 请求代理到本机 API。开发不连接生产服务器。如需预览桌面端专属 UI（例如侧栏「工作 / 对话」切换栏，网页端没有工作相关功能），使用 `npm run dev:desktop`。
 
-Node API 在启动时读取服务端代码与 .env.local，npm run dev 不会热重载 API；修改服务端代码、代理或搜索/抓取限额后需要重启 npm run dev。只改后端时也可以使用 `npm run dev:server`（tsx watch，自动重启）。
+Node API 在启动时读取服务端代码，Web 开发模式同时读取 .env.local。npm run dev 不会热重载 API；修改服务端代码或 Web 模式的环境配置后需要重启 npm run dev。只改后端时也可以使用 `npm run dev:server`（tsx watch，自动重启）。
+
+`npm run dev:desktop` 的启动脚本、API 和 Vite 都跳过 .env.local。端口和数据目录仍可通过进程环境设置。桌面预览的网页工具代理与上传文件总量上限可在「设置 → 对话 → 个性化 → 其他设置」保存，无需重启。
+
+工作区的 `Ctrl+Shift+P` 可搜索并打开本机文件。Windows 上可运行 Everything 并将其命令行工具 `es.exe` 加入启动 Matrius 的进程 PATH，以复用 Everything 的实时索引。后备索引在首次搜索时从当前本机项目、用户目录及可用磁盘建立，最多保留 25 万条，跳过部分系统目录、`.git` 和 `node_modules`。应用可在索引建立过程中显示已找到的文件。项目外的本机文件按现有预览能力以只读方式打开。
 
 npm run dev 支持 --check、--reset-db 与 --clear。重置数据库会删除当前数据目录中的开发数据。数据默认在 `~/.matrius`，可在 `.env.local` 用 `DATA_DIR` 指定其他位置；`npm run db:migrate` 单独迁移同一个开发库；`npm run dev:server` 只启动后端。`STORAGE_LIMIT_BYTES` 控制上传文件总量上限，默认 128 MiB。
 
@@ -42,6 +46,8 @@ Vite 的依赖扫描固定从 `index.html` 开始，不再通过全仓库 HTML g
 5. **按范围运行单测**：日常开发优先运行受影响的单个测试文件（`npx tsx --test server/tests/<name>.test.ts` 或 `node --import ./tests/register.mjs --test tests/<name>.test.mjs`），跨模块或底层改动再跑全量。
 
 ## 调试与交付
+
+服务端日志写入 `~/.matrius/logs/server.log`，包含 info、warning、error 三个级别。文件达到 10 MiB 上限前轮转，保留一个备份 `server.log.1`。终端日志级别由 `LOG_LEVEL` 控制。
 
 Agent 在服务端运行，结合 Node API 日志与浏览器 Network 的 SSE 排查错误。本机 `/debug` 提供接口查询与健康检查，不记录 key、正文或原始模型请求。
 

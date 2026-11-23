@@ -214,7 +214,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
     try { return parseEnv(await readFile(file, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; return {}; }
   };
-  const local = { ...await readEnv(join(root, '.env.local')), ...env };
+  const local = target === 'desktop' ? env : { ...await readEnv(join(root, '.env.local')), ...env };
   const [webPort, apiPort] = devPorts(local);
   const dataDir = devDataDir(local);
 
@@ -237,6 +237,7 @@ export async function main({ args = process.argv.slice(2), env = process.env } =
   // environment; DATABASE_URL is cleared so a production URL never leaks.
   const backendEnv = {
     ...devEnvironment({ env, dataDir, webPort }),
+    MATRIUS_DESKTOP_DEV: target === 'desktop' ? 'true' : 'false',
     DATABASE_URL: '',
     HOST: '127.0.0.1',
     API_PORT: String(apiPort),

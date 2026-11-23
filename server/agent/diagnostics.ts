@@ -8,6 +8,7 @@ import type { ReplyResult } from '../../contract/agent-types';
 
 type Entry = { event: string; at: string; [key: string]: unknown };
 type Trace = { id: string; model: string; protocol: string; thinkingEffort: string; configuredMaxOutput: number; entries: Entry[] };
+export type LogReplyTrace = (trace: Trace) => void;
 const traces: Trace[] = [];
 const MAX_RUNS = 20;
 const MAX_ENTRIES = 100;
@@ -25,7 +26,7 @@ function number(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-export function createReplyDiagnostics(config: ModelConfig, thinkingEffort: string) {
+export function createReplyDiagnostics(config: ModelConfig, thinkingEffort: string, logTrace?: LogReplyTrace) {
   const trace: Trace = {
     id: randomUUID(), model: config.modelId, protocol: config.protocol,
     thinkingEffort, configuredMaxOutput: config.maxOutput, entries: [],
@@ -89,8 +90,7 @@ export function createReplyDiagnostics(config: ModelConfig, thinkingEffort: stri
     outputRetry(attempt: number, thinkingLevel: string) { record('output_retry', { attempt, thinkingLevel }); },
     finish(result: ReplyResult, outcome: string): ReplyResult {
       record('finish', { status: result.status, outcome, rounds: round });
-      // Serialize now so DevTools cannot show later mutations of a live object.
-      console.info('[Matrius Agent]', JSON.stringify(trace));
+      logTrace?.(trace);
       return result;
     },
   };

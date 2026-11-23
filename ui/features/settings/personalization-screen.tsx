@@ -9,6 +9,8 @@ import { setChatDisplay, useChatDisplay } from '@/features/chat/display-preferen
 import { MemoryDialog } from '@/features/memory/memory-dialog';
 import { useMemory } from '@/features/memory/memory-state';
 import { useModels } from '@/features/models/model-state';
+import { FeatureGate } from '@/features/instance/instance-state';
+import { DesktopChatSettingsForm } from './desktop-chat-settings';
 import { personalizationLimits } from './personalization';
 import { usePersonalization } from './personalization-state';
 import { SettingsPage } from './settings-page';
@@ -82,6 +84,7 @@ function OtherSettingsSection() {
         </label>
       </div>
     </div>
+    <FeatureGate name="desktop-chat-settings"><DesktopChatSettingsForm /></FeatureGate>
     {error && <p className="settings-message is-error" role="alert">
       <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
       <span>{error}</span>

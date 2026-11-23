@@ -154,24 +154,39 @@ function decompress(body: Buffer, contentEncoding: string, maxBytes: number): { 
  * The upstream proxy is optional but, when configured, is never bypassed: a
  * broken proxy is a 502 rather than a silent direct connection.
  */
-export function createHttpClient(settings: Settings): HttpClient {
-  let dispatcher: Dispatcher | undefined;
+export function createHttpClient(settings: Settings): HttpClient & { close(): Promise<void> } {
+  let dispatcher: ProxyAgent | undefined;
+  let configuredUrl: string | undefined;
   let proxyError: string | null = null;
 
-  if (settings.WEBTOOL_PROXY_URL) {
-    try {
-      const proxy = new URL(settings.WEBTOOL_PROXY_URL);
-      if (proxy.protocol !== 'http:' && proxy.protocol !== 'https:') {
-        throw new Error('Only HTTP/HTTPS upstream proxies are supported by the Node backend.');
+  function getDispatcher(): Dispatcher | undefined {
+    if (configuredUrl !== settings.WEBTOOL_PROXY_URL) {
+      const previous = dispatcher;
+      dispatcher = undefined;
+      configuredUrl = settings.WEBTOOL_PROXY_URL;
+      proxyError = null;
+      if (previous) void previous.close().catch(() => previous.destroy()).catch(() => {});
+      if (configuredUrl) {
+        try {
+          const proxy = new URL(configuredUrl);
+          if (proxy.protocol !== 'http:' && proxy.protocol !== 'https:') {
+            throw new Error('Only HTTP/HTTPS upstream proxies are supported by the Node backend.');
+          }
+          dispatcher = new ProxyAgent(proxy.toString());
+        } catch {
+          proxyError = 'Invalid HTTP/HTTPS proxy URL.';
+        }
       }
-      dispatcher = new ProxyAgent(proxy.toString());
-    } catch (error) {
-      proxyError = error instanceof Error ? error.message : 'Invalid WEBTOOL_PROXY_URL.';
     }
+    return dispatcher;
   }
 
   return {
+    async close() {
+      await dispatcher?.destroy();
+    },
     async get(url, options) {
+      const dispatcher = getDispatcher();
       if (proxyError) {
         throw new AppError(502, 'fetch_proxy_error', `上游代理不可用：${proxyError}`);
       }

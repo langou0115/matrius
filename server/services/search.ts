@@ -280,9 +280,15 @@ export function createSearchService(options: {
 }): SearchService {
   const { cache, settings, http } = options;
   const flights = new Map<string, Promise<SearchResult[]>>();
-  const breaker = { failures: 0, openUntil: 0 };
+  let proxyUrl = settings.WEBTOOL_PROXY_URL;
+  let currentBreaker = { failures: 0, openUntil: 0 };
 
   async function duckDuckGo(query: string, deadline: number, signal?: AbortSignal): Promise<ProviderOutcome> {
+    if (proxyUrl !== settings.WEBTOOL_PROXY_URL) {
+      proxyUrl = settings.WEBTOOL_PROXY_URL;
+      currentBreaker = { failures: 0, openUntil: 0 };
+    }
+    const breaker = currentBreaker;
     const started = Date.now();
     if (settings.SEARCH_BREAKER_FAILURES > 0 && breaker.openUntil > started) {
       return { name: 'duckduckgo', status: 'skipped', results: [], attempts: 0 };
@@ -446,7 +452,7 @@ export function createSearchService(options: {
   }
 
   async function search(query: string, limit: number, options: SearchOptions = {}): Promise<SearchResult[]> {
-    const cacheKey = `matrius:search:v3:${createHash('sha256').update(`${query}|${limit}`).digest('hex')}`;
+    const cacheKey = `matrius:search:v3:${createHash('sha256').update(JSON.stringify([query, limit, settings.WEBTOOL_PROXY_URL])).digest('hex')}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       try {

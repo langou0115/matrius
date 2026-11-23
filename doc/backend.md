@@ -1,5 +1,7 @@
 # 后端架构
 
+桌面预览提供 `GET /api/projects/:projectId/file-search?q=...`，在本机搜索文件名与路径并返回可供工作区打开的结果。Windows 优先查询 Everything，后备索引保留在 Node 进程内存中。文件仍由主机文件预览与项目保存接口分别读取和写入。
+
 后端是 `server/` 下的单 Node/TypeScript 进程，使用 Fastify 与 node:sqlite，入口为 server/main.ts，应用装配在 server/app.ts。
 
 浏览器通过 /api/agent/runs 的 SSE 提交运行请求并消费事件，并通过 /api/agent/models 查询服务商模型目录。server/agent 负责模型调用、上下文、工具循环、压缩、标题与记忆。工具通过 server/agent/tools 注册并直接调用 server/services。旧 /api/tools/* 接口已移除，无需恢复。

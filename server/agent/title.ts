@@ -45,6 +45,7 @@ export async function generateConversationTitle({
   content,
   quote,
   signal,
+  logTrace,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 }: {
   config: ModelConfig;
@@ -52,6 +53,7 @@ export async function generateConversationTitle({
   content: string;
   quote?: string;
   signal?: AbortSignal;
+  logTrace?: import('./diagnostics').LogReplyTrace;
   timeoutMs?: number;
 }): Promise<string | null> {
   const input = buildTitleInput(content, quote);
@@ -70,6 +72,7 @@ export async function generateConversationTitle({
       timeoutMs,
       maxDurationMs: Math.max(timeoutMs * 2, 30_000),
       ...(signal ? { signal } : {}),
+      ...(logTrace ? { logTrace } : {}),
     });
     const result = await run.start();
     if (result.status !== 'complete') return null;

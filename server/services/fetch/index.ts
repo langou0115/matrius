@@ -235,7 +235,7 @@ export function createFetchService(options: {
     async fetch(url, mode, options = {}) {
       // v4: the extractor moved to Readability with charset detection, so old cached excerpts
       // must not keep serving the previous body dump.
-      const key = `matrius:fetch:v4:${createHash('sha256').update(`${url}|${mode}`).digest('hex')}`;
+      const key = `matrius:fetch:v4:${createHash('sha256').update(JSON.stringify([url, mode, settings.WEBTOOL_PROXY_URL])).digest('hex')}`;
       const cached = cache.get(key);
       if (cached) {
         try {

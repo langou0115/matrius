@@ -20,8 +20,9 @@ test('the features endpoint is public and uncached', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/features' });
     assert.equal(response.statusCode, 200);
     assert.equal(response.headers['cache-control'], 'no-store');
-    assert.deepEqual(response.json(), { features: FEATURES });
-    assert.deepEqual(featureIds(), ['files', 'usage', 'tasks', 'work-git']);
+    assert.deepEqual(response.json(), { features: FEATURES.filter(({ id }) => id !== 'desktop-chat-settings' && id !== 'work-file-search') });
+    assert.equal((await app.inject('/api/desktop/chat-settings')).statusCode, 404);
+    assert.deepEqual(featureIds(), ['files', 'usage', 'tasks', 'work-git', 'desktop-chat-settings', 'work-file-search']);
   } finally {
     await app.close();
     rmSync(directory, { recursive: true, force: true });

@@ -77,13 +77,14 @@ function paintLines(text: string, lines: string[], highlighted: HighlightedFile 
 type PreviewState = HostFilePreview | { error: string };
 
 export function WorkFilePreview({
-  hostId, projectId, file, draft, fontSize,
+  hostId, projectId, file, draft, fontSize, readOnly = false,
 }: {
   hostId: string;
   projectId: string;
   file: WorkHostEntry;
   draft: WorkFileDraft | undefined;
   fontSize: number;
+  readOnly?: boolean;
 }) {
   const { request } = useInstance();
   const demo = useIsPreview();
@@ -94,7 +95,7 @@ export function WorkFilePreview({
   const editorRef = useRef<HTMLDivElement>(null);
   const saved = result && 'text' in result ? result : null;
   const base = draft?.base ?? saved;
-  const editing = hostId === LOCAL_WORK_HOST_ID && Boolean(base);
+  const editing = !readOnly && hostId === LOCAL_WORK_HOST_ID && Boolean(base);
   const text = draft?.text ?? (editing ? saved?.text.replace(/\r\n?/gu, '\n') : saved?.text) ?? '';
   const lines = useMemo(() => text.split(/\r\n?|\n/u), [text]);
   const painted = useMemo(() => paintLines(text, lines, highlighted), [highlighted, lines, text]);
@@ -112,7 +113,7 @@ export function WorkFilePreview({
     void preview.then((data) => {
       if (signal.aborted) return;
       setResult(data);
-      if (demo) return;
+      if (demo || readOnly) return;
       const current = getWorkState().fileTabsByProject[projectId]?.drafts.get(file.path);
       if (current && !current.composing && !current.saving && !isFileDraftDirty(current)) {
         setWorkFileDraft(projectId, file.path, undefined, current);
@@ -121,7 +122,7 @@ export function WorkFilePreview({
       if (!signal.aborted) setResult({ error: reason instanceof Error ? reason.message : '无法读取文件。' });
     });
     return () => controller.abort();
-  }, [demo, file.name, file.path, hostId, projectId, request]);
+  }, [demo, file.name, file.path, hostId, projectId, readOnly, request]);
 
   useEffect(() => {
     if (!text) return;
@@ -142,9 +143,10 @@ export function WorkFilePreview({
   }, [editing]);
 
   useEffect(() => () => {
+    if (readOnly) return;
     const current = getWorkState().fileTabsByProject[projectId]?.drafts.get(file.path);
     if (current?.composing) setWorkFileDraft(projectId, file.path, { ...current, composing: false }, current);
-  }, [file.path, projectId]);
+  }, [file.path, projectId, readOnly]);
 
   function updateText(next: string, composing: boolean) {
     if (!base) return;

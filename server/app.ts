@@ -19,6 +19,7 @@ import { registerAgentRoutes } from './routes/agent';
 import { registerAuthRoutes } from './routes/auth';
 import { registerConversationRoutes } from './routes/conversations';
 import { registerDebugRoutes } from './routes/debug';
+import { registerDesktopChatSettings } from './routes/desktop-chat-settings';
 import { registerFeatureRoutes } from './routes/features';
 import { registerFileRoutes } from './routes/files';
 import { registerHealthRoutes } from './routes/health';
@@ -29,11 +30,13 @@ import { registerTaskRoutes } from './routes/tasks';
 import { registerTerminalRoutes } from './routes/terminals';
 import { registerUsageRoutes } from './routes/usage';
 import { registerWorkspaceRoutes } from './routes/workspace';
+import { registerWorkFileSearch } from './routes/work-file-search';
 import { MemoryCache } from './services/cache';
 import { createWorkCliSessionService, type WorkCliSessionService } from './services/cli-sessions';
 import { DraftStore } from './services/documents/drafts';
 import type { DocumentToolService } from './services/documents/service';
 import { createFetchService } from './services/fetch';
+import { createLogStream } from './services/file-logging';
 import type { HostFsService } from './services/host-fs';
 import type { WorkHostService } from './services/hosts';
 import { createHttpClient } from './services/http';
@@ -81,7 +84,7 @@ function isValidationError(value: unknown): value is ValidationError {
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp> {
-  const settings = options.settings ?? getSettings();
+  const settings = { ...(options.settings ?? getSettings()) };
   const db = options.db ?? openDatabase(settings.databasePath, {
     busyTimeoutMs: settings.SQLITE_BUSY_TIMEOUT_MS,
   });
@@ -109,13 +112,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
       return (await documentService).run(instanceId, request);
     },
   };
-  const runs = options.runs ?? createAgentRunService({
-    services: { search, fetch, files: documents },
-  });
-
+  const consoleLevel = settings.LOG_LEVEL.toLowerCase().replace(/^warning$/, 'warn');
   const app = Fastify({
     logger: {
-      level: settings.LOG_LEVEL.toLowerCase(),
+      level: settings.APP_ENV === 'test' ? consoleLevel : consoleLevel === 'debug' || consoleLevel === 'trace' ? consoleLevel : 'info',
+      ...(settings.APP_ENV !== 'test' && { stream: createLogStream(consoleLevel) }),
       redact: {
         paths: [
           'req.headers.authorization',
@@ -135,6 +136,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
     // SSE and uploads can leave keep-alive sockets; a single-user process should
     // shut down promptly instead of waiting for a client timeout.
     forceCloseConnections: true,
+  });
+  const runs = options.runs ?? createAgentRunService({
+    services: { search, fetch, files: documents },
+    logTrace: (trace) => app.log.info({ trace }, 'Matrius Agent'),
   });
 
   if (settings.corsOrigins.length) {
@@ -238,6 +243,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   registerHealthRoutes(app, { settings, db, storage, cache });
   registerAuthRoutes(app, { settings, cache });
   registerFeatureRoutes(app, settings);
+  registerDesktopChatSettings(app, db, settings);
+  registerWorkFileSearch(app, db, settings.MATRIUS_DESKTOP_DEV);
   registerConversationRoutes(app, { db });
   registerWorkspaceRoutes(app, { db });
   registerModelRoutes(app, { db });
@@ -260,6 +267,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   app.addHook('onClose', async () => {
     terminals.disposeAll();
     runs.dispose();
+    await http.close();
   });
   if (!options.db) {
     app.addHook('onClose', async () => {

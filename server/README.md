@@ -108,7 +108,11 @@ Development defaults point at `~/.matrius`. `server/config.ts` reads the reposit
 | `STORAGE_LIMIT_BYTES` | 128 MiB | application quota for uploaded files; replaces host-disk reporting |
 | `ENABLE_DEBUG_PAGE` | dev only | expose `/debug` and `/api/openapi.json`; production requires `true` |
 | `WEBTOOL_PROXY_URL` | empty | optional upstream proxy for search & web fetch |
-| `LOG_LEVEL` | `info` | pino level |
+| `LOG_LEVEL` | `info` | Console log level. Disk logs are always info and above. |
+
+`npm run dev:desktop` skips `.env.local`. The desktop preview loads its upload quota and web-tool proxy from SQLite after the first save through Settings → Chat → Personalization → Other settings. Changes take effect immediately.
+
+Server logs go to `~/.matrius/logs/server.log` with info, warning and error levels. The server rotates at 10 MiB and keeps one previous file, `server.log.1`.
 
 ## Database compatibility rules
 

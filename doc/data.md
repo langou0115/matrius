@@ -47,6 +47,8 @@ SQLite 事务与文件替换不是跨存储的原子事务；备份和恢复应�
 桌面工作区的默认 Git 差异视图保存在 SQLite 的 `work_settings.editor_diff_layout`。迁移 `0016_work_editor_diff_layout` 为已有实例补上「行内」默认值。
 
 会话与消息、记忆、画像和偏好使用 `baseRevision` 乐观并发，冲突返回 409；单用户的多设备/多标签页仍需冲突保护。
+
+桌面预览的上传文件总量上限和网页工具代理保存在 `desktop_chat_settings` 表中，由 `GET /api/desktop/chat-settings` 读取和 `PUT /api/desktop/chat-settings` 更新。更新需提供 `baseRevision`，成功后立即应用到当前服务端实例。
 工作区持久化队列直接调用 REST，流式期间合并保存，完成时提交最终内容；网络失败明确提示，不回退到 IndexedDB。
 消息的文件引用、引用原文、反馈、思考与工具顺序、滚动摘要等继续随现有消息结构保存。
 图片请求字节不写入聊天工作区快照。

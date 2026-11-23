@@ -43,6 +43,14 @@ test('production reads .env.local as defaults while process env takes precedence
     }, { envFile: envPath });
     assert.equal(overridden.AUTH_SECRET, 'env-secret');
     assert.equal(overridden.STORAGE_LIMIT_BYTES, 2048);
+
+    const desktop = loadSettings(
+      { APP_ENV: 'development', MATRIUS_DESKTOP_DEV: 'true', API_PORT: '9001' },
+      { envFile: envPath },
+    );
+    assert.equal(desktop.authEnabled, false);
+    assert.equal(desktop.STORAGE_LIMIT_BYTES, 134217728);
+    assert.equal(desktop.API_PORT, 9001);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

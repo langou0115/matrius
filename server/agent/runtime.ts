@@ -6,6 +6,7 @@ import { DEFAULT_SYSTEM_PROMPT } from '../../contract/agent-prompt';
 import type { ModelConfig, ThinkingEffort } from '../../contract/agent-protocol';
 import type { Message, ProcessActivity, RuntimeSnapshot, SteerOutcome, TokenUsage, WebActivity } from '../../contract/agent-types';
 import type { createReplyRun } from './runner';
+import type { LogReplyTrace } from './diagnostics';
 import type { ToolActivityResolver } from './tool-activity';
 
 export type AgentRequest = {
@@ -41,6 +42,7 @@ function settleProcess(process: ProcessActivity[] | undefined, stopped: boolean)
 }
 
 type RuntimeOptions = {
+  logTrace?: LogReplyTrace;
   onReply: (conversationId: string, message: Message) => void;
   /** Persists the rolling summary, or clears it when compaction no longer applies. */
   onSummary?: (conversationId: string, summary: ConversationSummary | undefined) => void;
@@ -54,7 +56,7 @@ type RuntimeOptions = {
 
 /** Platform-independent runtime: one active request per conversation, no React, storage or DOM. */
 export function createAgentRuntime({
-  onReply, onSummary, onUsage, loadRunner = () => import('./runner'), loadCompactor = () => import('./compaction'),
+  onReply, onSummary, onUsage, logTrace, loadRunner = () => import('./runner'), loadCompactor = () => import('./compaction'),
 }: RuntimeOptions) {
   let snapshot: RuntimeSnapshot = { runs: {}, error: null };
   const listeners = new Set<() => void>();
@@ -147,6 +149,7 @@ export function createAgentRuntime({
         if (overflow) return { status: 'error' as const, error: overflow };
         run = createReplyRun({
           config: requestConfig, apiKey, messages: prepared.messages, thinkingEffort,
+          ...(logTrace ? { logTrace } : {}),
           systemPrompt: prepared.systemPrompt, ...(memoryText ? { memoryText } : {}), tools,
           ...(toolActivity ? { toolActivity } : {}), onUpdate(value) {
             if (disposed || cancelled) return;

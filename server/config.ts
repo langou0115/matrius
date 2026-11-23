@@ -11,6 +11,7 @@ const REPO_ROOT = resolve(SERVER_DIR, '..');
 
 const environmentSchema = z.object({
   APP_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  MATRIUS_DESKTOP_DEV: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   APP_URL: z.string().default('http://localhost:8000'),
   CORS_ORIGINS: z.string().default(''),
   LOG_LEVEL: z.string().default('info'),
@@ -117,7 +118,7 @@ export function loadSettings(
   options: LoadSettingsOptions = {},
 ): Settings {
   const defaultEnvPath = resolve(REPO_ROOT, '.env.local');
-  const envFile = options.envFile === false
+  const envFile = options.envFile === false || processEnv.MATRIUS_DESKTOP_DEV === 'true'
     ? {}
     : typeof options.envFile === 'string'
       ? readEnvFile(options.envFile)

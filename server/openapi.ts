@@ -520,6 +520,25 @@ export const openApiDocument = {
         responses: { ...ok(obj({ text: str(), revision: str() }, ['text', 'revision'])), ...errorResponses },
       },
     },
+    '/api/projects/{projectId}/file-search': {
+      get: {
+        tags: ['hosts'],
+        summary: 'Search local file names and paths in desktop preview',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: str() },
+          { name: 'q', in: 'query', required: true, schema: str() },
+        ],
+        responses: {
+          ...ok(obj({
+            items: arr(obj({ path: str(), name: str(), kind: str(), accessible: bool(), localOutsideProject: bool() })),
+            source: { type: 'string', enum: ['everything', 'local'] },
+            indexing: bool(),
+            limited: bool(),
+          })),
+          ...errorResponses,
+        },
+      },
+    },
     '/api/projects/{projectId}/files/text': {
       put: {
         tags: ['hosts'],
@@ -873,6 +892,19 @@ export const openApiDocument = {
         summary: 'Delete a message with baseRevision',
         parameters: [...messageParameters, { name: 'baseRevision', in: 'query', required: true, schema: int() }],
         responses: { ...ok(obj({ ok: bool() })), ...errorResponses },
+      },
+    },
+    '/api/desktop/chat-settings': {
+      get: {
+        tags: ['workspace'],
+        summary: 'Get upload quota and web tool proxy in desktop preview',
+        responses: { ...ok(obj({ storageLimitBytes: int(), webtoolProxyUrl: str(), revision: int() })), ...errorResponses },
+      },
+      put: {
+        tags: ['workspace'],
+        summary: 'Update desktop preview settings with baseRevision',
+        requestBody: jsonBody(obj({ storageLimitBytes: int(), webtoolProxyUrl: str(), baseRevision: int() }, ['storageLimitBytes', 'webtoolProxyUrl', 'baseRevision'])),
+        responses: { ...ok(obj({ storageLimitBytes: int(), webtoolProxyUrl: str(), revision: int() })), ...errorResponses },
       },
     },
     '/api/preferences': {

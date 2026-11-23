@@ -88,6 +88,7 @@ function offlineShell(): Plugin {
 const appTarget = (process.env.VITE_MATRIUS_TARGET ?? process.env.MATRIUS_TARGET) === 'desktop' ? 'desktop' : 'web';
 
 export default defineConfig({
+  envDir: appTarget === 'desktop' ? false : undefined,
   define: {
     'import.meta.env.VITE_MATRIUS_TARGET': JSON.stringify(appTarget),
   },

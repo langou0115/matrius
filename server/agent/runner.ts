@@ -9,7 +9,7 @@ import { thinkingBudgetsFor } from '../../contract/agent-thinking';
 import { formatUiBlockMarker } from '../../contract/intelligent-ui';
 import type { IntelligentUiBlock, Message, MessageFile, ProcessActivity, ReplyUpdate, ReplyResult, SteerOutcome, TokenUsage, WebActivity } from '../../contract/agent-types';
 import { directStream } from './llm/direct-stream';
-import { createReplyDiagnostics } from './diagnostics';
+import { createReplyDiagnostics, type LogReplyTrace } from './diagnostics';
 import { emptyToolActivity, type ToolActivityResolver } from './tool-activity';
 
 function getErrorSignal(value: unknown, seen = new Set<object>(), depth = 0): string {
@@ -66,7 +66,7 @@ function tokenCount(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
-export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, memoryText, includeCurrentContext = true, tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal, toolActivity = emptyToolActivity }: {
+export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'default', systemPrompt = DEFAULT_SYSTEM_PROMPT, memoryText, includeCurrentContext = true, tools = [], onUpdate, streamFn = directStream, timeoutMs = 120_000, maxDurationMs = 15 * 60_000, signal, toolActivity = emptyToolActivity, logTrace }: {
   config: ModelConfig; apiKey: string; messages: Message[];
   thinkingEffort?: ThinkingEffort;
   systemPrompt?: string;
@@ -79,6 +79,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   onUpdate: (value: ReplyUpdate) => void; streamFn?: StreamFn;
   /** Maps tool events to the UI activity rows and generated files. */
   toolActivity?: ToolActivityResolver;
+  logTrace?: LogReplyTrace;
   /** Maximum silence, reset by streamed output and tool progress. */
   timeoutMs?: number;
   maxDurationMs?: number;
@@ -86,7 +87,7 @@ export function createReplyRun({ config, apiKey, messages, thinkingEffort = 'def
   signal?: AbortSignal;
 }) {
   const model = createAgentModel(config);
-  const diagnostics = createReplyDiagnostics(config, thinkingEffort);
+  const diagnostics = createReplyDiagnostics(config, thinkingEffort, logTrace);
   if (thinkingEffort !== 'default') model.reasoning = true;
   const initialMessages = includeCurrentContext
     ? [...buildContext(messages, config), requestContextMessage(memoryText)]

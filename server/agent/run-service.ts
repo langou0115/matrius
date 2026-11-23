@@ -58,6 +58,7 @@ function normalizeEffort(value: AgentRunRequest['thinkingEffort']): ThinkingEffo
  * remains the message writer in this phase.
  */
 export function createAgentRunService(options: {
+  logTrace?: RuntimeOptions['logTrace'];
   services?: ToolServices;
   loadRunner?: RuntimeOptions['loadRunner'];
   loadCompactor?: RuntimeOptions['loadCompactor'];
@@ -65,6 +66,7 @@ export function createAgentRunService(options: {
   const entries = new Map<string, RunEntry>();
 
   const runtime = createAgentRuntime({
+    ...(options.logTrace ? { logTrace: options.logTrace } : {}),
     onReply(conversationId, message) {
       const entry = entries.get(conversationId);
       if (!entry) return;

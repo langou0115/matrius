@@ -19,6 +19,8 @@ export const FEATURES: readonly Feature[] = [
   { id: 'usage', name: 'Token 用量', description: '查看实例的模型 token 使用量与每日趋势。' },
   { id: 'tasks', name: '定时任务', description: '按设定周期或指定时间自动创建或复用对话并执行提示词。' },
   { id: 'work-git', name: '工作区 Git', description: '查看工作项目的 Git 分支和变更并提交选中的文件。' },
+  { id: 'desktop-chat-settings', name: '桌面对话设置', description: '配置上传总量上限和网页工具代理。' },
+  { id: 'work-file-search', name: '工作区文件搜索', description: '搜索本机文件并在工作区标签页打开。' },
 ];
 
 export function enabledFeatures(): Feature[] {

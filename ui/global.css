@@ -1331,6 +1331,20 @@ input[type='password']::-ms-clear { display: none; }
 .work-tab-select { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 100%; padding: 0 6px 0 10px; border-radius: 7px 0 0 7px; font-size: var(--text-small); }
 .work-tab.is-active .work-tab-select { font-family: var(--font-medium); }
 .work-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.work-tab-description { min-width: 28px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-text); font-size: var(--text-caption); font-weight: 400; }
+.dialog.work-file-search { width: min(680px, calc(100vw - 40px)); margin: min(13dvh, 110px) auto auto; }
+.work-file-search .dialog-panel { padding: 8px; }
+.work-file-search-field { display: flex; align-items: center; gap: 10px; padding: 2px 10px; color: var(--muted-text); }
+.work-file-search-field input { flex: 1; min-width: 0; border: 0; background: transparent; box-shadow: none; }
+.work-file-search-results { max-height: min(50dvh, 440px); overflow: auto; list-style: none; margin: 0; padding: 0; }
+.work-file-search-results > li { display: flex; align-items: center; gap: 10px; padding: 7px 10px; min-width: 0; border-radius: 7px; cursor: pointer; }
+.work-file-search-results > li[aria-selected="true"], .work-file-search-results > li:hover { background: var(--accent); }
+.work-file-search-results svg { flex: none; color: var(--muted-text); }
+.work-file-search-results li > span { display: grid; min-width: 0; }
+.work-file-search-results strong, .work-file-search-results small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-file-search-results strong { font: var(--text-small) var(--font-medium); }
+.work-file-search-results small, .work-file-search-status { color: var(--muted-text); font-size: var(--text-caption); }
+.work-file-search-status { padding: 7px 10px; margin: 0; }
 .work-tab-close,
 .work-tab-pin-btn { display: grid; place-items: center; width: 20px; height: 20px; margin-right: 4px; border-radius: 5px; color: var(--muted-text); opacity: .75; }
 .work-tab-close:hover,

@@ -30,6 +30,7 @@ export async function generateMemorySummary({
   userMessage,
   assistantMessage,
   signal,
+  logTrace,
 }: {
   config: ModelConfig;
   apiKey: string;
@@ -38,6 +39,7 @@ export async function generateMemorySummary({
   userMessage: string;
   assistantMessage: string;
   signal?: AbortSignal;
+  logTrace?: import('./diagnostics').LogReplyTrace;
 }): Promise<string | null> {
   if (!userMessage.trim() || (config.requiresApiKey && !apiKey)) return null;
   let latest = '';
@@ -64,6 +66,7 @@ export async function generateMemorySummary({
       timeoutMs: 60_000,
       maxDurationMs: 120_000,
       ...(signal ? { signal } : {}),
+      ...(logTrace ? { logTrace } : {}),
     });
     const result = await run.start();
     if (result.status !== 'complete') return null;

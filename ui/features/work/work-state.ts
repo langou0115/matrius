@@ -22,7 +22,8 @@ import {
   normalizeWorkProjectOrder,
   sortWorkProjectsByOrder,
   type HostFilePreview,
-  type WorkHostEntry,
+  workFileTabPath,
+  type WorkFileTab,
   type WorkProject,
 } from '@contract/work-projects';
 import {
@@ -102,7 +103,7 @@ export type WorkStoreSnapshot = {
   hosts: WorkHost[];
   terminals: WorkTerminalSession[];
   gitTabsByProject: Record<string, 'active' | 'inactive'>;
-  fileTabsByProject: Record<string, { entries: WorkHostEntry[]; activePath: string | null; drafts: Map<string, WorkFileDraft> }>;
+  fileTabsByProject: Record<string, { entries: WorkFileTab[]; activePath: string | null; drafts: Map<string, WorkFileDraft> }>;
   activeTerminalId: string | null;
   activeTerminalByProject: Record<string, string | null>;
   filesPanelOpen: boolean;
@@ -851,16 +852,17 @@ export function closeWorkGit(projectId: string): void {
   emit({ ...state, gitTabsByProject });
 }
 
-export function openWorkFile(projectId: string, entry: WorkHostEntry): void {
+export function openWorkFile(projectId: string, entry: WorkFileTab): void {
   const entries = state.fileTabsByProject[projectId]?.entries ?? [];
+  const path = workFileTabPath(entry);
   emit({
     ...state,
     gitTabsByProject: deactivateWorkGit(projectId),
     fileTabsByProject: {
       ...state.fileTabsByProject,
       [projectId]: {
-        entries: entries.some((file) => file.path === entry.path) ? entries : [...entries, entry],
-        activePath: entry.path,
+        entries: entries.some((file) => workFileTabPath(file) === path) ? entries : [...entries, entry],
+        activePath: path,
         drafts: state.fileTabsByProject[projectId]?.drafts ?? new Map(),
       },
     },
@@ -870,9 +872,9 @@ export function openWorkFile(projectId: string, entry: WorkHostEntry): void {
 export function closeWorkFiles(projectId: string, paths: readonly string[]): void {
   const tabs = state.fileTabsByProject[projectId];
   if (!tabs || !paths.length) return;
-  const entries = tabs.entries.filter((file) => !paths.includes(file.path));
+  const entries = tabs.entries.filter((file) => !paths.includes(workFileTabPath(file)));
   const activePath = tabs.activePath && paths.includes(tabs.activePath)
-    ? entries.at(-1)?.path ?? null
+    ? (entries.length ? workFileTabPath(entries[entries.length - 1]) : null)
     : tabs.activePath;
   const drafts = new Map(tabs.drafts);
   paths.forEach((path) => { drafts.delete(path); });

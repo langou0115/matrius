@@ -20,6 +20,7 @@
 - **工作区 Git**：桌面端可在独立标签查看 VS Code 风格的源代码管理、提交图、分支切换与语法高亮差异，并支持暂存、取消暂存、放弃更改、远程同步与提交。
 - **工作区文件预览**：在桌面端点击项目文件树中的文件，可在标签页查看带行号和语法高亮的 UTF-8 文本。本机项目可直接编辑，字号、自动保存与 Git 文件的默认差异视图可在「设置 → 工作 → 编辑器」配置。差异默认以行内方式显示。
 - **网页端边界**：网页端仅提供对话、资料库、定时任务与设置等核心能力；**工作（Work）相关功能仅面向桌面端（Desktop），网页端不提供**（本地可通过 `npm run dev:desktop` 预览桌面端入口）。
+- **工作区快速打开文件**：按 `Ctrl+Shift+P` 搜索本机文件名或路径，选中后在当前项目的标签页打开。同名文件标签会显示区分它们的目录。
 - **完整富文本渲染**：基于 Streamdown 渲染 Markdown / GFM 表格与脚注、KaTeX 数学公式、Shiki 按需代码高亮与 Mermaid 图表，联网引用自动编号并与来源侧栏联动。
 - **多模型自带密钥（BYOK）**：支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 及兼容协议；支持从服务端代理拉取服务商模型列表，并为对话、标题生成与个人记忆分别指定模型。
 - **服务端 Agent 工具链**：
@@ -60,7 +61,11 @@ cp .env.local.example .env.local
 
 ## 环境配置
 
-`.env.local` 在开发模式与 `npm run start` 生产模式下均会读取，进程环境变量优先级高于 `.env.local`（`APP_ENV=test` 时跳过 `.env.local`）。
+`npm run dev:web` 和 `npm run start` 读取 `.env.local`，进程环境变量优先。测试和 `npm run dev:desktop` 跳过该文件。
+
+桌面预览中，打开「设置 → 对话 → 个性化 → 其他设置」可设置上传文件总量上限和网页工具代理。默认上限为 128 MiB（134217728 字节），代理留空时直连。保存后即时生效，重启后保留。
+
+服务端将 info、warning 和 error 日志写入 `~/.matrius/logs/server.log`。每个文件最多 10 MiB，轮转时保留上一份 `server.log.1`。debug 级日志可通过 `LOG_LEVEL=debug` 在终端查看。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |

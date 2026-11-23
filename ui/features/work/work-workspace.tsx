@@ -1,4 +1,4 @@
-import { LOCAL_WORK_HOST_ID, type WorkHostEntry } from '@contract/work-projects';
+import { LOCAL_WORK_HOST_ID, workFileTabPath, type WorkFileTab } from '@contract/work-projects';
 import {
   WINDOWS_SHELL_OPTIONS,
   defaultTerminalTitle,
@@ -15,12 +15,14 @@ import {
   Pin,
   PinOff,
   Plus,
+  Search,
   X,
 } from 'lucide-react';
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -42,6 +44,8 @@ import {
 import { WorkErrorDialog } from './work-error-dialog';
 import { WorkGitView } from './work-git-view';
 import { WorkFilePreview } from './work-file-preview';
+import { WorkFileSearch } from './work-file-search';
+import { fileTabDescriptions } from './work-file-tab-labels';
 import { useWorkFileSave } from './work-file-save';
 import { WorkFilesPanel } from './work-files-panel';
 import { loadWorkSettings } from './work-shell-preference';
@@ -111,6 +115,7 @@ export function WorkWorkspace() {
   const instance = useInstance();
   const preview = useIsPreview();
   const hasGitFeature = useFeature('work-git');
+  const canSearchFiles = useFeature('work-file-search') && !preview;
   const gitEnabled = preview || hasGitFeature;
   const saveFile = useWorkFileSave();
   const {
@@ -135,6 +140,7 @@ export function WorkWorkspace() {
   const [creating, setCreating] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [resizingFiles, setResizingFiles] = useState(false);
+  const [fileSearchProjectId, setFileSearchProjectId] = useState<string>();
   const [viewMeta, setViewMeta] = useState<Record<string, { pinned?: boolean; title?: string }>>({});
   const [tabMenu, setTabMenu] = useState<{
     key: string;
@@ -172,17 +178,31 @@ export function WorkWorkspace() {
   const fileTabs = activeProject ? fileTabsByProject[activeProject.id] : undefined;
   const gitTab = gitEnabled && activeProject ? gitTabsByProject[activeProject.id] : undefined;
   const gitActive = gitTab === 'active';
-  const activeFile = gitActive ? undefined : fileTabs?.entries.find((entry) => entry.path === fileTabs.activePath);
-  const filePaths = fileTabs?.entries.map((entry) => entry.path) ?? [];
+  const activeFile = gitActive ? undefined : fileTabs?.entries.find((entry) => workFileTabPath(entry) === fileTabs.activePath);
+  const activeTabPath = activeFile && workFileTabPath(activeFile);
+  const filePaths = fileTabs?.entries.map(workFileTabPath) ?? [];
+  const fileDescriptions = useMemo(() => fileTabDescriptions(fileTabs?.entries ?? []), [fileTabs?.entries]);
   useLayoutEffect(() => {
     if (activeFile) activeFileTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeFile]);
   const projectId = activeProject?.id;
+  useEffect(() => {
+    if (!canSearchFiles || !projectId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.isComposing
+        || event.key.toLowerCase() !== 'p') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) setFileSearchProjectId(projectId);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [canSearchFiles, projectId]);
   const gitKey = JSON.stringify([projectId, 'git']);
   const fileKey = (path: string) => JSON.stringify([projectId, 'file', path]);
   const terminalKey = (id: string) => JSON.stringify([projectId, 'terminal', id]);
   const menuTerminal = projectTerminals.find((terminal) => terminalKey(terminal.id) === tabMenu?.key);
-  const menuFile = fileTabs?.entries.find((entry) => fileKey(entry.path) === tabMenu?.key);
+  const menuFile = fileTabs?.entries.find((entry) => fileKey(workFileTabPath(entry)) === tabMenu?.key);
   const menuGit = Boolean(gitTab && tabMenu?.key === gitKey);
   const menuOpen = Boolean(tabMenu && tabMenu.projectId === projectId && (menuTerminal || menuFile || menuGit));
   const menuTitle = menuTerminal?.title ?? viewMeta[tabMenu?.key ?? '']?.title ?? menuFile?.name ?? 'Git';
@@ -338,9 +358,9 @@ export function WorkWorkspace() {
     }
   }
 
-  function handleOpenFile(entry: WorkHostEntry): void {
+  function handleOpenFile(entry: WorkFileTab): void {
     if (!activeProject) return;
-    if (entry.path === activeFile?.path) {
+    if (workFileTabPath(entry) === activeTabPath) {
       screenRef.current?.querySelector<HTMLTextAreaElement>('.work-code-input textarea')?.focus({ preventScroll: true });
     }
     openWorkFile(activeProject.id, entry);
@@ -426,7 +446,7 @@ export function WorkWorkspace() {
   };
   const otherTabs = {
     terminalIds: closableTabs.terminalIds.filter((id) => id !== menuTerminal?.id),
-    paths: closableTabs.paths.filter((path) => path !== menuFile?.path),
+    paths: closableTabs.paths.filter((path) => !menuFile || path !== workFileTabPath(menuFile)),
     git: closableTabs.git && !menuGit,
   };
   const hasClosableTabs = ({ terminalIds, paths, git }: typeof closableTabs) => Boolean(terminalIds.length || paths.length || git);
@@ -462,7 +482,7 @@ export function WorkWorkspace() {
       className={`work-screen${filesPanelOpen ? ' has-files-panel' : ''}${resizingFiles ? ' is-resizing' : ''}`}
       style={screenStyle}
       onKeyDown={(event) => {
-        if (activeProject?.hostId !== LOCAL_WORK_HOST_ID || !activeFile || event.nativeEvent.isComposing) return;
+        if (activeProject?.hostId !== LOCAL_WORK_HOST_ID || !activeFile || activeFile.localOutsideProject || event.nativeEvent.isComposing) return;
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
           event.preventDefault();
           void saveFile(activeProject.id, activeFile.path);
@@ -581,22 +601,26 @@ export function WorkWorkspace() {
               );
             })}
             {activeProject && fileTabs?.entries.map((entry) => {
-              const key = fileKey(entry.path);
+              const path = workFileTabPath(entry);
+              const key = fileKey(path);
               const meta = viewMeta[key];
+              const description = fileDescriptions.get(path);
+              const selected = path === activeTabPath;
               return (
-                <div key={key} onContextMenu={(event) => openTabMenu(event, key)} className={`work-tab${entry.path === activeFile?.path ? ' is-active' : ''}${meta?.pinned ? ' is-pinned' : ''}`}>
+                <div key={key} onContextMenu={(event) => openTabMenu(event, key)} className={`work-tab${selected ? ' is-active' : ''}${meta?.pinned ? ' is-pinned' : ''}`}>
                   <button
                     type="button"
                     role="tab"
                     className="work-tab-select"
-                    aria-selected={entry.path === activeFile?.path}
-                    ref={entry.path === activeFile?.path ? activeFileTabRef : undefined}
+                    aria-selected={selected}
+                    ref={selected ? activeFileTabRef : undefined}
                     title={entry.path}
                     onClick={() => handleOpenFile(entry)}
                   >
                     <FileText size={14} aria-hidden="true" />
                     <span className="work-tab-title">{meta?.title ?? entry.name}</span>
-                    {isFileDraftDirty(fileTabs.drafts.get(entry.path)) && (
+                    {description && <span className="work-tab-description" dir="auto">{description}</span>}
+                    {isFileDraftDirty(fileTabs.drafts.get(path)) && (
                       <span className="work-file-dirty" role="img" aria-label="未保存" title="未保存" />
                     )}
                   </button>
@@ -604,7 +628,7 @@ export function WorkWorkspace() {
                     type="button"
                     className={`icon-button ${meta?.pinned ? 'work-tab-pin-btn' : 'work-tab-close'}`}
                     aria-label={meta?.pinned ? `取消固定：${meta.title ?? entry.name}` : `关闭文件：${meta?.title ?? entry.name}`}
-                    onClick={() => meta?.pinned ? toggleViewPin(key) : closeWorkspaceTabs({ terminalIds: [], paths: [entry.path], git: false })}
+                    onClick={() => meta?.pinned ? toggleViewPin(key) : closeWorkspaceTabs({ terminalIds: [], paths: [path], git: false })}
                   >
                     {meta?.pinned ? <Pin size={12} strokeWidth={1.75} aria-hidden="true" /> : <X size={13} strokeWidth={1.75} aria-hidden="true" />}
                   </button>
@@ -630,6 +654,12 @@ export function WorkWorkspace() {
           </div>
 
           <div className="work-topbar-actions">
+            {canSearchFiles && projectId && (
+              <button type="button" className="icon-button work-topbar-btn" aria-label="查找本机文件"
+                aria-keyshortcuts="Control+Shift+P" title="查找本机文件 (Ctrl+Shift+P)" onClick={() => setFileSearchProjectId(projectId)}>
+                <Search size={16} aria-hidden="true" />
+              </button>
+            )}
             <div className="work-add-control" ref={addControlRef}>
               <div className={`work-add-split${addMenuOpen ? ' is-open' : ''}`}>
                 <button
@@ -762,16 +792,27 @@ export function WorkWorkspace() {
           )}
           {activeProject && activeFile && (
             <WorkFilePreview
-              key={JSON.stringify([activeProject.id, activeFile.path, hostUnlockVersion])}
-              hostId={activeProject.hostId}
+              key={JSON.stringify([activeProject.id, activeTabPath, hostUnlockVersion])}
+              hostId={activeFile.localOutsideProject ? LOCAL_WORK_HOST_ID : activeProject.hostId}
               projectId={activeProject.id}
               file={activeFile}
-              draft={fileTabs?.drafts.get(activeFile.path)}
+              draft={activeTabPath ? fileTabs?.drafts.get(activeTabPath) : undefined}
+              readOnly={activeFile.localOutsideProject ?? false}
               fontSize={editorFontSize}
             />
           )}
         </main>
       </div>
+
+      {canSearchFiles && projectId && fileSearchProjectId === projectId && (
+        <WorkFileSearch key={`file-search:${projectId}`} projectId={projectId}
+          onClose={() => setFileSearchProjectId(undefined)}
+          onOpen={(file) => {
+            setFileSearchProjectId(undefined);
+            handleOpenFile(file);
+          }}
+        />
+      )}
 
       {filesPanelOpen && (
         <WorkFilesPanel

@@ -225,6 +225,76 @@ test('local file tabs open directly in the editor and automatically save when en
   }
 });
 
+test('work file search opens local results in the active project and labels same-name tabs', async (t) => {
+  const dom = setupDom();
+  const root = createRoot(dom.document.getElementById('root'));
+  const previousFetch = globalThis.fetch;
+  const opened = [];
+  const paths = ['C:\\frontend\\src\\index.ts', 'C:\\backend\\src\\index.ts'];
+  globalThis.fetch = async (input) => {
+    const url = new URL(input, 'http://localhost');
+    if (url.pathname === '/api/features') return Response.json({ features: [{ id: 'work-file-search' }] });
+    if (url.pathname === '/api/projects/project/file-search') {
+      assert.equal(url.searchParams.get('q'), 'index.ts');
+      return Response.json({
+        items: paths.map((path) => ({ path, name: 'index.ts', kind: 'file', accessible: true, localOutsideProject: true })),
+        source: 'local', indexing: false, limited: false,
+      });
+    }
+    if (url.pathname === '/api/hosts/local/fs/preview') {
+      opened.push(url.searchParams.get('path'));
+      return Response.json({ text: '// test', revision: 'test' });
+    }
+    return Response.json({ items: [], entries: [] });
+  };
+  try {
+    upsertWorkProject({
+      id: 'project', name: 'remote', hostId: 'ssh-host', directory: '/project',
+      revision: 1, createdAt: 1, updatedAt: 1,
+    });
+    await act(async () => {
+      root.render(createElement(InstanceProvider, { preview: false }, createElement(WorkWorkspace)));
+    });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const openSearch = async () => {
+      const shortcut = Object.assign(new dom.window.Event('keydown', { cancelable: true }),
+        { key: 'P', ctrlKey: true, shiftKey: true });
+      await act(async () => { dom.window.dispatchEvent(shortcut); });
+      assert.equal(shortcut.defaultPrevented, true);
+      const input = dom.document.querySelector('input[role="combobox"]');
+      assert.ok(input);
+      await act(async () => {
+        input.value = 'index.ts';
+        input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+      });
+      await act(async () => { t.mock.timers.tick(140); });
+      return dom.document.querySelectorAll('.work-file-search [role="option"]');
+    };
+    const first = await openSearch();
+    assert.equal(first.length, 2);
+    await act(async () => { first[0].click(); });
+    assert.equal(dom.document.querySelector('.work-tab-description'), null);
+    await openSearch();
+    const input = dom.document.querySelector('input[role="combobox"]');
+    await act(async () => {
+      input.dispatchEvent(Object.assign(new dom.window.Event('keydown', { bubbles: true }), { key: 'ArrowDown' }));
+    });
+    assert.equal(dom.document.querySelectorAll('.work-file-search [role="option"]')[1].getAttribute('aria-selected'), 'true');
+    await act(async () => {
+      input.dispatchEvent(Object.assign(new dom.window.Event('keydown', { bubbles: true }), { key: 'Enter' }));
+    });
+    assert.deepEqual(opened, paths);
+    assert.deepEqual([...dom.document.querySelectorAll('.work-tab-description')].map((node) => node.textContent),
+      ['frontend/src', 'backend/src']);
+    assert.equal(dom.document.querySelector('.work-tab-select[aria-selected="true"]').title, paths[1]);
+    assert.ok(dom.document.querySelector('.work-code-view'));
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.fetch = previousFetch;
+    dom.restore();
+  }
+});
+
 test('Git opens in its own project tab between terminal creation and the files panel', async () => {
   const dom = setupDom();
   const root = createRoot(dom.document.getElementById('root'));
