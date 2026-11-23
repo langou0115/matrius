@@ -16,7 +16,7 @@ test('settings paths are recognised for real and preview routes', () => {
     '/mock/chat/settings', '/mock/chat/settings/models']) {
     assert.equal(isSettingsPath(path), true, path);
   }
-  for (const path of ['/', '/c/x', '/library', '/mock/chat', '/mock/chat/c/x', '/mock/library']) {
+  for (const path of ['/', '/c/x', '/work', '/p/proj-1', '/library', '/mock/chat', '/mock/chat/c/x', '/mock/chat/work', '/mock/chat/p/proj-1', '/mock/library']) {
     assert.equal(isSettingsPath(path), false, path);
   }
 });
@@ -56,6 +56,20 @@ test('desktop work tab return label says 返回工作 unless mobile or library/t
 
     rememberWorkspacePath('/library');
     assert.equal(workspaceReturnLabel(false), '返回资料库');
+
+    rememberWorkspacePath('/p/proj-1');
+    assert.equal(workspaceReturnLabel(false), '返回工作');
+    assert.equal(workspaceReturnHref('abc', false, false), '/p/proj-1');
+    assert.equal(workspaceReturnHref('abc', false, true), '/c/abc');
+
+    writeSidebarTab('chat');
+    assert.equal(workspaceReturnLabel(false), '返回工作');
+    assert.equal(workspaceReturnHref(null, false, false), '/p/proj-1');
+
+    rememberWorkspacePath('/mock/chat/work');
+    assert.equal(workspaceReturnLabel(false), '返回工作');
+    assert.equal(workspaceReturnHref('m1', true, false), '/mock/chat/work');
+    assert.equal(workspaceReturnHref('m1', true, true), '/mock/chat/c/m1');
   } finally {
     resetSidebarTabForTests();
     resetWorkspaceReturnForTests();

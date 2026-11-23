@@ -37,7 +37,9 @@ import {
 const INSTANCE_ID = 1;
 const HEAD_READ_BYTES = 16 * 1024;
 const TAIL_READ_BYTES = 32 * 1024;
-const RUNNING_STALE_MS = 30 * 60 * 1000;
+const MAX_ADAPTIVE_TAIL_BYTES = 1024 * 1024;
+const ACTIVE_PROCESS_RUNNING_STALE_MS = 10 * 60 * 1000;
+const UNCONFIRMED_RUNNING_STALE_MS = 3 * 60 * 1000;
 const REMOTE_CLI_TIMEOUT_MS = 10_000;
 const MAX_FETCH_LIMIT = 200;
 
@@ -65,36 +67,55 @@ async function readHeadAndTail(
   filePath: string,
   headBytes = HEAD_READ_BYTES,
   tailBytes = TAIL_READ_BYTES,
-): Promise<{ head: string; tail: string; mtimeMs: number; size: number } | null> {
+  hasRequiredTail?: (lines: readonly Record<string, unknown>[]) => boolean,
+): Promise<{ head: string; tail: string; headLines: Record<string, unknown>[]; tailLines: Record<string, unknown>[]; mtimeMs: number; size: number } | null> {
   let handle;
   try {
     handle = await open(filePath, 'r');
     const info = await handle.stat();
     const size = info.size;
     if (size === 0) {
-      return { head: '', tail: '', mtimeMs: info.mtimeMs, size: 0 };
+      return { head: '', tail: '', headLines: [], tailLines: [], mtimeMs: info.mtimeMs, size: 0 };
     }
     if (size <= headBytes + tailBytes) {
       const buf = Buffer.allocUnsafe(size);
       const { bytesRead } = await handle.read(buf, 0, size, 0);
       const text = buf.subarray(0, bytesRead).toString('utf8');
-      return { head: text, tail: text, mtimeMs: info.mtimeMs, size };
+      const lines = parseJsonLines(text);
+      return { head: text, tail: text, headLines: lines, tailLines: lines, mtimeMs: info.mtimeMs, size };
     }
 
     const headBuf = Buffer.allocUnsafe(headBytes);
     const headRes = await handle.read(headBuf, 0, headBytes, 0);
     const head = headBuf.subarray(0, headRes.bytesRead).toString('utf8');
+    const headLines = parseJsonLines(head);
 
-    const tailOffset = Math.max(0, size - tailBytes);
-    const tailLen = size - tailOffset;
-    const tailBuf = Buffer.allocUnsafe(tailLen);
-    const tailRes = await handle.read(tailBuf, 0, tailLen, tailOffset);
-    let tail = tailBuf.subarray(0, tailRes.bytesRead).toString('utf8');
-    if (tailOffset > 0) {
-      const firstNewline = tail.indexOf('\n');
-      tail = firstNewline >= 0 ? tail.slice(firstNewline + 1) : '';
+    let windowBytes = tailBytes;
+    let tail = '';
+    let tailLines: Record<string, unknown>[] = [];
+    while (true) {
+      const cappedBytes = Math.min(size, windowBytes);
+      const tailOffset = Math.max(0, size - cappedBytes);
+      const tailLen = size - tailOffset;
+      const tailBuf = Buffer.allocUnsafe(tailLen);
+      const tailRes = await handle.read(tailBuf, 0, tailLen, tailOffset);
+      tail = tailBuf.subarray(0, tailRes.bytesRead).toString('utf8');
+      if (tailOffset > 0) {
+        const firstNewline = tail.indexOf('\n');
+        tail = firstNewline >= 0 ? tail.slice(firstNewline + 1) : '';
+      }
+      tailLines = parseJsonLines(tail);
+      if (
+        !hasRequiredTail
+        || hasRequiredTail(tailLines)
+        || tailOffset === 0
+        || windowBytes >= MAX_ADAPTIVE_TAIL_BYTES
+      ) {
+        break;
+      }
+      windowBytes = Math.min(MAX_ADAPTIVE_TAIL_BYTES, windowBytes * 4);
     }
-    return { head, tail, mtimeMs: info.mtimeMs, size };
+    return { head, tail, headLines, tailLines, mtimeMs: info.mtimeMs, size };
   } catch {
     return null;
   } finally {
@@ -153,6 +174,61 @@ type ClaudeIndexEntry = {
   isSidechain?: boolean;
 };
 
+function isClaudeStatusRecord(rec: Record<string, unknown>): boolean {
+  const type = rec.type;
+  if (type === 'assistant' || type === 'user' || type === 'progress') return true;
+  if (type === 'system') {
+    const subtype = rec.subtype;
+    return subtype === 'turn_duration' || subtype === 'api_error';
+  }
+  return false;
+}
+
+function isClaudeMetadataRecord(rec: Record<string, unknown>): boolean {
+  const type = rec.type;
+  if (
+    type === 'file-history-snapshot'
+    || type === 'summary'
+    || type === 'custom-title'
+    || type === 'ai-title'
+    || type === 'queue-operation'
+    || type === 'last-prompt'
+    || type === 'pr-link'
+    || type === 'agent-name'
+    || type === 'agent-color'
+    || type === 'tag'
+    || type === 'attachment'
+  ) {
+    return true;
+  }
+  if (type === 'system') {
+    const subtype = rec.subtype;
+    return subtype !== 'turn_duration' && subtype !== 'api_error';
+  }
+  return false;
+}
+
+function isCodexStatusEvent(rec: Record<string, unknown>): boolean {
+  if (rec.type !== 'event_msg') return false;
+  const payload = rec.payload as { type?: unknown } | undefined;
+  const pt = payload?.type;
+  return (
+    pt === 'task_complete'
+    || pt === 'turn_complete'
+    || pt === 'turn_aborted'
+    || pt === 'turn_interrupted'
+    || pt === 'shutdown_complete'
+    || pt === 'task_started'
+    || pt === 'turn_started'
+    || pt === 'error'
+  );
+}
+
+type ActiveClaudePidMeta = {
+  alive: boolean;
+  explicitStatus?: string;
+};
+
 async function readLocalClaudeSessions(options: {
   claudeDir: string;
   projectId: string;
@@ -165,7 +241,7 @@ async function readLocalClaudeSessions(options: {
   const projectsRoot = join(claudeDir, 'projects');
   if (!existsSync(projectsRoot)) return [];
 
-  const activeSessionIds = new Set<string>();
+  const activeSessionById = new Map<string, ActiveClaudePidMeta>();
   const sessionsMetaDir = join(claudeDir, 'sessions');
   if (existsSync(sessionsMetaDir)) {
     try {
@@ -176,6 +252,7 @@ async function readLocalClaudeSessions(options: {
           const parsed = JSON.parse(await readFile(join(sessionsMetaDir, entry.name), 'utf8')) as {
             pid?: unknown;
             sessionId?: unknown;
+            status?: unknown;
           };
           if (
             typeof parsed.pid === 'number'
@@ -183,7 +260,11 @@ async function readLocalClaudeSessions(options: {
             && typeof parsed.sessionId === 'string'
             && isValidCliSessionId(parsed.sessionId)
           ) {
-            activeSessionIds.add(parsed.sessionId);
+            const explicitStatus = typeof parsed.status === 'string' ? parsed.status.trim().toLowerCase() : undefined;
+            const prev = activeSessionById.get(parsed.sessionId);
+            if (!prev || explicitStatus === 'busy' || explicitStatus === 'running') {
+              activeSessionById.set(parsed.sessionId, { alive: true, explicitStatus });
+            }
           }
         } catch {
           // Ignore malformed PID tracking files.
@@ -267,11 +348,15 @@ async function readLocalClaudeSessions(options: {
       const idxMeta = indexBySession.get(sessionId);
       if (idxMeta?.isSidechain) continue;
 
-      const slices = await readHeadAndTail(join(folder, file.name));
+      const slices = await readHeadAndTail(
+        join(folder, file.name),
+        HEAD_READ_BYTES,
+        TAIL_READ_BYTES,
+        (lines) => lines.some((item) => isClaudeStatusRecord(item)),
+      );
       if (!slices) continue;
 
-      const headLines = parseJsonLines(slices.head);
-      const tailLines = slices.tail === slices.head ? headLines : parseJsonLines(slices.tail);
+      const { headLines, tailLines } = slices;
 
       if (headLines.some((item) => item.isSidechain === true)) continue;
 
@@ -314,47 +399,78 @@ async function readLocalClaudeSessions(options: {
         }
       }
 
-      if (!hasConversationTurn && !customTitle && !aiTitle && !summaryTitle && !activeSessionIds.has(sessionId)) {
+      const activeMeta = activeSessionById.get(sessionId);
+      if (!hasConversationTurn && !customTitle && !aiTitle && !summaryTitle && !activeMeta) {
         continue;
       }
 
-      const isActive = activeSessionIds.has(sessionId);
-      const isFresh = nowMs - latestTs < RUNNING_STALE_MS;
+      const isActive = Boolean(activeMeta?.alive);
+      const explicitIdle = activeMeta?.explicitStatus === 'idle' || activeMeta?.explicitStatus === 'waiting';
+      const explicitBusy = activeMeta?.explicitStatus === 'busy' || activeMeta?.explicitStatus === 'running';
+      const staleLimitMs = isActive ? ACTIVE_PROCESS_RUNNING_STALE_MS : UNCONFIRMED_RUNNING_STALE_MS;
+      const isFresh = nowMs - latestTs < staleLimitMs;
       let status: WorkCliSessionStatus = 'idle';
 
       for (let i = tailLines.length - 1; i >= 0; i -= 1) {
         const rec = tailLines[i];
         const type = rec.type;
-        if (
-          type === 'file-history-snapshot'
-          || type === 'summary'
-          || type === 'custom-title'
-          || type === 'ai-title'
-          || type === 'queue-operation'
-        ) {
+        if (isClaudeMetadataRecord(rec)) {
           continue;
         }
-        if (type === 'system' && rec.subtype === 'turn_duration') {
-          status = 'completed';
+        if (type === 'system') {
+          if (rec.subtype === 'turn_duration') {
+            status = 'completed';
+          } else {
+            status = 'idle';
+          }
           break;
         }
         if (type === 'assistant') {
+          if (rec.isApiErrorMessage === true) {
+            status = 'idle';
+            break;
+          }
           const msg = rec.message as { stop_reason?: unknown } | undefined;
           const stopReason = msg?.stop_reason;
           if (stopReason === 'end_turn' || stopReason === 'stop_sequence' || stopReason === 'max_tokens') {
             status = 'completed';
+          } else if (explicitIdle && nowMs - latestTs > 5_000) {
+            status = 'idle';
           } else {
-            status = (isActive || isFresh) ? 'running' : 'idle';
+            status = isFresh ? 'running' : 'idle';
           }
           break;
         }
-        if (type === 'user' || type === 'progress') {
-          status = (isActive || isFresh) ? 'running' : 'idle';
+        if (type === 'user') {
+          const msg = rec.message as { content?: unknown } | undefined;
+          const text = extractTextFromClaudeContent(msg?.content);
+          if (text.includes('[Request interrupted by user')) {
+            status = 'idle';
+            break;
+          }
+          const hasToolResult = Array.isArray(msg?.content)
+            && msg.content.some((block) => Boolean(block && typeof block === 'object' && (block as { type?: unknown }).type === 'tool_result'));
+          if ((rec.isMeta === true || isIgnorableClaudeUserPrompt(text)) && !hasToolResult) {
+            continue;
+          }
+          if (explicitIdle && nowMs - latestTs > 5_000) {
+            status = 'idle';
+          } else {
+            status = isFresh ? 'running' : 'idle';
+          }
+          break;
+        }
+        if (type === 'progress') {
+          if (explicitIdle && nowMs - latestTs > 5_000) {
+            status = 'idle';
+          } else {
+            status = isFresh ? 'running' : 'idle';
+          }
           break;
         }
       }
 
-      if (status === 'idle' && isActive && !hasConversationTurn) {
+      if (status === 'idle' && isActive && explicitBusy && !hasConversationTurn) {
         status = 'running';
       }
 
@@ -421,51 +537,76 @@ async function detectCodexRolloutStatus(
   nowMs: number,
 ): Promise<{ status: WorkCliSessionStatus; mtimeMs: number; firstUserMessage?: string }> {
   let fileMtimeMs = 0;
+  let lastEventMs = 0;
   let tailStatus: WorkCliSessionStatus | null = null;
   let firstUserMessage: string | undefined;
 
   if (rolloutPath) {
     const cleanPath = stripWindowsExtendedPathPrefix(rolloutPath);
-    const slices = await readHeadAndTail(cleanPath);
+    const slices = await readHeadAndTail(
+      cleanPath,
+      HEAD_READ_BYTES,
+      TAIL_READ_BYTES,
+      (lines) => lines.some((item) => isCodexStatusEvent(item)),
+    );
     if (slices) {
       fileMtimeMs = slices.mtimeMs;
-      const headLines = parseJsonLines(slices.head);
-      const tailLines = slices.tail === slices.head ? headLines : parseJsonLines(slices.tail);
+      const { headLines, tailLines } = slices;
       firstUserMessage = extractFirstCodexUserMessage(headLines) ?? extractFirstCodexUserMessage(tailLines);
+      for (const rec of tailLines) {
+        if (typeof rec.timestamp === 'string' || typeof rec.timestamp === 'number') {
+          const parsed = parseIsoTimestampMs(rec.timestamp);
+          if (parsed > lastEventMs) lastEventMs = parsed;
+        }
+      }
+      const freshest = Math.max(fileMtimeMs, updatedAtMs, lastEventMs);
       for (let i = tailLines.length - 1; i >= 0; i -= 1) {
         const rec = tailLines[i];
         if (rec.type !== 'event_msg') continue;
         const payload = rec.payload as { type?: unknown } | undefined;
         const payloadType = payload?.type;
-        if (payloadType === 'task_complete') {
+        if (payloadType === 'task_complete' || payloadType === 'turn_complete') {
           tailStatus = 'completed';
           break;
         }
-        if (payloadType === 'turn_aborted') {
+        if (payloadType === 'turn_aborted' || payloadType === 'turn_interrupted' || payloadType === 'shutdown_complete') {
           tailStatus = 'idle';
           break;
         }
-        if (payloadType === 'task_started') {
-          const fresh = nowMs - Math.max(fileMtimeMs, updatedAtMs) < RUNNING_STALE_MS;
-          const turnRunning = turnStatus === 'inProgress' || turnStatus === 'running' || turnStatus === 'pending';
-          tailStatus = (fresh || turnRunning) ? 'running' : 'idle';
+        if (payloadType === 'error') {
+          if (nowMs - freshest > 5_000) {
+            tailStatus = 'idle';
+            break;
+          }
+          continue;
+        }
+        if (payloadType === 'task_started' || payloadType === 'turn_started') {
+          if (turnStatus === 'completed') {
+            tailStatus = 'completed';
+          } else if (turnStatus === 'interrupted' || turnStatus === 'aborted' || turnStatus === 'failed' || turnStatus === 'cancelled') {
+            tailStatus = 'idle';
+          } else {
+            const fresh = nowMs - freshest < UNCONFIRMED_RUNNING_STALE_MS;
+            tailStatus = fresh ? 'running' : 'idle';
+          }
           break;
         }
       }
     }
   }
 
+  const freshest = Math.max(fileMtimeMs, updatedAtMs, lastEventMs);
   if (tailStatus) {
-    return { status: tailStatus, mtimeMs: fileMtimeMs, firstUserMessage };
+    return { status: tailStatus, mtimeMs: Math.max(fileMtimeMs, lastEventMs), firstUserMessage };
   }
   if (turnStatus === 'completed') {
-    return { status: 'completed', mtimeMs: fileMtimeMs, firstUserMessage };
+    return { status: 'completed', mtimeMs: Math.max(fileMtimeMs, lastEventMs), firstUserMessage };
   }
   if (turnStatus === 'inProgress' || turnStatus === 'running' || turnStatus === 'pending') {
-    const fresh = nowMs - Math.max(fileMtimeMs, updatedAtMs) < RUNNING_STALE_MS;
-    return { status: fresh ? 'running' : 'idle', mtimeMs: fileMtimeMs, firstUserMessage };
+    const fresh = nowMs - freshest < UNCONFIRMED_RUNNING_STALE_MS;
+    return { status: fresh ? 'running' : 'idle', mtimeMs: Math.max(fileMtimeMs, lastEventMs), firstUserMessage };
   }
-  return { status: 'idle', mtimeMs: fileMtimeMs, firstUserMessage };
+  return { status: 'idle', mtimeMs: Math.max(fileMtimeMs, lastEventMs), firstUserMessage };
 }
 
 async function readCodexFallbackJsonlSessions(options: {
@@ -505,7 +646,7 @@ async function readCodexFallbackJsonlSessions(options: {
   for (const filePath of rolloutFiles) {
     const slices = await readHeadAndTail(filePath);
     if (!slices) continue;
-    const headLines = parseJsonLines(slices.head);
+    const { headLines } = slices;
     const meta = headLines.find((item) => item.type === 'session_meta');
     const payload = meta?.payload as Record<string, unknown> | undefined;
     if (!payload) continue;
@@ -716,6 +857,7 @@ async function readLocalAntigravitySessions(options: {
 
     if (row.status === 'CASCADE_RUN_STATUS_RUNNING') {
       let convDbMtimeMs = 0;
+      let inspectedSteps = false;
       let hasActiveStep = false;
       const convDbPath = join(agyDir, 'conversations', `${row.conversation_id}.db`);
       if (existsSync(convDbPath)) {
@@ -726,7 +868,10 @@ async function readLocalAntigravitySessions(options: {
             const tailSteps = convDb.prepare(
               'SELECT status FROM steps ORDER BY idx DESC LIMIT 5',
             ).all() as Array<{ status: number }>;
-            hasActiveStep = tailSteps.some((step) => step.status === 1 || step.status === 2);
+            if (tailSteps.length > 0) {
+              inspectedSteps = true;
+              hasActiveStep = tailSteps.some((step) => step.status === 1 || step.status === 2);
+            }
           } finally {
             convDb.close();
           }
@@ -736,9 +881,15 @@ async function readLocalAntigravitySessions(options: {
       }
       const freshest = Math.max(updatedAt, convDbMtimeMs);
       updatedAt = freshest;
-      status = (nowMs - freshest < RUNNING_STALE_MS || hasActiveStep && nowMs - freshest < RUNNING_STALE_MS)
-        ? 'running'
-        : 'idle';
+      const ageMs = nowMs - freshest;
+      if (inspectedSteps && !hasActiveStep && ageMs > 15_000) {
+        status = Number(row.step_count) > 0 ? 'completed' : 'idle';
+      } else {
+        const staleLimit = inspectedSteps && hasActiveStep
+          ? ACTIVE_PROCESS_RUNNING_STALE_MS
+          : UNCONFIRMED_RUNNING_STALE_MS;
+        status = ageMs < staleLimit ? 'running' : 'idle';
+      }
     } else if (
       row.status === 'CASCADE_RUN_STATUS_IDLE'
       || row.status === 'CASCADE_RUN_STATUS_WAITING_FOR_USER'
@@ -765,7 +916,9 @@ const REMOTE_PYTHON_CLI_PROBE = [
   'limit = max(1, min(200, int(sys.argv[2]) if len(sys.argv) > 2 else 30))',
   'home = os.path.expanduser("~")',
   'now_ms = int(time.time() * 1000)',
-  'STALE_MS = 30 * 60 * 1000',
+  'ACTIVE_STALE_MS = 10 * 60 * 1000',
+  'UNCONFIRMED_STALE_MS = 3 * 60 * 1000',
+  'MAX_TAIL_BYTES = 1024 * 1024',
   'ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")',
   'def norm_posix(p):',
   '  p = (p or "").strip()',
@@ -789,21 +942,6 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '  if s.endswith("Z"): s = s[:-1] + "+00:00"',
   '  try: return int(datetime.fromisoformat(s).timestamp() * 1000)',
   '  except Exception: return 0',
-  'def read_head_tail(p, h=16384, t=32768):',
-  '  try:',
-  '    st = os.stat(p)',
-  '    sz = st.st_size',
-  '    with open(p, "rb") as f:',
-  '      if sz <= h + t:',
-  '        txt = f.read().decode("utf-8", "replace")',
-  '        return txt, txt, int(st.st_mtime * 1000)',
-  '      hd = f.read(h).decode("utf-8", "replace")',
-  '      f.seek(max(0, sz - t))',
-  '      tl = f.read(t).decode("utf-8", "replace")',
-  '      nl = tl.find("\\n")',
-  '      tl = tl[nl+1:] if nl >= 0 else ""',
-  '      return hd, tl, int(st.st_mtime * 1000)',
-  '  except Exception: return None',
   'def parse_jsonl(txt):',
   '  out = []',
   '  for ln in txt.splitlines():',
@@ -814,17 +952,61 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '      if isinstance(obj, dict): out.append(obj)',
   '    except Exception: pass',
   '  return out',
+  'def read_head_tail(p, h=16384, t=32768, req_fn=None):',
+  '  try:',
+  '    st = os.stat(p)',
+  '    sz = st.st_size',
+  '    with open(p, "rb") as f:',
+  '      if sz <= h + t:',
+  '        txt = f.read().decode("utf-8", "replace")',
+  '        lines = parse_jsonl(txt)',
+  '        return lines, lines, int(st.st_mtime * 1000)',
+  '      hd = parse_jsonl(f.read(h).decode("utf-8", "replace"))',
+  '      win = t',
+  '      tl = []',
+  '      while True:',
+  '        off = max(0, sz - min(sz, win))',
+  '        f.seek(off)',
+  '        raw_t = f.read(sz - off).decode("utf-8", "replace")',
+  '        if off > 0:',
+  '          nl = raw_t.find("\\n")',
+  '          raw_t = raw_t[nl+1:] if nl >= 0 else ""',
+  '        tl = parse_jsonl(raw_t)',
+  '        if req_fn is None or any(req_fn(r) for r in tl) or off == 0 or win >= MAX_TAIL_BYTES:',
+  '          break',
+  '        win = min(MAX_TAIL_BYTES, win * 4)',
+  '      return hd, tl, int(st.st_mtime * 1000)',
+  '  except Exception: return None',
+  'def is_claude_status_rec(r):',
+  '  tp = r.get("type")',
+  '  if tp in ("assistant", "user", "progress"): return True',
+  '  if tp == "system": return r.get("subtype") in ("turn_duration", "api_error")',
+  '  return False',
+  'def is_claude_meta_rec(r):',
+  '  tp = r.get("type")',
+  '  if tp in ("file-history-snapshot", "summary", "custom-title", "ai-title", "queue-operation", "last-prompt", "pr-link", "agent-name", "agent-color", "tag", "attachment"): return True',
+  '  if tp == "system": return r.get("subtype") not in ("turn_duration", "api_error")',
+  '  return False',
+  'def is_codex_status_rec(r):',
+  '  if r.get("type") != "event_msg": return False',
+  '  pt = (r.get("payload") or {}).get("type")',
+  '  return pt in ("task_complete", "turn_complete", "turn_aborted", "turn_interrupted", "shutdown_complete", "task_started", "turn_started", "error")',
   'target = norm_posix(target_raw)',
   'items = []',
   '# 1. Claude Code',
   'claude_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")',
-  'active_claude = set()',
+  'active_claude = {}',
   'for sf in glob.glob(os.path.join(claude_dir, "sessions", "*.json")):',
   '  try:',
   '    d = json.load(open(sf, "r", encoding="utf-8"))',
   '    pid = d.get("pid"); sid = d.get("sessionId")',
   '    if isinstance(pid, int) and pid > 0 and isinstance(sid, str) and ID_RE.match(sid):',
-  '      try: os.kill(pid, 0); active_claude.add(sid)',
+  '      try:',
+  '        os.kill(pid, 0)',
+  '        es = d.get("status")',
+  '        es_norm = es.strip().lower() if isinstance(es, str) else ""',
+  '        prev_es = active_claude.get(sid)',
+  '        if prev_es is None or es_norm in ("busy", "running"): active_claude[sid] = es_norm',
   '      except OSError: pass',
   '  except Exception: pass',
   'c_proj_root = os.path.join(claude_dir, "projects")',
@@ -857,9 +1039,9 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '      if not ID_RE.match(sid): continue',
   '      im = idx_map.get(sid, {})',
   '      if im.get("isSidechain"): continue',
-  '      ht = read_head_tail(os.path.join(folder, fn))',
+  '      ht = read_head_tail(os.path.join(folder, fn), 16384, 32768, is_claude_status_rec)',
   '      if not ht: continue',
-  '      hl = parse_jsonl(ht[0]); tl = hl if ht[1] == ht[0] else parse_jsonl(ht[1])',
+  '      hl, tl, file_mtime = ht',
   '      if any(r.get("isSidechain") is True for r in hl): continue',
   '      ct, ait, st, fu, has_turn = im.get("customTitle"), None, im.get("summary"), im.get("firstPrompt"), False',
   '      for r in hl:',
@@ -871,25 +1053,46 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '          mc = (r.get("message") or {}).get("content")',
   '          txt = mc if isinstance(mc, str) else " ".join(b.get("text", "") for b in (mc or []) if isinstance(b, dict) and b.get("type") == "text")',
   '          if txt.strip() and not re.match(r"^<(?:local-command-|command-name|command-message|system-reminder)", txt.strip()): fu = txt',
-  '      ts = ht[2]',
+  '      ts = file_mtime',
   '      for r in tl:',
   '        if r.get("type") in ("user", "assistant"): has_turn = True',
   '        if r.get("type") == "custom-title" and isinstance(r.get("customTitle"), str): ct = r["customTitle"]',
   '        elif r.get("type") == "ai-title" and isinstance(r.get("aiTitle"), str): ait = r["aiTitle"]',
   '        elif r.get("type") == "summary" and isinstance(r.get("summary"), str): st = r["summary"]',
   '        ts = max(ts, parse_ts(r.get("timestamp")))',
-  '      if not has_turn and not ct and not ait and not st and sid not in active_claude: continue',
+  '      is_act = sid in active_claude',
+  '      if not has_turn and not ct and not ait and not st and not is_act: continue',
+  '      es_norm = active_claude.get(sid, "")',
+  '      explicit_idle = es_norm in ("idle", "waiting")',
+  '      explicit_busy = es_norm in ("busy", "running")',
+  '      stale_lim = ACTIVE_STALE_MS if is_act else UNCONFIRMED_STALE_MS',
+  '      fresh = (now_ms - ts) < stale_lim',
   '      status = "idle"',
-  '      is_act = sid in active_claude; fresh = (now_ms - ts) < STALE_MS',
   '      for r in reversed(tl):',
   '        tp = r.get("type")',
-  '        if tp in ("file-history-snapshot", "summary", "custom-title", "ai-title", "queue-operation"): continue',
-  '        if tp == "system" and r.get("subtype") == "turn_duration": status = "completed"; break',
-  '        if tp == "assistant":',
-  '          sr = (r.get("message") or {}).get("stop_reason")',
-  '          status = "completed" if sr in ("end_turn", "stop_sequence", "max_tokens") else ("running" if (is_act or fresh) else "idle")',
+  '        if is_claude_meta_rec(r): continue',
+  '        if tp == "system":',
+  '          status = "completed" if r.get("subtype") == "turn_duration" else "idle"',
   '          break',
-  '        if tp in ("user", "progress"): status = "running" if (is_act or fresh) else "idle"; break',
+  '        if tp == "assistant":',
+  '          if r.get("isApiErrorMessage") is True: status = "idle"; break',
+  '          sr = (r.get("message") or {}).get("stop_reason")',
+  '          if sr in ("end_turn", "stop_sequence", "max_tokens"): status = "completed"',
+  '          elif explicit_idle and (now_ms - ts) > 5000: status = "idle"',
+  '          else: status = "running" if fresh else "idle"',
+  '          break',
+  '        if tp == "user":',
+  '          mc = (r.get("message") or {}).get("content")',
+  '          txt = mc if isinstance(mc, str) else " ".join(b.get("text", "") for b in (mc or []) if isinstance(b, dict) and b.get("type") == "text")',
+  '          if "[Request interrupted by user" in txt: status = "idle"; break',
+  '          has_tool_res = isinstance(mc, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in mc)',
+  '          if (r.get("isMeta") is True or not txt.strip() or re.match(r"^<(?:local-command-|command-name|command-message|system-reminder)", txt.strip())) and not has_tool_res: continue',
+  '          status = "idle" if (explicit_idle and (now_ms - ts) > 5000) else ("running" if fresh else "idle")',
+  '          break',
+  '        if tp == "progress":',
+  '          status = "idle" if (explicit_idle and (now_ms - ts) > 5000) else ("running" if fresh else "idle")',
+  '          break',
+  '      if status == "idle" and is_act and explicit_busy and not has_turn: status = "running"',
   '      items.append({"id": sid, "provider": "claude", "title": clean_title(ct or ait or st or fu, "Claude Code 对话"), "status": status, "updatedAt": ts})',
   '# 2. Codex',
   'codex_dir = os.environ.get("CODEX_HOME") or os.path.join(home, ".codex")',
@@ -915,27 +1118,36 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '      if hdb:',
   '        row_t = hdb.execute("SELECT status FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1", (tid,)).fetchone()',
   '        if row_t: turn_st = row_t[0]',
-  '      st = "idle"; mtime = 0; fum_rollout = None',
+  '      st = ""; mtime = 0; last_ev_ms = 0; fum_rollout = None',
   '      if rp and os.path.isfile(rp):',
-  '        ht = read_head_tail(rp, 16384, 32768)',
+  '        ht = read_head_tail(rp, 16384, 32768, is_codex_status_rec)',
   '        if ht:',
-  '          mtime = ht[2]',
-  '          hl = parse_jsonl(ht[0]); tl = hl if ht[1] == ht[0] else parse_jsonl(ht[1])',
+  '          hl, tl, mtime = ht',
   '          for r in (hl + tl):',
   '            if r.get("type") == "event_msg" and (r.get("payload") or {}).get("type") == "user_message" and isinstance((r.get("payload") or {}).get("message"), str) and (r.get("payload") or {}).get("message").strip():',
   '              fum_rollout = r["payload"]["message"]; break',
+  '          for r in tl:',
+  '            last_ev_ms = max(last_ev_ms, parse_ts(r.get("timestamp")))',
+  '          freshest = max(mtime, uat_ms, last_ev_ms)',
   '          for r in reversed(tl):',
   '            if r.get("type") != "event_msg": continue',
   '            pt = (r.get("payload") or {}).get("type")',
-  '            if pt == "task_complete": st = "completed"; break',
-  '            if pt == "turn_aborted": st = "idle"; break',
-  '            if pt == "task_started":',
-  '              fresh = (now_ms - max(mtime, uat_ms)) < STALE_MS',
-  '              st = "running" if (fresh or turn_st in ("inProgress", "running", "pending")) else "idle"',
+  '            if pt in ("task_complete", "turn_complete"): st = "completed"; break',
+  '            if pt in ("turn_aborted", "turn_interrupted", "shutdown_complete"): st = "idle"; break',
+  '            if pt == "error":',
+  '              if (now_ms - freshest) > 5000: st = "idle"; break',
+  '              continue',
+  '            if pt in ("task_started", "turn_started"):',
+  '              if turn_st == "completed": st = "completed"',
+  '              elif turn_st in ("interrupted", "aborted", "failed", "cancelled"): st = "idle"',
+  '              else: st = "running" if (now_ms - freshest) < UNCONFIRMED_STALE_MS else "idle"',
   '              break',
-  '      if st == "idle" and turn_st == "completed": st = "completed"',
-  '      elif st == "idle" and turn_st in ("inProgress", "running", "pending") and (now_ms - max(mtime, uat_ms)) < STALE_MS: st = "running"',
-  '      items.append({"id": tid, "provider": "codex", "title": clean_title(name or codex_idx.get(tid) or title or fum or preview or fum_rollout, "Codex 对话"), "status": st, "updatedAt": max(uat_ms, mtime)})',
+  '      freshest = max(mtime, uat_ms, last_ev_ms)',
+  '      if not st:',
+  '        if turn_st == "completed": st = "completed"',
+  '        elif turn_st in ("inProgress", "running", "pending") and (now_ms - freshest) < UNCONFIRMED_STALE_MS: st = "running"',
+  '        else: st = "idle"',
+  '      items.append({"id": tid, "provider": "codex", "title": clean_title(name or codex_idx.get(tid) or title or fum or preview or fum_rollout, "Codex 对话"), "status": st, "updatedAt": freshest})',
   '    if hdb: hdb.close()',
   '    sdb.close()',
   '  except Exception: pass',
@@ -959,15 +1171,23 @@ const REMOTE_PYTHON_CLI_PROBE = [
   '      st = "idle"',
   '      if rstatus == "CASCADE_RUN_STATUS_RUNNING":',
   '        cdb_p = os.path.join(agy_dir, "conversations", cid + ".db")',
-  '        has_act = False',
+  '        inspected = False; has_act = False',
   '        if os.path.isfile(cdb_p):',
   '          try:',
   '            ts = max(ts, int(os.stat(cdb_p).st_mtime * 1000))',
   '            cdb = sqlite3.connect(f"file:{cdb_p}?mode=ro", uri=True)',
-  '            has_act = any(row[0] in (1, 2) for row in cdb.execute("SELECT status FROM steps ORDER BY idx DESC LIMIT 5"))',
+  '            steps_rows = cdb.execute("SELECT status FROM steps ORDER BY idx DESC LIMIT 5").fetchall()',
+  '            if steps_rows:',
+  '              inspected = True',
+  '              has_act = any(row[0] in (1, 2) for row in steps_rows)',
   '            cdb.close()',
   '          except Exception: pass',
-  '        st = "running" if ((now_ms - ts) < STALE_MS or (has_act and (now_ms - ts) < STALE_MS)) else "idle"',
+  '        age_ms = now_ms - ts',
+  '        if inspected and not has_act and age_ms > 15000:',
+  '          st = "completed" if (step_cnt or 0) > 0 else "idle"',
+  '        else:',
+  '          stale_lim = ACTIVE_STALE_MS if (inspected and has_act) else UNCONFIRMED_STALE_MS',
+  '          st = "running" if age_ms < stale_lim else "idle"',
   '      elif rstatus in ("CASCADE_RUN_STATUS_IDLE", "CASCADE_RUN_STATUS_WAITING_FOR_USER") or (step_cnt or 0) > 0:',
   '        st = "completed"',
   '      items.append({"id": cid, "provider": "antigravity", "title": clean_title(title or preview, "Antigravity 对话"), "status": st, "updatedAt": ts})',

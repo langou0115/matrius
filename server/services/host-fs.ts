@@ -30,6 +30,11 @@ import {
 const INSTANCE_ID = 1;
 const MAX_ENTRIES = 500;
 const BROWSE_TIMEOUT_MS = 10_000;
+const LOCAL_FS_CONCURRENCY = 24;
+const SYMLINK_STAT_TIMEOUT_MS = 1_000;
+const WINDOWS_DRIVES_CACHE_TTL_MS = 10_000;
+const FSUTIL_TIMEOUT_MS = 2_500;
+const ENTRY_NAME_COLLATOR = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 
 const POSIX_BROWSE_SCRIPT = [
   'raw=$1',
@@ -42,19 +47,47 @@ const POSIX_BROWSE_SCRIPT = [
   '  if [ -e "$target" ] && [ ! -d "$target" ]; then printf "ERR\\0所选路径不是目录：%s\\0" "$target"; else printf "ERR\\0无法访问目录：%s\\0" "$target"; fi',
   '  exit 2',
   'fi',
+  'if command -v python3 >/dev/null 2>&1; then',
+  '  python3 -c "',
+  'import os, sys',
+  'w = sys.stdout.buffer.write',
+  'w(b\\"PWD\\\\0\\" + os.fsencode(os.path.realpath(\\".\\")) + b\\"\\\\0\\")',
+  'dirs, files = [], []',
+  'with os.scandir(\\".\\") as it:',
+  '    for e in it:',
+  '        try:',
+  '            is_dir = e.is_dir(follow_symlinks=True)',
+  '        except OSError:',
+  '            is_dir = False',
+  '        (dirs if is_dir else files).append((e.name, is_dir))',
+  'dirs.sort(key=lambda x: x[0].casefold())',
+  'selected = dirs[:1500]',
+  'if len(selected) < 1500:',
+  '    files.sort(key=lambda x: x[0].casefold())',
+  '    selected.extend(files[:1500 - len(selected)])',
+  'if len(dirs) + len(files) > 1500:',
+  '    w(b\\"TRUNC\\\\01\\\\0\\")',
+  'for name, is_dir in selected:',
+  '    mode = (os.R_OK | os.X_OK) if is_dir else os.R_OK',
+  '    ok = os.access(name, mode)',
+  '    tag = (b\\"d1\\" if ok else b\\"d0\\") if is_dir else (b\\"f1\\" if ok else b\\"f0\\")',
+  '    w(tag + b\\"\\\\0\\" + os.fsencode(name) + b\\"\\\\0\\")',
+  '" 2>/dev/null && exit 0',
+  'fi',
   'pwd_out=$(pwd -P 2>/dev/null || pwd)',
   'printf "PWD\\0%s\\0" "$pwd_out"',
   'count=0',
   'for entry in .* *; do',
   '  [ "$entry" = "." ] || [ "$entry" = ".." ] && continue',
-  '  [ ! -e "$entry" ] && [ ! -L "$entry" ] && continue',
-  '  count=$((count + 1))',
-  '  if [ "$count" -gt 1500 ]; then printf "TRUNC\\01\\0"; break; fi',
   '  if [ -d "$entry" ]; then',
   '    if [ -r "$entry" ] && [ -x "$entry" ]; then tag=d1; else tag=d0; fi',
-  '  else',
+  '  elif [ -e "$entry" ] || [ -L "$entry" ]; then',
   '    if [ -r "$entry" ]; then tag=f1; else tag=f0; fi',
+  '  else',
+  '    continue',
   '  fi',
+  '  count=$((count + 1))',
+  '  if [ "$count" -gt 1500 ]; then printf "TRUNC\\01\\0"; break; fi',
   '  printf "%s\\0%s\\0" "$tag" "$entry"',
   'done',
 ].join('\n');
@@ -110,14 +143,14 @@ const POSIX_PROJECT_GIT = [
   'directory=$1',
   'shift',
   'case "$directory" in "~") directory=$HOME ;; "~/"*) directory="$HOME/${directory#~/}" ;; esac',
-  'GIT_TERMINAL_PROMPT=0 exec git --literal-pathspecs -c core.fsmonitor=false -C "$directory" "$@"',
+  'GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true exec git --literal-pathspecs -c core.fsmonitor=false -C "$directory" "$@"',
 ].join('\n');
 
 export type HostFsService = {
   runProjectGit(hostId: string, directory: string, args: string[]): Promise<HostCommandResult>;
   savePreview(projectId: string, path: string, text: string, baseRevision: string): Promise<HostFilePreview>;
   readPreview(hostId: string, path: string): Promise<HostFilePreview>;
-  listEntries(hostId: string, rawPath?: string): Promise<HostDirectoryListing>;
+  listEntries(hostId: string, rawPath?: string, options?: { refresh?: boolean }): Promise<HostDirectoryListing>;
 };
 
 let cachedAskpassPath: string | null = null;
@@ -144,7 +177,7 @@ export function posixSingleQuote(value: string): string {
 function sortEntries(entries: WorkHostEntry[]): { entries: WorkHostEntry[]; truncated: boolean } {
   const sorted = [...entries].sort((left, right) => {
     if (left.kind !== right.kind) return left.kind === 'directory' ? -1 : 1;
-    return left.name.localeCompare(right.name, 'zh-CN', { numeric: true, sensitivity: 'base' });
+    return ENTRY_NAME_COLLATOR.compare(left.name, right.name);
   });
   if (sorted.length > MAX_ENTRIES) {
     return { entries: sorted.slice(0, MAX_ENTRIES), truncated: true };
@@ -154,7 +187,23 @@ function sortEntries(entries: WorkHostEntry[]): { entries: WorkHostEntry[]; trun
 
 const DRIVE_CHECK_TIMEOUT_MS = 400;
 
-async function defaultListWindowsDrives(): Promise<string[]> {
+export function parseWindowsDrivesOutput(raw: Buffer | string): string[] {
+  const text = decodeWslText(raw);
+  const matches = text.match(/[A-Za-z]:\\/gu);
+  if (!matches) return [];
+  const seen = new Set<string>();
+  const drives: string[] = [];
+  for (const match of matches) {
+    const normalized = `${match[0].toUpperCase()}:\\`;
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      drives.push(normalized);
+    }
+  }
+  return drives.sort();
+}
+
+async function probeWindowsDrivesFallback(): Promise<string[]> {
   const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
   const checks = await Promise.all(
     letters.map(async (letter) => {
@@ -176,6 +225,58 @@ async function defaultListWindowsDrives(): Promise<string[]> {
   return checks.filter((item): item is string => item !== null);
 }
 
+async function defaultListWindowsDrives(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+  // Query logical drives via fsutil.exe (GetLogicalDrives) instead of stat()-ing A:\..Z:\
+  // in Node's libuv threadpool, which otherwise stalls all 4 worker threads on disconnected
+  // or sleeping network drives.
+  const systemRoot = env.SystemRoot || env.WINDIR;
+  const primaryCmd = systemRoot ? join(systemRoot, 'System32', 'fsutil.exe') : 'fsutil.exe';
+  let result = await defaultRunCommand(primaryCmd, ['fsinfo', 'drives'], { timeoutMs: FSUTIL_TIMEOUT_MS });
+  if (result.errorCode === 'ENOENT' && primaryCmd !== 'fsutil.exe') {
+    result = await defaultRunCommand('fsutil.exe', ['fsinfo', 'drives'], { timeoutMs: FSUTIL_TIMEOUT_MS });
+  }
+  if (result.code === 0 && !result.timedOut && !result.errorCode) {
+    const drives = parseWindowsDrivesOutput(result.stdout);
+    if (drives.length > 0) return drives;
+  }
+  return probeWindowsDrivesFallback();
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const current = nextIndex;
+        nextIndex += 1;
+        results[current] = await worker(items[current]);
+      }
+    }),
+  );
+  return results;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout(onTimeout()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function isWindowsDrivesRequest(rawPath: string, currentPlatform: NodeJS.Platform): boolean {
   if (currentPlatform !== 'win32') return false;
   return rawPath === WINDOWS_DRIVES_ROOT || rawPath === '/' || rawPath === '\\';
@@ -195,12 +296,11 @@ async function listLocalFs(
   rawPath: string,
   homeDir: string,
   currentPlatform: NodeJS.Platform,
-  listWindowsDrives: () => Promise<string[]>,
+  listWindowsDrives: (refresh?: boolean) => Promise<string[]>,
+  refresh?: boolean,
 ): Promise<HostDirectoryListing> {
-  const drivesPromise = currentPlatform === 'win32' ? listWindowsDrives() : Promise.resolve<string[]>([]);
-
   if (isWindowsDrivesRequest(rawPath, currentPlatform)) {
-    const drives = await drivesPromise;
+    const drives = await listWindowsDrives(refresh);
     return {
       hostId,
       path: WINDOWS_DRIVES_ROOT,
@@ -218,15 +318,32 @@ async function listLocalFs(
 
   const requested = resolveLocalTarget(rawPath, homeDir, currentPlatform);
   let targetPath = requested;
-  let info;
   let dirents;
   try {
-    info = await stat(requested);
-    targetPath = await realpath(requested).catch(() => requested);
-    if (!info.isDirectory()) {
-      throw invalid(`所选路径不是目录：${targetPath}`);
+    let timedOut = false;
+    const result = await withTimeout(
+      (async () => {
+        const [info, resolved] = await Promise.all([
+          stat(requested),
+          realpath(requested).catch(() => requested),
+        ]);
+        if (!info.isDirectory()) {
+          throw invalid(`所选路径不是目录：${resolved}`);
+        }
+        const entries = await readdir(resolved, { withFileTypes: true });
+        return { resolved, entries };
+      })(),
+      BROWSE_TIMEOUT_MS,
+      () => {
+        timedOut = true;
+        return null;
+      },
+    );
+    if (timedOut || !result) {
+      throw new AppError(504, 'host_browse_timeout', `读取目录超时：${requested}`);
     }
-    dirents = await readdir(targetPath, { withFileTypes: true });
+    targetPath = result.resolved;
+    dirents = result.entries;
   } catch (error) {
     if (error instanceof AppError) throw error;
     const err = error as NodeJS.ErrnoException;
@@ -235,34 +352,65 @@ async function listLocalFs(
     throw new AppError(400, 'path_error', `无法读取目录：${err.message}`);
   }
 
-  const [rawEntries, drives] = await Promise.all([
-    (async () => {
-      const items: WorkHostEntry[] = [];
-      for (const dirent of dirents) {
-        const entryPath = join(targetPath, dirent.name);
-        let kind: 'directory' | 'file' = dirent.isDirectory() ? 'directory' : 'file';
-        if (dirent.isSymbolicLink()) {
-          const resolvedKind = await stat(entryPath).then((entryStat) => (entryStat.isDirectory() ? 'directory' : 'file')).catch(() => 'file' as const);
-          kind = resolvedKind;
-        } else if (!dirent.isDirectory() && !dirent.isFile()) {
-          const fallback = await lstat(entryPath).then((entryStat) => (entryStat.isDirectory() ? 'directory' : 'file')).catch(() => null);
-          if (!fallback) continue;
-          kind = fallback;
-        }
-        const mode = kind === 'directory' ? (fsConstants.R_OK | fsConstants.X_OK) : fsConstants.R_OK;
-        const accessible = await access(entryPath, mode).then(() => true).catch(() => false);
-        items.push({ kind, name: dirent.name, path: entryPath, accessible });
-      }
-      return items;
-    })(),
-    drivesPromise,
-  ]);
+  type PendingEntry = { kind: 'directory' | 'file'; name: string; path: string };
+  const dirs: PendingEntry[] = [];
+  const files: PendingEntry[] = [];
+  const unresolved: typeof dirents = [];
 
-  const { entries, truncated } = sortEntries(rawEntries);
+  for (const dirent of dirents) {
+    const entryPath = join(targetPath, dirent.name);
+    if (dirent.isDirectory()) {
+      dirs.push({ kind: 'directory', name: dirent.name, path: entryPath });
+    } else if (dirent.isFile()) {
+      files.push({ kind: 'file', name: dirent.name, path: entryPath });
+    } else {
+      unresolved.push(dirent);
+    }
+  }
+
+  if (unresolved.length > 0) {
+    const resolved = await mapWithConcurrency(unresolved, LOCAL_FS_CONCURRENCY, async (dirent): Promise<PendingEntry | null> => {
+      const entryPath = join(targetPath, dirent.name);
+      if (dirent.isSymbolicLink()) {
+        const kind = await withTimeout<'directory' | 'file'>(
+          stat(entryPath).then((entryStat) => (entryStat.isDirectory() ? 'directory' : 'file')).catch(() => 'file'),
+          SYMLINK_STAT_TIMEOUT_MS,
+          () => 'file',
+        );
+        return { kind, name: dirent.name, path: entryPath };
+      }
+      const kind = await lstat(entryPath)
+        .then((entryStat): 'directory' | 'file' => (entryStat.isDirectory() ? 'directory' : 'file'))
+        .catch(() => null);
+      return kind ? { kind, name: dirent.name, path: entryPath } : null;
+    });
+    for (const item of resolved) {
+      if (!item) continue;
+      if (item.kind === 'directory') dirs.push(item);
+      else files.push(item);
+    }
+  }
+
+  dirs.sort((left, right) => ENTRY_NAME_COLLATOR.compare(left.name, right.name));
+  const truncated = dirs.length + files.length > MAX_ENTRIES;
+  let selected: PendingEntry[];
+  if (dirs.length >= MAX_ENTRIES) {
+    selected = dirs.slice(0, MAX_ENTRIES);
+  } else {
+    files.sort((left, right) => ENTRY_NAME_COLLATOR.compare(left.name, right.name));
+    selected = [...dirs, ...files.slice(0, MAX_ENTRIES - dirs.length)];
+  }
+
+  const entries: WorkHostEntry[] = await mapWithConcurrency(selected, LOCAL_FS_CONCURRENCY, async (item) => {
+    const mode = item.kind === 'directory' ? (fsConstants.R_OK | fsConstants.X_OK) : fsConstants.R_OK;
+    const accessible = await access(item.path, mode).then(() => true).catch(() => false);
+    return { ...item, accessible };
+  });
+
   const parent = dirname(targetPath);
   const parentPath = parent !== targetPath
     ? parent
-    : (currentPlatform === 'win32' && /^[A-Za-z]:\\?$/u.test(targetPath) && drives.length > 0 ? WINDOWS_DRIVES_ROOT : null);
+    : (currentPlatform === 'win32' && /^[A-Za-z]:\\?$/u.test(targetPath) ? WINDOWS_DRIVES_ROOT : null);
 
   return {
     hostId,
@@ -344,7 +492,31 @@ export function createHostFsService(options: {
   const env = options.env ?? process.env;
   const wslCommand = options.wslCommand !== undefined ? options.wslCommand : resolveWslCommand(currentPlatform);
   const homeDir = options.homeDir ?? homedir();
-  const listWindowsDrives = options.listWindowsDrives ?? defaultListWindowsDrives;
+  const customListWindowsDrives = options.listWindowsDrives;
+  let cachedDrives: { items: string[]; expiresAt: number } | null = null;
+  let pendingDrives: Promise<string[]> | null = null;
+  const listWindowsDrives = async (refresh = false): Promise<string[]> => {
+    if (customListWindowsDrives) return customListWindowsDrives();
+    const now = Date.now();
+    if (!refresh && cachedDrives && cachedDrives.expiresAt > now) {
+      return cachedDrives.items;
+    }
+    if (refresh) {
+      cachedDrives = null;
+    } else if (pendingDrives) {
+      return pendingDrives;
+    }
+    const request = defaultListWindowsDrives(env)
+      .then((items) => {
+        cachedDrives = { items, expiresAt: Date.now() + WINDOWS_DRIVES_CACHE_TTL_MS };
+        return items;
+      })
+      .finally(() => {
+        if (pendingDrives === request) pendingDrives = null;
+      });
+    pendingDrives = request;
+    return request;
+  };
   const runtimeHostSecrets = options.runtimeHostSecrets ?? new Map<string, string>();
 
   async function runWslFs(row: WorkHostRow, rawPath: string, script: string, scriptArgs: string[] = [], timeoutMs = BROWSE_TIMEOUT_MS) {
@@ -437,10 +609,14 @@ export function createHostFsService(options: {
 
   return {
     async runProjectGit(hostId, directory, args) {
-      const timeoutMs = args[0] === 'fetch' || args[0] === 'commit' ? 30_000 : BROWSE_TIMEOUT_MS;
+      const isLongOp = args.some((arg) => arg === 'fetch' || arg === 'pull' || arg === 'push' || arg === 'commit');
+      const timeoutMs = isLongOp ? 30_000 : BROWSE_TIMEOUT_MS;
       if (hostId === LOCAL_WORK_HOST_ID) {
         const target = resolveLocalTarget(directory, homeDir, currentPlatform);
-        return runCommand('git', ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-C', target, ...args], { timeoutMs, env: { GIT_TERMINAL_PROMPT: '0' } });
+        return runCommand('git', ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-C', target, ...args], {
+          timeoutMs,
+          env: { GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' },
+        });
       }
       const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
       return runRemoteFs(row, directory, POSIX_PROJECT_GIT, args, timeoutMs);
@@ -522,7 +698,7 @@ export function createHostFsService(options: {
       return decodeFilePreview(result.stdout);
     },
 
-    async listEntries(hostId, rawPath) {
+    async listEntries(hostId, rawPath, listOptions) {
       let cleanPath: string;
       try {
         cleanPath = validateBrowsePath(rawPath);
@@ -531,7 +707,14 @@ export function createHostFsService(options: {
       }
 
       if (hostId === LOCAL_WORK_HOST_ID) {
-        return listLocalFs(LOCAL_WORK_HOST_ID, cleanPath, homeDir, currentPlatform, listWindowsDrives);
+        return listLocalFs(
+          LOCAL_WORK_HOST_ID,
+          cleanPath,
+          homeDir,
+          currentPlatform,
+          listWindowsDrives,
+          listOptions?.refresh,
+        );
       }
 
       const row = requireWorkHostRow(db, INSTANCE_ID, hostId);

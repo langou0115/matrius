@@ -26,6 +26,7 @@ import {
   type CSSProperties,
   type DragEvent,
   type FormEvent,
+  type MouseEvent,
 } from 'react';
 
 import { Dialog } from '@/components/web/dialog';
@@ -134,13 +135,15 @@ export function WorkWorkspace() {
   const [creating, setCreating] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [resizingFiles, setResizingFiles] = useState(false);
+  const [viewMeta, setViewMeta] = useState<Record<string, { pinned?: boolean; title?: string }>>({});
   const [tabMenu, setTabMenu] = useState<{
-    terminalId: string;
+    key: string;
+    projectId: string;
     anchor: HTMLElement | null;
     fallbackX: number;
     fallbackY: number;
   } | null>(null);
-  const [renaming, setRenaming] = useState<WorkTerminalSession | null>(null);
+  const [renaming, setRenaming] = useState<{ key: string; terminal?: WorkTerminalSession } | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [draggingTerminalId, setDraggingTerminalId] = useState<string | null>(null);
   const [tabDropTarget, setTabDropTarget] = useState<{
@@ -174,9 +177,16 @@ export function WorkWorkspace() {
   useLayoutEffect(() => {
     if (activeFile) activeFileTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeFile]);
-  const menuTerminal = tabMenu
-    ? projectTerminals.find((item) => item.id === tabMenu.terminalId) ?? null
-    : null;
+  const projectId = activeProject?.id;
+  const gitKey = JSON.stringify([projectId, 'git']);
+  const fileKey = (path: string) => JSON.stringify([projectId, 'file', path]);
+  const terminalKey = (id: string) => JSON.stringify([projectId, 'terminal', id]);
+  const menuTerminal = projectTerminals.find((terminal) => terminalKey(terminal.id) === tabMenu?.key);
+  const menuFile = fileTabs?.entries.find((entry) => fileKey(entry.path) === tabMenu?.key);
+  const menuGit = Boolean(gitTab && tabMenu?.key === gitKey);
+  const menuOpen = Boolean(tabMenu && tabMenu.projectId === projectId && (menuTerminal || menuFile || menuGit));
+  const menuTitle = menuTerminal?.title ?? viewMeta[tabMenu?.key ?? '']?.title ?? menuFile?.name ?? 'Git';
+  const menuPinned = menuTerminal?.pinned ?? viewMeta[tabMenu?.key ?? '']?.pinned;
   const effectivePlatform = preview ? (serverPlatform ?? detectPreviewPlatform()) : serverPlatform;
   const isWindowsLocal = activeProject?.hostId === LOCAL_WORK_HOST_ID && isWindowsPlatform(effectivePlatform);
 
@@ -237,7 +247,7 @@ export function WorkWorkspace() {
 
   useLayoutEffect(() => {
     const element = tabMenuRef.current;
-    if (!tabMenu || !element || !menuTerminal) return;
+    if (!tabMenu || !element || !menuOpen) return;
     const { width, height } = element.getBoundingClientRect();
     const viewportW = window.innerWidth || 1024;
     const viewportH = window.innerHeight || 768;
@@ -258,10 +268,10 @@ export function WorkWorkspace() {
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
     element.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
-  }, [menuTerminal, tabMenu]);
+  }, [menuOpen, tabMenu]);
 
   useEffect(() => {
-    if (!tabMenu || !menuTerminal) return;
+    if (!tabMenu || !menuOpen) return;
     function onPointerDown(event: PointerEvent) {
       if (event.target instanceof Node && tabMenuRef.current?.contains(event.target)) return;
       setTabMenu(null);
@@ -277,7 +287,7 @@ export function WorkWorkspace() {
       window.removeEventListener('resize', onDismiss);
       window.removeEventListener('scroll', onDismiss, true);
     };
-  }, [menuTerminal, tabMenu]);
+  }, [menuOpen, tabMenu]);
 
   const getMaxFilesPanelWidth = useCallback(() => {
     const screenWidth = screenRef.current?.getBoundingClientRect().width ?? 0;
@@ -386,8 +396,14 @@ export function WorkWorkspace() {
       setNotice(reason instanceof Error && reason.message ? reason.message : '终端名称不合法。');
       return;
     }
-    const targetId = renaming.id;
-    const previousTitle = renaming.title;
+    if (!renaming.terminal) {
+      const { key } = renaming;
+      setViewMeta((meta) => ({ ...meta, [key]: { ...meta[key], title: normalized } }));
+      setRenaming(null);
+      return;
+    }
+    const targetId = renaming.terminal.id;
+    const previousTitle = renaming.terminal.title;
     updateWorkTerminalMeta(targetId, { title: normalized }, { manualRename: true });
     setRenaming(null);
     if (!preview) {
@@ -403,10 +419,42 @@ export function WorkWorkspace() {
   const screenStyle = filesPanelWidth !== null
     ? ({ '--work-files-width': `${filesPanelWidth}px` } as CSSProperties)
     : undefined;
-  const otherClosableIds = menuTerminal
-    ? projectTerminals.filter((item) => item.id !== menuTerminal.id && !item.pinned).map((item) => item.id)
-    : [];
-  const allClosableIds = projectTerminals.filter((item) => !item.pinned).map((item) => item.id);
+  const closableTabs = {
+    terminalIds: projectTerminals.filter((item) => !item.pinned).map((item) => item.id),
+    paths: filePaths.filter((path) => !viewMeta[fileKey(path)]?.pinned),
+    git: Boolean(gitTab && !viewMeta[gitKey]?.pinned),
+  };
+  const otherTabs = {
+    terminalIds: closableTabs.terminalIds.filter((id) => id !== menuTerminal?.id),
+    paths: closableTabs.paths.filter((path) => path !== menuFile?.path),
+    git: closableTabs.git && !menuGit,
+  };
+  const hasClosableTabs = ({ terminalIds, paths, git }: typeof closableTabs) => Boolean(terminalIds.length || paths.length || git);
+
+  function openTabMenu(event: MouseEvent<HTMLDivElement>, key: string) {
+    if (!projectId) return;
+    event.preventDefault();
+    setAddMenuOpen(false);
+    setTabMenu({ key, projectId, anchor: event.currentTarget, fallbackX: event.clientX, fallbackY: event.clientY });
+  }
+
+  function toggleViewPin(key: string) {
+    setTabMenu(null);
+    setViewMeta((meta) => ({ ...meta, [key]: { ...meta[key], pinned: !meta[key]?.pinned } }));
+  }
+
+  function closeWorkspaceTabs({ terminalIds, paths, git }: typeof closableTabs) {
+    setTabMenu(null);
+    if (!projectId || (paths.length && !handleCloseFiles(projectId, paths))) return;
+    if (git) closeWorkGit(projectId);
+    handleCloseTabs(terminalIds);
+    setViewMeta((meta) => {
+      const next = { ...meta };
+      for (const path of paths) delete next[fileKey(path)];
+      if (git) delete next[gitKey];
+      return next;
+    });
+  }
 
   return (
     <div
@@ -423,7 +471,7 @@ export function WorkWorkspace() {
     >
       <div className="work-workspace">
         <header className="work-topbar">
-          <div className="work-tabs" role="tablist" aria-label="终端标签页">
+          <div className="work-tabs" role="tablist" aria-label="工作区标签页">
             {projectTerminals.map((session, tabIndex) => {
               const isActive = !gitActive && !activeFile && session.id === activeTerminalId;
               const isPinned = Boolean(session.pinned);
@@ -494,18 +542,7 @@ export function WorkWorkspace() {
                     reorderWorkTerminals(sourceId, session.id, position);
                   }}
                   onDragEnd={clearTabDragState}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setAddMenuOpen(false);
-                    const anchor = (event.currentTarget as HTMLElement | null)
-                      ?? (event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('.work-tab') : null);
-                    setTabMenu({
-                      terminalId: session.id,
-                      anchor,
-                      fallbackX: event.clientX,
-                      fallbackY: event.clientY,
-                    });
-                  }}
+                  onContextMenu={(event) => openTabMenu(event, terminalKey(session.id))}
                 >
                   <button
                     type="button"
@@ -543,41 +580,50 @@ export function WorkWorkspace() {
                 </div>
               );
             })}
-            {activeProject && fileTabs?.entries.map((entry) => (
-              <div key={entry.path} className={`work-tab${entry.path === activeFile?.path ? ' is-active' : ''}`}>
-                <button
-                  type="button"
-                  role="tab"
-                  className="work-tab-select"
-                  aria-selected={entry.path === activeFile?.path}
-                  ref={entry.path === activeFile?.path ? activeFileTabRef : undefined}
-                  title={entry.path}
-                  onClick={() => handleOpenFile(entry)}
-                >
-                  <FileText size={14} aria-hidden="true" />
-                  <span className="work-tab-title">{entry.name}</span>
-                  {isFileDraftDirty(fileTabs.drafts.get(entry.path)) && (
-                    <span className="work-file-dirty" role="img" aria-label="未保存" title="未保存" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="icon-button work-tab-close"
-                  aria-label={`关闭文件：${entry.name}`}
-                  onClick={() => handleCloseFiles(activeProject.id, [entry.path])}
-                >
-                  <X size={13} strokeWidth={1.75} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
+            {activeProject && fileTabs?.entries.map((entry) => {
+              const key = fileKey(entry.path);
+              const meta = viewMeta[key];
+              return (
+                <div key={key} onContextMenu={(event) => openTabMenu(event, key)} className={`work-tab${entry.path === activeFile?.path ? ' is-active' : ''}${meta?.pinned ? ' is-pinned' : ''}`}>
+                  <button
+                    type="button"
+                    role="tab"
+                    className="work-tab-select"
+                    aria-selected={entry.path === activeFile?.path}
+                    ref={entry.path === activeFile?.path ? activeFileTabRef : undefined}
+                    title={entry.path}
+                    onClick={() => handleOpenFile(entry)}
+                  >
+                    <FileText size={14} aria-hidden="true" />
+                    <span className="work-tab-title">{meta?.title ?? entry.name}</span>
+                    {isFileDraftDirty(fileTabs.drafts.get(entry.path)) && (
+                      <span className="work-file-dirty" role="img" aria-label="未保存" title="未保存" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className={`icon-button ${meta?.pinned ? 'work-tab-pin-btn' : 'work-tab-close'}`}
+                    aria-label={meta?.pinned ? `取消固定：${meta.title ?? entry.name}` : `关闭文件：${meta?.title ?? entry.name}`}
+                    onClick={() => meta?.pinned ? toggleViewPin(key) : closeWorkspaceTabs({ terminalIds: [], paths: [entry.path], git: false })}
+                  >
+                    {meta?.pinned ? <Pin size={12} strokeWidth={1.75} aria-hidden="true" /> : <X size={13} strokeWidth={1.75} aria-hidden="true" />}
+                  </button>
+                </div>
+              );
+            })}
             {activeProject && gitTab && (
-              <div className={`work-tab${gitActive ? ' is-active' : ''}`}>
+              <div onContextMenu={(event) => openTabMenu(event, gitKey)} className={`work-tab${gitActive ? ' is-active' : ''}${viewMeta[gitKey]?.pinned ? ' is-pinned' : ''}`}>
                 <button type="button" role="tab" aria-selected={gitActive} className="work-tab-select" onClick={() => openWorkGit(activeProject.id)}>
                   <GitBranch size={14} aria-hidden="true" />
-                  <span className="work-tab-title">Git</span>
+                  <span className="work-tab-title">{viewMeta[gitKey]?.title ?? 'Git'}</span>
                 </button>
-                <button type="button" className="icon-button work-tab-close" aria-label="关闭 Git 标签" onClick={() => closeWorkGit(activeProject.id)}>
-                  <X size={13} aria-hidden="true" />
+                <button
+                  type="button"
+                  className={`icon-button ${viewMeta[gitKey]?.pinned ? 'work-tab-pin-btn' : 'work-tab-close'}`}
+                  aria-label={viewMeta[gitKey]?.pinned ? "取消固定 Git 标签" : "关闭 Git 标签"}
+                  onClick={() => viewMeta[gitKey]?.pinned ? toggleViewPin(gitKey) : closeWorkspaceTabs({ terminalIds: [], paths: [], git: true })}
+                >
+                  {viewMeta[gitKey]?.pinned ? <Pin size={12} strokeWidth={1.75} aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
                 </button>
               </div>
             )}
@@ -740,13 +786,13 @@ export function WorkWorkspace() {
         />
       )}
 
-      {tabMenu && menuTerminal && (
+      {tabMenu && menuOpen && (
         <div
           ref={tabMenuRef}
           id="work-tab-menu"
           className="conversation-menu work-tab-menu"
           role="menu"
-          aria-label={`终端操作：${menuTerminal.title}`}
+          aria-label={`标签页操作：${menuTitle}`}
           onKeyDown={(event) => {
             const items = Array.from(
               event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'),
@@ -771,23 +817,19 @@ export function WorkWorkspace() {
             role="menuitem"
             type="button"
             data-action="pin"
-            onClick={() => void handleTogglePin(menuTerminal)}
+            onClick={() => menuTerminal ? void handleTogglePin(menuTerminal) : toggleViewPin(tabMenu.key)}
           >
-            {menuTerminal.pinned
+            {menuPinned
               ? <PinOff size={15} strokeWidth={1.75} aria-hidden="true" />
               : <Pin size={15} strokeWidth={1.75} aria-hidden="true" />}
-            <span>{menuTerminal.pinned ? '取消固定' : '固定'}</span>
+            <span>{menuPinned ? '取消固定' : '固定'}</span>
           </button>
           <button
             role="menuitem"
             type="button"
             data-action="close-others"
-            disabled={otherClosableIds.length === 0 && filePaths.length === 0}
-            onClick={() => {
-              setTabMenu(null);
-              if (activeProject && !handleCloseFiles(activeProject.id, filePaths)) return;
-              void handleCloseTabs(otherClosableIds);
-            }}
+            disabled={!hasClosableTabs(otherTabs)}
+            onClick={() => closeWorkspaceTabs(otherTabs)}
           >
             <X size={15} strokeWidth={1.75} aria-hidden="true" />
             <span>关闭其他</span>
@@ -796,12 +838,8 @@ export function WorkWorkspace() {
             role="menuitem"
             type="button"
             data-action="close-all"
-            disabled={allClosableIds.length === 0 && filePaths.length === 0}
-            onClick={() => {
-              setTabMenu(null);
-              if (activeProject && !handleCloseFiles(activeProject.id, filePaths)) return;
-              void handleCloseTabs(allClosableIds);
-            }}
+            disabled={!hasClosableTabs(closableTabs)}
+            onClick={() => closeWorkspaceTabs(closableTabs)}
           >
             <X size={15} strokeWidth={1.75} aria-hidden="true" />
             <span>全部关闭</span>
@@ -811,8 +849,8 @@ export function WorkWorkspace() {
             type="button"
             data-action="rename"
             onClick={() => {
-              setRenaming(menuTerminal);
-              setRenameTitle(menuTerminal.title);
+              setRenaming({ key: tabMenu.key, terminal: menuTerminal });
+              setRenameTitle(menuTitle);
               setTabMenu(null);
             }}
           >
@@ -824,12 +862,12 @@ export function WorkWorkspace() {
 
       {renaming && (
         <Dialog
-          title="重命名终端"
+          title={renaming.terminal ? '重命名终端' : '重命名标签页'}
           className="compact-dialog work-tab-rename-dialog"
           onClose={() => setRenaming(null)}
         >
           <form onSubmit={(event) => void handleRenameSubmit(event)}>
-            <label className="field-label" htmlFor="work-terminal-title-input">终端名称</label>
+            <label className="field-label" htmlFor="work-terminal-title-input">{renaming.terminal ? '终端名称' : '标签页名称'}</label>
             <input
               id="work-terminal-title-input"
               className="text-field"

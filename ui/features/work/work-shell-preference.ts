@@ -2,7 +2,7 @@ import {
   normalizeWorkCliProviderOrder,
   type WorkCliProvider,
 } from '@contract/work-cli';
-import { normalizeWorkEditorFontSize, normalizeWorkProjectOrder } from '@contract/work-projects';
+import { normalizeWorkEditorDiffLayout, normalizeWorkEditorFontSize, normalizeWorkProjectOrder, type WorkEditorDiffLayout } from '@contract/work-projects';
 import {
   DEFAULT_WINDOWS_SHELL,
   normalizeWindowsShell,
@@ -19,6 +19,7 @@ export type WorkSettingsPayload = {
   persistTerminalScrollback: boolean;
   editorFontSize: number;
   editorAutoSave: boolean;
+  editorDiffLayout: WorkEditorDiffLayout;
   projectOrder: string[];
   cliProviderOrder: WorkCliProvider[];
   terminalOrder: string[];
@@ -43,6 +44,7 @@ export async function loadWorkSettings(request: ApiRequest): Promise<WorkSetting
     persistTerminalScrollback: res.persistTerminalScrollback === true,
     editorFontSize: normalizeWorkEditorFontSize(res.editorFontSize),
     editorAutoSave: res.editorAutoSave === true,
+    editorDiffLayout: normalizeWorkEditorDiffLayout(res.editorDiffLayout),
     projectOrder: normalizeWorkProjectOrder(res.projectOrder),
     cliProviderOrder: normalizeWorkCliProviderOrder(res.cliProviderOrder),
     terminalOrder: normalizeWorkTerminalOrder(res.terminalOrder),

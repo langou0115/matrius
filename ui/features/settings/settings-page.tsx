@@ -1,5 +1,5 @@
 import { Link, useLocalSearchParams, usePathname, type Href } from '@/router';
-import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, FileCode, Palette, Search, Server, SlidersHorizontal, Terminal, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ChartColumn, Cloud, Cpu, HardDrive, Info, FileCode, Palette, Search, Server, Settings2, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type PropsWithChildren } from 'react';
 
 import { LinkAnchor } from '@/components/web/link-anchor';
@@ -7,6 +7,7 @@ import { useMobile } from '@/components/web/use-mobile';
 import { isDesktopTarget } from '@/core/platform/target';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { useChat } from '@/features/chat/chat-state';
+import { useSidebarTab } from '@/features/chat/sidebar-mode';
 import { useInstance } from '@/features/instance/instance-state';
 
 import { searchSettings, searchSettingsContent, visibleSettings } from './settings-catalog';
@@ -22,7 +23,7 @@ const categoryIcons: Record<string, LucideIcon> = {
   appearance: Palette,
   personalization: SlidersHorizontal,
   models: Cpu,
-  'work-general': Terminal,
+  'work-general': Settings2,
   'work-editor': FileCode,
   hosts: Server,
   about: Info,
@@ -47,14 +48,17 @@ export function SettingsPage({ title, children }: PropsWithChildren<{ title: str
   const root = useSettingsRoot();
   const { info } = useInstance();
   const mobile = useMobile();
+  const desktop = isDesktopTarget() && !mobile;
+  const workMode = useSidebarTab(desktop) === 'work';
   const settingsItems = visibleSettings(
     info?.features ?? [],
     preview,
     Boolean(info),
-    isDesktopTarget() && !mobile,
+    desktop,
+    workMode,
   );
   const pathname = usePathname().replace(/\/$/, '');
-  const returnHref = workspaceReturnHref(conversationId, preview);
+  const returnHref = workspaceReturnHref(conversationId, preview, mobile);
   const returnLabel = workspaceReturnLabel(mobile);
   // Account, usage, storage and sync are full app pages rather than preview chat settings,
   // so they always live under /settings even when the rest of the catalogue is scoped to /mock.
@@ -63,12 +67,13 @@ export function SettingsPage({ title, children }: PropsWithChildren<{ title: str
   // string is one of the generated static paths, so narrow at this single boundary.
   const itemHref = (id: string): Href => (directRoutes.has(id) ? `/settings/${id}` : `${root}/${id}`) as Href;
   const activeId = settingsItems.find((item) => pathname === itemHref(item.id))?.id;
-  const groups = settingsItems.reduce<string[]>((list, item) => (list.includes(item.group) ? list : [...list, item.group]), []);
+  const visibleGroups = new Set(settingsItems.map((item) => item.group));
+  const groups = workMode ? ['通用', '对话', '工作', '应用'].filter((group) => visibleGroups.has(group)) : [...visibleGroups];
   const searching = query.trim().length > 0;
   const contentMatches = searching ? searchSettingsContent(query).filter((target) => settingsItems.some((item) => item.id === target.category)) : [];
   // A category row is redundant when its contents already match.
-  const categoryMatches = searching ? searchSettings(query).filter((item) => settingsItems.some((visible) => visible.id === item.id)
-    && !contentMatches.some((target) => target.category === item.id)) : [];
+  const categoryMatches = searching ? searchSettings(query, settingsItems)
+    .filter((item) => !contentMatches.some((target) => target.category === item.id)) : [];
   const noResults = searching && !contentMatches.length && !categoryMatches.length;
 
   // Results link to a category with `?focus=<heading id>`; scroll that heading into view once

@@ -2,17 +2,19 @@ import {
   DEFAULT_WORK_EDITOR_FONT_SIZE,
   MAX_WORK_EDITOR_FONT_SIZE,
   MIN_WORK_EDITOR_FONT_SIZE,
+  normalizeWorkEditorDiffLayout,
 } from '@contract/work-projects';
-import { AlertCircle, Minus, Plus, Save, Type } from 'lucide-react';
+import { AlertCircle, Columns2, Minus, Plus, Save, Type } from 'lucide-react';
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 
+import { SelectField } from '@/components/web/select-field';
 import { useInstance } from '@/features/instance/instance-state';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { loadWorkSettings, saveWorkSettings, type WorkSettingsPayload } from './work-shell-preference';
 import { getWorkState, setWorkEditorSettings, useWorkState } from './work-state';
 
-type EditorSettings = Pick<WorkSettingsPayload, 'editorFontSize' | 'editorAutoSave'>;
+type EditorSettings = Pick<WorkSettingsPayload, 'editorFontSize' | 'editorAutoSave' | 'editorDiffLayout'>;
 
 const INVALID_NUMBER_KEYS = new Set(['e', 'E', '+', '-', '.']);
 
@@ -37,7 +39,7 @@ function parseCommittedFontSize(raw: string): number | null {
 export function WorkEditorScreen() {
   const { request, status } = useInstance();
   const preview = useIsPreview();
-  const { editorFontSize, editorAutoSave } = useWorkState();
+  const { editorFontSize, editorAutoSave, editorDiffLayout } = useWorkState();
   const [loaded, setLoaded] = useState(preview);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState(() => String(editorFontSize));
@@ -48,7 +50,7 @@ export function WorkEditorScreen() {
   const mountedRef = useRef(true);
   const saveSeqRef = useRef(0);
   const saveQueueRef = useRef(Promise.resolve());
-  const committedRef = useRef<EditorSettings>({ editorFontSize, editorAutoSave });
+  const committedRef = useRef<EditorSettings>({ editorFontSize, editorAutoSave, editorDiffLayout });
 
   function updateDraft(next: string) {
     draftRef.current = next;
@@ -76,6 +78,7 @@ export function WorkEditorScreen() {
       committedRef.current = {
         editorFontSize: settings.editorFontSize,
         editorAutoSave: settings.editorAutoSave,
+        editorDiffLayout: settings.editorDiffLayout,
       };
       setWorkEditorSettings(settings);
       setLoaded(true);
@@ -90,6 +93,7 @@ export function WorkEditorScreen() {
     const optimistic: EditorSettings = {
       editorFontSize: patch.editorFontSize ?? current.editorFontSize,
       editorAutoSave: patch.editorAutoSave ?? current.editorAutoSave,
+      editorDiffLayout: patch.editorDiffLayout ?? current.editorDiffLayout,
     };
     setError(null);
     setWorkEditorSettings(optimistic);
@@ -104,6 +108,7 @@ export function WorkEditorScreen() {
         committedRef.current = {
           editorFontSize: saved.editorFontSize,
           editorAutoSave: saved.editorAutoSave,
+          editorDiffLayout: saved.editorDiffLayout,
         };
         if (seq === saveSeqRef.current) {
           setWorkEditorSettings(saved);
@@ -246,6 +251,20 @@ export function WorkEditorScreen() {
                 <Plus size={15} strokeWidth={1.75} aria-hidden="true" />
               </button>
             </div>
+          </div>
+          <div className="settings-row" id="work-editor-diff-layout">
+            <span className="settings-row-icon" aria-hidden="true"><Columns2 size={18} strokeWidth={1.75} /></span>
+            <div className="settings-row-copy">
+              <strong>默认差异视图</strong>
+            </div>
+            <SelectField
+              label="默认差异视图"
+              hideLabel
+              value={editorDiffLayout}
+              disabled={disabled}
+              options={[{ id: 'inline', label: '行内' }, { id: 'split', label: '并排' }]}
+              onChange={(id) => update({ editorDiffLayout: normalizeWorkEditorDiffLayout(id) })}
+            />
           </div>
           <div className="settings-row" id="work-editor-auto-save">
             <span className="settings-row-icon" aria-hidden="true"><Save size={18} strokeWidth={1.75} /></span>

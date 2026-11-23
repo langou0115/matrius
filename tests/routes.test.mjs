@@ -31,6 +31,22 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
     if (path.startsWith('/api/profile/fields/')) data = { value: '{}', revision: 1 };
     if (path === '/api/files/usage') data = { used: 0, disk: { total: 1000, used: 600, free: 400 } };
     if (path.startsWith('/api/usage')) data = { items: [], lifetime: { total: 0 }, estimated: { total: 0 }, backfilled: true };
+    if (path === '/api/work/settings') {
+      data = {
+        defaultWindowsShell: 'powershell',
+        activeProjectId: null,
+        activeTerminals: {},
+        filesPanelOpen: true,
+        filesPanelWidth: null,
+        persistTerminalScrollback: false,
+        editorFontSize: 14,
+        editorAutoSave: false,
+        editorDiffLayout: 'inline',
+        projectOrder: [],
+        cliProviderOrder: ['codex', 'antigravity', 'claude'],
+        terminalOrder: [],
+      };
+    }
     return Response.json(data);
   };
 
@@ -39,9 +55,9 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   const { MemoryRouter } = await import('react-router-dom');
   const { AppRoutes } = await import('../ui/router/routes.tsx');
 
-  for (const path of ['/', '/c/example', '/library', '/tasks', '/settings', '/settings/appearance', '/settings/models',
+  for (const path of ['/', '/c/example', '/work', '/p/example', '/library', '/tasks', '/settings', '/settings/appearance', '/settings/models',
     '/settings/work-general', '/settings/work-editor', '/settings/hosts', '/settings/personalization', '/settings/account', '/settings/storage', '/settings/usage', '/settings/about',
-    '/admin', '/debug', '/debug?tab=tools', '/mock/chat', '/mock/chat/settings/appearance', '/mock/chat/settings/work-general', '/mock/chat/settings/work-editor', '/mock/chat/settings/hosts', '/mock/library', '/mock/tasks', '/mock/process', '/mock/storage']) {
+    '/admin', '/debug', '/debug?tab=tools', '/mock/chat', '/mock/chat/work', '/mock/chat/p/example', '/mock/chat/settings/appearance', '/mock/chat/settings/work-general', '/mock/chat/settings/work-editor', '/mock/chat/settings/hosts', '/mock/library', '/mock/tasks', '/mock/process', '/mock/storage']) {
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
@@ -58,5 +74,28 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
       await act(async () => { root.unmount(); });
       container.remove();
     }
+  }
+
+  globalThis.__MATRIUS_TARGET__ = 'desktop';
+  try {
+    for (const path of ['/work', '/p/example', '/mock/chat/work', '/mock/chat/p/example']) {
+      const container = document.createElement('div');
+      document.body.append(container);
+      const root = createRoot(container);
+      try {
+        await act(async () => {
+          root.render(createElement(MemoryRouter, { initialEntries: [path] }, createElement(AppRoutes)));
+        });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+        const html = container.innerHTML;
+        assert.ok(html.length > 500, `desktop ${path} rendered ${html.length} bytes`);
+        assert.doesNotMatch(html, /界面渲染失败/u, `desktop ${path} must not hit the error boundary`);
+      } finally {
+        await act(async () => { root.unmount(); });
+        container.remove();
+      }
+    }
+  } finally {
+    globalThis.__MATRIUS_TARGET__ = undefined;
   }
 });

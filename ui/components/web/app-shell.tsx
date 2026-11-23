@@ -7,7 +7,9 @@ import { InstanceWorkspace } from '@/components/web/instance-workspace';
 import { Workspace } from '@/components/web/workspace';
 import { InstanceProvider } from '@/features/instance/instance-state';
 import { BackgroundNotifications } from '@/features/chat/components/background-notifications';
+import { SidebarRouteTabContext, writeSidebarTab } from '@/features/chat/sidebar-mode';
 import { rememberWorkspacePath } from '@/features/settings/settings-return';
+import { sidebarTabForPathname } from '@/features/work/work-href';
 import { usePathname } from '@/router';
 
 import '@/global.css';
@@ -20,6 +22,11 @@ export function AppShell() {
     || (import.meta.env.DEV && pathname === '/debug')
     || pathname === '/mock/chat/settings'
     || pathname.startsWith('/mock/chat/settings/');
+  const routeTab = sidebarTabForPathname(pathname);
+
+  useEffect(() => {
+    if (routeTab) writeSidebarTab(routeTab);
+  }, [routeTab]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -68,13 +75,15 @@ export function AppShell() {
     <AppErrorBoundary resetKey={pathname}>
       <InstanceProvider key={preview ? 'mock' : 'instance'} preview={preview}>
         <InstanceWorkspace preview={preview}>
-          <AppFrame>
-            <Suspense fallback={null}>
-              {fullPage ? <Outlet /> : <Workspace><Outlet /></Workspace>}
-            </Suspense>
-            {/* Inside the themed shell and above every route, including full-page settings. */}
-            <BackgroundNotifications />
-          </AppFrame>
+          <SidebarRouteTabContext value={routeTab}>
+            <AppFrame>
+              <Suspense fallback={null}>
+                {fullPage ? <Outlet /> : <Workspace><Outlet /></Workspace>}
+              </Suspense>
+              {/* Inside the themed shell and above every route, including full-page settings. */}
+              <BackgroundNotifications />
+            </AppFrame>
+          </SidebarRouteTabContext>
         </InstanceWorkspace>
       </InstanceProvider>
     </AppErrorBoundary>

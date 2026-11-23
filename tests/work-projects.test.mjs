@@ -7,6 +7,7 @@ import { parseHTML } from 'linkedom';
 import { ChatProvider } from '../ui/features/chat/chat-state.tsx';
 import { InstanceProvider } from '../ui/features/instance/instance-state.tsx';
 import { PreviewContext } from '../ui/features/workspace/preview-context.ts';
+import { DirectoryBrowserDialog } from '../ui/features/work/directory-browser-dialog.tsx';
 import { WorkSidebarPanel } from '../ui/features/work/work-sidebar-panel.tsx';
 import { resetWorkStateForTests } from '../ui/features/work/work-state.ts';
 
@@ -496,6 +497,140 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.match(createdItem.querySelector('.work-project-name')?.textContent ?? '', /D:/);
     assert.match(createdItem.querySelector('.work-project-select')?.getAttribute('title') ?? '', /D:\\/);
   } finally {
+    await act(async () => { root.unmount(); });
+    resetWorkStateForTests();
+    dom.restore();
+  }
+});
+
+test('directory browser caches visited folders in-session and bypasses cache on explicit refresh', async () => {
+  const dom = setupDom();
+  const root = createRoot(dom.document.getElementById('root'));
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+
+  const responses = {
+    '/api/hosts/local/fs': {
+      hostId: 'local',
+      path: 'C:\\Users\\dev',
+      parentPath: 'C:\\Users',
+      truncated: false,
+      entries: [{ kind: 'directory', name: 'Desktop', path: 'C:\\Users\\dev\\Desktop', accessible: true }],
+    },
+    '/api/hosts/local/fs?path=%E6%AD%A4%E7%94%B5%E8%84%91': {
+      hostId: 'local',
+      path: '此电脑',
+      parentPath: null,
+      selectable: false,
+      truncated: false,
+      entries: [
+        { kind: 'directory', name: 'C:\\', path: 'C:\\', accessible: true },
+        { kind: 'directory', name: 'D:\\', path: 'D:\\', accessible: true },
+      ],
+    },
+    '/api/hosts/local/fs?path=D%3A%5C': {
+      hostId: 'local',
+      path: 'D:\\',
+      parentPath: '此电脑',
+      truncated: false,
+      entries: [{ kind: 'directory', name: 'Engineer', path: 'D:\\Engineer', accessible: true }],
+    },
+    '/api/hosts/local/fs?path=D%3A%5C&refresh=1': {
+      hostId: 'local',
+      path: 'D:\\',
+      parentPath: '此电脑',
+      truncated: false,
+      entries: [
+        { kind: 'directory', name: 'Engineer', path: 'D:\\Engineer', accessible: true },
+        { kind: 'directory', name: 'FreshDir', path: 'D:\\FreshDir', accessible: true },
+      ],
+    },
+  };
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url === '/api/features') {
+      return new Response(JSON.stringify({ features: [{ id: 'work' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const payload = responses[url];
+    if (!payload) {
+      return new Response(JSON.stringify({ error: { code: 'not_found', message: `Missing ${url}` } }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await act(async () => {
+      root.render(
+        createElement(
+          InstanceProvider,
+          { preview: false },
+          createElement(
+            PreviewContext.Provider,
+            { value: false },
+            createElement(DirectoryBrowserDialog, {
+              hostId: 'local',
+              hostLabel: '本机',
+              initialPath: '',
+              onSelect() {},
+              onClose() {},
+            }),
+          ),
+        ),
+      );
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    assert.match(dom.document.body.textContent ?? '', /Desktop/);
+    const pcBtn = dom.document.querySelector('button[aria-label="此电脑"]');
+    assert.ok(pcBtn);
+    await act(async () => { pcBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    assert.match(dom.document.body.textContent ?? '', /D:\\/);
+
+    const dBtn = Array.from(dom.document.querySelectorAll('.work-browser-item')).find((btn) => btn.textContent?.includes('D:\\'));
+    assert.ok(dBtn);
+    await act(async () => { dBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    assert.match(dom.document.body.textContent ?? '', /Engineer/);
+
+    const fsCallsBeforeRevisit = requests.filter((url) => url.startsWith('/api/hosts/')).length;
+    assert.equal(fsCallsBeforeRevisit, 3);
+
+    // Navigating back up to 此电脑 uses the in-session cache without hitting the server again.
+    const upBtn = dom.document.querySelector('button[aria-label="返回上一级"]');
+    assert.ok(upBtn);
+    await act(async () => { upBtn.click(); });
+    assert.match(dom.document.body.textContent ?? '', /D:\\/);
+    assert.equal(requests.filter((url) => url.startsWith('/api/hosts/')).length, 3);
+
+    // Re-entering D:\ also hits cache immediately.
+    const dBtnCached = Array.from(dom.document.querySelectorAll('.work-browser-item')).find((btn) => btn.textContent?.includes('D:\\'));
+    assert.ok(dBtnCached);
+    await act(async () => { dBtnCached.click(); });
+    assert.match(dom.document.body.textContent ?? '', /Engineer/);
+    assert.equal(requests.filter((url) => url.startsWith('/api/hosts/')).length, 3);
+
+    // Clicking Refresh sends refresh=1 and replaces the cached listing.
+    const refreshBtn = dom.document.querySelector('button[aria-label="刷新目录"]');
+    assert.ok(refreshBtn);
+    await act(async () => { refreshBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    assert.equal(requests.filter((url) => url.startsWith('/api/hosts/')).length, 4);
+    assert.equal(requests.at(-1), '/api/hosts/local/fs?path=D%3A%5C&refresh=1');
+    assert.match(dom.document.body.textContent ?? '', /FreshDir/);
+  } finally {
+    globalThis.fetch = previousFetch;
     await act(async () => { root.unmount(); });
     resetWorkStateForTests();
     dom.restore();

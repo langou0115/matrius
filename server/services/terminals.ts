@@ -66,6 +66,8 @@ import {
 const INSTANCE_ID = 1;
 const MAX_SCROLLBACK_CHARS = 128_000;
 const SCROLLBACK_PERSIST_DELAY_MS = 1_200;
+const OUTPUT_COALESCE_MS = 6;
+const OUTPUT_COALESCE_MAX_CHARS = 32_768;
 
 export type PtyProcess = Pick<IPty, 'write' | 'resize' | 'kill' | 'onData' | 'onExit'> & {
   readonly pid?: number;
@@ -87,6 +89,8 @@ type ActiveTerminal = {
   rows: number;
   dirtySnapshot: boolean;
   flushTimer: ReturnType<typeof setTimeout> | null;
+  pendingOutput: string;
+  outputTimer: ReturnType<typeof setTimeout> | null;
   listeners: Set<(message: WorkTerminalServerMessage) => void>;
 };
 
@@ -563,6 +567,8 @@ export function createWorkTerminalService(options: {
       rows: clampTerminalRows(row.rows),
       dirtySnapshot: false,
       flushTimer: null,
+      pendingOutput: '',
+      outputTimer: null,
       listeners: new Set(),
     });
   }
@@ -570,6 +576,73 @@ export function createWorkTerminalService(options: {
   function broadcast(entry: ActiveTerminal, message: WorkTerminalServerMessage): void {
     for (const listener of entry.listeners) {
       listener(message);
+    }
+  }
+
+  function clearOutputCoalesce(entry: ActiveTerminal): void {
+    if (entry.outputTimer) {
+      clearTimeout(entry.outputTimer);
+      entry.outputTimer = null;
+    }
+    entry.pendingOutput = '';
+  }
+
+  function flushPendingOutput(entry: ActiveTerminal): void {
+    if (entry.outputTimer) {
+      clearTimeout(entry.outputTimer);
+      entry.outputTimer = null;
+    }
+    if (!entry.pendingOutput) return;
+    const data = entry.pendingOutput;
+    entry.pendingOutput = '';
+    broadcast(entry, { type: 'output', data });
+  }
+
+  function shouldCoalesceLeadingChunk(data: string): boolean {
+    if (data.includes('\x1b[2J') || data.includes('\x1b[3J') || data.includes('\x1b[?1049')) {
+      return true;
+    }
+    const syncStart = data.lastIndexOf('\x1b[?2026h');
+    if (syncStart >= 0 && data.indexOf('\x1b[?2026l', syncStart) < 0) {
+      return true;
+    }
+    const lastEsc = data.lastIndexOf('\x1b');
+    if (lastEsc >= 0 && lastEsc >= data.length - 32) {
+      const tail = data.slice(lastEsc + 1);
+      if (tail.length === 0 || (tail.startsWith('[') && !/[A-Za-z~@]$/u.test(tail))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function enqueuePtyOutput(entry: ActiveTerminal, data: string): void {
+    if (!data) return;
+    // Deliver normal interactive chunks immediately unless the burst begins with a
+    // screen clear / synchronized redraw / partial control sequence, then coalesce
+    // rapid follow-ups inside a 6ms window so full TUI repaints land atomically.
+    if (!entry.outputTimer && !entry.pendingOutput && !shouldCoalesceLeadingChunk(data)) {
+      broadcast(entry, { type: 'output', data });
+      entry.outputTimer = setTimeout(() => {
+        entry.outputTimer = null;
+        if (entry.pendingOutput) {
+          flushPendingOutput(entry);
+        }
+      }, OUTPUT_COALESCE_MS);
+      return;
+    }
+    entry.pendingOutput += data;
+    if (entry.pendingOutput.length >= OUTPUT_COALESCE_MAX_CHARS) {
+      flushPendingOutput(entry);
+      return;
+    }
+    if (!entry.outputTimer) {
+      entry.outputTimer = setTimeout(() => {
+        entry.outputTimer = null;
+        if (entry.pendingOutput) {
+          flushPendingOutput(entry);
+        }
+      }, OUTPUT_COALESCE_MS);
     }
   }
 
@@ -792,11 +865,12 @@ export function createWorkTerminalService(options: {
       if (persistScrollback || entry.session.cwd !== prevCwd) {
         schedulePersist(entry);
       }
-      broadcast(entry, { type: 'output', data });
+      enqueuePtyOutput(entry, data);
     });
 
     childPty.onExit(({ exitCode }) => {
       if (entry.pty !== childPty) return;
+      flushPendingOutput(entry);
       entry.pty = null;
       entry.modeState = createTerminalModeState();
       entry.scrollbackBaseAltScreen = null;
@@ -947,6 +1021,8 @@ export function createWorkTerminalService(options: {
         rows: normalized.rows,
         dirtySnapshot: false,
         flushTimer: null,
+        pendingOutput: '',
+        outputTimer: null,
         listeners: new Set(),
       };
       terminals.set(session.id, entry);
@@ -990,6 +1066,7 @@ export function createWorkTerminalService(options: {
         rememberPassword: rawInput.rememberPassword,
       });
 
+      clearOutputCoalesce(entry);
       entry.session.cwd = spawned.effectiveCwd;
       if (spawned.resolvedWindowsShell) {
         entry.session.shell = spawned.resolvedWindowsShell;
@@ -1002,8 +1079,14 @@ export function createWorkTerminalService(options: {
       delete entry.session.errorCode;
 
       if (entry.scrollback) {
+        // A previously saved Codex fullscreen session can end without emitting its exit sequence.
+        // Close that screen in the replay before drawing the new inline session.
+        const oldAltScreen = entry.session.preset === 'codex'
+          ? advanceTerminalModeState(createTerminalModeState(), entry.scrollback).altScreen
+          : null;
+        const leaveAltScreen = oldAltScreen === null ? '' : `\x1b[?${oldAltScreen}l`;
         const prefix = entry.scrollback.endsWith('\n') || entry.scrollback.endsWith('\r') ? '' : '\r\n';
-        const marker = `${prefix}\x1b[90m── 会话已恢复 · ${spawned.effectiveCwd} ──\x1b[0m\r\n`;
+        const marker = `${leaveAltScreen}${prefix}\x1b[90m── 会话已恢复 · ${spawned.effectiveCwd} ──\x1b[0m\r\n`;
         appendScrollback(entry, marker);
         broadcast(entry, { type: 'output', data: marker });
       }
@@ -1063,6 +1146,9 @@ export function createWorkTerminalService(options: {
 
     attach(terminalId, listener) {
       const entry = requireEntry(terminalId);
+      // Flush already-buffered bytes to existing listeners before capturing snapshot so the
+      // newly attached client does not receive both snapshot bytes and duplicate live output.
+      flushPendingOutput(entry);
       entry.listeners.add(listener);
       return {
         snapshot: buildTerminalSnapshotWithModes(
@@ -1096,6 +1182,7 @@ export function createWorkTerminalService(options: {
       if (!entry) return;
       const nextCols = clampTerminalCols(cols);
       const nextRows = clampTerminalRows(rows);
+      if (entry.cols === nextCols && entry.rows === nextRows) return;
       entry.cols = nextCols;
       entry.rows = nextRows;
       updateWorkTerminalMetaRow(db, INSTANCE_ID, terminalId, { cols: nextCols, rows: nextRows });
@@ -1114,6 +1201,7 @@ export function createWorkTerminalService(options: {
         clearTimeout(entry.flushTimer);
         entry.flushTimer = null;
       }
+      clearOutputCoalesce(entry);
       terminals.delete(terminalId);
       const activePty = entry.pty;
       entry.pty = null;
@@ -1132,6 +1220,7 @@ export function createWorkTerminalService(options: {
           clearTimeout(entry.flushTimer);
           entry.flushTimer = null;
         }
+        clearOutputCoalesce(entry);
         terminals.delete(entry.session.id);
         const activePty = entry.pty;
         entry.pty = null;
@@ -1174,6 +1263,7 @@ export function createWorkTerminalService(options: {
           clearTimeout(entry.flushTimer);
           entry.flushTimer = null;
         }
+        clearOutputCoalesce(entry);
         const persistStatus = entry.session.status === 'running' ? 'restored' : entry.session.status;
         flushEntryToDb(entry, persistStatus);
         const activePty = entry.pty;

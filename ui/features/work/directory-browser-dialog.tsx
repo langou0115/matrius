@@ -138,6 +138,10 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error && reason.message ? reason.message : '读取目录失败，请重试。';
 }
 
+function browserCacheKey(hostId: string, path?: string): string {
+  return `${hostId}\0${path?.trim() ?? ''}`;
+}
+
 function fallbackParentPath(currentPath: string): string | null {
   const trimmed = currentPath.trim();
   if (!trimmed || trimmed === '/' || /^[A-Za-z]:[\\/]?$/u.test(trimmed)) return null;
@@ -168,10 +172,47 @@ export function DirectoryBrowserDialog({
   const [loading, setLoading] = useState(!preview);
   const [error, setError] = useState<string | null>(null);
   const listingRef = useRef<HostDirectoryListing | null>(initialPreview);
+  const cacheRef = useRef<Map<string, HostDirectoryListing>>(new Map());
   const requestSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
-  const loadDirectory = useCallback(async (targetPath?: string) => {
+  const applyListing = useCallback((next: HostDirectoryListing, requestedPath?: string) => {
+    if (!preview) {
+      cacheRef.current.set(browserCacheKey(hostId, next.path), next);
+      if (requestedPath !== undefined) {
+        cacheRef.current.set(browserCacheKey(hostId, requestedPath), next);
+      }
+    }
+    listingRef.current = next;
+    setListing(next);
+    setPathInput(next.path);
+    setSelectedPath(null);
+  }, [hostId, preview]);
+
+  const loadDirectory = useCallback(async (targetPath?: string, options?: { refresh?: boolean }) => {
+    const refresh = Boolean(options?.refresh);
+    const cacheKey = browserCacheKey(hostId, targetPath);
+    if (!preview && !refresh) {
+      const cached = cacheRef.current.get(cacheKey);
+      if (cached) {
+        ++requestSeq.current;
+        abortRef.current?.abort();
+        abortRef.current = null;
+        setLoading(false);
+        setError(null);
+        setFilter('');
+        listingRef.current = cached;
+        setListing(cached);
+        setPathInput(cached.path);
+        setSelectedPath(null);
+        return;
+      }
+    }
+
+    if (refresh && !preview) {
+      cacheRef.current.delete(cacheKey);
+    }
+
     const seq = ++requestSeq.current;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -184,12 +225,9 @@ export function DirectoryBrowserDialog({
     try {
       const next = preview
         ? previewListing(hostId, targetPath)
-        : await browseHostDirectory(instance.request, hostId, targetPath, controller.signal);
+        : await browseHostDirectory(instance.request, hostId, targetPath, controller.signal, refresh ? { refresh: true } : undefined);
       if (requestSeq.current !== seq) return;
-      listingRef.current = next;
-      setListing(next);
-      setPathInput(next.path);
-      setSelectedPath(null);
+      applyListing(next, targetPath);
     } catch (reason) {
       if (controller.signal.aborted || requestSeq.current !== seq) return;
       if (listingRef.current) {
@@ -201,21 +239,32 @@ export function DirectoryBrowserDialog({
         setLoading(false);
       }
     }
-  }, [hostId, instance.request, preview]);
+  }, [applyListing, hostId, instance.request, preview]);
 
   useEffect(() => {
     if (preview) return;
+    const initialKey = browserCacheKey(hostId, initialPath || undefined);
+    const cached = cacheRef.current.get(initialKey);
+    if (cached) {
+      ++requestSeq.current;
+      listingRef.current = cached;
+      setListing(cached);
+      setPathInput(cached.path);
+      setSelectedPath(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     const seq = ++requestSeq.current;
     const controller = new AbortController();
     abortRef.current = controller;
+    setLoading(true);
 
     browseHostDirectory(instance.request, hostId, initialPath || undefined, controller.signal)
       .then((next) => {
         if (controller.signal.aborted || requestSeq.current !== seq) return;
-        listingRef.current = next;
-        setListing(next);
-        setPathInput(next.path);
-        setSelectedPath(null);
+        applyListing(next, initialPath || undefined);
         setError(null);
       })
       .catch(async (reason: unknown) => {
@@ -224,10 +273,7 @@ export function DirectoryBrowserDialog({
           try {
             const fallback = await browseHostDirectory(instance.request, hostId, undefined, controller.signal);
             if (controller.signal.aborted || requestSeq.current !== seq) return;
-            listingRef.current = fallback;
-            setListing(fallback);
-            setPathInput(fallback.path);
-            setSelectedPath(null);
+            applyListing(fallback, undefined);
             setError(errorMessage(reason));
             return;
           } catch {
@@ -243,7 +289,7 @@ export function DirectoryBrowserDialog({
       });
 
     return () => { controller.abort(); };
-  }, [hostId, initialPath, instance.request, preview]);
+  }, [applyListing, hostId, initialPath, instance.request, preview]);
 
   const visibleEntries = useMemo(() => {
     const raw = listing?.entries ?? [];
@@ -323,7 +369,7 @@ export function DirectoryBrowserDialog({
           className="icon-button work-browser-refresh"
           aria-label="刷新目录"
           disabled={loading}
-          onClick={() => void loadDirectory(listing?.path ?? (pathInput.trim() || undefined))}
+          onClick={() => void loadDirectory(listing?.path ?? (pathInput.trim() || undefined), { refresh: true })}
         >
           <RefreshCw size={15} strokeWidth={1.75} className={loading ? 'loading-spinner' : undefined} aria-hidden="true" />
         </button>

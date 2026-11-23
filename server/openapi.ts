@@ -504,6 +504,7 @@ export const openApiDocument = {
         parameters: [
           { name: 'hostId', in: 'path', required: true, schema: str() },
           { name: 'path', in: 'query', schema: str() },
+          { name: 'refresh', in: 'query', schema: str() },
         ],
         responses: { ...ok(ref('HostDirectoryListing')), ...errorResponses },
       },
@@ -545,16 +546,28 @@ export const openApiDocument = {
         tags: ['hosts'],
         summary: 'Read up to 100 Git commits with parent links and refs',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
-        responses: { ...ok(arr(obj({ oid: str(), parents: arr(str()), refs: arr(str()), subject: str(), author: str(), date: str() }))), ...errorResponses },
+        responses: { ...ok(arr(obj({ oid: str(), parents: arr(str()), refs: arr(str()), subject: str(), body: str(), author: str(), email: str(), date: str() }))), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/commits/{oid}/files': {
+      get: {
+        tags: ['hosts'],
+        summary: 'List files changed by a Git commit with per-file line stats',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: str() },
+          { name: 'oid', in: 'path', required: true, schema: str() },
+        ],
+        responses: { ...ok(arr(obj({ path: str(), status: str(), additions: nullable(int()), deletions: nullable(int()) }))), ...errorResponses },
       },
     },
     '/api/projects/{projectId}/git/commits/{oid}/diff': {
       get: {
         tags: ['hosts'],
-        summary: 'Read changes introduced by a Git commit',
+        summary: 'Read changes introduced by a Git commit (optionally scoped to a single file)',
         parameters: [
           { name: 'projectId', in: 'path', required: true, schema: str() },
           { name: 'oid', in: 'path', required: true, schema: str() },
+          { name: 'path', in: 'query', schema: str() },
         ],
         responses: { ...ok(obj({ patch: str(), truncated: bool() }, ['patch', 'truncated'])), ...errorResponses },
       },
@@ -579,12 +592,64 @@ export const openApiDocument = {
         responses: { ...ok(), ...errorResponses },
       },
     },
+    '/api/projects/{projectId}/git/pull': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Pull changes from upstream remote branch',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        responses: { ...ok(), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/push': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Push local commits to remote branch',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        responses: { ...ok(), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/stage': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Stage selected paths into the Git index',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        requestBody: jsonBody(obj({ paths: arr(str()) }, ['paths'])),
+        responses: { ...ok(), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/unstage': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Unstage selected paths from the Git index',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        requestBody: jsonBody(obj({ paths: arr(str()) }, ['paths'])),
+        responses: { ...ok(), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/discard': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Discard working tree changes for selected paths',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        requestBody: jsonBody(obj({ paths: arr(str()) }, ['paths'])),
+        responses: { ...ok(), ...errorResponses },
+      },
+    },
+    '/api/projects/{projectId}/git/checkout': {
+      post: {
+        tags: ['hosts'],
+        summary: 'Switch to a local or remote tracking branch',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
+        requestBody: jsonBody(obj({ branch: str() }, ['branch'])),
+        responses: { ...ok(), ...errorResponses },
+      },
+    },
     '/api/projects/{projectId}/git/commits': {
       post: {
         tags: ['hosts'],
-        summary: 'Commit only the selected changed paths',
+        summary: 'Commit selected changed paths or staged changes',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: str() }],
-        requestBody: jsonBody(obj({ message: str(), paths: arr(str()) }, ['message', 'paths'])),
+        requestBody: jsonBody(obj({ message: str(), paths: arr(str()), staged: bool() }, ['message'])),
         responses: { ...created(obj({ oid: str() }, ['oid'])), ...errorResponses },
       },
     },
@@ -658,6 +723,7 @@ export const openApiDocument = {
           persistTerminalScrollback: bool(),
           editorFontSize: { type: 'integer', minimum: 10, maximum: 32 },
           editorAutoSave: bool(),
+          editorDiffLayout: { type: 'string', enum: ['inline', 'split'], default: 'inline' },
           projectOrder: arr(id),
           cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
           terminalOrder: arr(id),
@@ -675,6 +741,7 @@ export const openApiDocument = {
           persistTerminalScrollback: bool(),
           editorFontSize: { type: 'integer', minimum: 10, maximum: 32 },
           editorAutoSave: bool(),
+          editorDiffLayout: { type: 'string', enum: ['inline', 'split'], default: 'inline' },
           projectOrder: arr(id),
           cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
           terminalOrder: arr(id),
@@ -688,6 +755,7 @@ export const openApiDocument = {
           persistTerminalScrollback: bool(),
           editorFontSize: { type: 'integer', minimum: 10, maximum: 32 },
           editorAutoSave: bool(),
+          editorDiffLayout: { type: 'string', enum: ['inline', 'split'], default: 'inline' },
           projectOrder: arr(id),
           cliProviderOrder: arr({ type: 'string', enum: ['codex', 'antigravity', 'claude'] }),
           terminalOrder: arr(id),

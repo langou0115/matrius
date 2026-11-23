@@ -9,7 +9,7 @@ import { loadSettings } from '../config';
 import { openDatabase } from '../db/client';
 import { migrate } from '../db/migrate';
 import { createWorkHostRow, serializeWorkHost } from '../db/repositories/hosts';
-import { createHostFsService, parsePosixBrowseOutput } from '../services/host-fs';
+import { createHostFsService, parsePosixBrowseOutput, parseWindowsDrivesOutput } from '../services/host-fs';
 
 test('parsePosixBrowseOutput parses directories before files, preserves access flags, and surfaces ERR messages', () => {
   const stdout = Buffer.from(
@@ -324,7 +324,7 @@ test('work projects CRUD and host filesystem browser support local, WSL and SSH 
   }
 });
 
-test('local filesystem browser exposes Windows drive selection via upward navigation and normalizes drive roots', async () => {
+test('local filesystem browser exposes Windows drive selection via upward navigation, skips drive probing for directory paths, and truncates large directories cleanly', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'matrius-roots-data-'));
   const browseRoot = mkdtempSync(join(tmpdir(), 'matrius-roots-fs-'));
   const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
@@ -332,16 +332,30 @@ test('local filesystem browser exposes Windows drive selection via upward naviga
   migrate(db);
 
   try {
+    assert.deepEqual(
+      parseWindowsDrivesOutput(Buffer.from('\r\nDrives: d:\\ C:\\ t:\\ c:\\ \r\n', 'utf8')),
+      ['C:\\', 'D:\\', 'T:\\'],
+    );
+    assert.deepEqual(
+      parseWindowsDrivesOutput(Buffer.from('\r\n驱动器: C:\\ D:\\ \r\n', 'utf16le')),
+      ['C:\\', 'D:\\'],
+    );
+
+    let driveListCalls = 0;
     const winFs = createHostFsService({
       db,
       currentPlatform: 'win32',
       homeDir: browseRoot,
-      listWindowsDrives: async () => ['C:\\', 'D:\\'],
+      listWindowsDrives: async () => {
+        driveListCalls += 1;
+        return ['C:\\', 'D:\\'];
+      },
     });
     const drivesView = await winFs.listEntries('local', '此电脑');
     assert.equal(drivesView.path, '此电脑');
     assert.equal(drivesView.parentPath, null);
     assert.equal(drivesView.selectable, false);
+    assert.equal(driveListCalls, 1);
     assert.deepEqual(
       drivesView.entries.map((entry) => [entry.kind, entry.name, entry.path]),
       [
@@ -352,12 +366,29 @@ test('local filesystem browser exposes Windows drive selection via upward naviga
 
     const slashDrives = await winFs.listEntries('local', '/');
     assert.equal(slashDrives.path, '此电脑');
+    assert.equal(driveListCalls, 2);
+
+    // Browsing a regular directory must never probe all Windows drive letters.
+    mkdirSync(join(browseRoot, 'zeta-folder'));
+    mkdirSync(join(browseRoot, 'alpha-folder'));
+    for (let index = 0; index < 520; index += 1) {
+      writeFileSync(join(browseRoot, `file-${String(index).padStart(4, '0')}.txt`), '');
+    }
+    const homeListing = await winFs.listEntries('local', '');
+    assert.equal(driveListCalls, 2);
+    assert.equal(homeListing.truncated, true);
+    assert.equal(homeListing.entries.length, 500);
+    assert.equal(homeListing.entries[0]?.kind, 'directory');
+    assert.equal(homeListing.entries[0]?.name, 'alpha-folder');
+    assert.equal(homeListing.entries[1]?.kind, 'directory');
+    assert.equal(homeListing.entries[1]?.name, 'zeta-folder');
 
     if (process.platform === 'win32') {
       const systemDrive = `${(process.env.SystemDrive ?? 'C:').replace(/\\$/u, '')}\\`;
       const driveRoot = await winFs.listEntries('local', systemDrive.slice(0, 2).toLowerCase());
       assert.equal(driveRoot.path.toUpperCase(), systemDrive.toUpperCase());
       assert.equal(driveRoot.parentPath, '此电脑');
+      assert.equal(driveListCalls, 2);
     }
   } finally {
     db.close();

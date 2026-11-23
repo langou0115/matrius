@@ -20,7 +20,10 @@ import { WorkWorkspace } from '../ui/features/work/work-workspace.tsx';
 import { createPreviewCliSessions } from '../ui/features/work/work-api.ts';
 import {
   attachTerminalClipboard,
+  clampTerminalContextMenuPosition,
   openTerminalExternalLink,
+  sliceTerminalWriteBatch,
+  syncHelperTextareaGeometry,
 } from '../ui/features/work/work-terminal-view.tsx';
 import {
   advanceTerminalModeState,
@@ -48,6 +51,7 @@ import {
   updateWorkTerminalMeta,
   updateWorkTerminalStatus,
   upsertWorkProject,
+  openWorkFile,
 } from '../ui/features/work/work-state.ts';
 import { PreviewContext } from '../ui/features/workspace/preview-context.ts';
 import { AppearanceProvider } from '../ui/theme/appearance.tsx';
@@ -242,8 +246,11 @@ test('Git opens in its own project tab between terminal creation and the files p
     assert.ok(dom.document.querySelector('.work-git-graph-lines path'));
     assert.match(dom.document.querySelector('.work-git-graph-row').textContent, /HEAD -> main/u);
     await act(async () => { dom.document.querySelector('.work-git-graph-subject').click(); });
-    assert.equal(dom.document.querySelector('.work-git-diff-cell.add code').textContent, 'Updated content');
+    assert.equal(dom.document.querySelector('.work-git-diff-inline.add code').textContent, 'Updated content');
     await act(async () => { graphButton.click(); });
+    await act(async () => {
+      setWorkEditorSettings({ ...getWorkState(), editorDiffLayout: 'split' });
+    });
     const changedFile = dom.document.querySelector('.work-git-change button[title="README.md"]');
     assert.ok(changedFile);
     await act(async () => { changedFile.click(); });
@@ -253,10 +260,28 @@ test('Git opens in its own project tab between terminal creation and the files p
     const inline = [...dom.document.querySelectorAll('.work-git-review-modes button')].find((mode) => mode.textContent === '行内');
     await act(async () => { inline.click(); });
     assert.equal(dom.document.querySelector('.work-git-diff-inline.add code').textContent, 'Updated content');
+    assert.equal(getWorkState().editorDiffLayout, 'split');
     await act(async () => { graphButton.click(); });
     assert.equal(graphButton.getAttribute('aria-pressed'), 'true');
     assert.ok(dom.document.querySelector('.work-git-graph-lines path'));
-    await act(async () => { dom.document.querySelector('[aria-label="关闭 Git 标签"]').click(); });
+    await act(async () => {
+      openWorkFile('git-project', { kind: 'file', name: 'README.md', path: 'README.md', accessible: true });
+    });
+    const fileTab = dom.document.querySelector('[role="tab"][title="README.md"]');
+    const gitTab = dom.document.querySelector('[aria-label="关闭 Git 标签"]').previousElementSibling;
+    const openMenu = (tab) => act(async () => {
+      tab.dispatchEvent(new dom.window.Event('contextmenu', { bubbles: true, cancelable: true }));
+    });
+    const selectAction = (action) => act(async () => {
+      dom.document.querySelector(`#work-tab-menu [data-action="${action}"]`).click();
+    });
+    await openMenu(fileTab);
+    await selectAction('pin');
+    assert.ok(fileTab.closest('.work-tab').classList.contains('is-pinned'));
+    await openMenu(gitTab);
+    await selectAction('close-all');
+    assert.ok(fileTab.isConnected);
+    assert.equal(gitTab.isConnected, false);
     assert.equal(dom.document.querySelector('.work-git-view'), null);
   } finally {
     await act(async () => { root.unmount(); });
@@ -289,6 +314,21 @@ test('work workspace separates project selection from explicit expand, shows CLI
     // Sidebar project row has explicit visible expand toggle, no `...` button or inline add button, and starts collapsed.
     const projectItem = dom.document.querySelector('.work-project-item.is-active');
     assert.ok(projectItem);
+    const projectButton = projectItem.querySelector('.work-project-select');
+    const projectLabel = projectButton.querySelector('.work-project-name');
+    const projectText = projectLabel.querySelector('.sidebar-scrolling-label-text');
+    Object.defineProperty(projectLabel, 'clientWidth', { value: 100 });
+    Object.defineProperty(projectText, 'scrollWidth', { value: 180 });
+    let cancelled = false;
+    projectText.animate = (frames) => {
+      assert.equal(frames.at(-1).transform, 'translateX(-80px)');
+      return { cancel: () => { cancelled = true; } };
+    };
+    await act(async () => { projectButton.dispatchEvent(new dom.window.Event('mouseenter')); });
+    assert.equal(projectLabel.dataset.scrolling, 'true');
+    await act(async () => { projectButton.dispatchEvent(new dom.window.Event('mouseleave')); });
+    assert.equal(projectLabel.dataset.scrolling, undefined);
+    assert.equal(cancelled, true);
     assert.equal(projectItem.querySelector('.work-project-more'), null);
     assert.equal(projectItem.querySelector('.work-project-add'), null);
     assert.ok(dom.document.querySelector('.work-topbar button[aria-label="添加终端"]'));
@@ -1063,6 +1103,13 @@ test('WorkEditorScreen supports typing, clamping, stepping, and escaping editor 
       reactProps(autoSaveToggle).onChange({ target: autoSaveToggle });
     });
     assert.equal(getWorkState().editorAutoSave, true);
+    const layoutSelect = dom.document.querySelector('#work-editor-diff-layout .select-field-trigger');
+    assert.match(layoutSelect.textContent, /行内/u);
+    await act(async () => { layoutSelect.click(); });
+    const splitOption = [...dom.document.querySelectorAll('#work-editor-diff-layout [data-select-option]')]
+      .find((option) => option.textContent === '并排');
+    await act(async () => { splitOption.click(); });
+    assert.equal(getWorkState().editorDiffLayout, 'split');
   } finally {
     await act(async () => { root.unmount(); });
     resetWorkStateForTests();
@@ -1279,6 +1326,111 @@ test('attachTerminalClipboard supports right-click copy on selection, Ctrl+C cop
   } finally {
     resetWorkStateForTests();
     resetSidebarTabForTests();
+    dom.restore();
+  }
+});
+
+test('terminal helpers clamp context menu card, keep CSI/UTF-16 batches intact, sync IME anchor, and dispatch right-click menu', () => {
+  const clampedInside = clampTerminalContextMenuPosition(120, 80, 1280, 720, 160, 96);
+  assert.deepEqual(clampedInside, { left: 120, top: 80 });
+  const clampedEdge = clampTerminalContextMenuPosition(1250, 700, 1280, 720, 160, 96);
+  assert.deepEqual(clampedEdge, { left: 1108, top: 612 });
+
+  // Surrogate pair and incomplete CSI sequences are never split across write batch boundaries.
+  const surrogateInput = 'abc👍def';
+  const surrogateSplit = sliceTerminalWriteBatch(surrogateInput, 4);
+  assert.equal(surrogateSplit.chunk, 'abc');
+  assert.equal(surrogateSplit.rest, '👍def');
+
+  const csiInput = `${'z'.repeat(12)}\x1b[38;2;255;120;0mtext`;
+  const csiSplit = sliceTerminalWriteBatch(csiInput, 18);
+  assert.equal(csiSplit.chunk, 'z'.repeat(12));
+  assert.equal(csiSplit.rest, '\x1b[38;2;255;120;0mtext');
+
+  const syncInput = `prefix-\x1b[?2026h${'a'.repeat(20)}\x1b[?2026l-suffix`;
+  const syncSplit = sliceTerminalWriteBatch(syncInput, 20);
+  assert.equal(syncSplit.chunk, `prefix-\x1b[?2026h${'a'.repeat(20)}\x1b[?2026l`);
+  assert.equal(syncSplit.rest, '-suffix');
+
+  const dom = setupDom();
+  try {
+    const container = dom.document.createElement('div');
+    const screen = dom.document.createElement('div');
+    screen.className = 'xterm-screen';
+    Object.defineProperty(screen, 'clientWidth', { value: 800, configurable: true });
+    Object.defineProperty(screen, 'clientHeight', { value: 480, configurable: true });
+    const textarea = dom.document.createElement('textarea');
+    textarea.className = 'xterm-helper-textarea';
+    const composition = dom.document.createElement('div');
+    composition.className = 'composition-view active';
+    composition.getBoundingClientRect = () => ({ width: 120, height: 18, top: 0, left: 0, right: 120, bottom: 18 });
+    screen.append(textarea, composition);
+    container.append(screen);
+    dom.document.body.append(container);
+
+    // Sync holds compositionAnchor only while actively composing if TUI hides cursor and jumps to (0,0).
+    syncHelperTextareaGeometry({
+      container,
+      cursor: { x: 0, y: 0 },
+      cols: 80,
+      rows: 24,
+      compositionAnchor: { x: 10, y: 5 },
+      isComposing: true,
+      cursorHidden: true,
+    });
+    assert.equal(textarea.style.left, '100px');
+    assert.equal(textarea.style.top, '100px');
+    assert.equal(composition.style.left, '100px');
+    assert.equal(composition.style.top, '100px');
+
+    // Right-edge composition clamps within screenWidth instead of clipping out of viewport.
+    syncHelperTextareaGeometry({
+      container,
+      cursor: { x: 75, y: 23 },
+      cols: 80,
+      rows: 24,
+      cursorHidden: false,
+    });
+    assert.equal(composition.style.left, '680px');
+    assert.equal(textarea.style.left, '680px');
+    assert.equal(textarea.style.top, '460px');
+
+    // When onOpenContextMenu is provided, right-click always prevents native menu & opens custom card.
+    const menuEvents = [];
+    const cleanup = attachTerminalClipboard({
+      terminal: {
+        hasSelection: () => false,
+        getSelection: () => '',
+        clearSelection: () => {},
+        focus: () => {},
+        attachCustomKeyEventHandler: () => {},
+      },
+      container,
+      sendInterrupt: () => {},
+      onOpenContextMenu: (ev) => menuEvents.push({ x: ev.clientX, y: ev.clientY }),
+    });
+
+    let ctxPrevented = false;
+    let ctxStopped = false;
+    container.dispatchEvent(Object.assign(new dom.window.Event('contextmenu', { bubbles: true, cancelable: true }), {
+      clientX: 240,
+      clientY: 180,
+      preventDefault() { ctxPrevented = true; },
+      stopPropagation() { ctxStopped = true; },
+    }));
+    assert.equal(ctxPrevented, true);
+    assert.equal(ctxStopped, true);
+    assert.deepEqual(menuEvents, [{ x: 240, y: 180 }]);
+
+    let mousedownStopped = false;
+    container.dispatchEvent(Object.assign(new dom.window.Event('mousedown', { bubbles: true, cancelable: true }), {
+      button: 2,
+      stopPropagation() { mousedownStopped = true; },
+    }));
+    assert.equal(mousedownStopped, true);
+
+    cleanup();
+  } finally {
     dom.restore();
   }
 });

@@ -1,4 +1,13 @@
-import type { WorkGitCommit, WorkGitCommitNode, WorkGitDiff, WorkGitDiffRequest, WorkGitStatus } from '@contract/work-git';
+import type {
+  WorkGitCheckoutRequest,
+  WorkGitCommit,
+  WorkGitCommitFile,
+  WorkGitCommitNode,
+  WorkGitDiff,
+  WorkGitDiffRequest,
+  WorkGitPathsRequest,
+  WorkGitStatus,
+} from '@contract/work-git';
 import {
   CLI_SESSIONS_DEFAULT_FETCH_LIMIT,
   type WorkProjectCliSessionsResponse,
@@ -189,8 +198,12 @@ export function browseHostDirectory(
   hostId: string,
   path?: string,
   signal?: AbortSignal,
+  options?: { refresh?: boolean },
 ): Promise<HostDirectoryListing> {
-  const query = path ? `?path=${encodeURIComponent(path)}` : '';
+  const params: string[] = [];
+  if (path) params.push(`path=${encodeURIComponent(path)}`);
+  if (options?.refresh) params.push('refresh=1');
+  const query = params.length > 0 ? `?${params.join('&')}` : '';
   return request<HostDirectoryListing>(`/api/hosts/${encodeURIComponent(hostId)}/fs${query}`, { signal });
 }
 
@@ -411,6 +424,38 @@ export function fetchWorkGit(request: ApiRequest, projectId: string): Promise<Wo
   return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/fetch`, { method: 'POST' });
 }
 
+export function pullWorkGit(request: ApiRequest, projectId: string): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/pull`, { method: 'POST' });
+}
+
+export function pushWorkGit(request: ApiRequest, projectId: string): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/push`, { method: 'POST' });
+}
+
+export function stageWorkGit(request: ApiRequest, projectId: string, input: WorkGitPathsRequest): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/stage`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export function unstageWorkGit(request: ApiRequest, projectId: string, input: WorkGitPathsRequest): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/unstage`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export function discardWorkGit(request: ApiRequest, projectId: string, input: WorkGitPathsRequest): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/discard`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export function checkoutWorkGit(request: ApiRequest, projectId: string, input: WorkGitCheckoutRequest): Promise<WorkGitStatus> {
+  return request<WorkGitStatus>(`/api/projects/${encodeURIComponent(projectId)}/git/checkout`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
 export function readWorkGitDiff(
   request: ApiRequest,
   projectId: string,
@@ -425,6 +470,11 @@ export function readWorkGitGraph(request: ApiRequest, projectId: string, signal?
   return request<WorkGitCommitNode[]>(`/api/projects/${encodeURIComponent(projectId)}/git/graph`, { signal });
 }
 
-export function readWorkGitCommitDiff(request: ApiRequest, projectId: string, oid: string, signal?: AbortSignal): Promise<WorkGitDiff> {
-  return request<WorkGitDiff>(`/api/projects/${encodeURIComponent(projectId)}/git/commits/${encodeURIComponent(oid)}/diff`, { signal });
+export function readWorkGitCommitFiles(request: ApiRequest, projectId: string, oid: string, signal?: AbortSignal): Promise<WorkGitCommitFile[]> {
+  return request<WorkGitCommitFile[]>(`/api/projects/${encodeURIComponent(projectId)}/git/commits/${encodeURIComponent(oid)}/files`, { signal });
+}
+
+export function readWorkGitCommitDiff(request: ApiRequest, projectId: string, oid: string, path?: string, signal?: AbortSignal): Promise<WorkGitDiff> {
+  const query = path ? `?${new URLSearchParams({ path })}` : '';
+  return request<WorkGitDiff>(`/api/projects/${encodeURIComponent(projectId)}/git/commits/${encodeURIComponent(oid)}/diff${query}`, { signal });
 }

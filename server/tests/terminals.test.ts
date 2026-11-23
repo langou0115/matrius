@@ -378,6 +378,7 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
         persistTerminalScrollback: true,
         editorFontSize: 19,
         editorAutoSave: true,
+        editorDiffLayout: 'split',
         projectOrder: [sshProject.id, localProject.id],
         cliProviderOrder: ['claude', 'codex', 'antigravity'],
         terminalOrder: [wslId, localId, sshId],
@@ -436,6 +437,7 @@ test('persists terminal scrollback/cwd/meta and work_settings to SQLite across s
       persistTerminalScrollback: true,
       editorFontSize: 19,
       editorAutoSave: true,
+      editorDiffLayout: 'split',
       projectOrder: [sshProject.id, localProject.id],
       cliProviderOrder: ['claude', 'codex', 'antigravity'],
       terminalOrder: [wslId, localId, sshId],
@@ -607,7 +609,7 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
     assert.equal(spawned[1].env?.HTTP_PROXY, 'http://127.0.0.1:7890');
     assert.equal(spawned[1].env?.HTTPS_PROXY, 'http://127.0.0.1:7890');
     assert.equal(spawned[1].env?.ALL_PROXY, 'http://127.0.0.1:7890');
-    assert.ok(spawned[1].args.some((arg) => arg.includes('codex --dangerously-bypass-approvals-and-sandbox')));
+    assert.ok(spawned[1].args.some((arg) => arg.includes('codex --no-alt-screen --dangerously-bypass-approvals-and-sandbox')));
 
     // Re-creating a non-resumed CLI session for the same project+group returns the existing session (no duplicate spawn).
     const dupCodexRes = await app.inject({
@@ -639,7 +641,7 @@ test('mergeWindowsPathEntries expands %VAR% registry paths and terminals receive
       },
     });
     assert.equal(codexResumeRes.statusCode, 201);
-    assert.ok(spawned[3].args.some((arg) => arg.includes('codex resume --dangerously-bypass-approvals-and-sandbox codex-sess-42')));
+    assert.ok(spawned[3].args.some((arg) => arg.includes('codex resume --no-alt-screen --dangerously-bypass-approvals-and-sandbox codex-sess-42')));
 
     const sshRes = await app.inject({
       method: 'POST',
@@ -796,9 +798,10 @@ test('binds cliSessionId and title via PATCH /api/work/terminals/:terminalId and
   const db1 = openDatabase(dbPath, { busyTimeoutMs: 1000 });
   migrate(db1);
   const project = serializeWorkProject(createWorkProjectRow(db1, 1, { hostId: 'local', directory: workDir }));
+  const codexPty = createFakePty();
   const service1 = createWorkTerminalService({
     db: db1,
-    ptySpawn: () => createFakePty(),
+    ptySpawn: (_file, args) => args.some((arg) => arg.includes('codex')) ? codexPty : createFakePty(),
     currentPlatform: 'win32',
     env: { ...process.env, PATH: `${binDir};${process.env.PATH ?? ''}`, ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
   });
@@ -828,6 +831,12 @@ test('binds cliSessionId and title via PATCH /api/work/terminals/:terminalId and
     assert.equal(patched.cliSessionId, 'codex-thread-99');
     assert.equal(patched.title, '修复新对话标题');
     assert.equal(patched.command, 'codex resume codex-thread-99');
+    await first.app.inject({
+      method: 'PUT',
+      url: '/api/work/settings',
+      payload: { persistTerminalScrollback: true },
+    });
+    codexPty.emitData('\x1b[?1049hprevious fullscreen output');
 
     const createShell = await first.app.inject({
       method: 'POST',
@@ -863,11 +872,112 @@ test('binds cliSessionId and title via PATCH /api/work/terminals/:terminalId and
     assert.equal(reloaded.cliSessionId, 'codex-thread-99');
     assert.equal(reloaded.title, '修复新对话标题');
     assert.equal(reloaded.command, 'codex resume codex-thread-99');
+    await service2.resume(codexTermId);
+    const attached = service2.attach(codexTermId, () => {});
+    try {
+      assert.ok(attached.snapshot.includes('\x1b[?1049hprevious fullscreen output\x1b[?1049l'));
+    } finally {
+      attached.detach();
+    }
   } finally {
     await second.app.close();
     db2.close();
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(workDir, { recursive: true, force: true });
     rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+test('terminal service coalesces burst PTY output, flushes before exit/attach, and deduplicates identical resizes', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'matrius-term-coalesce-data-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'matrius-term-coalesce-work-'));
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+  const project = serializeWorkProject(createWorkProjectRow(db, 1, { hostId: 'local', directory: workDir }));
+
+  const spawnedPtys: Array<ReturnType<typeof createFakePty>> = [];
+  const service = createWorkTerminalService({
+    db,
+    ptySpawn: () => {
+      const pty = createFakePty();
+      spawnedPtys.push(pty);
+      return pty;
+    },
+    currentPlatform: 'win32',
+    env: { ...process.env, ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+  });
+
+  try {
+    const created = await service.create({
+      projectId: project.id,
+      preset: 'shell',
+      shell: 'cmd',
+      cols: 90,
+      rows: 30,
+    });
+    const fakePty = spawnedPtys[0];
+    assert.ok(fakePty);
+
+    // Same dimensions should not issue redundant pty.resize calls.
+    service.resize(created.id, 90, 30);
+    assert.deepEqual(fakePty.resizes, []);
+    service.resize(created.id, 110, 36);
+    assert.deepEqual(fakePty.resizes, [[110, 36]]);
+    service.resize(created.id, 110, 36);
+    assert.deepEqual(fakePty.resizes, [[110, 36]]);
+
+    const received: Array<{ type: string; data?: string; status?: string }> = [];
+    const attachment = service.attach(created.id, (msg) => {
+      received.push(msg);
+    });
+
+    // Leading chunk delivers immediately; burst follow-ups coalesce into one batch.
+    fakePty.emitData('first-');
+    fakePty.emitData('second-');
+    fakePty.emitData('third');
+    assert.deepEqual(received, [{ type: 'output', data: 'first-' }]);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(received, [
+      { type: 'output', data: 'first-' },
+      { type: 'output', data: 'second-third' },
+    ]);
+
+    // Screen clear / mode switches coalesce with following repaint lines instead of flashing blank.
+    const countBeforeClear = received.length;
+    fakePty.emitData('\x1b[2J\x1b[H');
+    fakePty.emitData('repainted-screen');
+    assert.equal(received.length, countBeforeClear);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(received.slice(countBeforeClear), [{ type: 'output', data: '\x1b[2J\x1b[Hrepainted-screen' }]);
+
+    // Attaching a second listener flushes pending buffered bytes beforehand so neither
+    // snapshot nor live listener misses or duplicates chunks.
+    fakePty.emitData('chunk-a-');
+    fakePty.emitData('chunk-b');
+    const received2: Array<{ type: string; data?: string }> = [];
+    const attachment2 = service.attach(created.id, (msg) => {
+      received2.push(msg);
+    });
+    assert.equal(attachment2.snapshot.endsWith('chunk-a-chunk-b'), true);
+    assert.deepEqual(received2, []);
+
+    // Exit flushes remaining buffered bytes synchronously before emitting exited status.
+    fakePty.emitData('tail-1-');
+    fakePty.emitData('tail-2');
+    fakePty.emitExit(0);
+    const tailMsgs = received.slice(-2) as Array<{ type: string; data?: string; status?: string }>;
+    assert.deepEqual(tailMsgs[0], { type: 'output', data: 'tail-2' });
+    assert.equal(tailMsgs[1].type, 'status');
+    assert.equal(tailMsgs[1].status, 'exited');
+
+    attachment.detach();
+    attachment2.detach();
+  } finally {
+    service.disposeAll();
+    db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true });
   }
 });

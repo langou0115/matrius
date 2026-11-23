@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-import { MAX_WORK_EDITOR_FONT_SIZE, MIN_WORK_EDITOR_FONT_SIZE } from '../../contract/work-projects';
+import { MAX_WORK_EDITOR_FONT_SIZE, MIN_WORK_EDITOR_FONT_SIZE, WORK_EDITOR_DIFF_LAYOUTS } from '../../contract/work-projects';
 import type { WorkTerminalClientMessage } from '../../contract/work-terminals';
 import type { AppDatabase } from '../db/client';
 import { getWorkSettingsRow, updateWorkSettingsRow } from '../db/repositories/terminals';
@@ -55,6 +55,7 @@ const workSettingsUpdateSchema = z.object({
   persistTerminalScrollback: z.boolean().optional(),
   editorFontSize: z.number().int().min(MIN_WORK_EDITOR_FONT_SIZE).max(MAX_WORK_EDITOR_FONT_SIZE).optional(),
   editorAutoSave: z.boolean().optional(),
+  editorDiffLayout: z.enum(WORK_EDITOR_DIFF_LAYOUTS).optional(),
   projectOrder: z.array(z.string().min(1).max(120)).max(500).optional(),
   cliProviderOrder: z.array(z.enum(['codex', 'antigravity', 'claude'])).max(10).optional(),
   terminalOrder: z.array(z.string().min(1).max(120)).max(500).optional(),

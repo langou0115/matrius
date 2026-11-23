@@ -10,6 +10,13 @@ import {
 } from './work-cli';
 import { defaultTerminalCommand, type WorkTerminalPreset } from './work-terminals';
 
+export const WORK_EDITOR_DIFF_LAYOUTS = ['inline', 'split'] as const;
+export type WorkEditorDiffLayout = (typeof WORK_EDITOR_DIFF_LAYOUTS)[number];
+
+export function normalizeWorkEditorDiffLayout(value: unknown): WorkEditorDiffLayout {
+  return value === 'split' ? 'split' : 'inline';
+}
+
 export const DEFAULT_WORK_EDITOR_FONT_SIZE = 14;
 export const MIN_WORK_EDITOR_FONT_SIZE = 10;
 export const MAX_WORK_EDITOR_FONT_SIZE = 32;
@@ -264,17 +271,21 @@ export function resolveWorkTerminalCommand(
   const trimmedBase = baseCommand.trim();
   // Regular shell terminals never inherit CLI launch arguments.
   if (preset === 'shell') return trimmedBase;
-  const extraArgs = project.cliArgs?.[preset]?.trim();
-  if (!extraArgs) return trimmedBase;
+  const extraArgs = project.cliArgs?.[preset]?.trim() ?? '';
   const effectiveBase = trimmedBase || defaultTerminalCommand(preset);
   if (!effectiveBase) return extraArgs;
   if (preset === 'codex') {
     const resumeMatch = /^(codex\s+resume)\s+(.+)$/u.exec(effectiveBase);
-    if (resumeMatch) {
-      return `${resumeMatch[1]} ${extraArgs} ${resumeMatch[2]}`;
+    if (effectiveBase === 'codex' || resumeMatch) {
+      const inlineFlag = /(?:^|\s)--no-alt-screen(?:\s|$)/u.test(`${extraArgs} ${resumeMatch?.[2] ?? ''}`)
+        ? ''
+        : '--no-alt-screen';
+      return [resumeMatch?.[1] ?? effectiveBase, inlineFlag, extraArgs, resumeMatch?.[2]]
+        .filter(Boolean)
+        .join(' ');
     }
   }
-  return `${effectiveBase} ${extraArgs}`;
+  return extraArgs ? `${effectiveBase} ${extraArgs}` : trimmedBase;
 }
 
 export function validateWorkProjectInput(raw: WorkProjectInput): NormalizedWorkProjectInput {

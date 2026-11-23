@@ -36,17 +36,25 @@ export function visibleSettings(
   preview = false,
   connected = false,
   desktop = isDesktopTarget(),
+  workMode = false,
 ) {
-  return settingsItems.filter((item) => {
+  const visible = settingsItems.filter((item) => {
     if (item.desktopOnly && !desktop) return false;
     if (preview && (item.id === 'storage' || item.id === 'usage')) return false;
     return !item.feature || (connected && features.includes(item.feature));
   });
+  if (!desktop || !workMode) return visible;
+  return visible.map((item) => ({
+    ...item,
+    group: item.group === '工作' || item.group === '应用' ? item.group
+      : item.id === 'appearance' ? '通用'
+        : '对话',
+  }));
 }
 
-export function searchSettings(query: string) {
+export function searchSettings(query: string, items = settingsItems) {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return settingsItems.filter((item) => {
+  return items.filter((item) => {
     const text = `${item.title} ${item.description} ${item.group} ${item.keywords}`.toLocaleLowerCase();
     return terms.every((term) => text.includes(term));
   });

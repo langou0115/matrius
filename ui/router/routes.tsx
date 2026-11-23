@@ -13,6 +13,7 @@ import SettingsRootRedirect from '@/features/settings/settings-root-redirect';
  * carries the shell and the conversation view. Paths mirror the address bar exactly;
  * `/debug` and `/mock/*` exist only during development.
  */
+const WorkRoute = lazy(() => import('@/features/work/work-route'));
 const LibraryScreen = lazy(() => import('@/features/files/library-screen'));
 const TasksScreen = lazy(() => import('@/features/tasks/tasks-screen'));
 const StorageScreen = lazy(() => import('@/features/files/storage-screen'));
@@ -38,9 +39,9 @@ function DevOnly({ children }: { children: ReactNode }) {
 }
 
 /** Desktop-only routes stay inaccessible on Web builds and mobile viewports. */
-function DesktopOnly({ children }: { children: ReactNode }) {
+function DesktopOnly({ children, fallback = '/settings' }: { children: ReactNode; fallback?: string }) {
   const mobile = useMobile();
-  return isDesktopTarget() && !mobile ? <>{children}</> : <Navigate to="/settings" replace />;
+  return isDesktopTarget() && !mobile ? <>{children}</> : <Navigate to={fallback} replace />;
 }
 
 export function AppRoutes() {
@@ -49,6 +50,9 @@ export function AppRoutes() {
       <Route element={<AppShell />}>
         <Route index element={<ChatRoute />} />
         <Route path="c/:conversationId" element={<ChatRoute />} />
+        <Route path="work" element={<DesktopOnly fallback="/"><WorkRoute /></DesktopOnly>} />
+        <Route path="p" element={<DesktopOnly fallback="/"><Navigate to="/work" replace /></DesktopOnly>} />
+        <Route path="p/:projectId" element={<DesktopOnly fallback="/"><WorkRoute /></DesktopOnly>} />
         <Route path="library" element={<LibraryScreen />} />
         <Route path="tasks" element={<TasksScreen />} />
 
@@ -70,6 +74,9 @@ export function AppRoutes() {
         <Route path="debug/mock/intelligent-ui" element={<DevOnly><IntelligentUiPreview /></DevOnly>} />
         <Route path="mock/chat" element={<DevOnly><ChatRoute /></DevOnly>} />
         <Route path="mock/chat/c/:conversationId" element={<DevOnly><ChatRoute /></DevOnly>} />
+        <Route path="mock/chat/work" element={<DevOnly><DesktopOnly fallback="/mock/chat"><WorkRoute /></DesktopOnly></DevOnly>} />
+        <Route path="mock/chat/p" element={<DevOnly><DesktopOnly fallback="/mock/chat"><Navigate to="/mock/chat/work" replace /></DesktopOnly></DevOnly>} />
+        <Route path="mock/chat/p/:projectId" element={<DevOnly><DesktopOnly fallback="/mock/chat"><WorkRoute /></DesktopOnly></DevOnly>} />
         <Route path="mock/chat/settings" element={<DevOnly><SettingsRootRedirect /></DevOnly>} />
         <Route path="mock/chat/settings/appearance" element={<DevOnly><AppearanceScreen /></DevOnly>} />
         <Route path="mock/chat/settings/theme" element={<DevOnly><AppearanceRedirect /></DevOnly>} />

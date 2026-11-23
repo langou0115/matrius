@@ -20,15 +20,18 @@ import {
 } from '@contract/work-terminals';
 import { ChevronRight, FolderPlus, Plus, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { router, usePathname } from '@/router';
 
 import { Dialog } from '@/components/web/dialog';
 import { Icon } from '@/components/web/icon';
 import { SidebarMenu } from '@/components/web/sidebar-menu';
+import { SidebarScrollingLabel } from '@/components/web/sidebar-scrolling-label';
 import { listWorkHosts } from '@/features/hosts/hosts-api';
 import { useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { CreateProjectDialog } from './create-project-dialog';
 import { TerminalPresetIcon } from './terminal-preset-icon';
+import { workHref, workProjectIdIn } from './work-href';
 import {
   createPreviewCliSessions,
   createPreviewWorkHosts,
@@ -133,6 +136,7 @@ function createPreviewNewCliTerminal(project: WorkProject, provider: WorkCliProv
 export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean }) {
   const instance = useInstance();
   const preview = useIsPreview();
+  const pathname = usePathname();
   const {
     activeProjectId,
     activeTerminalId,
@@ -419,6 +423,15 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     ? terminals.find((item) => item.id === activeTerminalId) ?? null
     : null;
 
+  const activateProject = useCallback((projectId: string, mode: 'push' | 'replace' = 'push') => {
+    writeActiveProjectId(projectId);
+    if (workProjectIdIn(pathname, preview) !== projectId) {
+      const targetHref = workHref(projectId, preview);
+      if (mode === 'replace') router.replace(targetHref);
+      else router.push(targetHref);
+    }
+  }, [pathname, preview]);
+
   async function handleOpenCliSession(project: WorkProject, session: WorkCliSession) {
     const key = workCliSessionKey(project.id, session.provider, session.id);
     if (openingCliKey === key) return;
@@ -436,10 +449,13 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
     ));
     if (existing) {
       selectWorkTerminal(existing.id);
+      if (workProjectIdIn(pathname, preview) !== project.id) {
+        router.push(workHref(project.id, preview));
+      }
       return;
     }
 
-    writeActiveProjectId(project.id);
+    activateProject(project.id);
     if (preview) {
       addWorkTerminal(createPreviewResumedTerminal(project, session));
       return;
@@ -476,12 +492,12 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       && !item.cliSessionId
     ));
     if (existing) {
-      writeActiveProjectId(project.id);
+      activateProject(project.id);
       selectWorkTerminal(existing.id);
       return;
     }
 
-    writeActiveProjectId(project.id);
+    activateProject(project.id);
     if (preview) {
       addWorkTerminal(createPreviewNewCliTerminal(project, provider));
       bumpCliSessionsRefresh();
@@ -521,10 +537,14 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
   async function confirmRemove() {
     if (!deleting || busyId) return;
     const target = deleting;
+    const shouldReplaceRoute = activeProjectId === target.id || workProjectIdIn(pathname, preview) === target.id;
     setWorkProjectsError(null);
     if (preview) {
       removeWorkProject(target.id);
       setDeleting(null);
+      if (shouldReplaceRoute) {
+        router.replace(workHref(getWorkState().activeProjectId, preview));
+      }
       return;
     }
     setBusyId(target.id);
@@ -532,6 +552,9 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
       await deleteWorkProject(instance.request, target.id, target.revision);
       removeWorkProject(target.id);
       setDeleting(null);
+      if (shouldReplaceRoute) {
+        router.replace(workHref(getWorkState().activeProjectId, preview));
+      }
     } catch (reason) {
       setWorkProjectsError(reason instanceof Error && reason.message ? reason.message : '移除项目失败。');
     } finally {
@@ -707,7 +730,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                             className="work-project-select"
                             aria-current={isActive ? 'true' : undefined}
                             title={`${hostLabel} · ${project.directory}`}
-                            onClick={() => writeActiveProjectId(project.id)}
+                            onClick={() => activateProject(project.id)}
                             onKeyDown={(event) => {
                               if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                                 event.preventDefault();
@@ -716,7 +739,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                               }
                             }}
                           >
-                            <span className="work-project-name">{project.name}</span>
+                            <SidebarScrollingLabel className="work-project-name" title={project.name} />
                             {project.hostId !== LOCAL_WORK_HOST_ID && (
                               <span className="work-project-host">{hostLabel}</span>
                             )}
@@ -879,7 +902,7 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
                                             data-cli-terminal-id={draftTerminal.id}
                                             title={draftTerminal.title || NEW_CLI_SESSION_TITLE}
                                             onClick={() => {
-                                              writeActiveProjectId(project.id);
+                                              activateProject(project.id);
                                               selectWorkTerminal(draftTerminal.id);
                                             }}
                                           >
@@ -1013,7 +1036,14 @@ export function WorkSidebarPanel({ collapsed = false }: { collapsed?: boolean })
           project={dialogProject === 'create' ? null : dialogProject}
           initialHosts={hosts}
           onHostsSync={syncHosts}
-          onSaved={(saved) => upsertWorkProject(saved)}
+          onSaved={(saved) => {
+            const existed = projects.some((item) => item.id === saved.id);
+            upsertWorkProject(saved);
+            if (!existed && workProjectIdIn(pathname, preview) !== saved.id) {
+              const currentUrlProject = workProjectIdIn(pathname, preview);
+              activateProject(saved.id, currentUrlProject ? 'push' : 'replace');
+            }
+          }}
           onClose={() => setDialogProject(null)}
         />
       )}

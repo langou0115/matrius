@@ -35,6 +35,10 @@ const fsQuerySchema = z.object({
   path: z.string().max(1000).optional(),
 });
 
+const fsBrowseQuerySchema = fsQuerySchema.extend({
+  refresh: z.enum(['0', '1', 'true', 'false']).optional(),
+});
+
 const unlockHostSchema = z.object({
   secret: z.string().min(1).max(10_000),
   persist: z.boolean().optional(),
@@ -94,8 +98,9 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
 
   app.get<{ Params: { hostId: string } }>('/api/hosts/:hostId/fs', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    const query = fsQuerySchema.parse(request.query ?? {});
-    return hostFs.listEntries(request.params.hostId, query.path);
+    const query = fsBrowseQuerySchema.parse(request.query ?? {});
+    const refresh = query.refresh === '1' || query.refresh === 'true';
+    return hostFs.listEntries(request.params.hostId, query.path, { refresh });
   });
 
   app.get<{ Params: { hostId: string } }>('/api/hosts/:hostId/fs/preview', async (request, reply) => {

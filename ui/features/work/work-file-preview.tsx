@@ -1,80 +1,23 @@
 import { LOCAL_WORK_HOST_ID, type HostFilePreview, type WorkHostEntry } from '@contract/work-projects';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { BundledLanguage } from 'shiki';
 
 import { useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { readHostFilePreview } from './work-api';
 import { getWorkState, isFileDraftDirty, setWorkFileDraft, type WorkFileDraft } from './work-state';
-
-const filenameLanguages: Record<string, BundledLanguage> = {
-  dockerfile: 'dockerfile',
-  makefile: 'make',
-  '.env': 'dotenv',
-};
-
-const extensionLanguages: Record<string, BundledLanguage> = {
-  h: 'c',
-  hpp: 'cpp',
-  mjs: 'javascript',
-  cjs: 'javascript',
-  mts: 'typescript',
-  cts: 'typescript',
-  ps1: 'powershell',
-  sh: 'shellscript',
-  svg: 'xml',
-};
+import {
+  MAX_HIGHLIGHT_LINES,
+  highlightCodeLines,
+  paintTokens,
+  type HighlightToken,
+  type HighlightedFile,
+} from './work-syntax';
 
 const exampleText: Record<string, string> = {
   'main.tsx': 'export function App() {\n  return <main>Matrius</main>;\n}\n',
   'package.json': '{\n  "name": "matrius",\n  "private": true\n}\n',
   'README.md': '# Matrius\n\nReact and TypeScript workspace.\n',
 };
-
-const MAX_HIGHLIGHT_LINES = 10_000;
-
-type HighlightToken = {
-  content: string;
-  light?: string;
-  dark?: string;
-};
-
-type HighlightedFile = {
-  lines: string[];
-  tokens: HighlightToken[][];
-  painted: ReactNode[];
-};
-
-async function highlight(lines: string[], filename: string): Promise<HighlightedFile | null> {
-  if (lines.length > MAX_HIGHLIGHT_LINES) return null;
-  const { bundledLanguages, codeToTokensWithThemes } = await import('shiki');
-  const name = filename.toLowerCase();
-  const extension = name.includes('.') ? name.split('.').at(-1) ?? '' : '';
-  const lang = (Object.hasOwn(filenameLanguages, name) ? filenameLanguages[name] : undefined)
-    ?? (Object.hasOwn(extensionLanguages, extension) ? extensionLanguages[extension] : undefined)
-    ?? (Object.hasOwn(bundledLanguages, extension) ? extension as BundledLanguage : undefined);
-  if (!lang) return null;
-
-  const tokens = await codeToTokensWithThemes(lines.join('\n'), {
-    lang,
-    tokenizeMaxLineLength: 10_000,
-    themes: { light: 'one-light', dark: 'one-dark-pro' },
-  });
-  const lineTokens = lines.map((line, index) => {
-    const segments = tokens[index];
-    if (!segments || segments.map((token) => token.content).join('') !== line) return [];
-    return segments.map((token) => ({
-      content: token.content,
-      light: token.variants.light.color,
-      dark: token.variants.dark.color,
-    }));
-  });
-  return {
-    lines,
-    tokens: lineTokens,
-    painted: lineTokens.map((segments, index) => segments.length ? paintTokens(segments) : lines[index]),
-  };
-}
 
 function retainLineColors(line: string, previous: string, tokens: HighlightToken[]): HighlightToken[] {
   let prefix = 0;
@@ -101,21 +44,6 @@ function retainLineColors(line: string, previous: string, tokens: HighlightToken
     if (insertHere) assignedInsertion = true;
     return { ...token, content: before + (insertHere ? inserted : '') + after };
   });
-}
-
-function paintTokens(tokens: HighlightToken[]): ReactNode {
-  return tokens.map((token, index) => token.content && (
-    <span
-      key={index}
-      className="work-preview-token"
-      style={{
-        '--preview-light': token.light,
-        '--preview-dark': token.dark,
-      } as CSSProperties}
-    >
-      {token.content}
-    </span>
-  ));
 }
 
 function paintLines(text: string, lines: string[], highlighted: HighlightedFile | null): ReactNode {
@@ -199,7 +127,7 @@ export function WorkFilePreview({
     if (!text) return;
     let current = true;
     const timer = window.setTimeout(() => {
-      void highlight(lines, file.name).catch(() => null).then((content) => {
+      void highlightCodeLines(lines, file.name).catch(() => null).then((content) => {
         if (current) setHighlighted(content);
       });
     }, editing ? 100 : 0);

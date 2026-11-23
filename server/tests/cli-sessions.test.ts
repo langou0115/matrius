@@ -394,3 +394,166 @@ test('extracts Claude ai-title and Codex rollout user_message / session_index fa
     rmSync(homeDir, { recursive: true, force: true });
   }
 });
+
+test('cli-sessions accurately classifies interrupted, large-tail, stale-inProgress, and finished Antigravity sessions', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'matrius-cli-accuracy-data-'));
+  const homeDir = mkdtempSync(join(tmpdir(), 'matrius-cli-accuracy-home-'));
+  const projectDir = join(homeDir, 'workspace', 'accuracy-demo');
+  mkdirSync(projectDir, { recursive: true });
+
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+  const project = serializeWorkProject(createWorkProjectRow(db, 1, {
+    hostId: 'local',
+    directory: projectDir,
+  }));
+  const nowMs = 1_800_000_000_000;
+
+  const claudeSlugDir = join(homeDir, '.claude', 'projects', claudeProjectSlug(projectDir));
+  mkdirSync(claudeSlugDir, { recursive: true });
+  mkdirSync(join(homeDir, '.claude', 'sessions'), { recursive: true });
+
+  // Live PIDs for interrupted & waiting sessions.
+  writeFileSync(
+    join(homeDir, '.claude', 'sessions', '10101.json'),
+    JSON.stringify({ pid: 10101, sessionId: 'claude-interrupted-1', status: 'busy', cwd: projectDir }),
+  );
+  writeFileSync(
+    join(homeDir, '.claude', 'sessions', '10102.json'),
+    JSON.stringify({ pid: 10102, sessionId: 'claude-empty-prompt-1', status: 'idle', cwd: projectDir }),
+  );
+
+  // 1. User interrupted turn even though PID stays alive -> idle (not stuck running).
+  writeFileSync(
+    join(claudeSlugDir, 'claude-interrupted-1.jsonl'),
+    [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: '执行重构' }, timestamp: new Date(nowMs - 4_000).toISOString() }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] }, timestamp: new Date(nowMs - 1_000).toISOString() }),
+    ].join('\n') + '\n',
+  );
+
+  // 2. Live idle zero-turn prompt -> idle (not spinning).
+  writeFileSync(
+    join(claudeSlugDir, 'claude-empty-prompt-1.jsonl'),
+    JSON.stringify({ type: 'file-history-snapshot', messageId: 'snap-1' }) + '\n',
+  );
+
+  // 3. Large >40KB single JSONL record after turn_duration / trailing last-prompt & stop_hook_summary -> adaptive tail finds completed.
+  writeFileSync(
+    join(claudeSlugDir, 'claude-large-tail-1.jsonl'),
+    [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: '读取超大日志并完成' }, timestamp: new Date(nowMs - 20_000).toISOString() }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'x'.repeat(42_000) }] }, timestamp: new Date(nowMs - 10_000).toISOString() }),
+      JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 2500, timestamp: new Date(nowMs - 10_000).toISOString() }),
+      JSON.stringify({ type: 'system', subtype: 'stop_hook_summary', hookCount: 1, timestamp: new Date(nowMs - 9_500).toISOString() }),
+      JSON.stringify({ type: 'last-prompt', lastPrompt: '读取超大日志并完成' }),
+    ].join('\n') + '\n',
+  );
+
+  // 4. Codex session with stale inProgress (> 3 min old) -> idle instead of stuck forever.
+  const codexDir = join(homeDir, '.codex');
+  const rolloutDir = join(codexDir, 'sessions', '2026', '11', '23');
+  mkdirSync(rolloutDir, { recursive: true });
+  const staleCodexRollout = join(rolloutDir, 'rollout-stale.jsonl');
+  writeFileSync(
+    staleCodexRollout,
+    [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'codex-stale-inprog', cwd: projectDir } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: '旧卡死任务' }, timestamp: new Date(nowMs - 400_000).toISOString() }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started' }, timestamp: new Date(nowMs - 390_000).toISOString() }),
+    ].join('\n') + '\n',
+  );
+  utimesSync(staleCodexRollout, new Date(nowMs - 390_000), new Date(nowMs - 390_000));
+
+  const largeCodexRollout = join(rolloutDir, 'rollout-large.jsonl');
+  writeFileSync(
+    largeCodexRollout,
+    [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'codex-large-done', cwd: projectDir } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: '超大输出已完成' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', content: 'd'.repeat(42_000) } }),
+    ].join('\n') + '\n',
+  );
+
+  const stateDb = new DatabaseSync(join(codexDir, 'state_5.sqlite'));
+  stateDb.exec(`
+    CREATE TABLE threads (
+      id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      source TEXT NOT NULL, model_provider TEXT NOT NULL, cwd TEXT NOT NULL, title TEXT NOT NULL,
+      sandbox_policy TEXT NOT NULL, approval_mode TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0,
+      first_user_message TEXT NOT NULL DEFAULT '', updated_at_ms INTEGER, preview TEXT NOT NULL DEFAULT '',
+      name TEXT, attached_thread_parent_id TEXT
+    );
+  `);
+  const insertThread = stateDb.prepare(
+    `INSERT INTO threads (id, rollout_path, created_at, updated_at, source, model_provider, cwd, title, sandbox_policy, approval_mode, archived, first_user_message, updated_at_ms, preview, name, attached_thread_parent_id)
+     VALUES (?, ?, ?, ?, 'cli', 'openai', ?, '', '{}', 'on-request', 0, '', ?, '', NULL, NULL)`,
+  );
+  insertThread.run('codex-stale-inprog', staleCodexRollout, 1799600, 1799600, projectDir, nowMs - 390_000);
+  insertThread.run('codex-large-done', largeCodexRollout, 1799990, 1799990, projectDir, nowMs - 10_000);
+  stateDb.close();
+
+  const histDb = new DatabaseSync(join(codexDir, 'thread_history_1.sqlite'));
+  histDb.exec('CREATE TABLE thread_turns (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, status TEXT NOT NULL, PRIMARY KEY (thread_id, turn_id))');
+  histDb.prepare('INSERT INTO thread_turns VALUES (?, ?, ?, ?)').run('codex-stale-inprog', 'turn-1', 10, 'inProgress');
+  histDb.close();
+
+  // 5. Antigravity summary says RUNNING, but conversation DB steps are already all completed >15s ago -> completed.
+  const agyDir = join(homeDir, '.gemini', 'antigravity-cli');
+  mkdirSync(join(agyDir, 'conversations'), { recursive: true });
+  const sumDb = new DatabaseSync(join(agyDir, 'conversation_summaries.db'));
+  sumDb.exec(`
+    CREATE TABLE conversation_summaries (
+      conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT "", preview TEXT NOT NULL DEFAULT "",
+      step_count INTEGER NOT NULL DEFAULT 0, last_modified_time TEXT NOT NULL, workspace_uris TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT "", parent_conversation_id TEXT NOT NULL DEFAULT "",
+      nesting_depth INTEGER NOT NULL DEFAULT 0, killed INTEGER NOT NULL DEFAULT 0,
+      last_user_input_time TEXT NOT NULL
+    );
+  `);
+  const uriPath = projectDir.replaceAll('\\', '/');
+  const workspaceUri = uriPath.startsWith('/') ? `file://${uriPath}` : `file:///${uriPath}`;
+  sumDb.prepare('INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('agy-finished-lag-1', '已结束但摘要滞后', '', 4, new Date(nowMs - 25_000).toISOString(), JSON.stringify([workspaceUri]), 'CASCADE_RUN_STATUS_RUNNING', '', 0, 0, new Date(nowMs - 30_000).toISOString());
+  sumDb.close();
+
+  const convDbPath = join(agyDir, 'conversations', 'agy-finished-lag-1.db');
+  const convDb = new DatabaseSync(convDbPath);
+  convDb.exec('CREATE TABLE steps (idx INTEGER PRIMARY KEY, status INTEGER NOT NULL)');
+  convDb.prepare('INSERT INTO steps VALUES (?, ?)').run(1, 3);
+  convDb.prepare('INSERT INTO steps VALUES (?, ?)').run(2, 3);
+  convDb.close();
+  utimesSync(convDbPath, new Date(nowMs - 25_000), new Date(nowMs - 25_000));
+
+  const cliSessions = createWorkCliSessionService({
+    db,
+    homeDir,
+    currentPlatform: process.platform,
+    now: () => nowMs,
+    isPidAlive: (pid) => pid === 10101 || pid === 10102,
+  });
+  const { app } = await buildApp({ settings, db, cliSessions });
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/cli-sessions?limit=20`,
+    });
+    assert.equal(res.statusCode, 200);
+    const byId = new Map(
+      res.json<{ items: Array<{ id: string; status: string }> }>().items.map((item) => [item.id, item]),
+    );
+    assert.equal(byId.get('claude-interrupted-1')?.status, 'idle');
+    assert.equal(byId.get('claude-empty-prompt-1')?.status, 'idle');
+    assert.equal(byId.get('claude-large-tail-1')?.status, 'completed');
+    assert.equal(byId.get('codex-stale-inprog')?.status, 'idle');
+    assert.equal(byId.get('codex-large-done')?.status, 'completed');
+    assert.equal(byId.get('agy-finished-lag-1')?.status, 'completed');
+  } finally {
+    await app.close();
+    db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});

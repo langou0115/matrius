@@ -16,7 +16,9 @@ import {
 import type { WorkHost } from '@contract/work-hosts';
 import {
   DEFAULT_WORK_EDITOR_FONT_SIZE,
+  normalizeWorkEditorDiffLayout,
   normalizeWorkEditorFontSize,
+  type WorkEditorDiffLayout,
   normalizeWorkProjectOrder,
   sortWorkProjectsByOrder,
   type HostFilePreview,
@@ -112,6 +114,7 @@ export type WorkStoreSnapshot = {
   persistTerminalScrollback: boolean;
   editorFontSize: number;
   editorAutoSave: boolean;
+  editorDiffLayout: WorkEditorDiffLayout;
   hostUnlockVersion: number;
 };
 
@@ -287,12 +290,14 @@ function createInitialState(): WorkStoreSnapshot {
     persistTerminalScrollback: false,
     editorFontSize: DEFAULT_WORK_EDITOR_FONT_SIZE,
     editorAutoSave: false,
+    editorDiffLayout: 'inline',
     hostUnlockVersion: 0,
   };
 }
 
 let state: WorkStoreSnapshot = createInitialState();
 let hasExplicitProjectChoice = Boolean(state.activeProjectId);
+let lastHydratedActiveProjectId: string | null = null;
 let hasExplicitFilesPanelOpen = false;
 let hasExplicitFilesPanelWidth = false;
 const listeners = new Set<() => void>();
@@ -359,6 +364,10 @@ export function writeActiveProjectId(projectId: string | null): void {
   }
 }
 
+export function selectWorkProjectFromRoute(projectId: string): void {
+  writeActiveProjectId(projectId);
+}
+
 export function useActiveProjectId(): string | null {
   return useWorkState().activeProjectId;
 }
@@ -368,7 +377,11 @@ export function setWorkProjects(projects: WorkProject[]): void {
   const activeStillExists = state.activeProjectId
     ? orderedProjects.some((item) => item.id === state.activeProjectId)
     : false;
-  const nextActive = activeStillExists ? state.activeProjectId : (orderedProjects[0]?.id ?? null);
+  const fallbackActive = lastHydratedActiveProjectId
+    && orderedProjects.some((item) => item.id === lastHydratedActiveProjectId)
+    ? lastHydratedActiveProjectId
+    : (orderedProjects[0]?.id ?? null);
+  const nextActive = activeStillExists ? state.activeProjectId : fallbackActive;
   if (nextActive !== state.activeProjectId) {
     try {
       if (nextActive) globalThis.sessionStorage?.setItem(ACTIVE_PROJECT_KEY, nextActive);
@@ -1044,11 +1057,12 @@ export function setPersistTerminalScrollback(enabled: boolean): void {
   emit({ ...state, persistTerminalScrollback: next });
 }
 
-export function setWorkEditorSettings(settings: { editorFontSize: number; editorAutoSave: boolean }): void {
+export function setWorkEditorSettings(settings: { editorFontSize: number; editorAutoSave: boolean; editorDiffLayout?: WorkEditorDiffLayout }): void {
   emit({
     ...state,
     editorFontSize: normalizeWorkEditorFontSize(settings.editorFontSize),
     editorAutoSave: settings.editorAutoSave,
+    editorDiffLayout: normalizeWorkEditorDiffLayout(settings.editorDiffLayout ?? state.editorDiffLayout),
   });
 }
 
@@ -1061,6 +1075,7 @@ export function hydrateWorkSettings(settings: {
   persistTerminalScrollback?: boolean;
   editorFontSize?: number;
   editorAutoSave?: boolean;
+  editorDiffLayout?: WorkEditorDiffLayout;
   projectOrder?: string[];
   cliProviderOrder?: WorkCliProvider[];
   terminalOrder?: string[];
@@ -1092,6 +1107,7 @@ export function hydrateWorkSettings(settings: {
 
   const orderedProjects = sortWorkProjectsByOrder(state.projects, nextProjectOrder);
   const orderedTerminals = sortWorkTerminalsByOrder(state.terminals, nextTerminalOrder);
+  lastHydratedActiveProjectId = settings.activeProjectId ?? null;
 
   // Only keep an existing activeProjectId if the user explicitly switched/selected one
   // in this session; otherwise restore the server-persisted activeProjectId from SQLite.
@@ -1140,6 +1156,7 @@ export function hydrateWorkSettings(settings: {
     persistTerminalScrollback: Boolean(settings.persistTerminalScrollback),
     editorFontSize: normalizeWorkEditorFontSize(settings.editorFontSize ?? state.editorFontSize),
     editorAutoSave: settings.editorAutoSave ?? state.editorAutoSave,
+    editorDiffLayout: normalizeWorkEditorDiffLayout(settings.editorDiffLayout ?? state.editorDiffLayout),
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId,
     activeTerminalByProject: mergedTerminals,
@@ -1441,6 +1458,7 @@ export function markWorkCliSessionRead(
 
 export function resetWorkStateForTests(): void {
   hasExplicitProjectChoice = false;
+  lastHydratedActiveProjectId = null;
   hasExplicitFilesPanelOpen = false;
   hasExplicitFilesPanelWidth = false;
   draftBaselineSessionIdsByTerminalId = new Map();
@@ -1490,6 +1508,7 @@ export function resetWorkStateForTests(): void {
     persistTerminalScrollback: false,
     editorFontSize: DEFAULT_WORK_EDITOR_FONT_SIZE,
     editorAutoSave: false,
+    editorDiffLayout: 'inline',
     hostUnlockVersion: 0,
   });
 }

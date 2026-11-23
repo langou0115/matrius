@@ -5,8 +5,10 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
 import { ChatProvider } from '../ui/features/chat/chat-state.tsx';
+import { resetSidebarTabForTests, writeSidebarTab } from '../ui/features/chat/sidebar-mode.ts';
 import HostSettingsScreen from '../ui/features/hosts/host-settings-screen.tsx';
 import { InstanceProvider } from '../ui/features/instance/instance-state.tsx';
+import { visibleSettings } from '../ui/features/settings/settings-catalog.ts';
 import { PreviewContext } from '../ui/features/workspace/preview-context.ts';
 
 function setInputValue(input, value) {
@@ -65,7 +67,7 @@ function setupDom({ mobile = false, target = 'desktop' } = {}) {
   };
 }
 
-test('desktop host settings screen renders 工作 group above 应用 and manages SSH/WSL hosts in preview', async () => {
+test('desktop work settings groups navigation and manages SSH/WSL hosts in preview', async () => {
   const dom = setupDom({ mobile: false, target: 'desktop' });
   const root = createRoot(dom.document.getElementById('root'));
 
@@ -88,9 +90,19 @@ test('desktop host settings screen renders 工作 group above 应用 and manages
       );
     });
 
-    const navGroups = Array.from(dom.document.querySelectorAll('.settings-nav-group > h2'))
+    const navGroups = () => Array.from(dom.document.querySelectorAll('.settings-nav-group > h2'))
       .map((heading) => heading.textContent?.trim());
-    assert.deepEqual(navGroups, ['偏好', '工作', '应用']);
+    assert.deepEqual(navGroups(), ['偏好', '工作', '应用']);
+    await act(async () => { writeSidebarTab('work'); });
+    assert.deepEqual(navGroups(), ['通用', '对话', '工作', '应用']);
+    const items = visibleSettings(['files', 'usage'], false, true, true, true);
+    assert.deepEqual(items.filter((item) => item.group === '对话').map((item) => item.id),
+      ['storage', 'usage', 'personalization', 'models']);
+    assert.equal(items.find((item) => item.id === 'appearance')?.group, '通用');
+    assert.deepEqual(items.filter((item) => item.group === '应用').map((item) => item.id), ['about']);
+    const general = Array.from(dom.document.querySelectorAll('.settings-nav-item'))
+      .find((item) => item.textContent?.trim() === '常规');
+    assert.ok(general?.querySelector('svg.lucide-settings-2'));
 
     const cards = Array.from(dom.document.querySelectorAll('.host-card'));
     assert.equal(cards.length, 2);
@@ -205,6 +217,7 @@ test('desktop host settings screen renders 工作 group above 应用 and manages
     assert.doesNotMatch(editDialog.textContent ?? '', /备注/);
   } finally {
     await act(async () => { root.unmount(); });
+    resetSidebarTabForTests();
     dom.restore();
   }
 });

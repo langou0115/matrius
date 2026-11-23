@@ -1,6 +1,17 @@
-import { useSyncExternalStore } from 'react';
+import { createContext, useContext, useSyncExternalStore } from 'react';
 
 export type SidebarTab = 'work' | 'chat';
+
+/**
+ * Provided by AppShell when mounted inside the full router so explicit routes (`/work`,
+ * `/p/:id`, `/c/:id`, `/`) drive the sidebar mode synchronously without a first-paint flash.
+ * Stays `undefined` in isolated component tests that stub `@/router`.
+ */
+export const SidebarRouteTabContext = createContext<SidebarTab | null | undefined>(undefined);
+
+export function useSidebarRouteTab(): SidebarTab | null | undefined {
+  return useContext(SidebarRouteTabContext);
+}
 
 const STORAGE_KEY = 'matrius:sidebar-tab';
 let memoryTab: SidebarTab | null = null;

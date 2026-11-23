@@ -1,4 +1,4 @@
-import type { WorkGitCommit, WorkGitCommitNode, WorkGitDiff, WorkGitDiffRequest, WorkGitStatus } from '../../contract/work-git';
+import type { WorkGitCommit, WorkGitCommitFile, WorkGitCommitNode, WorkGitDiff, WorkGitDiffRequest, WorkGitStatus } from '../../contract/work-git';
 import type { AppDatabase } from '../db/client';
 import { requireWorkProjectRow } from '../db/repositories/projects';
 import { AppError, conflict, invalid } from '../errors';
@@ -35,6 +35,23 @@ function parseStatus(output: string): Pick<WorkGitStatus, 'branch' | 'upstream' 
     }
   }
   return { ...result, changes: [...changes.values()] };
+}
+
+function hasMergeConflicts(changes: WorkGitStatus['changes']): boolean {
+  return changes.some(({ index, workingTree }) => (
+    index === 'U' || workingTree === 'U' || (index === 'A' && workingTree === 'A') || (index === 'D' && workingTree === 'D')
+  ));
+}
+
+function validateRepoPaths(paths: readonly string[]): string[] {
+  const normalized = [...new Set(paths)];
+  if (!normalized.length) throw invalid('请选择至少一个文件。');
+  for (const path of normalized) {
+    if (!path || path === '.' || path === '..' || path.startsWith('/') || path.includes('\0')) {
+      throw invalid('文件路径不合法。');
+    }
+  }
+  return normalized;
 }
 
 export function createWorkGitService(db: AppDatabase, hostFs: HostFsService) {
@@ -84,6 +101,17 @@ export function createWorkGitService(db: AppDatabase, hostFs: HostFsService) {
     return { root: repo.root, ...parseStatus(status), localBranches, remoteBranches };
   }
 
+  async function withRepoLock<T>(projectId: string, busyMessage: string, task: (repo: Awaited<ReturnType<typeof repository>>) => Promise<T>): Promise<T> {
+    const repo = await repository(projectId);
+    if (pending.has(repo.key)) throw conflict(busyMessage);
+    pending.add(repo.key);
+    try {
+      return await task(repo);
+    } finally {
+      pending.delete(repo.key);
+    }
+  }
+
   return {
     async status(projectId: string) {
       return readStatus(await repository(projectId));
@@ -92,23 +120,70 @@ export function createWorkGitService(db: AppDatabase, hostFs: HostFsService) {
       const repo = await repository(projectId);
       const output = await repo.run([
         'log', '--exclude=refs/stash', '--all', '--single-worktree', '--topo-order', '--max-count=100',
-        '--no-color', '--no-show-signature', '-z', '--format=%H%x00%P%x00%D%x00%s%x00%an%x00%aI',
+        '--no-color', '--no-show-signature', '-z', '--format=%H%x00%P%x00%D%x00%s%x00%b%x00%an%x00%ae%x00%aI',
         '--decorate=short',
       ]);
       const fields = output.split('\0');
       const commits: WorkGitCommitNode[] = [];
-      for (let i = 0; i + 5 < fields.length; i += 6) {
-        const [oid, parents, refs, subject, author, date] = fields.slice(i, i + 6);
-        commits.push({ oid, parents: parents ? parents.split(' ') : [], refs: refs ? refs.split(', ') : [], subject, author, date });
+      for (let i = 0; i + 7 < fields.length; i += 8) {
+        const [oid, parents, refs, subject, body, author, email, date] = fields.slice(i, i + 8);
+        const trimmedBody = body.trim();
+        commits.push({
+          oid,
+          parents: parents ? parents.split(' ') : [],
+          refs: refs ? refs.split(', ') : [],
+          subject,
+          ...(trimmedBody ? { body: trimmedBody } : {}),
+          author,
+          ...(email ? { email } : {}),
+          date,
+        });
       }
       return commits;
     },
-    async commitDiff(projectId: string, oid: string): Promise<WorkGitDiff> {
+    async commitFiles(projectId: string, oid: string): Promise<WorkGitCommitFile[]> {
       const repo = await repository(projectId);
-      return formatPatch(await repo.diff([
+      const output = await repo.run([
+        '--no-optional-locks', 'show', '--format=', '--diff-merges=first-parent', '--root',
+        '--raw', '--numstat', '--no-renames', '-z', oid, '--',
+      ]);
+      const fields = output.split('\0');
+      const statusByPath = new Map<string, string>();
+      const files: WorkGitCommitFile[] = [];
+
+      for (let i = 0; i < fields.length; i += 1) {
+        const token = fields[i].replace(/^\n+/u, '');
+        if (!token) continue;
+        const rawMatch = /^:\d{6} \d{6} [0-9a-f]+ [0-9a-f]+ ([A-Z])\d*$/u.exec(token);
+        if (rawMatch && i + 1 < fields.length) {
+          statusByPath.set(fields[i + 1], rawMatch[1]);
+          i += 1;
+          continue;
+        }
+        const statMatch = /^(\d+|-)\t(\d+|-)\t(.+)$/u.exec(token);
+        if (statMatch) {
+          const [, addRaw, delRaw, path] = statMatch;
+          files.push({
+            path,
+            status: statusByPath.get(path) ?? 'M',
+            additions: addRaw === '-' ? null : Number(addRaw),
+            deletions: delRaw === '-' ? null : Number(delRaw),
+          });
+        }
+      }
+      return files;
+    },
+    async commitDiff(projectId: string, oid: string, path?: string): Promise<WorkGitDiff> {
+      const repo = await repository(projectId);
+      const args = [
         '--no-optional-locks', 'show', '--format=', '--diff-merges=first-parent', '--root',
         '--no-color', '--no-ext-diff', '--no-textconv', oid, '--',
-      ]));
+      ];
+      if (path !== undefined) {
+        const [safePath] = validateRepoPaths([path]);
+        args.push(safePath);
+      }
+      return formatPatch(await repo.diff(args));
     },
     async diff(projectId: string, { path, scope }: WorkGitDiffRequest): Promise<WorkGitDiff> {
       const repo = await repository(projectId);
@@ -131,37 +206,100 @@ export function createWorkGitService(db: AppDatabase, hostFs: HostFsService) {
       return formatPatch(output);
     },
     async fetch(projectId: string) {
-      const repo = await repository(projectId);
-      if (pending.has(repo.key)) throw conflict('此仓库有 Git 操作正在进行，请稍后再试。');
-      pending.add(repo.key);
-      try {
+      return withRepoLock(projectId, '此仓库有 Git 操作正在进行，请稍后再试。', async (repo) => {
         await repo.run(['fetch', '--all', '--prune', '--no-recurse-submodules']);
-        return await readStatus(repo);
-      } finally {
-        pending.delete(repo.key);
-      }
+        return readStatus(repo);
+      });
+    },
+    async pull(projectId: string) {
+      return withRepoLock(projectId, '此仓库有 Git 操作正在进行，请稍后再试。', async (repo) => {
+        await repo.run(['pull', '--no-edit']);
+        return readStatus(repo);
+      });
+    },
+    async push(projectId: string) {
+      return withRepoLock(projectId, '此仓库有 Git 操作正在进行，请稍后再试。', async (repo) => {
+        await repo.run(['push']);
+        return readStatus(repo);
+      });
+    },
+    async stage(projectId: string, paths: string[]) {
+      const safePaths = validateRepoPaths(paths);
+      return withRepoLock(projectId, '此仓库有 Git 操作正在进行，请稍后再试。', async (repo) => {
+        await repo.run(['add', '-A', '--', ...safePaths]);
+        return readStatus(repo);
+      });
+    },
+    async unstage(projectId: string, paths: string[]) {
+      const safePaths = validateRepoPaths(paths);
+      return withRepoLock(projectId, '此仓库有 Git 操作正在进行，请稍后再试。', async (repo) => {
+        const hasHead = await repo.run(['rev-parse', '--verify', '--quiet', 'HEAD']).then(() => true, () => false);
+        if (hasHead) {
+          await repo.run(['reset', '-q', 'HEAD', '--', ...safePaths]);
+        } else {
+          await repo.run(['rm', '--cached', '-r', '-f', '--ignore-unmatch', '--', ...safePaths]);
+        }
+        return readStatus(repo);
+      });
+    },
+    async discard(projectId: string, paths: string[]) {
+      const safePaths = validateRepoPaths(paths);
+      return withRepoLock(projectId, '此仓库有 Git 操作正在进行，请稍后再试。', async (repo) => {
+        const { changes } = await readStatus(repo);
+        const byPath = new Map(changes.map((entry) => [entry.path, entry]));
+        const tracked: string[] = [];
+        const untracked: string[] = [];
+        for (const path of safePaths) {
+          const entry = byPath.get(path);
+          if (!entry || entry.workingTree === '.') throw conflict('文件变更已更新，请刷新后重试。');
+          if (entry.workingTree === '?') {
+            if (path.endsWith('/')) throw invalid('此路径是一个独立的仓库目录，不能直接放弃。');
+            untracked.push(path);
+          } else {
+            tracked.push(path);
+          }
+        }
+        if (tracked.length) await repo.run(['checkout', '--', ...tracked]);
+        if (untracked.length) await repo.run(['clean', '-f', '-d', '--', ...untracked]);
+        return readStatus(repo);
+      });
+    },
+    async checkout(projectId: string, branch: string) {
+      if (!branch || branch.startsWith('-')) throw invalid('分支名称不合法。');
+      return withRepoLock(projectId, '此仓库有 Git 操作正在进行，请稍后再试。', async (repo) => {
+        const current = await readStatus(repo);
+        if (current.localBranches.includes(branch)) {
+          await repo.run(['checkout', branch]);
+        } else if (current.remoteBranches.includes(branch)) {
+          await repo.run(['checkout', '--track', branch]);
+        } else {
+          throw invalid('未找到指定分支。');
+        }
+        return readStatus(repo);
+      });
     },
     async commit(projectId: string, input: WorkGitCommit) {
-      const repo = await repository(projectId);
-      if (pending.has(repo.key)) throw conflict('此仓库正在提交，请稍后再试。');
-      pending.add(repo.key);
-      try {
+      return withRepoLock(projectId, '此仓库正在提交，请稍后再试。', async (repo) => {
         const { changes } = await readStatus(repo);
-        const requested = new Set(input.paths);
-        const selected = changes.filter((change) => requested.has(change.path));
-        if (selected.length !== requested.size) throw conflict('文件变更已更新，请刷新后重新选择。');
-        if (changes.some(({ index, workingTree }) => index === 'U' || workingTree === 'U'
-          || (index === 'A' && workingTree === 'A') || (index === 'D' && workingTree === 'D'))) {
+        if (hasMergeConflicts(changes)) {
           throw conflict('仓库有未解决的冲突，请先在终端解决。');
         }
-        const untracked = selected.filter(({ workingTree }) => workingTree === '?').map(({ path }) => path);
-        if (untracked.length) await repo.run(['add', '--intent-to-add', '--', ...untracked]);
-        await repo.run(['commit', '--only', '-m', input.message, '--', ...selected.map(({ path }) => path)]);
+        if (input.staged && (!input.paths || input.paths.length === 0)) {
+          const hasStaged = changes.some(({ index }) => index !== '.' && index !== '?');
+          if (!hasStaged) throw conflict('暂存区没有可提交的变更。');
+          await repo.run(['commit', '-m', input.message]);
+        } else {
+          const requested = new Set(input.paths ?? []);
+          if (!requested.size) throw invalid('请选择至少一个要提交的文件。');
+          const selected = changes.filter((change) => requested.has(change.path));
+          if (selected.length !== requested.size) throw conflict('文件变更已更新，请刷新后重新选择。');
+          const untracked = selected.filter(({ workingTree }) => workingTree === '?').map(({ path }) => path);
+          if (untracked.length) await repo.run(['add', '--intent-to-add', '--', ...untracked]);
+          await repo.run(['commit', '--only', '-m', input.message, '--', ...selected.map(({ path }) => path)]);
+        }
         const oid = (await repo.run(['rev-parse', '--short', 'HEAD'])).trim();
         return { oid };
-      } finally {
-        pending.delete(repo.key);
-      }
+      });
     },
   };
 }

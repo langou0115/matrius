@@ -15,7 +15,9 @@ import { ConversationMenu } from './conversation-menu';
 import { ConversationSelect } from './conversation-select';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { isDesktopTarget } from '@/core/platform/target';
-import { useSidebarTab, writeSidebarTab, type SidebarTab } from '../sidebar-mode';
+import { workHref } from '@/features/work/work-href';
+import { readActiveProjectId } from '@/features/work/work-state';
+import { useSidebarRouteTab, useSidebarTab, writeSidebarTab, type SidebarTab } from '../sidebar-mode';
 
 const WorkSidebarPanel = lazy(() =>
   import('@/features/work/work-sidebar-panel').then((module) => ({ default: module.WorkSidebarPanel })),
@@ -31,7 +33,9 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const { conversations, activeId, dispatch } = useChat();
   const mobile = useMobile();
   const showModeSwitch = isDesktopTarget() && !mobile;
-  const activeTab = useSidebarTab(showModeSwitch);
+  const storedTab = useSidebarTab(showModeSwitch);
+  const routeTab = useSidebarRouteTab();
+  const activeTab = showModeSwitch ? (routeTab ?? storedTab) : 'chat';
   const workTabRef = useRef<HTMLButtonElement>(null);
   const chatTabRef = useRef<HTMLButtonElement>(null);
   const runtime = useChatRuntime();
@@ -124,8 +128,14 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
     setDeleteAttachedFiles(false);
   }
   function switchTab(next: SidebarTab, focus = false) {
-    if (next === 'work') setMenu(null);
-    writeSidebarTab(next);
+    if (next !== activeTab) {
+      if (next === 'work') setMenu(null);
+      writeSidebarTab(next);
+      const targetHref = next === 'work'
+        ? workHref(readActiveProjectId(), preview)
+        : conversationHref(activeId, preview);
+      if ((pathname || '/') !== targetHref) router.push(targetHref);
+    }
     if (!focus) return;
     const target = next === 'work' ? workTabRef.current : chatTabRef.current;
     target?.focus();
@@ -273,7 +283,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   return (
     <aside className="sidebar" aria-label="对话导航">
       <div className="sidebar-header">
-        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => { switchTab('chat'); dispatch({ type: 'select', id: null }); if (!preview) writeLastRoute(null); }}><BrandMark size={30} />Matrius</LinkAnchor></Link>
+        <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => { writeSidebarTab('chat'); dispatch({ type: 'select', id: null }); if (!preview) writeLastRoute(null); }}><BrandMark size={30} />Matrius</LinkAnchor></Link>
         <div className="sidebar-header-actions">
           <button className="icon-button" onClick={onSearch} aria-label="搜索对话"><Icon name="search" size={19} /></button>
           <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>

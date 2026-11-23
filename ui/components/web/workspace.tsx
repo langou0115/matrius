@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useState, type PropsWithChildre
 
 import { isDesktopTarget } from '@/core/platform/target';
 import { useChat } from '@/features/chat/chat-state';
-import { useSidebarTab } from '@/features/chat/sidebar-mode';
+import { useSidebarRouteTab, useSidebarTab } from '@/features/chat/sidebar-mode';
 import { SearchDialog } from '@/features/chat/components/search-dialog';
 import { Dialog } from './dialog';
 import { useMobile } from './use-mobile';
@@ -15,7 +15,12 @@ const WorkWorkspace = lazy(() =>
 export function Workspace({ children }: PropsWithChildren) {
   const { sidebarOpen, dispatch } = useChat();
   const mobile = useMobile();
-  const showWorkPane = useSidebarTab(isDesktopTarget() && !mobile) === 'work';
+  const showModeSwitch = isDesktopTarget() && !mobile;
+  const storedTab = useSidebarTab(showModeSwitch);
+  const routeTab = useSidebarRouteTab();
+  // When AppShell owns the router, WorkRoute renders through `children` (`<Outlet />`);
+  // isolated component tests stub `@/router` without AppShell and rely on storedTab here.
+  const showWorkPane = showModeSwitch && routeTab === undefined && storedTab === 'work';
   const closeSidebar = () => { if (sidebarOpen) dispatch({ type: 'sidebar' }); };
   const [sidebarVisible, setSidebarVisible] = useState(sidebarOpen);
   if (sidebarOpen && !sidebarVisible) setSidebarVisible(true);

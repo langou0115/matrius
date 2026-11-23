@@ -3,7 +3,7 @@ import {
   normalizeWorkCliProviderOrder,
   type WorkCliProvider,
 } from '../../../contract/work-cli';
-import { DEFAULT_WORK_EDITOR_FONT_SIZE, normalizeWorkEditorFontSize, normalizeWorkProjectOrder } from '../../../contract/work-projects';
+import { DEFAULT_WORK_EDITOR_FONT_SIZE, normalizeWorkEditorDiffLayout, normalizeWorkEditorFontSize, normalizeWorkProjectOrder, type WorkEditorDiffLayout } from '../../../contract/work-projects';
 import {
   DEFAULT_WINDOWS_SHELL,
   normalizeOptionalWindowsShell,
@@ -227,6 +227,7 @@ export type PersistedWorkSettings = {
   persistTerminalScrollback: boolean;
   editorFontSize: number;
   editorAutoSave: boolean;
+  editorDiffLayout: WorkEditorDiffLayout;
   projectOrder: string[];
   cliProviderOrder: WorkCliProvider[];
   terminalOrder: string[];
@@ -242,6 +243,7 @@ type WorkSettingsRow = {
   persist_terminal_scrollback: number;
   editor_font_size: number;
   editor_auto_save: number;
+  editor_diff_layout: string;
   project_order_json: string;
   cli_provider_order_json: string;
   terminal_order_json: string;
@@ -314,6 +316,7 @@ export function getWorkSettingsRow(db: AppDatabase, instanceId: number): Persist
       persistTerminalScrollback: false,
       editorFontSize: DEFAULT_WORK_EDITOR_FONT_SIZE,
       editorAutoSave: false,
+      editorDiffLayout: 'inline',
       projectOrder: [],
       cliProviderOrder: [...WORK_CLI_PROVIDERS],
       terminalOrder: [],
@@ -328,6 +331,7 @@ export function getWorkSettingsRow(db: AppDatabase, instanceId: number): Persist
     persistTerminalScrollback: Boolean(existing.persist_terminal_scrollback),
     editorFontSize: normalizeWorkEditorFontSize(existing.editor_font_size),
     editorAutoSave: Boolean(existing.editor_auto_save),
+    editorDiffLayout: normalizeWorkEditorDiffLayout(existing.editor_diff_layout),
     projectOrder: parseProjectOrderJson(existing.project_order_json),
     cliProviderOrder: parseCliProviderOrderJson(existing.cli_provider_order_json),
     terminalOrder: parseTerminalOrderJson(existing.terminal_order_json),
@@ -361,6 +365,7 @@ export function updateWorkSettingsRow(
       : current.persistTerminalScrollback,
     editorFontSize: normalizeWorkEditorFontSize(patch.editorFontSize ?? current.editorFontSize),
     editorAutoSave: patch.editorAutoSave ?? current.editorAutoSave,
+    editorDiffLayout: patch.editorDiffLayout ?? current.editorDiffLayout,
     projectOrder: patch.projectOrder !== undefined
       ? normalizeWorkProjectOrder(patch.projectOrder)
       : current.projectOrder,
@@ -374,9 +379,9 @@ export function updateWorkSettingsRow(
   db.prepare(`
     INSERT INTO work_settings (
       instance_id, default_windows_shell, active_project_id, active_terminals_json,
-      files_panel_open, files_panel_width, persist_terminal_scrollback, editor_font_size, editor_auto_save,
+      files_panel_open, files_panel_width, persist_terminal_scrollback, editor_font_size, editor_auto_save, editor_diff_layout,
       project_order_json, cli_provider_order_json, terminal_order_json, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(instance_id) DO UPDATE SET
       default_windows_shell = excluded.default_windows_shell,
       active_project_id = excluded.active_project_id,
@@ -386,6 +391,7 @@ export function updateWorkSettingsRow(
       persist_terminal_scrollback = excluded.persist_terminal_scrollback,
       editor_font_size = excluded.editor_font_size,
       editor_auto_save = excluded.editor_auto_save,
+      editor_diff_layout = excluded.editor_diff_layout,
       project_order_json = excluded.project_order_json,
       cli_provider_order_json = excluded.cli_provider_order_json,
       terminal_order_json = excluded.terminal_order_json,
@@ -400,6 +406,7 @@ export function updateWorkSettingsRow(
     next.persistTerminalScrollback ? 1 : 0,
     next.editorFontSize,
     next.editorAutoSave ? 1 : 0,
+    next.editorDiffLayout,
     JSON.stringify(next.projectOrder),
     JSON.stringify(next.cliProviderOrder),
     JSON.stringify(next.terminalOrder),

@@ -1,5 +1,6 @@
 import { isDesktopTarget } from '@/core/platform/target';
 import { readSidebarTab } from '@/features/chat/sidebar-mode';
+import { isWorkPath } from '@/features/work/work-href';
 import type { Href } from '@/router';
 
 import { conversationHref } from '@/features/chat/conversation-href';
@@ -28,14 +29,17 @@ export function rememberedWorkspacePath(): string | null {
 }
 
 /** Where the settings back link goes: the origin page, else the active conversation/home. */
-export function workspaceReturnHref(activeId: string | null, preview: boolean): Href {
+export function workspaceReturnHref(activeId: string | null, preview: boolean, mobile = false): Href {
+  if (lastWorkspacePath && isWorkPath(lastWorkspacePath) && (mobile || !isDesktopTarget())) {
+    return conversationHref(activeId, preview);
+  }
   return (lastWorkspacePath ?? conversationHref(activeId, preview)) as Href;
 }
 
 export function workspaceReturnLabel(mobile = false): string {
   if (lastWorkspacePath === '/library' || lastWorkspacePath === '/mock/library') return '返回资料库';
   if (lastWorkspacePath === '/tasks' || lastWorkspacePath === '/mock/tasks') return '返回定时任务';
-  if (!mobile && isDesktopTarget() && readSidebarTab(true) === 'work') return '返回工作';
+  if (!mobile && isDesktopTarget() && (isWorkPath(lastWorkspacePath) || readSidebarTab(true) === 'work')) return '返回工作';
   return '返回对话';
 }
 
