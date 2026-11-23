@@ -1,5 +1,5 @@
 import { WINDOWS_SHELL_OPTIONS, type WindowsTerminalShell } from '@contract/work-terminals';
-import { History, Terminal } from 'lucide-react';
+import { AlertCircle, History, Terminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { SelectField } from '@/components/web/select-field';
@@ -94,22 +94,22 @@ export function WorkGeneralScreen() {
 
   return (
     <SettingsPage title="常规">
-      <section className="settings-section" id="work-default-terminal">
-        {error && <p className="field-error" role="alert">{error}</p>}
-        <div className="settings-list memory-settings-list">
-          <div className="settings-row">
+      <section className="settings-section" aria-labelledby="work-general-terminal-heading">
+        <h2 id="work-general-terminal-heading">终端</h2>
+        <div className="settings-list memory-settings-list work-settings-list">
+          <div className="settings-row" id="work-default-terminal">
             <span className="settings-row-icon" aria-hidden="true">
-              <Terminal size={18} strokeWidth={1.75} />
+              <Terminal size={19} strokeWidth={1.75} />
             </span>
             <div className="settings-row-copy">
               <strong>默认终端</strong>
               <span className="settings-row-description">
                 {windowsEnabled
-                  ? '仅对 Windows 本机项目生效；点击工作区右上角「+」时将默认打开此终端（PowerShell 或 CMD）。'
-                  : '仅对 Windows 本机项目生效；当前主机的终端默认使用系统 Shell。'}
+                  ? 'Windows 本机新建终端时默认打开 PowerShell 或 CMD。'
+                  : '仅对 Windows 本机项目生效，当前主机使用系统 Shell。'}
               </span>
             </div>
-            <div className="settings-row-action work-general-select-wrap">
+            <div className="settings-row-action work-settings-control work-general-select-wrap">
               <SelectField
                 label="默认终端"
                 hideLabel
@@ -123,12 +123,12 @@ export function WorkGeneralScreen() {
 
           <div className="settings-row" id="work-terminal-scrollback">
             <span className="settings-row-icon" aria-hidden="true">
-              <History size={18} strokeWidth={1.75} />
+              <History size={19} strokeWidth={1.75} />
             </span>
             <div className="settings-row-copy">
               <strong>保留终端历史输出</strong>
               <span className="settings-row-description">
-                默认关闭；开启后将按 1200ms 节流保存每个终端最近 128,000 字符的输出快照到数据库，用于在重启服务后恢复并回放历史内容。
+                开启后将节流保存终端输出快照，重启服务后恢复并回放历史内容。
               </span>
             </div>
             <label className="model-switch-label">
@@ -144,6 +144,12 @@ export function WorkGeneralScreen() {
             </label>
           </div>
         </div>
+        {error && (
+          <p className="settings-message is-error" role="alert">
+            <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span>{error}</span>
+          </p>
+        )}
       </section>
     </SettingsPage>
   );

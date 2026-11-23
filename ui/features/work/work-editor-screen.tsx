@@ -188,86 +188,92 @@ export function WorkEditorScreen() {
 
   return (
     <SettingsPage title="编辑器">
-      <section className="settings-section">
-        <div className="settings-list">
+      <section className="settings-section" aria-labelledby="work-editor-heading">
+        <h2 id="work-editor-heading">文本编辑</h2>
+        <div className="settings-list memory-settings-list work-settings-list">
           <div className="settings-row" id="work-editor-font-size">
-            <span className="settings-row-icon" aria-hidden="true"><Type size={18} strokeWidth={1.75} /></span>
+            <span className="settings-row-icon" aria-hidden="true"><Type size={19} strokeWidth={1.75} /></span>
             <div className="settings-row-copy">
               <label htmlFor="work-editor-font-size-input"><strong>字体大小</strong></label>
               <span className="settings-row-description">
                 支持 {MIN_WORK_EDITOR_FONT_SIZE}–{MAX_WORK_EDITOR_FONT_SIZE} px（默认 {DEFAULT_WORK_EDITOR_FONT_SIZE} px）。
               </span>
             </div>
-            <div className={`settings-row-action work-editor-font-size-control${disabled ? ' is-disabled' : ''}`}>
-              <button
-                type="button"
-                className="work-editor-font-size-step"
-                aria-label="减小字体大小"
-                disabled={disabled || stepBase <= MIN_WORK_EDITOR_FONT_SIZE}
-                onClick={() => stepFontSize(-1)}
-              >
-                <Minus size={15} strokeWidth={1.75} aria-hidden="true" />
-              </button>
-              <div
-                className="work-editor-font-size-field"
-                onClick={() => inputRef.current?.focus()}
-              >
-                <input
-                  ref={inputRef}
-                  id="work-editor-font-size-input"
-                  className="work-editor-font-size-input"
-                  type="number"
-                  inputMode="numeric"
-                  min={MIN_WORK_EDITOR_FONT_SIZE}
-                  max={MAX_WORK_EDITOR_FONT_SIZE}
-                  step={1}
-                  value={draft}
-                  disabled={disabled}
-                  aria-label="字体大小"
-                  onFocus={() => {
-                    editingRef.current = true;
-                  }}
-                  onChange={handleFontSizeChange}
-                  onKeyDown={handleFontSizeKeyDown}
-                  onBlur={() => {
-                    editingRef.current = false;
-                    if (skipBlurCommitRef.current) {
-                      skipBlurCommitRef.current = false;
-                      return;
-                    }
-                    commitFontSize();
-                  }}
-                  onWheel={(event) => event.currentTarget.blur()}
-                />
-                <span className="work-editor-font-size-unit" aria-hidden="true">px</span>
+            <div className="settings-row-action work-settings-control">
+              <div className={`work-editor-font-size-control${disabled ? ' is-disabled' : ''}`}>
+                <button
+                  type="button"
+                  className="work-editor-font-size-step"
+                  aria-label="减小字体大小"
+                  disabled={disabled || stepBase <= MIN_WORK_EDITOR_FONT_SIZE}
+                  onClick={() => stepFontSize(-1)}
+                >
+                  <Minus size={14} strokeWidth={1.9} aria-hidden="true" />
+                </button>
+                <div
+                  className="work-editor-font-size-field"
+                  onClick={() => inputRef.current?.focus()}
+                >
+                  <input
+                    ref={inputRef}
+                    id="work-editor-font-size-input"
+                    className="work-editor-font-size-input"
+                    type="number"
+                    inputMode="numeric"
+                    min={MIN_WORK_EDITOR_FONT_SIZE}
+                    max={MAX_WORK_EDITOR_FONT_SIZE}
+                    step={1}
+                    value={draft}
+                    disabled={disabled}
+                    aria-label="字体大小"
+                    onFocus={() => {
+                      editingRef.current = true;
+                    }}
+                    onChange={handleFontSizeChange}
+                    onKeyDown={handleFontSizeKeyDown}
+                    onBlur={() => {
+                      editingRef.current = false;
+                      if (skipBlurCommitRef.current) {
+                        skipBlurCommitRef.current = false;
+                        return;
+                      }
+                      commitFontSize();
+                    }}
+                    onWheel={(event) => event.currentTarget.blur()}
+                  />
+                  <span className="work-editor-font-size-unit" aria-hidden="true">px</span>
+                </div>
+                <button
+                  type="button"
+                  className="work-editor-font-size-step"
+                  aria-label="增大字体大小"
+                  disabled={disabled || stepBase >= MAX_WORK_EDITOR_FONT_SIZE}
+                  onClick={() => stepFontSize(1)}
+                >
+                  <Plus size={14} strokeWidth={1.9} aria-hidden="true" />
+                </button>
               </div>
-              <button
-                type="button"
-                className="work-editor-font-size-step"
-                aria-label="增大字体大小"
-                disabled={disabled || stepBase >= MAX_WORK_EDITOR_FONT_SIZE}
-                onClick={() => stepFontSize(1)}
-              >
-                <Plus size={15} strokeWidth={1.75} aria-hidden="true" />
-              </button>
             </div>
           </div>
           <div className="settings-row" id="work-editor-diff-layout">
-            <span className="settings-row-icon" aria-hidden="true"><Columns2 size={18} strokeWidth={1.75} /></span>
+            <span className="settings-row-icon" aria-hidden="true"><Columns2 size={19} strokeWidth={1.75} /></span>
             <div className="settings-row-copy">
               <strong>默认差异视图</strong>
+              <span className="settings-row-description">在 Git 查看器中以行内或并排方式展示更改。</span>
             </div>
-            <SelectField
-              label="默认差异视图"
-              hideLabel
-              value={editorDiffLayout}
-              disabled={disabled}
-              options={[{ id: 'inline', label: '行内' }, { id: 'split', label: '并排' }]}
-              onChange={(id) => update({ editorDiffLayout: normalizeWorkEditorDiffLayout(id) })}
-            />
+            <div className="settings-row-action work-settings-control work-editor-select-wrap">
+              <SelectField
+                label="默认差异视图"
+                hideLabel
+                value={editorDiffLayout}
+                disabled={disabled}
+                options={[{ id: 'inline', label: '行内' }, { id: 'split', label: '并排' }]}
+                onChange={(id) => update({ editorDiffLayout: normalizeWorkEditorDiffLayout(id) })}
+              />
+            </div>
           </div>
           <div className="settings-row" id="work-editor-auto-save">
-            <span className="settings-row-icon" aria-hidden="true"><Save size={18} strokeWidth={1.75} /></span>
+            <span className="settings-row-icon" aria-hidden="true"><Save size={19} strokeWidth={1.75} /></span>
             <div className="settings-row-copy">
               <strong>自动保存</strong>
               <span className="settings-row-description">停止输入后自动保存本机文件。</span>

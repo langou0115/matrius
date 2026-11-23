@@ -108,6 +108,7 @@ export type WorkStoreSnapshot = {
   activeTerminalByProject: Record<string, string | null>;
   filesPanelOpen: boolean;
   filesPanelWidth: number | null;
+  fileSearchProjectId: string | null;
   serverPlatform: string | null;
   windowsBuild: number | null;
   defaultWindowsShell: WindowsTerminalShell;
@@ -284,6 +285,7 @@ function createInitialState(): WorkStoreSnapshot {
     activeTerminalByProject: readStoredActiveTerminals(),
     filesPanelOpen: true,
     filesPanelWidth: readStoredFilesWidth(),
+    fileSearchProjectId: null,
     serverPlatform: null,
     windowsBuild: null,
     defaultWindowsShell: readStoredDefaultWindowsShell(),
@@ -360,9 +362,21 @@ export function writeActiveProjectId(projectId: string | null): void {
       activeProjectId: projectId,
       activeTerminalId: nextActiveTerminalId,
       activeTerminalByProject: nextMap,
+      ...(state.activeProjectId !== projectId ? { fileSearchProjectId: null } : {}),
       ...(unreadChanged ? { unreadCompletedCliKeys: nextUnread } : {}),
     });
   }
+}
+
+export function openWorkFileSearch(projectId?: string | null): void {
+  const target = projectId ?? state.activeProjectId ?? state.projects[0]?.id ?? null;
+  if (!target || state.fileSearchProjectId === target) return;
+  emit({ ...state, fileSearchProjectId: target });
+}
+
+export function closeWorkFileSearch(): void {
+  if (state.fileSearchProjectId === null) return;
+  emit({ ...state, fileSearchProjectId: null });
 }
 
 export function selectWorkProjectFromRoute(projectId: string): void {
@@ -1503,6 +1517,7 @@ export function resetWorkStateForTests(): void {
     activeTerminalByProject: {},
     filesPanelOpen: true,
     filesPanelWidth: null,
+    fileSearchProjectId: null,
     serverPlatform: null,
     windowsBuild: null,
     defaultWindowsShell: DEFAULT_WINDOWS_SHELL,

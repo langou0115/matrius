@@ -268,6 +268,13 @@ export function sliceTerminalWriteBatch(
   };
 }
 
+export function waitsForTerminalRepaint(chunk: string): boolean {
+  // Hold only a clear with no replacement text yet. Output that is already a
+  // complete repaint, including DEC synchronized output, takes the normal path.
+  // eslint-disable-next-line no-control-regex
+  return /(?:\x1b\[[23]J|\x1b\[(?:1;1)?H\x1b\[0?J)(?:\x1b\[[0-?]*[ -/]*[@-~]|[ \r\n\t])*$/u.test(chunk.slice(-256));
+}
+
 export function syncHelperTextareaGeometry(options: {
   container: HTMLElement;
   cursor: { x: number; y: number };
@@ -275,7 +282,6 @@ export function syncHelperTextareaGeometry(options: {
   rows: number;
   compositionAnchor?: { x: number; y: number } | null;
   isComposing?: boolean;
-  cursorHidden?: boolean;
 }): void {
   const {
     container,
@@ -284,8 +290,8 @@ export function syncHelperTextareaGeometry(options: {
     rows,
     compositionAnchor = null,
     isComposing = false,
-    cursorHidden = false,
   } = options;
+  if (!isComposing) container.removeAttribute('data-ime-composing');
   const textarea = container.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea');
   const screenElement = container.querySelector<HTMLElement>('.xterm-screen');
   if (!textarea || !screenElement) return;
@@ -297,8 +303,7 @@ export function syncHelperTextareaGeometry(options: {
   const cellHeight = screenHeight / safeRows;
   if (!(cellWidth > 0 && cellHeight > 0)) return;
 
-  const shouldHoldAnchor = isComposing && cursorHidden && Boolean(compositionAnchor) && cursor.x === 0 && cursor.y === 0;
-  const anchor = shouldHoldAnchor && compositionAnchor ? compositionAnchor : cursor;
+  const anchor = isComposing && compositionAnchor ? compositionAnchor : cursor;
   const col = Math.min(Math.max(anchor.x, 0), safeCols - 1);
   const row = Math.min(Math.max(anchor.y, 0), safeRows - 1);
   const boxWidth = Math.max(cellWidth, 2);
@@ -306,6 +311,19 @@ export function syncHelperTextareaGeometry(options: {
   const left = Math.min(col * cellWidth, Math.max(0, screenWidth - boxWidth));
   const top = Math.min(row * cellHeight, Math.max(0, screenHeight - boxHeight));
 
+  const compositionView = container.querySelector<HTMLElement>('.composition-view.active');
+  const viewWidth = isComposing ? compositionView?.getBoundingClientRect().width ?? 0 : 0;
+  const clampedLeft = Math.min(left, Math.max(0, screenWidth - viewWidth));
+  if (isComposing) {
+    // xterm also sets inline geometry after rendering, including in a deferred
+    // callback. Keep the computed position stable through both writes.
+    container.style.setProperty('--work-ime-left', `${clampedLeft}px`);
+    container.style.setProperty('--work-ime-top', `${top}px`);
+    container.style.setProperty('--work-ime-width', `${Math.max(viewWidth, boxWidth)}px`);
+    container.style.setProperty('--work-ime-height', `${boxHeight}px`);
+    container.setAttribute('data-ime-composing', '');
+    return;
+  }
   textarea.style.left = `${left}px`;
   textarea.style.top = `${top}px`;
   textarea.style.width = `${boxWidth}px`;
@@ -313,23 +331,6 @@ export function syncHelperTextareaGeometry(options: {
   textarea.style.lineHeight = `${boxHeight}px`;
   textarea.style.fontSize = `${TERMINAL_FONT_SIZE}px`;
   textarea.style.zIndex = '-5';
-
-  const compositionView = container.querySelector<HTMLElement>('.composition-view.active');
-  if (compositionView) {
-    const viewWidth = compositionView.getBoundingClientRect().width;
-    const clampedLeft = viewWidth > 0 && left + viewWidth > screenWidth
-      ? Math.max(0, screenWidth - viewWidth)
-      : left;
-    compositionView.style.left = `${clampedLeft}px`;
-    compositionView.style.top = `${top}px`;
-    compositionView.style.height = `${boxHeight}px`;
-    compositionView.style.lineHeight = `${boxHeight}px`;
-    compositionView.style.fontSize = `${TERMINAL_FONT_SIZE}px`;
-    compositionView.style.fontFamily = TERMINAL_FONT_FAMILY;
-    textarea.style.left = `${clampedLeft}px`;
-    textarea.style.top = `${top}px`;
-    textarea.style.width = `${Math.max(viewWidth, boxWidth)}px`;
-  }
 }
 
 export type TerminalClipboardTarget = {
@@ -614,38 +615,28 @@ function WorkTerminalPane({
       let cursorHidden = false;
       let isComposing = false;
       let compositionAnchor: { x: number; y: number } | null = null;
-      let compositionSyncTimer: ReturnType<typeof setTimeout> | null = null;
+      let lastVisibleCursor: { x: number; y: number } | null = null;
       const syncTextarea = () => {
         if (disposed) return;
         const buf = term.buffer.active;
         const hasHistory = buf.type === 'normal' && buf.baseY > 0;
         container.toggleAttribute('data-has-scrollback', hasHistory);
         container.toggleAttribute('data-scrolled-up', hasHistory && buf.viewportY < buf.baseY);
+        const cursor = { x: buf.cursorX, y: buf.cursorY };
+        if (!isComposing && !cursorHidden) lastVisibleCursor = cursor;
         syncHelperTextareaGeometry({
           container,
-          cursor: { x: buf.cursorX, y: buf.cursorY },
+          cursor,
           cols: term.cols,
           rows: term.rows,
           compositionAnchor,
           isComposing,
-          cursorHidden,
         });
       };
       syncTextareaRef.current = syncTextarea;
 
       const scheduleTextareaSync = () => {
-        if (imeAnchorRaf !== 0 && typeof cancelAnimationFrame === 'function') {
-          cancelAnimationFrame(imeAnchorRaf);
-        }
-        if (compositionSyncTimer !== null) {
-          clearTimeout(compositionSyncTimer);
-          compositionSyncTimer = null;
-        }
-        // Run after xterm updates compositionView.textContent and runs updateCompositionElements().
-        compositionSyncTimer = setTimeout(() => {
-          compositionSyncTimer = null;
-          syncTextarea();
-        }, 0);
+        if (disposed || imeAnchorRaf !== 0) return;
         imeAnchorRaf = requestAnimationFrame(() => {
           imeAnchorRaf = 0;
           syncTextarea();
@@ -657,30 +648,27 @@ function WorkTerminalPane({
         if (buf.type === 'normal' && buf.viewportY < buf.baseY) {
           term.scrollToBottom();
         }
-        if (!(cursorHidden && buf.cursorX === 0 && buf.cursorY === 0)) {
-          compositionAnchor = { x: buf.cursorX, y: buf.cursorY };
-        }
-        syncTextarea();
       };
 
       const handleFocusInCapture = () => {
         syncTextarea();
       };
       const handleKeyDownCapture = (event: KeyboardEvent) => {
-        if (event.keyCode === 229 || event.key === 'Process' || event.isComposing) {
+        if (!isComposing && (event.keyCode === 229 || event.key === 'Process' || event.isComposing)) {
           ensureBottomForIme();
+          syncTextarea();
         }
       };
       const handleCompositionStartCapture = () => {
-        isComposing = true;
         ensureBottomForIme();
+        const buf = term.buffer.active;
+        compositionAnchor = (cursorHidden ? lastVisibleCursor : null) ?? { x: buf.cursorX, y: buf.cursorY };
+        isComposing = true;
+        syncTextarea();
+        scheduleTextareaSync();
       };
       const handleCompositionUpdateCapture = () => {
-        isComposing = true;
-        const buf = term.buffer.active;
-        if (!cursorHidden || buf.cursorX !== 0 || buf.cursorY !== 0) {
-          compositionAnchor = { x: buf.cursorX, y: buf.cursorY };
-        }
+        if (!isComposing) handleCompositionStartCapture();
         scheduleTextareaSync();
       };
       const handleCompositionEndCapture = () => {
@@ -695,10 +683,7 @@ function WorkTerminalPane({
       container.addEventListener('compositionupdate', handleCompositionUpdateCapture, { capture: true });
       container.addEventListener('compositionend', handleCompositionEndCapture, { capture: true });
       imeCleanupFns.push(() => {
-        if (compositionSyncTimer !== null) {
-          clearTimeout(compositionSyncTimer);
-          compositionSyncTimer = null;
-        }
+        container.removeAttribute('data-ime-composing');
         container.removeEventListener('focusin', handleFocusInCapture, { capture: true });
         container.removeEventListener('keydown', handleKeyDownCapture, { capture: true });
         container.removeEventListener('compositionstart', handleCompositionStartCapture, { capture: true });
@@ -754,16 +739,9 @@ function WorkTerminalPane({
       };
 
       xtermDisposables.push(
-        term.buffer.onBufferChange(syncTextarea),
-        term.onCursorMove(() => {
-          syncTextarea();
-        }),
-        term.onScroll(() => {
-          syncTextarea();
-        }),
-        term.onRender(() => {
-          syncTextarea();
-        }),
+        term.buffer.onBufferChange(scheduleTextareaSync),
+        term.onCursorMove(scheduleTextareaSync),
+        term.onScroll(scheduleTextareaSync),
         term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
           for (const param of params) {
             if (param === 25) {
@@ -859,15 +837,18 @@ function WorkTerminalPane({
         });
       };
 
-      const flushPendingOutput = () => {
+      const flushPendingOutput = (allowRepaintWait = false) => {
         outputFlushId = null;
         outputFlushKind = null;
         if (disposed || !pendingOutputBuffer) return;
+        if (allowRepaintWait && waitsForTerminalRepaint(pendingOutputBuffer)) {
+          outputFlushKind = 'timer';
+          outputFlushId = setTimeout(flushPendingOutput, 24);
+          return;
+        }
         const { chunk, rest } = sliceTerminalWriteBatch(pendingOutputBuffer);
         pendingOutputBuffer = rest;
-        writeChunk(chunk, () => {
-          syncTextarea();
-        });
+        writeChunk(chunk, scheduleTextareaSync);
         if (rest) {
           scheduleOutputFlush();
         }
@@ -878,7 +859,7 @@ function WorkTerminalPane({
         const canUseRaf = activeRef.current && (typeof document === 'undefined' || !document.hidden);
         if (canUseRaf && typeof requestAnimationFrame === 'function') {
           outputFlushKind = 'raf';
-          outputFlushId = requestAnimationFrame(flushPendingOutput);
+          outputFlushId = requestAnimationFrame(() => flushPendingOutput(true));
         } else {
           outputFlushKind = 'timer';
           outputFlushId = setTimeout(flushPendingOutput, 16);

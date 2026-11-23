@@ -15,7 +15,6 @@ import {
   Pin,
   PinOff,
   Plus,
-  Search,
   X,
 } from 'lucide-react';
 import {
@@ -56,7 +55,9 @@ import {
   bumpCliSessionsRefresh,
   detectPreviewPlatform,
   closeWorkFiles,
+  closeWorkFileSearch,
   openWorkFile,
+  openWorkFileSearch,
   openWorkGit,
   closeWorkGit,
   isFileDraftDirty,
@@ -129,6 +130,7 @@ export function WorkWorkspace() {
     hostUnlockVersion,
     filesPanelOpen,
     filesPanelWidth,
+    fileSearchProjectId,
     serverPlatform,
     defaultWindowsShell,
     defaultWindowsShellLoaded,
@@ -140,7 +142,6 @@ export function WorkWorkspace() {
   const [creating, setCreating] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [resizingFiles, setResizingFiles] = useState(false);
-  const [fileSearchProjectId, setFileSearchProjectId] = useState<string>();
   const [viewMeta, setViewMeta] = useState<Record<string, { pinned?: boolean; title?: string }>>({});
   const [tabMenu, setTabMenu] = useState<{
     key: string;
@@ -193,7 +194,7 @@ export function WorkWorkspace() {
         || event.key.toLowerCase() !== 'p') return;
       event.preventDefault();
       event.stopPropagation();
-      if (!event.repeat) setFileSearchProjectId(projectId);
+      if (!event.repeat) openWorkFileSearch(projectId);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
@@ -654,12 +655,6 @@ export function WorkWorkspace() {
           </div>
 
           <div className="work-topbar-actions">
-            {canSearchFiles && projectId && (
-              <button type="button" className="icon-button work-topbar-btn" aria-label="查找本机文件"
-                aria-keyshortcuts="Control+Shift+P" title="查找本机文件 (Ctrl+Shift+P)" onClick={() => setFileSearchProjectId(projectId)}>
-                <Search size={16} aria-hidden="true" />
-              </button>
-            )}
             <div className="work-add-control" ref={addControlRef}>
               <div className={`work-add-split${addMenuOpen ? ' is-open' : ''}`}>
                 <button
@@ -806,9 +801,9 @@ export function WorkWorkspace() {
 
       {canSearchFiles && projectId && fileSearchProjectId === projectId && (
         <WorkFileSearch key={`file-search:${projectId}`} projectId={projectId}
-          onClose={() => setFileSearchProjectId(undefined)}
+          onClose={() => closeWorkFileSearch()}
           onOpen={(file) => {
-            setFileSearchProjectId(undefined);
+            closeWorkFileSearch();
             handleOpenFile(file);
           }}
         />

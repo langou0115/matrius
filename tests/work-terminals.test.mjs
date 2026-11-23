@@ -24,6 +24,7 @@ import {
   openTerminalExternalLink,
   sliceTerminalWriteBatch,
   syncHelperTextareaGeometry,
+  waitsForTerminalRepaint,
 } from '../ui/features/work/work-terminal-view.tsx';
 import {
   advanceTerminalModeState,
@@ -109,19 +110,19 @@ function setupDom() {
   };
 }
 
-function renderDesktopWorkspace() {
+function renderDesktopWorkspace(preview = true) {
   return createElement(
     AppearanceProvider,
     null,
     createElement(
       InstanceProvider,
-      { preview: true },
+      { preview },
       createElement(
         PreviewContext.Provider,
-        { value: true },
+        { value: preview },
         createElement(
           ModelProvider,
-          { preview: true },
+          { preview },
           createElement(
             PersonalizationProvider,
             null,
@@ -1400,6 +1401,14 @@ test('attachTerminalClipboard supports right-click copy on selection, Ctrl+C cop
   }
 });
 
+test('only terminal clears still waiting for replacement text get a repaint delay', () => {
+  assert.equal(waitsForTerminalRepaint('\x1b[?25l\x1b[2J\x1b[H'), true);
+  assert.equal(waitsForTerminalRepaint('\x1b[H\x1b[J'), true);
+  assert.equal(waitsForTerminalRepaint('\x1b[2J\x1b[HLoading…'), false);
+  assert.equal(waitsForTerminalRepaint('\x1b[?2026h\x1b[2JDone\x1b[?2026l'), false);
+  assert.equal(waitsForTerminalRepaint('PS> '), false);
+});
+
 test('terminal helpers clamp context menu card, keep CSI/UTF-16 batches intact, sync IME anchor, and dispatch right-click menu', () => {
   const clampedInside = clampTerminalContextMenuPosition(120, 80, 1280, 720, 160, 96);
   assert.deepEqual(clampedInside, { left: 120, top: 80 });
@@ -1438,20 +1447,18 @@ test('terminal helpers clamp context menu card, keep CSI/UTF-16 batches intact, 
     container.append(screen);
     dom.document.body.append(container);
 
-    // Sync holds compositionAnchor only while actively composing if TUI hides cursor and jumps to (0,0).
+    // A TUI can move the cursor anywhere while an IME composition is active.
     syncHelperTextareaGeometry({
       container,
-      cursor: { x: 0, y: 0 },
+      cursor: { x: 60, y: 18 },
       cols: 80,
       rows: 24,
       compositionAnchor: { x: 10, y: 5 },
       isComposing: true,
-      cursorHidden: true,
     });
-    assert.equal(textarea.style.left, '100px');
-    assert.equal(textarea.style.top, '100px');
-    assert.equal(composition.style.left, '100px');
-    assert.equal(composition.style.top, '100px');
+    assert.equal(container.hasAttribute('data-ime-composing'), true);
+    assert.equal(container.style.getPropertyValue('--work-ime-left'), '100px');
+    assert.equal(container.style.getPropertyValue('--work-ime-top'), '100px');
 
     // Right-edge composition clamps within screenWidth instead of clipping out of viewport.
     syncHelperTextareaGeometry({
@@ -1459,10 +1466,13 @@ test('terminal helpers clamp context menu card, keep CSI/UTF-16 batches intact, 
       cursor: { x: 75, y: 23 },
       cols: 80,
       rows: 24,
-      cursorHidden: false,
+      isComposing: true,
     });
-    assert.equal(composition.style.left, '680px');
-    assert.equal(textarea.style.left, '680px');
+    assert.equal(container.style.getPropertyValue('--work-ime-left'), '680px');
+    assert.equal(container.style.getPropertyValue('--work-ime-width'), '120px');
+    syncHelperTextareaGeometry({ container, cursor: { x: 75, y: 23 }, cols: 80, rows: 24 });
+    assert.equal(container.hasAttribute('data-ime-composing'), false);
+    assert.equal(textarea.style.left, '750px');
     assert.equal(textarea.style.top, '460px');
 
     // When onOpenContextMenu is provided, right-click always prevents native menu & opens custom card.
@@ -1808,6 +1818,142 @@ test('new CLI conversation sidebar draft auto-expands collapsed group, binds on 
     await act(async () => {
       root.unmount();
     });
+    resetWorkStateForTests();
+    resetSidebarTabForTests();
+    dom.restore();
+  }
+});
+
+test('sidebar search button and Ctrl+K search local files in work mode without a duplicate topbar button', async () => {
+  const dom = setupDom();
+  const root = createRoot(dom.document.getElementById('root'));
+  const previousFetch = globalThis.fetch;
+  const project = {
+    id: 'proj-search',
+    name: 'matrius',
+    hostId: 'ssh-host',
+    directory: '/project',
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  globalThis.fetch = async (input) => {
+    const url = new URL(input, 'http://localhost');
+    if (url.pathname === '/api/features') {
+      return Response.json({ features: [{ id: 'work-file-search' }] });
+    }
+    if (url.pathname === '/api/projects') {
+      return Response.json({ items: [project] });
+    }
+    if (url.pathname === '/api/work/terminals') {
+      return Response.json({ items: [], platform: 'win32' });
+    }
+    if (url.pathname === '/api/work/settings') {
+      return Response.json({
+        defaultWindowsShell: 'powershell',
+        activeProjectId: project.id,
+        activeTerminals: {},
+        filesPanelOpen: false,
+        filesPanelWidth: null,
+        persistTerminalScrollback: false,
+        editorFontSize: 14,
+        editorAutoSave: false,
+        editorDiffLayout: 'inline',
+        projectOrder: [],
+        cliProviderOrder: ['codex', 'antigravity', 'claude'],
+        terminalOrder: [],
+      });
+    }
+    if (url.pathname === '/api/projects/proj-search/cli-sessions') {
+      return Response.json({ items: [], total: 0, hasMore: false });
+    }
+    if (url.pathname === '/api/projects/proj-search/file-search') {
+      return Response.json({ items: [], source: 'local', indexing: false, limited: false });
+    }
+    return Response.json({ items: [], entries: [] });
+  };
+
+  const tree = createElement(
+    AppearanceProvider,
+    null,
+    createElement(
+      InstanceProvider,
+      { preview: false },
+      createElement(
+        PreviewContext.Provider,
+        { value: false },
+        createElement(
+          ModelProvider,
+          { preview: true },
+          createElement(
+            PersonalizationProvider,
+            null,
+            createElement(
+              MemoryProvider,
+              null,
+              createElement(
+                NetworkToolsProvider,
+                null,
+                createElement(
+                  ChatProvider,
+                  { initialState: { conversations: [], activeId: null, sidebarOpen: true } },
+                  createElement(
+                    ChatRuntimeProvider,
+                    null,
+                    createElement(Workspace, null, createElement('div', null, 'chat')),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  try {
+    await act(async () => { root.render(tree); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
+
+    assert.equal(dom.document.querySelector('.work-topbar button[aria-label="查找本机文件"]'), null);
+    const sidebarSearchBtn = dom.document.querySelector('.sidebar-header-actions button[aria-label="查找本机文件"]');
+    assert.ok(sidebarSearchBtn);
+    assert.equal(sidebarSearchBtn.disabled, false);
+
+    await act(async () => { sidebarSearchBtn.click(); });
+    const searchDialog = dom.document.querySelector('dialog.work-file-search[open]');
+    assert.ok(searchDialog);
+    assert.equal(dom.document.querySelector('dialog.search-dialog'), null);
+
+    await act(async () => {
+      searchDialog.dispatchEvent(new dom.window.Event('cancel', { cancelable: true }));
+    });
+    assert.equal(dom.document.querySelector('dialog.work-file-search'), null);
+
+    const ctrlK = Object.assign(new dom.window.Event('keydown', { cancelable: true }), {
+      key: 'k',
+      ctrlKey: true,
+    });
+    await act(async () => { dom.window.dispatchEvent(ctrlK); });
+    assert.equal(ctrlK.defaultPrevented, true);
+    const keyDialog = dom.document.querySelector('dialog.work-file-search[open]');
+    assert.ok(keyDialog);
+    assert.equal(dom.document.querySelector('dialog.search-dialog'), null);
+    await act(async () => {
+      keyDialog.dispatchEvent(new dom.window.Event('cancel', { cancelable: true }));
+    });
+    assert.equal(dom.document.querySelector('dialog.work-file-search'), null);
+
+    const collapseBtn = dom.document.querySelector('button[aria-label="收起侧栏"]');
+    assert.ok(collapseBtn);
+    await act(async () => { collapseBtn.click(); });
+    const railSearchBtn = dom.document.querySelector('aside.sidebar.is-collapsed button[aria-label="查找本机文件"]');
+    assert.ok(railSearchBtn);
+    await act(async () => { railSearchBtn.click(); });
+    assert.ok(dom.document.querySelector('dialog.work-file-search[open]'));
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.fetch = previousFetch;
     resetWorkStateForTests();
     resetSidebarTabForTests();
     dom.restore();

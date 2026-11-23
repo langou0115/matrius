@@ -175,6 +175,8 @@ test('desktop target renders 工作 and 对话 switcher above 新对话, with wo
     assert.ok(workPanel);
     assert.match(workPanel.textContent ?? '', /创建项目/);
     assert.match(workPanel.textContent ?? '', /项目/);
+    assert.ok(sidebar.querySelector('.sidebar-header-actions button[aria-label="查找本机文件"]'));
+    assert.equal(sidebar.querySelector('.sidebar-header-actions button[aria-label="搜索对话"]'), null);
     assert.doesNotMatch(sidebar.textContent ?? '', /新对话/);
     assert.doesNotMatch(sidebar.textContent ?? '', /测试对话/);
     assert.ok(sidebar.querySelector('.sidebar-settings-entry'));
@@ -252,6 +254,7 @@ test('desktop workspace clears the right conversation area when switching to 工
     assert.equal(workMain.children.length, 0);
     assert.ok(dom.document.querySelector('.work-topbar .work-tabs'));
     assert.ok(dom.document.querySelector('.work-topbar button[aria-label="添加终端"]'));
+    assert.equal(dom.document.querySelector('.work-topbar button[aria-label="查找本机文件"]'), null);
     const filesToggleBtn = dom.document.querySelector('.work-topbar button[aria-label="收起工作目录"]');
     assert.ok(filesToggleBtn);
     assert.ok(dom.document.querySelector('.work-files-panel'));
@@ -259,7 +262,7 @@ test('desktop workspace clears the right conversation area when switching to 工
     assert.equal(dom.document.querySelector('.work-files-panel'), null);
     assert.ok(dom.document.querySelector('.work-topbar button[aria-label="展开工作目录"]'));
 
-    // Collapsing the sidebar on desktop keeps the slim icon rail with top expand, create project, and settings (no mode switch icon).
+    // Collapsing the sidebar on desktop keeps the slim icon rail with top expand, create project, file search, and settings (no mode switch icon).
     const collapseBtn = dom.document.querySelector('button[aria-label="收起侧栏"]');
     assert.ok(collapseBtn);
     await act(async () => { collapseBtn.click(); });
@@ -267,6 +270,7 @@ test('desktop workspace clears the right conversation area when switching to 工
     assert.ok(rail);
     assert.equal(dom.document.querySelector('main.work-main .sidebar-expand'), null);
     assert.ok(rail.querySelector('button[aria-label="创建项目"]'));
+    assert.ok(rail.querySelector('button[aria-label="查找本机文件"]'));
     assert.equal(rail.querySelector('button[aria-label="切换到对话"]'), null);
     assert.equal(rail.querySelector('button[aria-label="切换到工作"]'), null);
     assert.ok(rail.querySelector('a[aria-label="打开设置"]'));
@@ -284,6 +288,7 @@ test('desktop workspace clears the right conversation area when switching to 工
     const chatTab = dom.document.querySelector('#sidebar-tab-chat');
     assert.ok(chatTab);
     await act(async () => { chatTab.click(); });
+    assert.ok(dom.document.querySelector('.sidebar-header-actions button[aria-label="搜索对话"]'));
     assert.ok(dom.document.querySelector('.chat-placeholder'));
     assert.equal(dom.document.querySelector('main.work-main'), null);
 

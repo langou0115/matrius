@@ -16,7 +16,7 @@ import { ConversationSelect } from './conversation-select';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { isDesktopTarget } from '@/core/platform/target';
 import { workHref } from '@/features/work/work-href';
-import { readActiveProjectId } from '@/features/work/work-state';
+import { openWorkFileSearch, readActiveProjectId, useWorkState } from '@/features/work/work-state';
 import { useSidebarRouteTab, useSidebarTab, writeSidebarTab, type SidebarTab } from '../sidebar-mode';
 
 const WorkSidebarPanel = lazy(() =>
@@ -43,6 +43,12 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const instance = useInstance();
   const filesEnabled = useFeature('files');
   const tasksEnabled = useFeature('tasks');
+  const workFileSearchEnabled = useFeature('work-file-search');
+  const canSearchWorkFiles = workFileSearchEnabled && !preview;
+  const { projects: workProjects, activeProjectId: workActiveProjectId } = useWorkState();
+  const activeWorkProjectId = workActiveProjectId ?? workProjects[0]?.id ?? null;
+  const searchAriaLabel = activeTab === 'work' ? '查找本机文件' : '搜索对话';
+  const searchDisabled = activeTab === 'work' && (!canSearchWorkFiles || !activeWorkProjectId);
   // Removing the entry while the instance check is unreachable makes the library look deleted
   // after a backend reload. Keep it; the library page owns the retry and the explanation.
   const showLibrary = preview || filesEnabled || instance.status === 'unavailable';
@@ -202,6 +208,15 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   const onSettings = pathname === settingsHref || pathname.startsWith(`${settingsHref}/`);
   const onChatNew = activeId === null && !onLibrary && !onTasks && !onSettings;
 
+  function handleSearch() {
+    if (activeTab === 'work') {
+      if (!canSearchWorkFiles || !activeWorkProjectId) return;
+      openWorkFileSearch(activeWorkProjectId);
+      return;
+    }
+    onSearch();
+  }
+
   if (sidebarCollapsed && !mobile) {
     return (
       <aside className="sidebar is-collapsed" aria-label={activeTab === 'work' ? '工作导航' : '对话导航'}>
@@ -219,9 +234,20 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
         <div className="sidebar-rail-divider" aria-hidden="true" />
         <div className="sidebar-rail-top">
           {activeTab === 'work' ? (
-            <Suspense fallback={null}>
-              <WorkSidebarPanel collapsed />
-            </Suspense>
+            <>
+              <Suspense fallback={null}>
+                <WorkSidebarPanel collapsed />
+              </Suspense>
+              <button
+                type="button"
+                className="sidebar-rail-btn"
+                aria-label="查找本机文件"
+                disabled={searchDisabled}
+                onClick={handleSearch}
+              >
+                <Icon name="search" size={20} />
+              </button>
+            </>
           ) : (
             <>
               <button
@@ -258,7 +284,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
                 type="button"
                 className="sidebar-rail-btn"
                 aria-label="搜索对话"
-                onClick={onSearch}
+                onClick={handleSearch}
               >
                 <Icon name="search" size={20} />
               </button>
@@ -281,12 +307,20 @@ export const Sidebar = memo(function Sidebar({ onSearch, collapsed: sidebarColla
   }
 
   return (
-    <aside className="sidebar" aria-label="对话导航">
+    <aside className="sidebar" aria-label={activeTab === 'work' ? '工作导航' : '对话导航'}>
       <div className="sidebar-header">
         <Link href={homeHref} asChild><LinkAnchor className="brand" onClick={() => { writeSidebarTab('chat'); dispatch({ type: 'select', id: null }); if (!preview) writeLastRoute(null); }}><BrandMark size={30} />Matrius</LinkAnchor></Link>
         <div className="sidebar-header-actions">
-          <button className="icon-button" onClick={onSearch} aria-label="搜索对话"><Icon name="search" size={19} /></button>
-          <button className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={handleSearch}
+            disabled={searchDisabled}
+            aria-label={searchAriaLabel}
+          >
+            <Icon name="search" size={19} />
+          </button>
+          <button type="button" className="icon-button" onClick={() => dispatch({ type: 'sidebar' })} aria-label="收起侧栏"><Icon name="sidebar" size={19} /></button>
         </div>
       </div>
       {showModeSwitch ? <>

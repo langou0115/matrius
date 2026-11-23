@@ -4,6 +4,9 @@ import { isDesktopTarget } from '@/core/platform/target';
 import { useChat } from '@/features/chat/chat-state';
 import { useSidebarRouteTab, useSidebarTab } from '@/features/chat/sidebar-mode';
 import { SearchDialog } from '@/features/chat/components/search-dialog';
+import { useFeature } from '@/features/instance/instance-state';
+import { getWorkState, openWorkFileSearch } from '@/features/work/work-state';
+import { useIsPreview } from '@/features/workspace/preview-context';
 import { Dialog } from './dialog';
 import { useMobile } from './use-mobile';
 import { Sidebar } from '@/features/chat/components/sidebar';
@@ -15,9 +18,12 @@ const WorkWorkspace = lazy(() =>
 export function Workspace({ children }: PropsWithChildren) {
   const { sidebarOpen, dispatch } = useChat();
   const mobile = useMobile();
+  const preview = useIsPreview();
+  const workFileSearchEnabled = useFeature('work-file-search');
   const showModeSwitch = isDesktopTarget() && !mobile;
   const storedTab = useSidebarTab(showModeSwitch);
   const routeTab = useSidebarRouteTab();
+  const activeTab = showModeSwitch ? (routeTab ?? storedTab) : 'chat';
   // When AppShell owns the router, WorkRoute renders through `children` (`<Outlet />`);
   // isolated component tests stub `@/router` without AppShell and rely on storedTab here.
   const showWorkPane = showModeSwitch && routeTab === undefined && storedTab === 'work';
@@ -37,12 +43,18 @@ export function Workspace({ children }: PropsWithChildren) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         if (document.querySelector('dialog[open]')) return;
         event.preventDefault();
+        if (activeTab === 'work') {
+          const { activeProjectId, projects } = getWorkState();
+          const projectId = activeProjectId ?? projects[0]?.id ?? null;
+          if (!preview && workFileSearchEnabled && projectId) openWorkFileSearch(projectId);
+          return;
+        }
         setSearchOpen(true);
       }
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, []);
+  }, [activeTab, preview, workFileSearchEnabled]);
 
   return <div className={`app-shell ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
     <a className="skip-link" href="#main-content">跳到主要内容</a>
