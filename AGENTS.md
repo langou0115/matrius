@@ -28,11 +28,11 @@ npm run dev:server          # 只启动 TypeScript/Fastify 后端（tsx watch）
 npm run build               # 只执行 Vite 生产构建到 dist/
 npm run start               # 先全量构建 dist/，再单进程启动（读 .env.local 并托管界面与 /api/*）
 npm run db:migrate          # 只迁移本机开发库
-npm run test                # UI/共享测试，限制文件级并发（--test-concurrency=2）
-npm run test:server         # 后端测试（node:test + tsx），限制文件级并发（--test-concurrency=2）
+npm run test                # UI/共享测试，带磁盘转译缓存并限制文件级并发（--test-concurrency=4）
+npm run test:server         # 后端测试（node:test + tsx），限制文件级并发（--test-concurrency=4）
+npm run typecheck           # UI 类型检查（等价于 npx tsc --noEmit）
 npm run typecheck:server    # 后端类型检查
-npx tsc --noEmit            # UI 类型检查
-npx eslint .                # 使用 eslint.config.mjs 检查，可选
+npm run lint                # 带缓存的 ESLint 检查（可选）
 ```
 
 `npm run dev` 支持 `--check`、`--reset-db` 和 `--clear`（重建 Vite 依赖预构建）；`npm run dev -- --clear` 等价于给 Vite 传 `--force`。Node API 启动时自动执行 baseline migration，不需要 Python、uv 或 Alembic CLI。

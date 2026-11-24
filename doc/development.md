@@ -26,12 +26,12 @@ Vite 的依赖扫描固定从 `index.html` 开始，不再通过全仓库 HTML g
 
 ## 验证
 
-- npx tsc --noEmit：前端类型检查。
+- npm run typecheck（或 `npx tsc --noEmit`）：前端类型检查。
 - npm run typecheck:server：后端类型检查。
-- npm run test：UI 与共享测试，按文件并发执行（限制 `--test-concurrency=2`，避免高核数环境并发起大量子进程导致内存过载）。
-- npm run test:server：后端测试，按文件并发执行（限制 `--test-concurrency=2`）。
+- npm run test：UI 与共享测试，按文件并发执行（`--test-concurrency=4`），测试加载器将 TS/TSX 转译结果按内容哈希缓存在 `node_modules/.cache/matrius-test-ts/`，命中缓存时跳过加载 TypeScript 编译器。
+- npm run test:server：后端测试，按文件并发执行（`--test-concurrency=4`）。
 - npm run build：生产构建到 dist。
-- npx eslint .：可选风格检查。
+- npm run lint（或 `npx eslint .`）：带缓存的代码风格检查（缓存在 `node_modules/.cache/eslint/`）。
 
 共享逻辑、协议、持久化或跨模块修改运行全量测试。模拟模型测试不能代替真实浏览器验收。真实模型需验证流式回复、stop/steer、文件上传读取、标题、记忆与刷新持久化。
 

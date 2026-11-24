@@ -276,7 +276,7 @@ export function WorkEditorScreen() {
             <span className="settings-row-icon" aria-hidden="true"><Save size={19} strokeWidth={1.75} /></span>
             <div className="settings-row-copy">
               <strong>自动保存</strong>
-              <span className="settings-row-description">停止输入后自动保存本机文件。</span>
+              <span className="settings-row-description">停止输入后自动保存项目文件。</span>
             </div>
             <label className="model-switch-label">
               <input

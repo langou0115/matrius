@@ -38,7 +38,7 @@ export type HostCommandResult = {
 export type HostCommandRunner = (
   command: string,
   args: string[],
-  options?: { timeoutMs?: number; env?: Record<string, string> },
+  options?: { timeoutMs?: number; env?: Record<string, string>; maxBuffer?: number; input?: Buffer | string },
 ) => Promise<HostCommandResult>;
 
 export type SshBannerProber = (
@@ -61,13 +61,13 @@ export type WorkHostService = {
 export function defaultRunCommand(
   command: string,
   args: string[],
-  options: { timeoutMs?: number; env?: Record<string, string> } = {},
+  options: { timeoutMs?: number; env?: Record<string, string>; maxBuffer?: number; input?: Buffer | string } = {},
 ): Promise<HostCommandResult> {
   return new Promise((resolve) => {
-    execFile(command, args, {
+    const child = execFile(command, args, {
       encoding: 'buffer',
       timeout: options.timeoutMs ?? PROBE_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024,
+      maxBuffer: options.maxBuffer ?? 1024 * 1024,
       windowsHide: true,
       env: { ...process.env, ...options.env },
     }, (error, stdout, stderr) => {
@@ -86,6 +86,10 @@ export function defaultRunCommand(
         ...(err?.killed ? { timedOut: true } : {}),
       });
     });
+    if (options.input !== undefined && child.stdin) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(options.input);
+    }
   });
 }
 
@@ -236,6 +240,10 @@ export async function ensureWslDistroRunning(
 
 export function resolveWslCommand(platform = process.platform): string | null {
   return platform === 'win32' ? 'wsl.exe' : null;
+}
+
+export function resolveSshCommand(platform = process.platform): string {
+  return platform === 'win32' ? 'ssh.exe' : 'ssh';
 }
 
 export function createWorkHostService(options: {

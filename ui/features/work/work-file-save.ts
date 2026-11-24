@@ -1,4 +1,3 @@
-import { LOCAL_WORK_HOST_ID } from '@contract/work-projects';
 import { useCallback, useEffect } from 'react';
 
 import { useInstance } from '@/features/instance/instance-state';
@@ -13,8 +12,11 @@ export function useWorkFileSave() {
 
   const save = useCallback(async (projectId: string, path: string) => {
     const { projects, fileTabsByProject } = getWorkState();
-    const draft = fileTabsByProject[projectId]?.drafts.get(path);
-    if (projects.find((project) => project.id === projectId)?.hostId !== LOCAL_WORK_HOST_ID
+    const tabs = fileTabsByProject[projectId];
+    const draft = tabs?.drafts.get(path);
+    const entry = tabs?.entries.find((item) => item.path === path);
+    if (!projects.some((project) => project.id === projectId)
+      || entry?.localOutsideProject
       || !draft || draft.saving || draft.composing || !isFileDraftDirty(draft)) return;
 
     const pending = { ...draft, saving: true, error: undefined };

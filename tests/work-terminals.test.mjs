@@ -179,10 +179,17 @@ test('local file tabs open directly in the editor and automatically save when en
     await act(async () => { t.mock.timers.tick(100); });
     assert.equal(dom.document.querySelectorAll('.work-tab-select[title$="README.md"]').length, 1);
     assert.equal(dom.document.querySelector('.work-tab-select[title$="README.md"]').getAttribute('aria-selected'), 'true');
+    // Markdown opens in rendered preview mode by default with a VS Code-style toggle to edit source.
+    assert.ok(dom.document.querySelector('.work-doc-markdown'));
+    assert.equal(dom.document.querySelector('[aria-label="编辑 README.md"]'), null);
+    const editToggle = dom.document.querySelector('button[aria-label="切换到编辑器"]');
+    assert.ok(editToggle);
+    await act(async () => { editToggle.click(); });
+    await act(async () => { t.mock.timers.tick(100); });
     const input = dom.document.querySelector('[aria-label="编辑 README.md"]');
     assert.ok(input);
     assert.equal(dom.document.querySelector('.work-code-gutter').textContent, '1\n2\n3\n4');
-    assert.equal(dom.document.querySelector('.work-file-preview button'), null);
+    assert.ok(dom.document.querySelector('button[aria-label="切换到预览"]'));
     const paintLayer = dom.document.querySelector('.work-code-paint');
     assert.match(paintLayer.textContent, /# Matrius/u);
     const originalText = paintLayer.textContent;

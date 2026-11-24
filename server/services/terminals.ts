@@ -59,6 +59,7 @@ import {
   defaultRunCommand,
   ensureWslDistroRunning,
   expandHomePath,
+  resolveSshCommand,
   resolveWslCommand,
   type HostCommandRunner,
 } from './hosts';
@@ -472,6 +473,9 @@ export function createWorkTerminalService(options: {
       '-p', String(hostRow.port),
     ];
     let sshEnv: Record<string, string> | undefined;
+    if (hostRow.auth_method === 'key' && hostRow.private_key_path) {
+      args.push('-i', expandHomePath(hostRow.private_key_path), '-o', 'IdentitiesOnly=yes');
+    }
     if (secret) {
       args.push('-o', 'NumberOfPasswordPrompts=1');
       sshEnv = {
@@ -480,8 +484,6 @@ export function createWorkTerminalService(options: {
         DISPLAY: env.DISPLAY || 'matrius:0',
         MATRIUS_SSH_PASS: secret,
       };
-    } else if (hostRow.auth_method === 'key' && hostRow.private_key_path) {
-      args.push('-o', 'BatchMode=yes', '-i', expandHomePath(hostRow.private_key_path), '-o', 'IdentitiesOnly=yes');
     } else {
       args.push('-o', 'BatchMode=yes');
     }
@@ -811,13 +813,16 @@ export function createWorkTerminalService(options: {
         }
         const secret = trimmedPassword || runtimeHostSecrets.get(hostKey) || hostRow.secret_value;
 
-        file = 'ssh';
+        file = resolveSshCommand(currentPlatform);
         args = [
           '-tt',
           '-o', 'ConnectTimeout=8',
           '-o', 'StrictHostKeyChecking=accept-new',
           '-p', String(hostRow.port),
         ];
+        if (hostRow.auth_method === 'key' && hostRow.private_key_path) {
+          args.push('-i', expandHomePath(hostRow.private_key_path), '-o', 'IdentitiesOnly=yes');
+        }
         if (secret) {
           args.push('-o', 'NumberOfPasswordPrompts=1');
           extraEnv = {
@@ -826,9 +831,6 @@ export function createWorkTerminalService(options: {
             DISPLAY: env.DISPLAY || 'matrius:0',
             MATRIUS_SSH_PASS: secret,
           };
-        } else if (hostRow.auth_method === 'key' && hostRow.private_key_path) {
-          // Leave interactive passphrase entry enabled in the PTY if no cached passphrase exists.
-          args.push('-i', expandHomePath(hostRow.private_key_path), '-o', 'IdentitiesOnly=yes');
         }
         const target = hostRow.username ? `${hostRow.username}@${hostRow.host}` : hostRow.host;
         args.push('--', target, remoteCommand);

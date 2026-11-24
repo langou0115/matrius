@@ -483,7 +483,7 @@ export function WorkWorkspace() {
       className={`work-screen${filesPanelOpen ? ' has-files-panel' : ''}${resizingFiles ? ' is-resizing' : ''}`}
       style={screenStyle}
       onKeyDown={(event) => {
-        if (activeProject?.hostId !== LOCAL_WORK_HOST_ID || !activeFile || activeFile.localOutsideProject || event.nativeEvent.isComposing) return;
+        if (!activeProject || !activeFile || activeFile.localOutsideProject || event.nativeEvent.isComposing) return;
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
           event.preventDefault();
           void saveFile(activeProject.id, activeFile.path);

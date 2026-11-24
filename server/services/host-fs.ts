@@ -93,10 +93,18 @@ const POSIX_BROWSE_SCRIPT = [
 ].join('\n');
 
 const MAX_PREVIEW_BYTES = 256 * 1024;
+const MAX_BINARY_PREVIEW_BYTES = 20 * 1024 * 1024;
 const POSIX_PREVIEW_SCRIPT = [
   '[ -f "$1" ] || exit 2',
   'head -c ' + (MAX_PREVIEW_BYTES + 1) + ' < "$1"',
 ].join('\n');
+
+function posixBinaryPreviewScript(maxBytes: number): string {
+  return [
+    '[ -f "$1" ] || exit 2',
+    `head -c ${maxBytes + 1} < "$1"`,
+  ].join('\n');
+}
 
 function decodeFilePreview(bytes: Buffer): HostFilePreview {
   if (bytes.length > MAX_PREVIEW_BYTES) {
@@ -111,13 +119,21 @@ function decodeFilePreview(bytes: Buffer): HostFilePreview {
   }
 }
 
-async function readLocalPreviewBytes(path: string): Promise<Buffer> {
+async function readLocalPreviewBytes(path: string, maxBytes = MAX_PREVIEW_BYTES): Promise<Buffer> {
   try {
-    if (!(await stat(path)).isFile()) throw invalid('只能预览普通文件。');
+    const info = await stat(path);
+    if (!info.isFile()) throw invalid('只能预览普通文件。');
+    if (info.size > maxBytes) {
+      const limitLabel = maxBytes >= 1024 * 1024
+        ? `${Math.round(maxBytes / (1024 * 1024))} MiB`
+        : `${Math.round(maxBytes / 1024)} KiB`;
+      throw new AppError(413, 'file_preview_too_large', `文件超过 ${limitLabel}，无法预览。`);
+    }
     const file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
     try {
       if (!(await file.stat()).isFile()) throw invalid('只能预览普通文件。');
-      const bytes = Buffer.alloc(MAX_PREVIEW_BYTES + 1);
+      const allocSize = Math.min(maxBytes + 1, Math.max(info.size + 1, 1));
+      const bytes = Buffer.alloc(allocSize);
       let offset = 0;
       while (offset < bytes.length) {
         const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, offset);
@@ -149,7 +165,9 @@ const POSIX_PROJECT_GIT = [
 export type HostFsService = {
   runProjectGit(hostId: string, directory: string, args: string[]): Promise<HostCommandResult>;
   savePreview(projectId: string, path: string, text: string, baseRevision: string): Promise<HostFilePreview>;
+  saveBinaryFile(projectId: string, path: string, bytes: Buffer, baseRevision: string): Promise<{ revision: string }>;
   readPreview(hostId: string, path: string): Promise<HostFilePreview>;
+  readBinaryFile(hostId: string, path: string, maxBytes?: number): Promise<Buffer>;
   listEntries(hostId: string, rawPath?: string, options?: { refresh?: boolean }): Promise<HostDirectoryListing>;
 };
 
@@ -159,7 +177,7 @@ export function ensureAskpassScript(): string {
   if (cachedAskpassPath && existsSync(cachedAskpassPath)) return cachedAskpassPath;
   if (process.platform === 'win32') {
     const target = join(tmpdir(), 'matrius-ssh-askpass.cmd');
-    writeFileSync(target, '@echo off\r\necho %MATRIUS_SSH_PASS%\r\n', 'utf8');
+    writeFileSync(target, '@echo off\r\nsetlocal enabledelayedexpansion\r\necho(!MATRIUS_SSH_PASS!\r\n', 'utf8');
     cachedAskpassPath = target;
     return target;
   }
@@ -519,7 +537,93 @@ export function createHostFsService(options: {
   };
   const runtimeHostSecrets = options.runtimeHostSecrets ?? new Map<string, string>();
 
-  async function runWslFs(row: WorkHostRow, rawPath: string, script: string, scriptArgs: string[] = [], timeoutMs = BROWSE_TIMEOUT_MS) {
+  const POSIX_SAVE_FILE_SCRIPT = [
+    'root_raw=$1',
+    'target_raw=$2',
+    'base_rev=$3',
+    'case "$root_raw" in "~") root_raw=$HOME ;; "~/"*) root_raw="$HOME/${root_raw#~/}" ;; esac',
+    'if command -v python3 >/dev/null 2>&1; then',
+    '  python3 -c \'',
+    'import hashlib, os, sys, tempfile',
+    'root_raw, target_raw, base_rev = sys.argv[1], sys.argv[2], sys.argv[3]',
+    `max_bytes = ${MAX_PREVIEW_BYTES}`,
+    'if not os.path.isfile(target_raw): sys.exit(2)',
+    'root = os.path.realpath(root_raw)',
+    'target = os.path.realpath(target_raw)',
+    'try:',
+    '    rel = os.path.relpath(target, root)',
+    'except ValueError:',
+    '    sys.exit(4)',
+    'if rel in (".", "..") or rel.startswith(".." + os.sep) or os.path.isabs(rel):',
+    '    sys.exit(4)',
+    'try:',
+    '    with open(target, "rb") as f:',
+    '        original = f.read(max_bytes + 1)',
+    'except PermissionError:',
+    '    sys.exit(5)',
+    'if len(original) > max_bytes: sys.exit(6)',
+    'current_rev = hashlib.sha256(original).hexdigest()',
+    'if current_rev != base_rev: sys.exit(3)',
+    'bom = b"\\xef\\xbb\\xbf" if original.startswith(b"\\xef\\xbb\\xbf") else b""',
+    'new_text = sys.stdin.buffer.read(max_bytes + 1)',
+    'replacement = bom + new_text',
+    'if len(replacement) > max_bytes: sys.exit(6)',
+    'next_rev = hashlib.sha256(replacement).hexdigest()',
+    'if next_rev == current_rev:',
+    '    sys.stdout.write(next_rev)',
+    '    sys.exit(0)',
+    'if not os.access(target, os.W_OK): sys.exit(5)',
+    'mode = os.stat(target).st_mode & 0o777',
+    'tmp_path = None',
+    'try:',
+    '    fd, tmp_path = tempfile.mkstemp(prefix=".matrius-save-", suffix=".tmp", dir=os.path.dirname(target))',
+    '    try:',
+    '        os.write(fd, replacement)',
+    '        os.chmod(fd, mode)',
+    '        os.fsync(fd)',
+    '    finally:',
+    '        os.close(fd)',
+    '    with open(target, "rb") as f:',
+    '        if hashlib.sha256(f.read(max_bytes + 1)).hexdigest() != base_rev: sys.exit(3)',
+    '    os.replace(tmp_path, target)',
+    '    tmp_path = None',
+    '    sys.stdout.write(next_rev)',
+    'except PermissionError:',
+    '    sys.exit(5)',
+    'finally:',
+    '    if tmp_path and os.path.exists(tmp_path):',
+    '        try: os.unlink(tmp_path)',
+    '        except OSError: pass',
+    '\' "$root_raw" "$target_raw" "$base_rev"',
+    '  exit $?',
+    'fi',
+    '[ -f "$target_raw" ] || exit 2',
+    'root=$(cd -- "$root_raw" 2>/dev/null && pwd -P) || exit 2',
+    'target_dir=$(cd -- "$(dirname -- "$target_raw")" 2>/dev/null && pwd -P) || exit 2',
+    'target="$target_dir/$(basename -- "$target_raw")"',
+    'case "$target" in "$root"/*) ;; *) exit 4 ;; esac',
+    '[ -w "$target" ] || exit 5',
+    'sha_cmd=""',
+    'if command -v sha256sum >/dev/null 2>&1; then sha_cmd="sha256sum"; elif command -v shasum >/dev/null 2>&1; then sha_cmd="shasum -a 256"; else exit 1; fi',
+    'cur_rev=$($sha_cmd < "$target" | awk "{print \\$1}")',
+    '[ "$cur_rev" = "$base_rev" ] || exit 3',
+    'tmp=$(mktemp "$target_dir/.matrius-save-XXXXXX") || exit 5',
+    'cat > "$tmp" || { rm -f "$tmp"; exit 5; }',
+    'next_rev=$($sha_cmd < "$tmp" | awk "{print \\$1}")',
+    'if [ "$next_rev" = "$cur_rev" ]; then rm -f "$tmp"; printf "%s" "$next_rev"; exit 0; fi',
+    'chmod --reference="$target" "$tmp" 2>/dev/null || true',
+    'mv -f "$tmp" "$target" || { rm -f "$tmp"; exit 5; }',
+    'printf "%s" "$next_rev"',
+  ].join('\n');
+
+  async function runWslFs(
+    row: WorkHostRow,
+    rawPath: string,
+    script: string,
+    scriptArgs: string[] = [],
+    timeoutMs = BROWSE_TIMEOUT_MS,
+    extra: { input?: Buffer | string; maxBuffer?: number } = {},
+  ) {
     if (!wslCommand) {
       throw new AppError(400, 'wsl_unavailable', '当前运行环境无法浏览该 WSL 发行版目录。');
     }
@@ -538,6 +642,7 @@ export function createHostFsService(options: {
     const result = await runCommand(wslCommand, args, {
       timeoutMs,
       env: { WSL_UTF8: '1' },
+      ...extra,
     });
 
     if (result.errorCode === 'ENOENT') {
@@ -549,7 +654,14 @@ export function createHostFsService(options: {
     return result;
   }
 
-  async function runSshFs(row: WorkHostRow, rawPath: string, script: string, scriptArgs: string[] = [], timeoutMs = BROWSE_TIMEOUT_MS) {
+  async function runSshFs(
+    row: WorkHostRow,
+    rawPath: string,
+    script: string,
+    scriptArgs: string[] = [],
+    timeoutMs = BROWSE_TIMEOUT_MS,
+    extra: { input?: Buffer | string; maxBuffer?: number } = {},
+  ) {
     const resolvedSecret = runtimeHostSecrets.get(fromDbUuid(row.id)) || row.secret_value;
     if (row.auth_method === 'password' && !resolvedSecret) {
       throw new AppError(401, 'ssh_auth_required', '未保存 SSH 密码，请输入密码以浏览工作目录。');
@@ -563,6 +675,9 @@ export function createHostFsService(options: {
     ];
 
     const cmdEnv: Record<string, string> = {};
+    if (row.auth_method === 'key' && row.private_key_path) {
+      args.push('-i', expandHomePath(row.private_key_path), '-o', 'IdentitiesOnly=yes');
+    }
     if (resolvedSecret) {
       args.push('-o', 'NumberOfPasswordPrompts=1');
       cmdEnv.SSH_ASKPASS = ensureAskpassScript();
@@ -571,9 +686,6 @@ export function createHostFsService(options: {
       cmdEnv.MATRIUS_SSH_PASS = resolvedSecret;
     } else {
       args.push('-o', 'BatchMode=yes');
-      if (row.auth_method === 'key' && row.private_key_path) {
-        args.push('-i', expandHomePath(row.private_key_path), '-o', 'IdentitiesOnly=yes');
-      }
     }
 
     const target = row.username ? `${row.username}@${row.host}` : row.host;
@@ -583,6 +695,7 @@ export function createHostFsService(options: {
     const result = await runCommand('ssh', args, {
       timeoutMs,
       env: cmdEnv,
+      ...extra,
     });
 
     if (result.errorCode === 'ENOENT') {
@@ -594,8 +707,17 @@ export function createHostFsService(options: {
     return result;
   }
 
-  function runRemoteFs(row: WorkHostRow, path: string, script: string, scriptArgs?: string[], timeoutMs?: number) {
-    return row.kind === 'wsl' ? runWslFs(row, path, script, scriptArgs, timeoutMs) : runSshFs(row, path, script, scriptArgs, timeoutMs);
+  function runRemoteFs(
+    row: WorkHostRow,
+    path: string,
+    script: string,
+    scriptArgs?: string[],
+    timeoutMs?: number,
+    extra?: { input?: Buffer | string; maxBuffer?: number },
+  ) {
+    return row.kind === 'wsl'
+      ? runWslFs(row, path, script, scriptArgs, timeoutMs, extra)
+      : runSshFs(row, path, script, scriptArgs, timeoutMs, extra);
   }
 
   const savingPaths = new Set<string>();
@@ -625,7 +747,48 @@ export function createHostFsService(options: {
     async savePreview(projectId, path, text, baseRevision) {
       const project = requireWorkProjectRow(db, INSTANCE_ID, projectId);
       if (project.host_id !== LOCAL_WORK_HOST_ID) {
-        throw new AppError(403, 'file_editor_unavailable', '当前仅支持编辑本机项目中的文件。');
+        if (!posix.isAbsolute(path) || path.includes('\0')) {
+          throw invalid('文件路径不合法。');
+        }
+        const replacement = Buffer.from(text, 'utf8');
+        decodeFilePreview(replacement);
+        const lockKey = `${project.host_id}:${path}`;
+        if (savingPaths.has(lockKey)) throw new AppError(409, 'file_preview_busy', '文件正在保存，请稍后重试。');
+        savingPaths.add(lockKey);
+        try {
+          const row = requireWorkHostRow(db, INSTANCE_ID, project.host_id);
+          const result = await runRemoteFs(
+            row,
+            project.directory,
+            POSIX_SAVE_FILE_SCRIPT,
+            [path, baseRevision],
+            20_000,
+            { input: replacement },
+          );
+          if (result.code === 2) throw invalid('文件不存在或不是普通文件。');
+          if (result.code === 3) {
+            throw new AppError(409, 'file_preview_conflict', '文件已在其他地方修改。请先复制当前草稿，再重新打开文件。');
+          }
+          if (result.code === 4) {
+            throw new AppError(403, 'path_forbidden', '只能编辑项目目录中的普通文件。');
+          }
+          if (result.code === 5) {
+            throw new AppError(403, 'path_forbidden', '没有权限写入远程文件。');
+          }
+          if (result.code === 6) {
+            throw new AppError(413, 'file_preview_too_large', '文件超过 256 KiB，无法保存。');
+          }
+          if (result.code !== 0) {
+            throw new AppError(502, 'host_save_failed', summarizeBrowseFailure(result.stderr, '保存远程文件失败。'));
+          }
+          const nextRevision = result.stdout.toString('utf8').trim();
+          const revision = /^[a-f0-9]{64}$/u.test(nextRevision)
+            ? nextRevision
+            : createHash('sha256').update(replacement).digest('hex');
+          return { text, revision };
+        } finally {
+          savingPaths.delete(lockKey);
+        }
       }
       if (!isAbsolute(path) || path.includes('\0') || (currentPlatform === 'win32' && !/^[a-z]:[\\/][^:]*$/iu.test(path))) {
         throw invalid('文件路径不合法。');
@@ -675,6 +838,108 @@ export function createHostFsService(options: {
       }
     },
 
+    async saveBinaryFile(projectId, path, replacement, baseRevision) {
+      if (replacement.length > MAX_BINARY_PREVIEW_BYTES) {
+        throw new AppError(413, 'file_preview_too_large', `文件超过 ${Math.round(MAX_BINARY_PREVIEW_BYTES / (1024 * 1024))} MiB，无法保存。`);
+      }
+      const project = requireWorkProjectRow(db, INSTANCE_ID, projectId);
+      if (project.host_id !== LOCAL_WORK_HOST_ID) {
+        if (!posix.isAbsolute(path) || path.includes('\0')) {
+          throw invalid('文件路径不合法。');
+        }
+        const lockKey = `${project.host_id}:${path}`;
+        if (savingPaths.has(lockKey)) throw new AppError(409, 'file_preview_busy', '文件正在保存，请稍后重试。');
+        savingPaths.add(lockKey);
+        const binaryScript = POSIX_SAVE_FILE_SCRIPT
+          .replace(`max_bytes = ${MAX_PREVIEW_BYTES}`, `max_bytes = ${MAX_BINARY_PREVIEW_BYTES}`)
+          .replace('bom = b"\\xef\\xbb\\xbf" if original.startswith(b"\\xef\\xbb\\xbf") else b""', 'bom = b""');
+        try {
+          const row = requireWorkHostRow(db, INSTANCE_ID, project.host_id);
+          const result = await runRemoteFs(
+            row,
+            project.directory,
+            binaryScript,
+            [path, baseRevision],
+            30_000,
+            { input: replacement },
+          );
+          if (result.code === 2) throw invalid('文件不存在或不是普通文件。');
+          if (result.code === 3) {
+            throw new AppError(409, 'file_preview_conflict', '文件已在其他地方修改，请重新打开文件后再编辑。');
+          }
+          if (result.code === 4) {
+            throw new AppError(403, 'path_forbidden', '只能编辑项目目录中的普通文件。');
+          }
+          if (result.code === 5) {
+            throw new AppError(403, 'path_forbidden', '没有权限写入远程文件。');
+          }
+          if (result.code === 6) {
+            throw new AppError(413, 'file_preview_too_large', '文件超过大小限制，无法保存。');
+          }
+          if (result.code !== 0) {
+            throw new AppError(502, 'host_save_failed', summarizeBrowseFailure(result.stderr, '保存远程文件失败。'));
+          }
+          const nextRevision = result.stdout.toString('utf8').trim();
+          const revision = /^[a-f0-9]{64}$/u.test(nextRevision)
+            ? nextRevision
+            : createHash('sha256').update(replacement).digest('hex');
+          return { revision };
+        } finally {
+          savingPaths.delete(lockKey);
+        }
+      }
+      if (!isAbsolute(path) || path.includes('\0') || (currentPlatform === 'win32' && !/^[a-z]:[\\/][^:]*$/iu.test(path))) {
+        throw invalid('文件路径不合法。');
+      }
+      const [root, target] = await Promise.all([
+        realpath(resolveLocalTarget(project.directory, homeDir, currentPlatform)),
+        realpath(path),
+      ]).catch(() => { throw invalid('无法访问项目目录或文件。'); });
+      const within = relative(root, target);
+      if (!within || isAbsolute(within) || within === '..' || within.startsWith('..' + sep)) {
+        throw new AppError(403, 'path_forbidden', '只能编辑项目目录中的普通文件。');
+      }
+
+      const lockPath = currentPlatform === 'win32' ? target.toLowerCase() : target;
+      if (savingPaths.has(lockPath)) throw new AppError(409, 'file_preview_busy', '文件正在保存，请稍后重试。');
+      savingPaths.add(lockPath);
+      const tempPath = join(dirname(target), `.matrius-save-${randomUUID()}.tmp`);
+      let tempCreated = false;
+      try {
+        const original = await readLocalPreviewBytes(target, MAX_BINARY_PREVIEW_BYTES);
+        const currentRev = createHash('sha256').update(original).digest('hex');
+        if (currentRev !== baseRevision) {
+          throw new AppError(409, 'file_preview_conflict', '文件已在其他地方修改，请重新打开文件后再编辑。');
+        }
+        const nextRev = createHash('sha256').update(replacement).digest('hex');
+        if (nextRev === currentRev) return { revision: currentRev };
+        await access(target, fsConstants.W_OK);
+        const { mode } = await stat(target);
+        const temp = await open(tempPath, 'wx', 0o600);
+        tempCreated = true;
+        try {
+          await temp.writeFile(replacement);
+          await temp.chmod(mode & 0o777);
+          await temp.sync();
+        } finally {
+          await temp.close();
+        }
+        const verifyRev = createHash('sha256').update(await readLocalPreviewBytes(target, MAX_BINARY_PREVIEW_BYTES)).digest('hex');
+        if (verifyRev !== baseRevision) {
+          throw new AppError(409, 'file_preview_conflict', '文件已在其他地方修改，请重新打开文件后再编辑。');
+        }
+        await rename(tempPath, target);
+        tempCreated = false;
+        return { revision: nextRev };
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw invalid('保存文件失败，请检查文件与目录权限。');
+      } finally {
+        savingPaths.delete(lockPath);
+        if (tempCreated) await unlink(tempPath).catch(() => {});
+      }
+    },
+
     async readPreview(hostId, path) {
       try {
         validateBrowsePath(path);
@@ -696,6 +961,38 @@ export function createHostFsService(options: {
         throw new AppError(502, 'host_preview_failed', summarizeBrowseFailure(result.stderr, '无法读取主机文件。'));
       }
       return decodeFilePreview(result.stdout);
+    },
+
+    async readBinaryFile(hostId, path, maxBytes = MAX_BINARY_PREVIEW_BYTES) {
+      try {
+        validateBrowsePath(path);
+        if (path.includes('\0')) throw new Error();
+      } catch {
+        throw invalid('文件路径不合法。');
+      }
+      if (hostId === LOCAL_WORK_HOST_ID) {
+        if (!isAbsolute(path) || (currentPlatform === 'win32' && !/^[a-z]:[\\/][^:]*$/iu.test(path))) {
+          throw invalid('文件路径不合法。');
+        }
+        const bytes = await readLocalPreviewBytes(path, maxBytes);
+        if (bytes.length > maxBytes) {
+          throw new AppError(413, 'file_preview_too_large', `文件超过 ${Math.round(maxBytes / (1024 * 1024))} MiB，无法预览。`);
+        }
+        return bytes;
+      }
+      if (!posix.isAbsolute(path)) throw invalid('文件路径不合法。');
+      const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
+      const result = await runRemoteFs(row, path, posixBinaryPreviewScript(maxBytes), [], 20_000, {
+        maxBuffer: maxBytes + 64 * 1024,
+      });
+      if (result.code === 2) throw invalid('文件不存在或不是普通文件。');
+      if (result.code !== 0) {
+        throw new AppError(502, 'host_preview_failed', summarizeBrowseFailure(result.stderr, '无法读取主机文件。'));
+      }
+      if (result.stdout.length > maxBytes) {
+        throw new AppError(413, 'file_preview_too_large', `文件超过 ${Math.round(maxBytes / (1024 * 1024))} MiB，无法预览。`);
+      }
+      return result.stdout;
     },
 
     async listEntries(hostId, rawPath, listOptions) {

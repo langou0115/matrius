@@ -58,6 +58,61 @@ export type WorkFileSearchResponse = {
 
 export type HostFilePreview = { text: string; revision: string };
 
+export type WorkDocumentFormat = 'markdown' | 'pdf' | 'word' | 'excel' | 'powerpoint';
+
+const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown']);
+const WORD_EXTENSIONS = new Set(['docx', 'doc']);
+const EXCEL_EXTENSIONS = new Set(['xlsx', 'xls']);
+const POWERPOINT_EXTENSIONS = new Set(['pptx', 'ppt']);
+
+export function detectWorkDocumentFormat(filename: string): WorkDocumentFormat | null {
+  const base = filename.split(/[\\/]/u).pop() ?? filename;
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0 || dot === base.length - 1) return null;
+  const ext = base.slice(dot + 1).toLowerCase();
+  if (MARKDOWN_EXTENSIONS.has(ext)) return 'markdown';
+  if (ext === 'pdf') return 'pdf';
+  if (WORD_EXTENSIONS.has(ext)) return 'word';
+  if (EXCEL_EXTENSIONS.has(ext)) return 'excel';
+  if (POWERPOINT_EXTENSIONS.has(ext)) return 'powerpoint';
+  return null;
+}
+
+export type WorkSpreadsheetSheet = {
+  name: string;
+  rows: string[][];
+  totalRows: number;
+  totalCols: number;
+  truncated: boolean;
+};
+
+export type WorkSlideBlock =
+  | { kind: 'paragraph'; text: string; level?: number }
+  | { kind: 'table'; rows: string[][] }
+  | { kind: 'image'; src: string; alt?: string };
+
+export type WorkPresentationSlide = {
+  number: number;
+  title?: string;
+  blocks: WorkSlideBlock[];
+  notes?: string;
+};
+
+export type HostBinarySaveResult = {
+  revision: string;
+};
+
+export type HostDocumentPreview =
+  | { kind: 'word'; html: string; revision?: string; readOnlyLegacy?: boolean }
+  | {
+      kind: 'excel';
+      sheets: WorkSpreadsheetSheet[];
+      workbook?: Record<string, unknown>;
+      revision?: string;
+      readOnlyLegacy?: boolean;
+    }
+  | { kind: 'powerpoint'; slides: WorkPresentationSlide[]; revision?: string; readOnlyLegacy?: boolean };
+
 export type HostDirectoryListing = {
   hostId: string;
   path: string;

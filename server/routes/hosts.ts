@@ -1,9 +1,17 @@
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { detectWorkDocumentFormat } from '../../contract/work-projects';
+import type { Settings } from '../config';
 import type { AppDatabase } from '../db/client';
+import { AppError } from '../errors';
+import { convertLegacy } from '../services/documents/converter';
+import { extensionOf } from '../services/file-types';
 import { createHostFsService, type HostFsService } from '../services/host-fs';
 import { createWorkHostService, type WorkHostService } from '../services/hosts';
+import { renderWorkDocumentPreview } from '../services/work-document-preview';
+import { univerWorkbookToExcelBuffer } from '../services/work-excel-univer';
 
 const hostKindSchema = z.enum(['ssh', 'wsl']);
 const authMethodSchema = z.enum(['agent', 'key', 'password']);
@@ -46,6 +54,7 @@ const unlockHostSchema = z.object({
 
 export type HostRouteDeps = {
   db: AppDatabase;
+  settings?: Settings;
   hosts?: WorkHostService;
   hostFs?: HostFsService;
   runtimeHostSecrets?: Map<string, string>;
@@ -109,6 +118,52 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     return hostFs.readPreview(request.params.hostId, path);
   });
 
+  app.get<{ Params: { hostId: string } }>('/api/hosts/:hostId/fs/document', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path } = fsQuerySchema.required().parse(request.query ?? {});
+    const format = detectWorkDocumentFormat(path);
+    if (format !== 'word' && format !== 'excel' && format !== 'powerpoint') {
+      throw new AppError(415, 'document_preview_unsupported', '暂不支持渲染预览此文件类型。');
+    }
+    const bytes = await hostFs.readBinaryFile(request.params.hostId, path);
+    return renderWorkDocumentPreview(path, bytes, deps.settings);
+  });
+
+  app.get<{ Params: { hostId: string } }>('/api/hosts/:hostId/fs/raw', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    const { path } = fsQuerySchema.required().parse(request.query ?? {});
+    const format = detectWorkDocumentFormat(path);
+    if (format !== 'pdf' && format !== 'word' && format !== 'excel' && format !== 'powerpoint') {
+      throw new AppError(415, 'raw_preview_unsupported', '暂不支持直接内嵌查看此文件类型。');
+    }
+    const rawBytes = await hostFs.readBinaryFile(request.params.hostId, path);
+    const revision = createHash('sha256').update(rawBytes).digest('hex');
+    let payload: Buffer = rawBytes;
+    let ext = extensionOf(path);
+    let converted = false;
+    if (ext === 'doc' || ext === 'xls' || ext === 'ppt') {
+      if (!deps.settings) {
+        throw new AppError(503, 'document_converter_unavailable', '旧版 Office 文件需要 LibreOffice 转换引擎，建议另存为 .docx / .xlsx / .pptx 后查看。');
+      }
+      const res = await convertLegacy(deps.settings, path, rawBytes);
+      payload = res.data;
+      ext = res.format;
+      converted = true;
+    }
+    const mimeByExt: Record<string, string> = {
+      pdf: 'application/pdf',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    };
+    reply.header('Content-Disposition', 'inline');
+    reply.header('X-File-Revision', revision);
+    if (converted) reply.header('X-File-Converted', '1');
+    reply.type(mimeByExt[ext] ?? 'application/octet-stream');
+    return reply.send(payload);
+  });
+
   app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/text', { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { path, text, baseRevision } = z.object({
@@ -117,6 +172,28 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
       baseRevision: z.string().regex(/^[a-f0-9]{64}$/u),
     }).parse(request.body ?? {});
     return hostFs.savePreview(request.params.projectId, path, text, baseRevision);
+  });
+
+  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/binary', { bodyLimit: 30 * 1024 * 1024 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path, dataBase64, baseRevision } = z.object({
+      path: z.string().min(1).max(1000),
+      dataBase64: z.string().min(1),
+      baseRevision: z.string().regex(/^[a-f0-9]{64}$/u),
+    }).parse(request.body ?? {});
+    const bytes = Buffer.from(dataBase64, 'base64');
+    return hostFs.saveBinaryFile(request.params.projectId, path, bytes, baseRevision);
+  });
+
+  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/excel', { bodyLimit: 30 * 1024 * 1024 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path, workbook, baseRevision } = z.object({
+      path: z.string().min(1).max(1000),
+      workbook: z.record(z.string(), z.unknown()),
+      baseRevision: z.string().regex(/^[a-f0-9]{64}$/u),
+    }).parse(request.body ?? {});
+    const bytes = await univerWorkbookToExcelBuffer(workbook);
+    return hostFs.saveBinaryFile(request.params.projectId, path, bytes, baseRevision);
   });
 
   app.delete<{ Params: { hostId: string } }>('/api/hosts/:hostId', async (request, reply) => {

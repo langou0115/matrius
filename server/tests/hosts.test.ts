@@ -9,6 +9,7 @@ import { buildApp } from '../app';
 import { loadSettings } from '../config';
 import { openDatabase } from '../db/client';
 import { migrate } from '../db/migrate';
+import { createHostFsService } from '../services/host-fs';
 import { createWorkHostService, parseWslListOutput, resolveWslCommand } from '../services/hosts';
 
 test('resolveWslCommand only resolves wsl.exe on Windows and treats WSL Linux as standard Linux', () => {
@@ -99,6 +100,84 @@ test('project file save replaces text, rejects stale revisions, and stays inside
     writeFileSync(outside, 'outside');
     assert.equal((await save({ path: outside, text: 'outside-change', baseRevision })).statusCode, 403);
     assert.equal(readFileSync(outside, 'utf8'), 'outside');
+  } finally {
+    await app.close();
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('project file save supports SSH/WSL remote hosts with optimistic concurrency and directory boundary checks', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'matrius-remote-save-'));
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: directory, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+  const calls: Array<{ command: string; args: string[]; input?: Buffer | string }> = [];
+  let nextExitCode = 0;
+  const hostFs = createHostFsService({
+    db,
+    wslCommand: 'wsl.exe',
+    async runCommand(command, args, options) {
+      calls.push({ command, args, input: options?.input });
+      if (command === 'wsl.exe' && args[0] === '-l') {
+        return {
+          code: 0,
+          stdout: Buffer.from('  NAME STATE VERSION\r\n* Ubuntu-24.04  Running  2\r\n', 'utf16le'),
+          stderr: Buffer.alloc(0),
+        };
+      }
+      if (nextExitCode !== 0) {
+        return { code: nextExitCode, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      const nextRev = 'b'.repeat(64);
+      return { code: 0, stdout: Buffer.from(nextRev), stderr: Buffer.alloc(0) };
+    },
+  });
+  const { app } = await buildApp({ settings, db, hostFs });
+  try {
+    const hostRes = await app.inject({
+      method: 'POST',
+      url: '/api/hosts',
+      payload: { kind: 'wsl', name: 'Ubuntu', distro: 'Ubuntu-24.04' },
+    });
+    assert.equal(hostRes.statusCode, 201);
+    const hostId = hostRes.json().id;
+
+    const projectRes = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      payload: { directory: '/home/dev/repo', hostId },
+    });
+    assert.equal(projectRes.statusCode, 201);
+    const url = `/api/projects/${projectRes.json().id}/files/text`;
+    const baseRevision = 'a'.repeat(64);
+
+    const saved = await app.inject({
+      method: 'PUT',
+      url,
+      payload: { path: '/home/dev/repo/app.ts', text: 'export const ok = true;\n', baseRevision },
+    });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.deepEqual(saved.json(), { text: 'export const ok = true;\n', revision: 'b'.repeat(64) });
+    const execCall = calls.find((item) => item.args.includes('--exec'));
+    assert.ok(execCall);
+    assert.equal(Buffer.from(execCall.input ?? '').toString('utf8'), 'export const ok = true;\n');
+
+    nextExitCode = 3;
+    const conflict = await app.inject({
+      method: 'PUT',
+      url,
+      payload: { path: '/home/dev/repo/app.ts', text: 'stale', baseRevision },
+    });
+    assert.equal(conflict.statusCode, 409);
+
+    nextExitCode = 4;
+    const forbidden = await app.inject({
+      method: 'PUT',
+      url,
+      payload: { path: '/etc/passwd', text: 'nope', baseRevision },
+    });
+    assert.equal(forbidden.statusCode, 403);
   } finally {
     await app.close();
     db.close();

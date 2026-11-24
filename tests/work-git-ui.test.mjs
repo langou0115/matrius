@@ -252,6 +252,30 @@ test('WorkGitView supports VS Code tree/list toggle, stage/unstage/discard, bran
     await act(async () => { dom.document.querySelector('button[aria-label="关闭提交详情"]').click(); });
     assert.equal(dom.document.querySelector('.work-git-inspector'), null);
     assert.ok(dom.document.querySelector('.work-git-graph-pane'));
+
+    // VS Code Source Control commit UX: no per-file checkboxes; typing a message enables commit
+    assert.equal(dom.document.querySelector('.work-git-checkbox-input'), null);
+    const commitInput = dom.document.querySelector('textarea[aria-label="提交说明"]');
+    const commitBtn = dom.document.querySelector('.work-git-commit-btn');
+    assert.ok(commitInput);
+    assert.ok(commitBtn);
+    assert.equal(commitBtn.disabled, true);
+    const commitInputKey = Object.keys(commitInput).find((key) => key.startsWith('__reactProps'));
+    assert.ok(commitInputKey);
+    await act(async () => {
+      commitInput.value = 'chore: polish git panel';
+      commitInput[commitInputKey].onChange({ target: commitInput });
+    });
+    assert.equal(dom.document.querySelector('.work-git-commit-btn').disabled, false);
+    const commitForm = dom.document.querySelector('form.work-git-submit');
+    const commitFormKey = Object.keys(commitForm).find((key) => key.startsWith('__reactProps'));
+    assert.ok(commitFormKey);
+    await act(async () => {
+      commitForm[commitFormKey].onSubmit({ preventDefault() {} });
+    });
+    assert.equal(dom.document.querySelector('textarea[aria-label="提交说明"]').value, '');
+    assert.match(dom.document.querySelector('.work-git-toast.is-success')?.textContent ?? '', /已提交/u);
+    assert.equal(dom.document.querySelector('.work-git-submit .work-git-banner'), null);
   } finally {
     await act(async () => { root.unmount(); });
     dom.restore();

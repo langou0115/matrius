@@ -251,6 +251,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
   const runtimeHostSecrets = new Map<string, string>();
   registerHostRoutes(app, {
     db,
+    settings,
     runtimeHostSecrets,
     ...(options.hosts ? { hosts: options.hosts } : {}),
     ...(options.hostFs ? { hostFs: options.hostFs } : {}),

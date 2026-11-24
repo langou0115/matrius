@@ -10,7 +10,9 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  CheckCircle2,
   ChevronRight,
+  CircleAlert,
   CloudDownload,
   Folder,
   FolderOpen,
@@ -18,6 +20,7 @@ import {
   GitFork,
   List,
   ListTree,
+  Loader2,
   Maximize2,
   Minimize2,
   Minus,
@@ -130,9 +133,7 @@ function ChangeRow({
   treeView,
   depth,
   isSelected,
-  isChecked,
   busy,
-  onToggleChecked,
   onSelect,
   onStage,
   onUnstage,
@@ -144,9 +145,7 @@ function ChangeRow({
   treeView: boolean;
   depth: number;
   isSelected: boolean;
-  isChecked: boolean;
   busy: boolean;
-  onToggleChecked: (path: string, enabled: boolean) => void;
   onSelect: (path: string, scope: WorkGitDiffScope) => void;
   onStage: (paths: string[]) => void;
   onUnstage: (paths: string[]) => void;
@@ -155,25 +154,13 @@ function ChangeRow({
   const slash = path.lastIndexOf('/');
   const filename = slash >= 0 ? path.slice(slash + 1) : path;
   const directory = slash >= 0 ? path.slice(0, slash) : '';
-  const indentPadding = treeView ? 8 + depth * 14 : 6;
+  const indentPadding = treeView ? 10 + depth * 14 : 12;
 
   return (
     <div
-      className={`work-git-change${isSelected ? ' is-selected' : ''}`}
+      className={`work-git-change${isSelected ? ' is-selected' : ''}${code === 'D' ? ' is-deleted' : ''}`}
       style={{ paddingLeft: indentPadding }}
     >
-      <label className="work-git-check-label" title={`选择 ${path}`}>
-        <input
-          type="checkbox"
-          className="work-git-checkbox-input"
-          aria-label={`选择 ${path} 进行提交`}
-          checked={isChecked}
-          disabled={busy}
-          onChange={(event) => onToggleChecked(path, event.target.checked)}
-        />
-        <span className="work-git-checkbox" aria-hidden="true" />
-      </label>
-
       <button
         type="button"
         className="work-git-change-btn"
@@ -249,11 +236,8 @@ function ChangeTreeBranch({
   depth,
   collapsedFolders,
   selected,
-  checked,
   busy,
   onToggleFolder,
-  onToggleChecked,
-  onToggleFolderChecked,
   onSelect,
   onStage,
   onUnstage,
@@ -264,11 +248,8 @@ function ChangeTreeBranch({
   depth: number;
   collapsedFolders: Readonly<Record<string, boolean>>;
   selected: WorkGitDiffRequest | null;
-  checked: ReadonlySet<string>;
   busy: boolean;
   onToggleFolder: (folderKey: string) => void;
-  onToggleChecked: (path: string, enabled: boolean) => void;
-  onToggleFolderChecked: (paths: readonly string[], enabled: boolean) => void;
   onSelect: (path: string, scope: WorkGitDiffScope) => void;
   onStage: (paths: string[]) => void;
   onUnstage: (paths: string[]) => void;
@@ -288,9 +269,7 @@ function ChangeTreeBranch({
               treeView
               depth={depth}
               isSelected={selected?.path === path && selected.scope === scope}
-              isChecked={checked.has(path)}
               busy={busy}
-              onToggleChecked={onToggleChecked}
               onSelect={onSelect}
               onStage={onStage}
               onUnstage={onUnstage}
@@ -301,29 +280,13 @@ function ChangeTreeBranch({
 
         const folderKey = `${scope}:${node.key}`;
         const isCollapsed = Boolean(collapsedFolders[folderKey]);
-        const checkedCount = node.paths.filter((p) => checked.has(p)).length;
-        const allChecked = checkedCount > 0 && checkedCount === node.paths.length;
-        const someChecked = checkedCount > 0 && checkedCount < node.paths.length;
 
         return (
           <div key={folderKey} className="work-git-tree-folder">
             <div
               className="work-git-folder-row"
-              style={{ paddingLeft: 8 + depth * 14 }}
+              style={{ paddingLeft: 10 + depth * 14 }}
             >
-              <label className="work-git-check-label" title={`选择 ${node.name}`}>
-                <input
-                  type="checkbox"
-                  className="work-git-checkbox-input"
-                  aria-label={`选择目录 ${node.name}`}
-                  checked={allChecked}
-                  data-indeterminate={someChecked ? 'true' : undefined}
-                  disabled={busy}
-                  onChange={(event) => onToggleFolderChecked(node.paths, event.target.checked)}
-                />
-                <span className={`work-git-checkbox${someChecked ? ' is-indeterminate' : ''}`} aria-hidden="true" />
-              </label>
-
               <button
                 type="button"
                 className="work-git-folder-btn"
@@ -402,11 +365,8 @@ function ChangeTreeBranch({
                   depth={depth + 1}
                   collapsedFolders={collapsedFolders}
                   selected={selected}
-                  checked={checked}
                   busy={busy}
                   onToggleFolder={onToggleFolder}
-                  onToggleChecked={onToggleChecked}
-                  onToggleFolderChecked={onToggleFolderChecked}
                   onSelect={onSelect}
                   onStage={onStage}
                   onUnstage={onUnstage}
@@ -426,7 +386,6 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
   const demo = useIsPreview();
 
   const [status, setStatus] = useState<WorkGitStatus | null>(demo ? sampleStatus : null);
-  const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [message, setMessage] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
@@ -476,10 +435,6 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
     () => (status ? status.changes.filter(({ workingTree }) => workingTree !== '.') : []),
     [status],
   );
-  const checkedPaths = useMemo(
-    () => status?.changes.filter(({ path }) => checked.has(path)).map(({ path }) => path) ?? [],
-    [checked, status],
-  );
 
   useEffect(() => {
     if (demo || !active || busy) return;
@@ -491,7 +446,6 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
         if (controller.signal.aborted) return;
         setStatus(result);
         setLoadError(null);
-        setChecked((previous) => new Set(result.changes.filter(({ path }) => previous.has(path)).map(({ path }) => path)));
       } catch (reason) {
         if (!controller.signal.aborted) {
           setLoadError(reason instanceof Error ? reason.message : '无法读取 Git 状态。');
@@ -592,7 +546,6 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
       const nextStatus = await task();
       setStatus(nextStatus);
       setLoadError(null);
-      setChecked((previous) => new Set(nextStatus.changes.filter(({ path }) => previous.has(path)).map(({ path }) => path)));
       if (successNotice) setNotice(successNotice);
       setRefresh((value) => value + 1);
     } catch (reason) {
@@ -678,16 +631,38 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
     await runStatusAction('push', '已推送到远程分支', () => pushWorkGit(request, projectId));
   }
 
-  const canCommitChecked = checkedPaths.length > 0;
-  const canCommitStaged = !canCommitChecked && stagedChanges.length > 0;
-  const canSubmitCommit = !busy && !loadError && Boolean(message.trim()) && (canCommitChecked || canCommitStaged);
+  useEffect(() => {
+    if (!notice || busy) return;
+    const timer = window.setTimeout(() => setNotice(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [busy, notice]);
+
+  async function handleSync() {
+    if (busy || demo || !status?.upstream) return;
+    if (status.behind > 0 && status.ahead > 0) {
+      await runStatusAction('sync', '已同步远程分支', async () => {
+        await pullWorkGit(request, projectId);
+        return pushWorkGit(request, projectId);
+      });
+    } else if (status.behind > 0) {
+      await handlePull();
+    } else if (status.ahead > 0) {
+      await handlePush();
+    }
+  }
+
+  const hasStagedChanges = stagedChanges.length > 0;
+  const hasAnyChanges = stagedChanges.length > 0 || workingChanges.length > 0;
+  const canSubmitCommit = !busy && !loadError && Boolean(message.trim()) && hasAnyChanges;
+  const showPrimarySync = !hasAnyChanges && Boolean(status?.upstream) && ((status?.ahead ?? 0) > 0 || (status?.behind ?? 0) > 0);
 
   async function submitCommit() {
-    if (!canSubmitCommit) return;
+    if (!canSubmitCommit || !status) return;
     const commitText = message.trim();
-    const targetPaths = canCommitChecked
-      ? checkedPaths
-      : stagedChanges.map(({ path }) => path);
+    const commitStagedOnly = hasStagedChanges;
+    const targetPaths = commitStagedOnly
+      ? stagedChanges.map(({ path }) => path)
+      : status.changes.map(({ path }) => path);
 
     setBusyAction('commit');
     setCommitError(null);
@@ -698,23 +673,22 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
         : await commitWorkGit(
             request,
             projectId,
-            canCommitChecked ? { message: commitText, paths: targetPaths } : { message: commitText, staged: true },
+            commitStagedOnly ? { message: commitText, staged: true } : { message: commitText, paths: targetPaths },
           );
       if (demo) {
         setStatus((previous) => previous && {
           ...previous,
           ahead: previous.ahead + 1,
-          changes: canCommitChecked
-            ? previous.changes.filter(({ path }) => !targetPaths.includes(path))
-            : previous.changes
+          changes: commitStagedOnly
+            ? previous.changes
                 .map((c) => ({ ...c, index: '.' }))
-                .filter((c) => c.workingTree !== '.'),
+                .filter((c) => c.workingTree !== '.')
+            : [],
         });
       }
       setNotice(`已提交 ${oid}`);
       setRefresh((value) => value + 1);
       setMessage('');
-      setChecked(new Set());
     } catch (reason) {
       setCommitError(reason instanceof Error ? reason.message : '提交失败。');
     } finally {
@@ -732,26 +706,6 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
       event.preventDefault();
       void submitCommit();
     }
-  }
-
-  function toggleChecked(path: string, enabled: boolean) {
-    setChecked((previous) => {
-      const next = new Set(previous);
-      if (enabled) next.add(path);
-      else next.delete(path);
-      return next;
-    });
-  }
-
-  function toggleFolderChecked(paths: readonly string[], enabled: boolean) {
-    setChecked((previous) => {
-      const next = new Set(previous);
-      for (const path of paths) {
-        if (enabled) next.add(path);
-        else next.delete(path);
-      }
-      return next;
-    });
   }
 
   function handleSelectChange(path: string, scope: WorkGitDiffScope) {
@@ -790,11 +744,37 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
 
   const commitButtonLabel = busyAction === 'commit'
     ? '正在提交…'
-    : canCommitChecked
-      ? `提交 ${checkedPaths.length} 个文件`
-      : canCommitStaged
-        ? `提交已暂存 (${stagedChanges.length})`
-        : '提交';
+    : hasStagedChanges && workingChanges.length > 0
+      ? `提交已暂存 (${stagedChanges.length})`
+      : '提交';
+
+  const syncButtonLabel = busyAction === 'sync'
+    ? '正在同步…'
+    : busyAction === 'pull'
+      ? '正在拉取…'
+      : busyAction === 'push'
+        ? '正在推送…'
+        : status && status.behind > 0 && status.ahead > 0
+          ? `同步更改 (${status.behind}↓ ${status.ahead}↑)`
+          : status && status.behind > 0
+            ? `拉取 (${status.behind})`
+            : status && status.ahead > 0
+              ? `推送 (${status.ahead})`
+              : '同步更改';
+
+  const loadingToastText = busyAction === 'fetch'
+    ? '正在获取远程分支…'
+    : busyAction === 'pull'
+      ? '正在拉取远程更新…'
+      : busyAction === 'push'
+        ? '正在推送到远程分支…'
+        : busyAction === 'sync'
+          ? '正在同步远程分支…'
+          : null;
+
+  const commitPlaceholder = status?.branch
+    ? `消息 (Ctrl+Enter 在“${status.branch}”上提交)`
+    : '消息 (Ctrl+Enter 提交)';
 
   const commitRefs = useMemo(() => (commit ? parseGitRefs(commit.refs) : []), [commit]);
   const viewStyle = {
@@ -812,106 +792,95 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
     >
       <aside className="work-git-sidebar" aria-label="源代码管理">
         <header className="work-git-header">
-          <button
-            type="button"
-            className="icon-button work-git-graph-button"
-            aria-label="查看提交图"
-            title="查看提交图"
-            aria-pressed={Boolean(status && !selected && !commit)}
-            disabled={!status}
-            onClick={() => {
-              setSelection(null);
-              setCommit(null);
-              setSelectedCommitFile(null);
-            }}
-          >
-            <GitFork size={15} strokeWidth={1.75} aria-hidden="true" />
-          </button>
           <strong title={status?.root}>源代码管理</strong>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={treeView ? '切换为列表视图' : '切换为树状视图'}
-            title={treeView ? '切换为列表视图' : '切换为树状视图'}
-            disabled={!status}
-            onClick={() => setTreeView((value) => !value)}
-          >
-            {treeView
-              ? <List size={15} strokeWidth={1.75} aria-hidden="true" />
-              : <ListTree size={15} strokeWidth={1.75} aria-hidden="true" />}
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="刷新 Git 状态"
-            title="刷新 Git 状态"
-            disabled={busy}
-            onClick={() => setRefresh((value) => value + 1)}
-          >
-            <RefreshCw size={14} strokeWidth={1.75} className={busyAction === 'refresh' ? 'loading-spinner' : undefined} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="获取远程分支"
-            title="获取远程分支 (Fetch)"
-            disabled={busy || demo || !status || !!loadError}
-            onClick={() => void handleFetch()}
-          >
-            <CloudDownload size={15} strokeWidth={1.75} className={busyAction === 'fetch' ? 'loading-spinner' : undefined} aria-hidden="true" />
-          </button>
+          <div className="work-git-header-actions">
+            <button
+              type="button"
+              className="icon-button work-git-graph-button"
+              aria-label="查看提交图"
+              title="查看提交图"
+              aria-pressed={Boolean(status && !selected && !commit)}
+              disabled={!status}
+              onClick={() => {
+                setSelection(null);
+                setCommit(null);
+                setSelectedCommitFile(null);
+              }}
+            >
+              <GitFork size={14} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={treeView ? '切换为列表视图' : '切换为树状视图'}
+              title={treeView ? '切换为列表视图' : '切换为树状视图'}
+              disabled={!status}
+              onClick={() => setTreeView((value) => !value)}
+            >
+              {treeView
+                ? <List size={14} strokeWidth={1.75} aria-hidden="true" />
+                : <ListTree size={14} strokeWidth={1.75} aria-hidden="true" />}
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="刷新 Git 状态"
+              title="刷新 Git 状态"
+              disabled={busy}
+              onClick={() => setRefresh((value) => value + 1)}
+            >
+              <RefreshCw size={13.5} strokeWidth={1.75} className={busyAction === 'refresh' ? 'loading-spinner' : undefined} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="获取远程分支"
+              title="获取远程分支 (Fetch)"
+              disabled={busy || demo || !status || !!loadError}
+              onClick={() => void handleFetch()}
+            >
+              <CloudDownload size={14} strokeWidth={1.75} className={busyAction === 'fetch' ? 'loading-spinner' : undefined} aria-hidden="true" />
+            </button>
+          </div>
         </header>
 
         {status && (
           <div className="work-git-branch-bar">
-            <div className="work-git-branch-row">
-              <GitBranchSelect
-                ariaLabel="切换分支"
-                placeholder="分离的 HEAD"
-                value={status.branch}
-                localBranches={status.localBranches}
-                remoteBranches={status.remoteBranches}
-                disabled={busy}
-                onChange={(branch) => {
-                  if (branch) handleCheckout(branch);
-                }}
-              />
-              {status.upstream && (
-                <div className="work-git-sync-actions">
-                  <button
-                    type="button"
-                    className="icon-button work-git-sync-btn"
-                    aria-label="拉取远程更新"
-                    title="拉取 (Pull)"
-                    disabled={busy || demo || !!loadError}
-                    onClick={() => void handlePull()}
-                  >
-                    <ArrowDown size={13} strokeWidth={1.85} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button work-git-sync-btn"
-                    aria-label="推送到远程"
-                    title="推送 (Push)"
-                    disabled={busy || demo || !!loadError}
-                    onClick={() => void handlePush()}
-                  >
-                    <ArrowUp size={13} strokeWidth={1.85} aria-hidden="true" />
-                  </button>
-                </div>
-              )}
-            </div>
+            <GitBranchSelect
+              ariaLabel="切换分支"
+              placeholder="分离的 HEAD"
+              value={status.branch}
+              localBranches={status.localBranches}
+              remoteBranches={status.remoteBranches}
+              disabled={busy}
+              onChange={(branch) => {
+                if (branch) handleCheckout(branch);
+              }}
+            />
             {status.upstream && (
-              <div className="work-git-upstream">
-                <span className="work-git-upstream-name" title={status.upstream}>{status.upstream}</span>
-                <span className={`work-git-ab${status.ahead > 0 ? ' is-active' : ''}`} title="领先提交数">
-                  <ArrowUp size={11} strokeWidth={2} aria-hidden="true" />
-                  {status.ahead}
-                </span>
-                <span className={`work-git-ab${status.behind > 0 ? ' is-active' : ''}`} title="落后提交数">
-                  <ArrowDown size={11} strokeWidth={2} aria-hidden="true" />
-                  {status.behind}
-                </span>
+              <div className="work-git-sync-actions">
+                <button
+                  type="button"
+                  className={`work-git-sync-btn${status.behind > 0 ? ' has-count' : ''}`}
+                  aria-label="拉取远程更新"
+                  title={`拉取 (${status.upstream})`}
+                  disabled={busy || demo || !!loadError}
+                  onClick={() => void handlePull()}
+                >
+                  <ArrowDown size={13} strokeWidth={1.85} aria-hidden="true" />
+                  {status.behind > 0 && <span>{status.behind}</span>}
+                </button>
+                <button
+                  type="button"
+                  className={`work-git-sync-btn${status.ahead > 0 ? ' has-count' : ''}`}
+                  aria-label="推送到远程"
+                  title={`推送 (${status.upstream})`}
+                  disabled={busy || demo || !!loadError}
+                  onClick={() => void handlePush()}
+                >
+                  <ArrowUp size={13} strokeWidth={1.85} aria-hidden="true" />
+                  {status.ahead > 0 && <span>{status.ahead}</span>}
+                </button>
               </div>
             )}
           </div>
@@ -925,7 +894,7 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
             <form className="work-git-submit" onSubmit={handleCommitFormSubmit}>
               <div className="work-git-commit-box">
                 <textarea
-                  placeholder="消息 (Ctrl+Enter 提交)"
+                  placeholder={commitPlaceholder}
                   aria-label="提交说明"
                   maxLength={1000}
                   value={message}
@@ -934,49 +903,25 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
                   onChange={(event) => setMessage(event.target.value)}
                 />
               </div>
-              <div className="work-git-commit-controls">
+              {showPrimarySync ? (
+                <button
+                  type="button"
+                  className="work-git-commit-btn"
+                  disabled={busy || demo || !!loadError}
+                  onClick={() => void handleSync()}
+                >
+                  {status.behind > 0 && status.ahead === 0
+                    ? <ArrowDown size={14} strokeWidth={2} aria-hidden="true" />
+                    : status.ahead > 0 && status.behind === 0
+                      ? <ArrowUp size={14} strokeWidth={2} aria-hidden="true" />
+                      : <RefreshCw size={13} strokeWidth={2} className={busy ? 'loading-spinner' : undefined} aria-hidden="true" />}
+                  <span>{syncButtonLabel}</span>
+                </button>
+              ) : (
                 <button type="submit" className="work-git-commit-btn" disabled={!canSubmitCommit}>
                   <Check size={14} strokeWidth={2} aria-hidden="true" />
                   <span>{commitButtonLabel}</span>
                 </button>
-                <label className="work-git-select-all" title="全选或取消全选">
-                  <input
-                    type="checkbox"
-                    className="work-git-checkbox-input"
-                    aria-label="选择全部变更"
-                    checked={checkedPaths.length > 0 && checkedPaths.length === status.changes.length}
-                    disabled={busy || !status.changes.length}
-                    onChange={(event) => setChecked(new Set(event.target.checked ? status.changes.map(({ path }) => path) : []))}
-                  />
-                  <span className="work-git-checkbox" aria-hidden="true" />
-                  <span>全选</span>
-                </label>
-              </div>
-              {commitError && (
-                <div className="work-git-banner is-error" role="alert">
-                  <span>{commitError}</span>
-                  <button type="button" className="icon-button" aria-label="关闭错误提示" onClick={() => setCommitError(null)}>
-                    <X size={12} aria-hidden="true" />
-                  </button>
-                </div>
-              )}
-              {(busyAction === 'fetch' || busyAction === 'pull' || busyAction === 'push' || notice) && (
-                <div className="work-git-banner is-info" role="status">
-                  <span>
-                    {busyAction === 'fetch'
-                      ? '正在获取远程分支…'
-                      : busyAction === 'pull'
-                        ? '正在拉取更新…'
-                        : busyAction === 'push'
-                          ? '正在推送提交…'
-                          : notice}
-                  </span>
-                  {notice && !busy && (
-                    <button type="button" className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}>
-                      <X size={12} aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
               )}
             </form>
 
@@ -1051,7 +996,7 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
                     {!isCollapsed && (
                       <div className="work-git-group-items">
                         {changes.length === 0 ? (
-                          <p className="work-git-empty-state">工作区干净，没有待提交更改</p>
+                          <p className="work-git-empty-state">没有待提交的更改</p>
                         ) : treeNodes ? (
                           <ChangeTreeBranch
                             nodes={treeNodes}
@@ -1059,11 +1004,8 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
                             depth={0}
                             collapsedFolders={collapsedFolders}
                             selected={selected}
-                            checked={checked}
                             busy={busy}
                             onToggleFolder={(key) => setCollapsedFolders((prev) => ({ ...prev, [key]: !prev[key] }))}
-                            onToggleChecked={toggleChecked}
-                            onToggleFolderChecked={toggleFolderChecked}
                             onSelect={handleSelectChange}
                             onStage={handleStage}
                             onUnstage={handleUnstage}
@@ -1081,9 +1023,7 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
                                 treeView={false}
                                 depth={0}
                                 isSelected={selected?.path === path && selected.scope === scope}
-                                isChecked={checked.has(path)}
                                 busy={busy}
-                                onToggleChecked={toggleChecked}
                                 onSelect={handleSelectChange}
                                 onStage={handleStage}
                                 onUnstage={handleUnstage}
@@ -1326,6 +1266,45 @@ export function WorkGitView({ projectId, active }: { projectId: string; active: 
           ) : null
         )}
       </div>
+
+      {(loadingToastText || commitError || notice) && (
+        <div className="work-git-toast-stack" aria-live="polite">
+          {loadingToastText && (
+            <div className="work-git-toast is-loading" role="status">
+              <Loader2 size={15} strokeWidth={2} className="work-git-toast-icon loading-spinner" aria-hidden="true" />
+              <span className="work-git-toast-text">{loadingToastText}</span>
+            </div>
+          )}
+          {commitError && (
+            <div className="work-git-toast is-error" role="alert">
+              <CircleAlert size={15} strokeWidth={1.85} className="work-git-toast-icon" aria-hidden="true" />
+              <span className="work-git-toast-text">{commitError}</span>
+              <button
+                type="button"
+                className="icon-button work-git-toast-close"
+                aria-label="关闭错误提示"
+                onClick={() => setCommitError(null)}
+              >
+                <X size={13} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+          {notice && !loadingToastText && (
+            <div className="work-git-toast is-success" role="status">
+              <CheckCircle2 size={15} strokeWidth={1.85} className="work-git-toast-icon" aria-hidden="true" />
+              <span className="work-git-toast-text">{notice}</span>
+              <button
+                type="button"
+                className="icon-button work-git-toast-close"
+                aria-label="关闭提示"
+                onClick={() => setNotice(null)}
+              >
+                <X size={13} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {discardTargets && (
         <Dialog

@@ -55,6 +55,20 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
   const { MemoryRouter } = await import('react-router-dom');
   const { AppRoutes } = await import('../ui/router/routes.tsx');
 
+  function isRouteReady(container) {
+    if (container.innerHTML.length <= 500) return false;
+    const content = container.querySelector('.workspace-content');
+    return !content || content.innerHTML.length > 0;
+  }
+
+  async function waitForRoute(container, timeoutMs = 120) {
+    const deadline = Date.now() + timeoutMs;
+    while (!isRouteReady(container) && Date.now() < deadline) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+    await act(async () => { await Promise.resolve(); });
+  }
+
   for (const path of ['/', '/c/example', '/work', '/p/example', '/library', '/tasks', '/settings', '/settings/appearance', '/settings/models',
     '/settings/work-general', '/settings/work-editor', '/settings/hosts', '/settings/personalization', '/settings/account', '/settings/storage', '/settings/usage', '/settings/about',
     '/admin', '/debug', '/debug?tab=tools', '/mock/chat', '/mock/chat/work', '/mock/chat/p/example', '/mock/chat/settings/appearance', '/mock/chat/settings/work-general', '/mock/chat/settings/work-editor', '/mock/chat/settings/hosts', '/mock/library', '/mock/tasks', '/mock/process', '/mock/storage']) {
@@ -65,7 +79,7 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
       await act(async () => {
         root.render(createElement(MemoryRouter, { initialEntries: [path] }, createElement(AppRoutes)));
       });
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+      await waitForRoute(container);
       const html = container.innerHTML;
       assert.ok(html.length > 500, `${path} rendered ${html.length} bytes`);
       assert.doesNotMatch(html, /界面渲染失败/u, `${path} must not hit the error boundary`);
@@ -86,7 +100,7 @@ test('every route renders a screen instead of the error boundary', { timeout: 30
         await act(async () => {
           root.render(createElement(MemoryRouter, { initialEntries: [path] }, createElement(AppRoutes)));
         });
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+        await waitForRoute(container);
         const html = container.innerHTML;
         assert.ok(html.length > 500, `desktop ${path} rendered ${html.length} bytes`);
         assert.doesNotMatch(html, /界面渲染失败/u, `desktop ${path} must not hit the error boundary`);

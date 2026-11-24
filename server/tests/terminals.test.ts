@@ -198,14 +198,14 @@ test('work terminals API spawns PTY sessions for local/WSL/SSH projects, guards 
     assert.equal(createStoppedWsl.statusCode, 400);
     assert.equal(spawned.length, spawnCountBeforeStopped);
 
-    // 3. SSH project spawns ssh -tt with remote directory cd.
+    // 3. SSH project spawns ssh.exe (on Windows) -tt with remote directory cd.
     const createSsh = await app.inject({
       method: 'POST',
       url: '/api/work/terminals',
       payload: { projectId: sshProject.id, preset: 'codex' },
     });
     assert.equal(createSsh.statusCode, 201);
-    assert.equal(spawned[2].file, 'ssh');
+    assert.equal(spawned[2].file, 'ssh.exe');
     assert.ok(spawned[2].args.includes('-tt'));
     assert.ok(spawned[2].args.some((arg) => arg.includes('/srv/app') && arg.includes('codex')));
 
@@ -979,5 +979,67 @@ test('terminal service coalesces burst PTY output, flushes before exit/attach, a
     db.close();
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+test('SSH terminals resolve platform binary (ssh.exe on win32, ssh on POSIX) and keep -i with key passphrase', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'matrius-term-ssh-key-data-'));
+  const settings = loadSettings({ APP_ENV: 'test', DATA_DIR: dataDir, LOG_LEVEL: 'silent' });
+  const db = openDatabase(settings.databasePath, { busyTimeoutMs: 1000 });
+  migrate(db);
+
+  const keyHost = serializeWorkHost(createWorkHostRow(db, 1, {
+    kind: 'ssh',
+    name: 'KeyBox',
+    host: '10.0.0.22',
+    port: 22,
+    username: 'deploy',
+    authMethod: 'key',
+    privateKeyPath: '/keys/id_ed25519',
+    secret: 'key-passphrase-123',
+  }));
+  const sshProject = serializeWorkProject(createWorkProjectRow(db, 1, {
+    hostId: keyHost.id,
+    directory: '/srv/key-app',
+  }));
+
+  const winSpawned: Array<{ file: string; args: string[]; env?: Record<string, string | undefined> }> = [];
+  const winService = createWorkTerminalService({
+    db,
+    currentPlatform: 'win32',
+    ptySpawn: (file, args, opts) => {
+      winSpawned.push({ file, args: Array.isArray(args) ? args : [args], env: opts.env });
+      return createFakePty();
+    },
+  });
+
+  const posixSpawned: Array<{ file: string; args: string[]; env?: Record<string, string | undefined> }> = [];
+  const posixService = createWorkTerminalService({
+    db,
+    currentPlatform: 'linux',
+    ptySpawn: (file, args, opts) => {
+      posixSpawned.push({ file, args: Array.isArray(args) ? args : [args], env: opts.env });
+      return createFakePty();
+    },
+  });
+
+  try {
+    await winService.create({ projectId: sshProject.id, preset: 'shell' });
+    assert.equal(winSpawned[0].file, 'ssh.exe');
+    assert.ok(winSpawned[0].args.includes('-i'));
+    assert.ok(winSpawned[0].args.includes('/keys/id_ed25519'));
+    assert.ok(winSpawned[0].args.includes('IdentitiesOnly=yes'));
+    assert.equal(winSpawned[0].env?.MATRIUS_SSH_PASS, 'key-passphrase-123');
+    assert.equal(winSpawned[0].env?.SSH_ASKPASS_REQUIRE, 'force');
+
+    await posixService.create({ projectId: sshProject.id, preset: 'shell' });
+    assert.equal(posixSpawned[0].file, 'ssh');
+    assert.ok(posixSpawned[0].args.includes('-i'));
+    assert.equal(posixSpawned[0].env?.MATRIUS_SSH_PASS, 'key-passphrase-123');
+  } finally {
+    winService.disposeAll();
+    posixService.disposeAll();
+    db.close();
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });

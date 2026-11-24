@@ -14,7 +14,9 @@ import {
 } from '@contract/work-cli';
 import type { WorkHost } from '@contract/work-hosts';
 import type {
+  HostBinarySaveResult,
   HostDirectoryListing,
+  HostDocumentPreview,
   HostFilePreview,
   WorkHostEntry,
   WorkFileSearchResponse,
@@ -188,12 +190,49 @@ export function readHostFilePreview(
   return request<HostFilePreview>(`/api/hosts/${encodeURIComponent(hostId)}/fs/preview?${query}`, { signal });
 }
 
+export function readHostDocumentPreview(
+  request: ApiRequest,
+  hostId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<HostDocumentPreview> {
+  const query = new URLSearchParams({ path });
+  return request<HostDocumentPreview>(`/api/hosts/${encodeURIComponent(hostId)}/fs/document?${query}`, { signal });
+}
+
+export function hostRawFileUrl(hostId: string, path: string): string {
+  const query = new URLSearchParams({ path });
+  return `/api/hosts/${encodeURIComponent(hostId)}/fs/raw?${query}`;
+}
+
 export function saveWorkFile(
   request: ApiRequest,
   projectId: string,
   input: { path: string; text: string; baseRevision: string },
 ): Promise<HostFilePreview> {
   return request<HostFilePreview>(`/api/projects/${encodeURIComponent(projectId)}/files/text`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
+}
+
+export function saveWorkBinaryFile(
+  request: ApiRequest,
+  projectId: string,
+  input: { path: string; dataBase64: string; baseRevision: string },
+): Promise<HostBinarySaveResult> {
+  return request<HostBinarySaveResult>(`/api/projects/${encodeURIComponent(projectId)}/files/binary`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
+}
+
+export function saveWorkExcelFile(
+  request: ApiRequest,
+  projectId: string,
+  input: { path: string; workbook: Record<string, unknown>; baseRevision: string },
+): Promise<HostBinarySaveResult> {
+  return request<HostBinarySaveResult>(`/api/projects/${encodeURIComponent(projectId)}/files/excel`, {
     method: 'PUT',
     body: JSON.stringify(input),
   });
