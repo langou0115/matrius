@@ -28,11 +28,11 @@ test('settings returns to the page that opened it, not to a new conversation', (
   rememberWorkspacePath('/settings/appearance');
   assert.equal(rememberedWorkspacePath(), '/c/abc');
   assert.equal(workspaceReturnHref('abc', false), '/c/abc');
-  assert.equal(workspaceReturnLabel(), '返回对话');
+  assert.equal(workspaceReturnLabel(), '返回应用');
 
   rememberWorkspacePath('/library/');
   assert.equal(workspaceReturnHref(null, false), '/library');
-  assert.equal(workspaceReturnLabel(), '返回资料库');
+  assert.equal(workspaceReturnLabel(), '返回应用');
 });
 
 test('without an origin, return falls back to the active conversation or home', () => {
@@ -40,10 +40,10 @@ test('without an origin, return falls back to the active conversation or home', 
   assert.equal(workspaceReturnHref('abc', false), '/c/abc');
   assert.equal(workspaceReturnHref(null, false), '/');
   assert.equal(workspaceReturnHref('m1', true), '/mock/chat/c/m1');
-  assert.equal(workspaceReturnLabel(), '返回对话');
+  assert.equal(workspaceReturnLabel(), '返回应用');
 });
 
-test('desktop work tab return label says 返回工作 unless mobile or library/tasks origin', () => {
+test('settings return label always says 返回应用 across web and desktop routes', () => {
   const previousTarget = globalThis.__MATRIUS_TARGET__;
   globalThis.__MATRIUS_TARGET__ = 'desktop';
   resetWorkspaceReturnForTests();
@@ -51,23 +51,23 @@ test('desktop work tab return label says 返回工作 unless mobile or library/t
   try {
     writeSidebarTab('work');
     rememberWorkspacePath('/');
-    assert.equal(workspaceReturnLabel(false), '返回工作');
-    assert.equal(workspaceReturnLabel(true), '返回对话');
+    assert.equal(workspaceReturnLabel(false), '返回应用');
+    assert.equal(workspaceReturnLabel(true), '返回应用');
 
     rememberWorkspacePath('/library');
-    assert.equal(workspaceReturnLabel(false), '返回资料库');
+    assert.equal(workspaceReturnLabel(false), '返回应用');
 
     rememberWorkspacePath('/p/proj-1');
-    assert.equal(workspaceReturnLabel(false), '返回工作');
+    assert.equal(workspaceReturnLabel(false), '返回应用');
     assert.equal(workspaceReturnHref('abc', false, false), '/p/proj-1');
     assert.equal(workspaceReturnHref('abc', false, true), '/c/abc');
 
     writeSidebarTab('chat');
-    assert.equal(workspaceReturnLabel(false), '返回工作');
+    assert.equal(workspaceReturnLabel(false), '返回应用');
     assert.equal(workspaceReturnHref(null, false, false), '/p/proj-1');
 
     rememberWorkspacePath('/mock/chat/work');
-    assert.equal(workspaceReturnLabel(false), '返回工作');
+    assert.equal(workspaceReturnLabel(false), '返回应用');
     assert.equal(workspaceReturnHref('m1', true, false), '/mock/chat/work');
     assert.equal(workspaceReturnHref('m1', true, true), '/mock/chat/c/m1');
   } finally {

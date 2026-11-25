@@ -91,8 +91,7 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.equal(projectRegion.hasAttribute('hidden'), false);
     assert.equal(projectRegion.textContent?.trim(), '');
 
-    const openCreateBtn = Array.from(dom.document.querySelectorAll('button'))
-      .find((btn) => btn.textContent?.includes('创建项目'));
+    const openCreateBtn = dom.document.querySelector('button[aria-label="创建项目"]');
     assert.ok(openCreateBtn);
     await act(async () => { openCreateBtn.click(); });
 
@@ -195,16 +194,13 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.match(projectItem.textContent ?? '', /matrius/);
     assert.match(projectItem.textContent ?? '', /开发服务器/);
 
-    // Selecting the project row keeps it active without auto-expanding; explicit chevron toggle exists and no `...` button is shown.
+    // Selecting the project row keeps it active and no `...` button is shown.
     const selectBtn = projectItem.querySelector('.work-project-select');
-    const toggleBtn = projectItem.querySelector('.work-project-toggle');
-    assert.ok(selectBtn && toggleBtn);
+    assert.ok(selectBtn);
     assert.equal(selectBtn.getAttribute('aria-current'), 'true');
     assert.equal(projectItem.querySelector('.work-project-more'), null);
-    assert.equal(toggleBtn.getAttribute('aria-expanded'), 'false');
     await act(async () => { selectBtn.click(); });
     assert.equal(selectBtn.getAttribute('aria-current'), 'true');
-    assert.equal(toggleBtn.getAttribute('aria-expanded'), 'false');
 
     // Right-clicking the project row opens the settings context menu right-aligned under the project row (not at cursor coords).
     projectItem.getBoundingClientRect = () => ({ left: 12, top: 108, bottom: 144, right: 248, width: 236, height: 36 });
@@ -439,58 +435,10 @@ test('work sidebar creates projects by selecting host and browsing directories/f
     assert.ok(selectDriveDirBtn);
     await act(async () => { selectDriveDirBtn.click(); });
 
-    // Expandable AI config section starts collapsed and configures proxy + launch args for Codex, Antigravity, Claude Code.
-    const proxyToggle = secondDialog.querySelector('.work-proxy-toggle');
-    assert.ok(proxyToggle);
-    assert.match(proxyToggle.textContent ?? '', /AI 配置/);
-    assert.equal(proxyToggle.getAttribute('aria-expanded'), 'false');
-    assert.equal(secondDialog.querySelector('#work-project-proxy-fields'), null);
-
-    await act(async () => { proxyToggle.click(); });
-    assert.equal(proxyToggle.getAttribute('aria-expanded'), 'true');
-    const codexGroupToggle = secondDialog.querySelector('.work-ai-cli-group[data-cli-provider="codex"] .work-ai-cli-group-toggle');
-    const agyGroupToggle = secondDialog.querySelector('.work-ai-cli-group[data-cli-provider="antigravity"] .work-ai-cli-group-toggle');
-    const claudeGroupToggle = secondDialog.querySelector('.work-ai-cli-group[data-cli-provider="claude"] .work-ai-cli-group-toggle');
-    assert.ok(codexGroupToggle && agyGroupToggle && claudeGroupToggle);
-    assert.equal(codexGroupToggle.getAttribute('aria-expanded'), 'false');
-    assert.equal(agyGroupToggle.getAttribute('aria-expanded'), 'false');
-    assert.equal(claudeGroupToggle.getAttribute('aria-expanded'), 'false');
-    await act(async () => { codexGroupToggle.click(); });
-    await act(async () => { agyGroupToggle.click(); });
-    await act(async () => { claudeGroupToggle.click(); });
-    const codexProxyInput = secondDialog.querySelector('#work-project-proxy-codex');
-    const agyProxyInput = secondDialog.querySelector('#work-project-proxy-antigravity');
-    const claudeProxyInput = secondDialog.querySelector('#work-project-proxy-claude');
-    const codexArgsInput = secondDialog.querySelector('#work-project-args-codex');
-    const agyArgsInput = secondDialog.querySelector('#work-project-args-antigravity');
-    const claudeArgsInput = secondDialog.querySelector('#work-project-args-claude');
-    assert.ok(codexProxyInput && agyProxyInput && claudeProxyInput && codexArgsInput && agyArgsInput && claudeArgsInput);
-
-    const codexKey = Object.keys(codexProxyInput).find((key) => key.startsWith('__reactProps'));
-    const claudeKey = Object.keys(claudeProxyInput).find((key) => key.startsWith('__reactProps'));
-    const claudeArgsKey = Object.keys(claudeArgsInput).find((key) => key.startsWith('__reactProps'));
-    assert.ok(codexKey && claudeKey && claudeArgsKey);
+    // Creating a project no longer embeds AI config (AI config lives in the right CLI panel / project settings).
+    assert.equal(secondDialog.querySelector('.work-proxy-toggle'), null);
     const createForm = secondDialog.querySelector('form');
     const createFormKey = Object.keys(createForm).find((key) => key.startsWith('__reactProps'));
-    await act(async () => {
-      codexProxyInput.value = 'ftp://bad.proxy:21';
-      codexProxyInput[codexKey].onChange({ target: codexProxyInput });
-    });
-    await act(async () => { await createForm[createFormKey].onSubmit({ preventDefault() {} }); });
-    const proxyErrorDialog = dom.document.querySelector('.work-project-error-dialog[open]');
-    assert.ok(proxyErrorDialog);
-    assert.match(proxyErrorDialog.textContent ?? '', /Codex 网络代理仅支持 http:\/\/、https:\/\/ 或 socks5:\/\//);
-    await act(async () => { proxyErrorDialog.querySelector('.dialog-footer button').click(); });
-
-    await act(async () => {
-      codexProxyInput.value = 'http://127.0.0.1:7890';
-      codexProxyInput[codexKey].onChange({ target: codexProxyInput });
-      claudeProxyInput.value = 'socks5://127.0.0.1:1080';
-      claudeProxyInput[claudeKey].onChange({ target: claudeProxyInput });
-      claudeArgsInput.value = '--dangerously-skip-permissions';
-      claudeArgsInput[claudeArgsKey].onChange({ target: claudeArgsInput });
-    });
-    assert.match(proxyToggle.textContent ?? '', /已配置 3 项/);
     await act(async () => { await createForm[createFormKey].onSubmit({ preventDefault() {} }); });
     const createdItem = dom.document.querySelector('.work-project-item.is-active');
     assert.ok(createdItem);

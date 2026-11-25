@@ -66,12 +66,17 @@ import {
 
 const INSTANCE_ID = 1;
 const MAX_SCROLLBACK_CHARS = 128_000;
+const SCROLLBACK_COMPACT_THRESHOLD = 192_000;
 const SCROLLBACK_PERSIST_DELAY_MS = 1_200;
 const OUTPUT_COALESCE_MS = 6;
 const OUTPUT_COALESCE_MAX_CHARS = 32_768;
+const FLOW_CONTROL_HIGH_WATERMARK = 100_000;
+const FLOW_CONTROL_LOW_WATERMARK = 5_000;
 
 export type PtyProcess = Pick<IPty, 'write' | 'resize' | 'kill' | 'onData' | 'onExit'> & {
   readonly pid?: number;
+  pause?: () => void;
+  resume?: () => void;
 };
 
 export type PtySpawner = (
@@ -83,7 +88,8 @@ export type PtySpawner = (
 type ActiveTerminal = {
   session: WorkTerminalSession;
   pty: PtyProcess | null;
-  scrollback: string;
+  scrollbackChunks: string[];
+  scrollbackLength: number;
   modeState: WorkTerminalModeState;
   scrollbackBaseAltScreen: WorkTerminalAltScreenMode | null;
   cols: number;
@@ -92,6 +98,8 @@ type ActiveTerminal = {
   flushTimer: ReturnType<typeof setTimeout> | null;
   pendingOutput: string;
   outputTimer: ReturnType<typeof setTimeout> | null;
+  unackedChars: number;
+  ptyPaused: boolean;
   listeners: Set<(message: WorkTerminalServerMessage) => void>;
 };
 
@@ -108,6 +116,7 @@ export type WorkTerminalService = {
   ): { snapshot: string; session: WorkTerminalSession; detach: () => void };
   write(terminalId: string, data: string): void;
   resize(terminalId: string, cols: number, rows: number): void;
+  ack?: (terminalId: string, chars: number) => void;
   remove(terminalId: string): void;
   removeByProject(projectId: string): void;
   setPersistScrollback?: (enabled: boolean) => void;
@@ -559,10 +568,12 @@ export function createWorkTerminalService(options: {
 
   for (const row of listWorkTerminalRows(db, INSTANCE_ID)) {
     const session = serializeWorkTerminalRow(row);
+    const initialScrollback = persistScrollback ? (row.scrollback ?? '') : '';
     terminals.set(session.id, {
       session,
       pty: null,
-      scrollback: persistScrollback ? (row.scrollback ?? '') : '',
+      scrollbackChunks: initialScrollback ? [initialScrollback] : [],
+      scrollbackLength: initialScrollback.length,
       modeState: createTerminalModeState(),
       scrollbackBaseAltScreen: null,
       cols: clampTerminalCols(row.cols),
@@ -571,11 +582,41 @@ export function createWorkTerminalService(options: {
       flushTimer: null,
       pendingOutput: '',
       outputTimer: null,
+      unackedChars: 0,
+      ptyPaused: false,
       listeners: new Set(),
     });
   }
 
+  function resetFlowControl(entry: ActiveTerminal): void {
+    entry.unackedChars = 0;
+    if (entry.ptyPaused) {
+      entry.ptyPaused = false;
+      try {
+        entry.pty?.resume?.();
+      } catch {
+        // Ignore resume errors on closed PTY.
+      }
+    }
+  }
+
+  function trackOutputFlowControl(entry: ActiveTerminal, charCount: number): void {
+    if (charCount <= 0 || entry.listeners.size === 0 || !entry.pty?.pause) return;
+    entry.unackedChars += charCount;
+    if (!entry.ptyPaused && entry.unackedChars >= FLOW_CONTROL_HIGH_WATERMARK) {
+      entry.ptyPaused = true;
+      try {
+        entry.pty.pause();
+      } catch {
+        entry.ptyPaused = false;
+      }
+    }
+  }
+
   function broadcast(entry: ActiveTerminal, message: WorkTerminalServerMessage): void {
+    if (message.type === 'output') {
+      trackOutputFlowControl(entry, message.data.length);
+    }
     for (const listener of entry.listeners) {
       listener(message);
     }
@@ -648,6 +689,29 @@ export function createWorkTerminalService(options: {
     }
   }
 
+  function materializeScrollback(entry: ActiveTerminal): string {
+    if (entry.scrollbackChunks.length === 0) return '';
+    if (entry.scrollbackChunks.length === 1 && entry.scrollbackLength <= MAX_SCROLLBACK_CHARS) {
+      return entry.scrollbackChunks[0];
+    }
+    const joined = entry.scrollbackChunks.join('');
+    if (joined.length > MAX_SCROLLBACK_CHARS) {
+      const overflow = joined.length - MAX_SCROLLBACK_CHARS;
+      const droppedState = advanceTerminalModeState(
+        createTerminalModeState({ altScreen: entry.scrollbackBaseAltScreen }),
+        joined.slice(0, overflow),
+      );
+      entry.scrollbackBaseAltScreen = droppedState.altScreen;
+      const trimmed = joined.slice(overflow);
+      entry.scrollbackChunks = trimmed ? [trimmed] : [];
+      entry.scrollbackLength = trimmed.length;
+      return trimmed;
+    }
+    entry.scrollbackChunks = joined ? [joined] : [];
+    entry.scrollbackLength = joined.length;
+    return joined;
+  }
+
   function flushEntryToDb(entry: ActiveTerminal, persistStatus = entry.session.status): void {
     if (entry.flushTimer) {
       clearTimeout(entry.flushTimer);
@@ -657,7 +721,7 @@ export function createWorkTerminalService(options: {
     entry.dirtySnapshot = false;
     try {
       saveWorkTerminalSnapshotRow(db, INSTANCE_ID, entry.session.id, {
-        scrollback: persistScrollback ? entry.scrollback : '',
+        scrollback: persistScrollback ? materializeScrollback(entry) : '',
         cwd: entry.session.cwd,
         lastStatus: persistStatus,
         lastExitCode: entry.session.exitCode,
@@ -686,28 +750,49 @@ export function createWorkTerminalService(options: {
   }
 
   function appendScrollback(entry: ActiveTerminal, chunk: string): void {
+    if (!chunk) return;
     entry.modeState = advanceTerminalModeState(entry.modeState, chunk);
-    const combined = entry.scrollback + chunk;
-    const lastClearIndex = combined.lastIndexOf('\x1b[3J');
-    const afterClear = lastClearIndex >= 0 ? combined.slice(lastClearIndex) : combined;
-    const normalized = normalizeConptyClearChunk(afterClear);
-    const overflow = normalized.length > MAX_SCROLLBACK_CHARS
-      ? normalized.length - MAX_SCROLLBACK_CHARS
-      : 0;
-    const nextScrollback = overflow > 0 ? normalized.slice(overflow) : normalized;
-
-    if (lastClearIndex > 0 || overflow > 0) {
+    const lastClearIndex = chunk.lastIndexOf('\x1b[3J');
+    if (lastClearIndex >= 0) {
       let droppedState = createTerminalModeState({ altScreen: entry.scrollbackBaseAltScreen });
-      if (lastClearIndex > 0) {
-        droppedState = advanceTerminalModeState(droppedState, combined.slice(0, lastClearIndex));
+      for (const prev of entry.scrollbackChunks) {
+        droppedState = advanceTerminalModeState(droppedState, prev);
       }
-      if (overflow > 0) {
-        droppedState = advanceTerminalModeState(droppedState, normalized.slice(0, overflow));
+      if (lastClearIndex > 0) {
+        droppedState = advanceTerminalModeState(droppedState, chunk.slice(0, lastClearIndex));
       }
       entry.scrollbackBaseAltScreen = droppedState.altScreen;
+      const normalized = normalizeConptyClearChunk(chunk.slice(lastClearIndex));
+      if (normalized.length > MAX_SCROLLBACK_CHARS) {
+        const overflow = normalized.length - MAX_SCROLLBACK_CHARS;
+        entry.scrollbackBaseAltScreen = advanceTerminalModeState(
+          createTerminalModeState({ altScreen: entry.scrollbackBaseAltScreen }),
+          normalized.slice(0, overflow),
+        ).altScreen;
+        const trimmed = normalized.slice(overflow);
+        entry.scrollbackChunks = trimmed ? [trimmed] : [];
+        entry.scrollbackLength = trimmed.length;
+      } else {
+        entry.scrollbackChunks = normalized ? [normalized] : [];
+        entry.scrollbackLength = normalized.length;
+      }
+      return;
     }
 
-    entry.scrollback = nextScrollback;
+    const lastIdx = entry.scrollbackChunks.length - 1;
+    if (lastIdx >= 0 && entry.scrollbackChunks[lastIdx].slice(-64).includes('\x1b[3J')) {
+      const prev = entry.scrollbackChunks[lastIdx];
+      const merged = normalizeConptyClearChunk(prev + chunk);
+      entry.scrollbackLength += merged.length - prev.length;
+      entry.scrollbackChunks[lastIdx] = merged;
+    } else {
+      entry.scrollbackChunks.push(chunk);
+      entry.scrollbackLength += chunk.length;
+    }
+
+    if (entry.scrollbackLength > SCROLLBACK_COMPACT_THRESHOLD) {
+      materializeScrollback(entry);
+    }
   }
 
   function requireEntry(terminalId: string): ActiveTerminal {
@@ -838,17 +923,29 @@ export function createWorkTerminalService(options: {
     }
 
     let childPty: PtyProcess;
+    const spawnOptions: IWindowsPtyForkOptions = {
+      name: 'xterm-256color',
+      cols: spec.cols,
+      rows: spec.rows,
+      cwd: spawnCwd,
+      env: buildTerminalEnv(env, extraEnv, mergedWindowsPath),
+      ...(currentPlatform === 'win32' ? { useConpty: true, useConptyDll: true } : {}),
+    };
     try {
-      childPty = ptySpawn(file, args, {
-        name: 'xterm-256color',
-        cols: spec.cols,
-        rows: spec.rows,
-        cwd: spawnCwd,
-        env: buildTerminalEnv(env, extraEnv, mergedWindowsPath),
-      });
-    } catch (error) {
-      const message = error instanceof Error && error.message ? error.message : '无法启动终端进程。';
-      throw new AppError(500, 'terminal_spawn_failed', message);
+      childPty = ptySpawn(file, args, spawnOptions);
+    } catch (firstError) {
+      if (currentPlatform === 'win32' && spawnOptions.useConptyDll) {
+        try {
+          const { useConptyDll: _unused, ...fallbackOptions } = spawnOptions;
+          childPty = ptySpawn(file, args, fallbackOptions);
+        } catch (error) {
+          const message = error instanceof Error && error.message ? error.message : '无法启动终端进程。';
+          throw new AppError(500, 'terminal_spawn_failed', message);
+        }
+      } else {
+        const message = firstError instanceof Error && firstError.message ? firstError.message : '无法启动终端进程。';
+        throw new AppError(500, 'terminal_spawn_failed', message);
+      }
     }
 
     return { pty: childPty, effectiveCwd, resolvedWindowsShell };
@@ -873,6 +970,7 @@ export function createWorkTerminalService(options: {
     childPty.onExit(({ exitCode }) => {
       if (entry.pty !== childPty) return;
       flushPendingOutput(entry);
+      resetFlowControl(entry);
       entry.pty = null;
       entry.modeState = createTerminalModeState();
       entry.scrollbackBaseAltScreen = null;
@@ -1016,7 +1114,8 @@ export function createWorkTerminalService(options: {
       const entry: ActiveTerminal = {
         session,
         pty: spawned.pty,
-        scrollback: '',
+        scrollbackChunks: [],
+        scrollbackLength: 0,
         modeState: createTerminalModeState(),
         scrollbackBaseAltScreen: null,
         cols: normalized.cols,
@@ -1025,6 +1124,8 @@ export function createWorkTerminalService(options: {
         flushTimer: null,
         pendingOutput: '',
         outputTimer: null,
+        unackedChars: 0,
+        ptyPaused: false,
         listeners: new Set(),
       };
       terminals.set(session.id, entry);
@@ -1069,6 +1170,7 @@ export function createWorkTerminalService(options: {
       });
 
       clearOutputCoalesce(entry);
+      resetFlowControl(entry);
       entry.session.cwd = spawned.effectiveCwd;
       if (spawned.resolvedWindowsShell) {
         entry.session.shell = spawned.resolvedWindowsShell;
@@ -1080,14 +1182,15 @@ export function createWorkTerminalService(options: {
       delete entry.session.errorMessage;
       delete entry.session.errorCode;
 
-      if (entry.scrollback) {
+      const existingScrollback = materializeScrollback(entry);
+      if (existingScrollback) {
         // A previously saved Codex fullscreen session can end without emitting its exit sequence.
         // Close that screen in the replay before drawing the new inline session.
         const oldAltScreen = entry.session.preset === 'codex'
-          ? advanceTerminalModeState(createTerminalModeState(), entry.scrollback).altScreen
+          ? advanceTerminalModeState(createTerminalModeState(), existingScrollback).altScreen
           : null;
         const leaveAltScreen = oldAltScreen === null ? '' : `\x1b[?${oldAltScreen}l`;
-        const prefix = entry.scrollback.endsWith('\n') || entry.scrollback.endsWith('\r') ? '' : '\r\n';
+        const prefix = existingScrollback.endsWith('\n') || existingScrollback.endsWith('\r') ? '' : '\r\n';
         const marker = `${leaveAltScreen}${prefix}\x1b[90m── 会话已恢复 · ${spawned.effectiveCwd} ──\x1b[0m\r\n`;
         appendScrollback(entry, marker);
         broadcast(entry, { type: 'output', data: marker });
@@ -1152,9 +1255,10 @@ export function createWorkTerminalService(options: {
       // newly attached client does not receive both snapshot bytes and duplicate live output.
       flushPendingOutput(entry);
       entry.listeners.add(listener);
+      resetFlowControl(entry);
       return {
         snapshot: buildTerminalSnapshotWithModes(
-          entry.scrollback,
+          materializeScrollback(entry),
           entry.modeState,
           entry.scrollbackBaseAltScreen,
           entry.session.status === 'running',
@@ -1162,11 +1266,28 @@ export function createWorkTerminalService(options: {
         session: { ...entry.session },
         detach: () => {
           entry.listeners.delete(listener);
+          if (entry.listeners.size === 0) {
+            resetFlowControl(entry);
+          }
           if (entry.dirtySnapshot) {
             flushEntryToDb(entry);
           }
         },
       };
+    },
+
+    ack(terminalId, chars) {
+      const entry = terminals.get(terminalId);
+      if (!entry || !Number.isFinite(chars) || chars <= 0) return;
+      entry.unackedChars = Math.max(0, entry.unackedChars - Math.floor(chars));
+      if (entry.ptyPaused && entry.unackedChars <= FLOW_CONTROL_LOW_WATERMARK) {
+        entry.ptyPaused = false;
+        try {
+          entry.pty?.resume?.();
+        } catch {
+          // Ignore resume errors on closed PTY.
+        }
+      }
     },
 
     write(terminalId, data) {
@@ -1253,7 +1374,7 @@ export function createWorkTerminalService(options: {
         return;
       }
       for (const entry of terminals.values()) {
-        if (entry.scrollback) {
+        if (entry.scrollbackLength > 0) {
           schedulePersist(entry);
         }
       }

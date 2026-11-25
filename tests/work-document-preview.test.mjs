@@ -89,15 +89,17 @@ test('WorkFilePreview renders Markdown preview by default and toggles to source 
     const toEdit = dom.document.querySelector('button[aria-label="切换到编辑器"]');
     assert.ok(toEdit);
     await act(async () => { toEdit.click(); });
-    const textarea = dom.document.querySelector('textarea[aria-label="编辑 GUIDE.md"]');
-    assert.ok(textarea);
-    assert.equal(dom.document.querySelector('.work-code-paint')?.textContent, '# 架构设计\n\n正文说明。');
+    const editorHost = dom.document.querySelector('.work-cm-host');
+    assert.ok(editorHost);
+    const editorContent = editorHost.querySelector('[aria-label="编辑 GUIDE.md"]');
+    assert.ok(editorContent);
+    assert.equal(editorContent.getAttribute('data-value') ?? editorContent.value ?? editorContent.textContent, '# 架构设计\n\n正文说明。');
 
     const toPreview = dom.document.querySelector('button[aria-label="切换到预览"]');
     assert.ok(toPreview);
     await act(async () => { toPreview.click(); });
     assert.ok(dom.document.querySelector('.work-doc-markdown'));
-    assert.equal(dom.document.querySelector('textarea'), null);
+    assert.equal(dom.document.querySelector('.work-cm-host'), null);
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previousFetch;
@@ -219,7 +221,7 @@ test('WorkFilePreview allows editing SSH and WSL project files while keeping rea
     });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     assert.equal(dom.document.querySelector('textarea'), null);
-    assert.ok(dom.document.querySelector('.work-code-view'));
+    assert.equal(dom.document.querySelector('.work-cm-host')?.getAttribute('data-readonly'), 'true');
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previousFetch;

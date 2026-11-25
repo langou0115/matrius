@@ -103,7 +103,9 @@ export type WorkStoreSnapshot = {
   hosts: WorkHost[];
   terminals: WorkTerminalSession[];
   gitTabsByProject: Record<string, 'active' | 'inactive'>;
+  searchTabsByProject: Record<string, 'active' | 'inactive'>;
   fileTabsByProject: Record<string, { entries: WorkFileTab[]; activePath: string | null; drafts: Map<string, WorkFileDraft> }>;
+  pendingFileReveal: { projectId: string; path: string; line: number; column?: number; token: number } | null;
   activeTerminalId: string | null;
   activeTerminalByProject: Record<string, string | null>;
   filesPanelOpen: boolean;
@@ -280,7 +282,9 @@ function createInitialState(): WorkStoreSnapshot {
     hosts: [],
     terminals: [],
     gitTabsByProject: {},
+    searchTabsByProject: {},
     fileTabsByProject: {},
+    pendingFileReveal: null,
     activeTerminalId: null,
     activeTerminalByProject: readStoredActiveTerminals(),
     filesPanelOpen: true,
@@ -516,10 +520,13 @@ export function removeWorkProject(projectId: string): void {
   delete fileTabsByProject[projectId];
   const gitTabsByProject = { ...state.gitTabsByProject };
   delete gitTabsByProject[projectId];
+  const searchTabsByProject = { ...state.searchTabsByProject };
+  delete searchTabsByProject[projectId];
   emit({
     ...state,
     fileTabsByProject,
     gitTabsByProject,
+    searchTabsByProject,
     projects: nextProjects,
     projectOrder: nextProjectOrder,
     expandedProjectIds: nextExpanded,
@@ -745,6 +752,7 @@ export function addWorkTerminal(terminal: WorkTerminalSession): void {
     activeProjectId: terminal.projectId,
     fileTabsByProject: deactivateWorkFile(terminal.projectId),
     gitTabsByProject: deactivateWorkGit(terminal.projectId),
+    searchTabsByProject: deactivateWorkSearch(terminal.projectId),
     activeTerminalByProject: nextMap,
     unreadCompletedCliKeys: nextUnread,
   });
@@ -854,9 +862,18 @@ function deactivateWorkGit(projectId: string): WorkStoreSnapshot['gitTabsByProje
   return { ...state.gitTabsByProject, [projectId]: 'inactive' };
 }
 
+function deactivateWorkSearch(projectId: string): WorkStoreSnapshot['searchTabsByProject'] {
+  if (state.searchTabsByProject[projectId] !== 'active') return state.searchTabsByProject;
+  return { ...state.searchTabsByProject, [projectId]: 'inactive' };
+}
+
 export function openWorkGit(projectId: string): void {
   if (state.gitTabsByProject[projectId] === 'active') return;
-  emit({ ...state, gitTabsByProject: { ...state.gitTabsByProject, [projectId]: 'active' } });
+  emit({
+    ...state,
+    gitTabsByProject: { ...state.gitTabsByProject, [projectId]: 'active' },
+    searchTabsByProject: deactivateWorkSearch(projectId),
+  });
 }
 
 export function closeWorkGit(projectId: string): void {
@@ -866,12 +883,55 @@ export function closeWorkGit(projectId: string): void {
   emit({ ...state, gitTabsByProject });
 }
 
+export function openWorkSearch(projectId: string): void {
+  if (state.searchTabsByProject[projectId] === 'active') return;
+  emit({
+    ...state,
+    searchTabsByProject: { ...state.searchTabsByProject, [projectId]: 'active' },
+    gitTabsByProject: deactivateWorkGit(projectId),
+  });
+}
+
+export function closeWorkSearch(projectId: string): void {
+  if (!state.searchTabsByProject[projectId]) return;
+  const searchTabsByProject = { ...state.searchTabsByProject };
+  delete searchTabsByProject[projectId];
+  emit({ ...state, searchTabsByProject });
+}
+
+let revealTokenSeq = 1;
+
+export function revealWorkFileLine(
+  projectId: string,
+  entry: WorkFileTab,
+  line: number,
+  column?: number,
+): void {
+  const entries = state.fileTabsByProject[projectId]?.entries ?? [];
+  const path = workFileTabPath(entry);
+  emit({
+    ...state,
+    gitTabsByProject: deactivateWorkGit(projectId),
+    searchTabsByProject: deactivateWorkSearch(projectId),
+    pendingFileReveal: { projectId, path, line, column, token: revealTokenSeq++ },
+    fileTabsByProject: {
+      ...state.fileTabsByProject,
+      [projectId]: {
+        entries: entries.some((file) => workFileTabPath(file) === path) ? entries : [...entries, entry],
+        activePath: path,
+        drafts: state.fileTabsByProject[projectId]?.drafts ?? new Map(),
+      },
+    },
+  });
+}
+
 export function openWorkFile(projectId: string, entry: WorkFileTab): void {
   const entries = state.fileTabsByProject[projectId]?.entries ?? [];
   const path = workFileTabPath(entry);
   emit({
     ...state,
     gitTabsByProject: deactivateWorkGit(projectId),
+    searchTabsByProject: deactivateWorkSearch(projectId),
     fileTabsByProject: {
       ...state.fileTabsByProject,
       [projectId]: {
@@ -930,6 +990,7 @@ export function selectWorkTerminal(terminalId: string | null): void {
     activeProjectId: target.projectId,
     fileTabsByProject: deactivateWorkFile(target.projectId),
     gitTabsByProject: deactivateWorkGit(target.projectId),
+    searchTabsByProject: deactivateWorkSearch(target.projectId),
     activeTerminalByProject: nextMap,
     unreadCompletedCliKeys: nextUnread,
   });
@@ -1512,7 +1573,9 @@ export function resetWorkStateForTests(): void {
     hosts: [],
     terminals: [],
     gitTabsByProject: {},
+    searchTabsByProject: {},
     fileTabsByProject: {},
+    pendingFileReveal: null,
     activeTerminalId: null,
     activeTerminalByProject: {},
     filesPanelOpen: true,

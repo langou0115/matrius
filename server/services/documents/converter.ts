@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -10,6 +11,26 @@ import { extensionOf } from '../file-types';
 import { fontPath } from './binaries';
 
 const TARGETS: Record<string, string> = { doc: 'docx', xls: 'xlsx', ppt: 'pptx' };
+const PDF_RENDERABLE = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']);
+const PDF_CACHE_MAX = 16;
+const pdfRenderCache = new Map<string, Buffer>();
+
+function getCachedPdf(key: string): Buffer | undefined {
+  const hit = pdfRenderCache.get(key);
+  if (!hit) return undefined;
+  pdfRenderCache.delete(key);
+  pdfRenderCache.set(key, hit);
+  return hit;
+}
+
+function setCachedPdf(key: string, pdf: Buffer): void {
+  pdfRenderCache.delete(key);
+  pdfRenderCache.set(key, pdf);
+  while (pdfRenderCache.size > PDF_CACHE_MAX) {
+    const oldest = pdfRenderCache.keys().next().value;
+    if (oldest !== undefined) pdfRenderCache.delete(oldest);
+  }
+}
 
 function conversionError(error: unknown): AppError {
   const code = error && typeof error === 'object' && 'code' in error
@@ -60,6 +81,51 @@ export async function convertLegacy(
     }
     const stem = filename.includes('.') ? filename.slice(0, filename.lastIndexOf('.')) : filename;
     return { filename: `${stem}.${target}`, format: target, data: converted };
+  } finally {
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {});
+  }
+}
+
+export async function renderOfficeToPdf(
+  settings: Settings,
+  filename: string,
+  data: Uint8Array,
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  const extension = extensionOf(filename);
+  if (!PDF_RENDERABLE.has(extension)) {
+    throw new AppError(415, 'unsupported_file_type', '暂不支持将此文件渲染为 PDF 预览。');
+  }
+  const cacheKey = `${extension}:${createHash('sha256').update(data).digest('hex')}`;
+  const cached = getCachedPdf(cacheKey);
+  if (cached) return cached;
+
+  const directory = await mkdtemp(join(tmpdir(), 'matrius-pdf-'));
+  try {
+    const inputPath = join(directory, `input.${extension}`);
+    const outputPath = join(directory, 'output.pdf');
+    await writeFile(inputPath, data);
+    let converter: Awaited<ReturnType<typeof createConverter>> | null = null;
+    try {
+      // Omit fontDirectories so native LibreOffice discovers system + Microsoft Office fonts
+      // (including SimSun / Microsoft YaHei / Calibri) and reuses the user font cache.
+      converter = await createConverter({
+        timeoutMs: Math.max(settings.DOCUMENT_TOOL_TIMEOUT_SECONDS * 1000, 60_000),
+        maxInputBytes: Math.max(settings.MAX_UPLOAD_BYTES, 32 * 1024 * 1024),
+        maxOutputBytes: Math.max(settings.MAX_UPLOAD_BYTES, 64 * 1024 * 1024),
+      });
+      await converter.render({ inputPath, outputPath }, signal);
+    } catch (error) {
+      throw conversionError(error);
+    } finally {
+      await converter?.dispose();
+    }
+    const pdf = await readFile(outputPath);
+    if (pdf.length < 4 || !pdf.subarray(0, 4).equals(Buffer.from('%PDF'))) {
+      throw new AppError(502, 'document_conversion_failed', '文档渲染引擎未生成有效的 PDF。');
+    }
+    setCachedPdf(cacheKey, pdf);
+    return pdf;
   } finally {
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {});
   }

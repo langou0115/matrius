@@ -1,5 +1,4 @@
 import { isDesktopTarget } from '@/core/platform/target';
-import { readSidebarTab } from '@/features/chat/sidebar-mode';
 import { isWorkPath } from '@/features/work/work-href';
 import type { Href } from '@/router';
 
@@ -36,11 +35,8 @@ export function workspaceReturnHref(activeId: string | null, preview: boolean, m
   return (lastWorkspacePath ?? conversationHref(activeId, preview)) as Href;
 }
 
-export function workspaceReturnLabel(mobile = false): string {
-  if (lastWorkspacePath === '/library' || lastWorkspacePath === '/mock/library') return '返回资料库';
-  if (lastWorkspacePath === '/tasks' || lastWorkspacePath === '/mock/tasks') return '返回定时任务';
-  if (!mobile && isDesktopTarget() && (isWorkPath(lastWorkspacePath) || readSidebarTab(true) === 'work')) return '返回工作';
-  return '返回对话';
+export function workspaceReturnLabel(_mobile = false): string {
+  return '返回应用';
 }
 
 /** The tracker is process-wide; tests reset it between cases. */

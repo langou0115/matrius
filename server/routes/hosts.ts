@@ -6,12 +6,12 @@ import { detectWorkDocumentFormat } from '../../contract/work-projects';
 import type { Settings } from '../config';
 import type { AppDatabase } from '../db/client';
 import { AppError } from '../errors';
-import { convertLegacy } from '../services/documents/converter';
+import { convertLegacy, renderOfficeToPdf } from '../services/documents/converter';
 import { extensionOf } from '../services/file-types';
 import { createHostFsService, type HostFsService } from '../services/host-fs';
 import { createWorkHostService, type WorkHostService } from '../services/hosts';
 import { renderWorkDocumentPreview } from '../services/work-document-preview';
-import { univerWorkbookToExcelBuffer } from '../services/work-excel-univer';
+import { xSpreadsheetToExcelBuffer } from '../services/work-excel-spreadsheet';
 
 const hostKindSchema = z.enum(['ssh', 'wsl']);
 const authMethodSchema = z.enum(['agent', 'key', 'password']);
@@ -164,6 +164,29 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     return reply.send(payload);
   });
 
+  app.get<{ Params: { hostId: string } }>('/api/hosts/:hostId/fs/render-pdf', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    const { path } = fsQuerySchema.required().parse(request.query ?? {});
+    const format = detectWorkDocumentFormat(path);
+    if (format !== 'pdf' && format !== 'word' && format !== 'excel' && format !== 'powerpoint') {
+      throw new AppError(415, 'raw_preview_unsupported', '暂不支持渲染预览此文件类型。');
+    }
+    const rawBytes = await hostFs.readBinaryFile(request.params.hostId, path);
+    if (format === 'pdf') {
+      reply.header('Content-Disposition', 'inline');
+      reply.type('application/pdf');
+      return reply.send(rawBytes);
+    }
+    if (!deps.settings) {
+      throw new AppError(503, 'document_converter_unavailable', 'LibreOffice 文档渲染引擎不可用。');
+    }
+    const pdfBytes = await renderOfficeToPdf(deps.settings, path, rawBytes);
+    reply.header('Content-Disposition', 'inline');
+    reply.type('application/pdf');
+    return reply.send(pdfBytes);
+  });
+
   app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/text', { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { path, text, baseRevision } = z.object({
@@ -187,13 +210,52 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
 
   app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/excel', { bodyLimit: 30 * 1024 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    const { path, workbook, baseRevision } = z.object({
+    const { path, spreadsheet, baseRevision } = z.object({
       path: z.string().min(1).max(1000),
-      workbook: z.record(z.string(), z.unknown()),
+      spreadsheet: z.array(z.unknown()).min(1),
       baseRevision: z.string().regex(/^[a-f0-9]{64}$/u),
     }).parse(request.body ?? {});
-    const bytes = await univerWorkbookToExcelBuffer(workbook);
+    const bytes = await xSpreadsheetToExcelBuffer(spreadsheet);
     return hostFs.saveBinaryFile(request.params.projectId, path, bytes, baseRevision);
+  });
+
+  app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/files/create', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { parentPath, name, kind } = z.object({
+      parentPath: z.string().max(1000).optional(),
+      name: z.string().min(1).max(255),
+      kind: z.enum(['file', 'directory']),
+    }).parse(request.body ?? {});
+    const created = await hostFs.createEntry(request.params.projectId, parentPath ?? '', name, kind);
+    reply.code(201);
+    return created;
+  });
+
+  app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/files/rename', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path, newName } = z.object({
+      path: z.string().min(1).max(1000),
+      newName: z.string().min(1).max(255),
+    }).parse(request.body ?? {});
+    return hostFs.renameEntry(request.params.projectId, path, newName);
+  });
+
+  app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/files/delete', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path } = z.object({
+      path: z.string().min(1).max(1000),
+    }).parse(request.body ?? {});
+    await hostFs.deleteEntry(request.params.projectId, path);
+    reply.code(204);
+  });
+
+  app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/files/reveal', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path } = z.object({
+      path: z.string().max(1000).optional(),
+    }).parse(request.body ?? {});
+    await hostFs.revealInSystemExplorer(request.params.projectId, path);
+    reply.code(204);
   });
 
   app.delete<{ Params: { hostId: string } }>('/api/hosts/:hostId', async (request, reply) => {

@@ -41,6 +41,7 @@ import {
 
 type Props = {
   project?: WorkProject | null;
+  aiConfigOnly?: boolean;
   initialHosts?: WorkHost[];
   onHostsSync?: (hosts: WorkHost[]) => void;
   onSaved: (project: WorkProject) => void;
@@ -70,7 +71,14 @@ const CLI_ARGS_PLACEHOLDERS: Record<WorkCliProvider, string> = {
   antigravity: '例如：命令行启动参数（留空按默认启动）',
 };
 
-export function CreateProjectDialog({ project = null, initialHosts, onHostsSync, onSaved, onClose }: Props) {
+export function CreateProjectDialog({
+  project = null,
+  aiConfigOnly = false,
+  initialHosts,
+  onHostsSync,
+  onSaved,
+  onClose,
+}: Props) {
   const instance = useInstance();
   const preview = useIsPreview();
   const pathname = usePathname();
@@ -249,13 +257,13 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
   return (
     <>
       <Dialog
-        title={editing ? '项目设置' : '创建项目'}
+        title={aiConfigOnly ? 'AI 配置' : editing ? '项目设置' : '创建项目'}
         onClose={() => { if (!saving) onClose(); }}
         className="compact-dialog work-project-dialog"
       >
         <form className="provider-edit-form" onSubmit={(event) => void handleSubmit(event)}>
           <fieldset className="work-project-form-body" disabled={saving}>
-            {editing && project && (
+            {!aiConfigOnly && editing && project && (
               <label className="model-form-field">
                 项目名称
                 <input
@@ -268,60 +276,65 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
               </label>
             )}
 
-            <div className="work-field-block">
-              <div className="work-field-header">
-                <span className="work-field-title">主机</span>
-                {!editing && (
+            {!aiConfigOnly && (
+              <>
+                <div className="work-field-block">
+                  <div className="work-field-header">
+                    <span className="work-field-title">主机</span>
+                    {!editing && (
+                      <button
+                        type="button"
+                        className="work-settings-link"
+                        onClick={openHostSettings}
+                      >
+                        主机设置
+                      </button>
+                    )}
+                  </div>
+                  <SelectField
+                    label="主机"
+                    hideLabel
+                    fixedPopover
+                    value={editing && project ? project.hostId : hostId}
+                    options={hostOptions}
+                    disabled={editing}
+                    onChange={(nextHostId) => {
+                      if (editing) return;
+                      if (nextHostId !== hostId) {
+                        setHostId(nextHostId);
+                        setDirectory('');
+                        setBrowseDir('');
+                        setError(null);
+                      }
+                    }}
+                  />
+                </div>
+
+                <div className="work-field-block">
+                  <span className="work-field-title">项目目录</span>
                   <button
                     type="button"
-                    className="work-settings-link"
-                    onClick={openHostSettings}
+                    className={`work-dir-picker${(editing && project ? project.directory : directory) ? ' has-value' : ''}`}
+                    aria-label={editing ? '项目目录（创建后不可修改）' : '选择项目目录'}
+                    disabled={editing}
+                    onClick={() => {
+                      if (editing) return;
+                      setError(null);
+                      setBrowsing(true);
+                    }}
                   >
-                    主机设置
+                    <span className="work-dir-picker-icon" aria-hidden="true">
+                      <FolderOpen size={15} strokeWidth={1.75} />
+                    </span>
+                    <span className="work-dir-picker-text">
+                      {(editing && project ? project.directory : directory) || '选择项目目录'}
+                    </span>
                   </button>
-                )}
-              </div>
-              <SelectField
-                label="主机"
-                hideLabel
-                fixedPopover
-                value={editing && project ? project.hostId : hostId}
-                options={hostOptions}
-                disabled={editing}
-                onChange={(nextHostId) => {
-                  if (editing) return;
-                  if (nextHostId !== hostId) {
-                    setHostId(nextHostId);
-                    setDirectory('');
-                    setBrowseDir('');
-                    setError(null);
-                  }
-                }}
-              />
-            </div>
+                </div>
+              </>
+            )}
 
-            <div className="work-field-block">
-              <span className="work-field-title">项目目录</span>
-              <button
-                type="button"
-                className={`work-dir-picker${(editing && project ? project.directory : directory) ? ' has-value' : ''}`}
-                aria-label={editing ? '项目目录（创建后不可修改）' : '选择项目目录'}
-                disabled={editing}
-                onClick={() => {
-                  if (editing) return;
-                  setError(null);
-                  setBrowsing(true);
-                }}
-              >
-                <span className="work-dir-picker-icon" aria-hidden="true">
-                  <FolderOpen size={15} strokeWidth={1.75} />
-                </span>
-                <span className="work-dir-picker-text">
-                  {(editing && project ? project.directory : directory) || '选择项目目录'}
-                </span>
-              </button>
-            </div>
-
+            {editing && (
             <div className="work-proxy-section">
               <button
                 type="button"
@@ -409,6 +422,7 @@ export function CreateProjectDialog({ project = null, initialHosts, onHostsSync,
                 </div>
               )}
             </div>
+            )}
           </fieldset>
 
           <div className="dialog-footer">

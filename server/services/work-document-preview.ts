@@ -13,7 +13,7 @@ import type { Settings } from '../config';
 import { AppError } from '../errors';
 import { convertLegacy } from './documents/converter';
 import { extensionOf } from './file-types';
-import { excelBufferToUniverWorkbook } from './work-excel-univer';
+import { excelWorkbookToXSpreadsheet } from './work-excel-spreadsheet';
 
 const LEGACY_FORMATS = new Set(['doc', 'xls', 'ppt']);
 const MAX_SHEETS = 30;
@@ -194,12 +194,11 @@ async function renderExcelXlsx(
     });
   }
 
-  const baseName = filename.split(/[\\/]/u).pop() ?? filename;
-  const univerWorkbook = await excelBufferToUniverWorkbook(data, baseName);
+  const spreadsheet = excelWorkbookToXSpreadsheet(workbook);
   return {
     kind: 'excel',
     sheets,
-    workbook: univerWorkbook as unknown as Record<string, unknown>,
+    spreadsheet,
     revision,
     ...(readOnlyLegacy ? { readOnlyLegacy: true } : {}),
   };

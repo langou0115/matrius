@@ -18,6 +18,8 @@ import type {
   HostDirectoryListing,
   HostDocumentPreview,
   HostFilePreview,
+  WorkContentSearchRequest,
+  WorkContentSearchResponse,
   WorkHostEntry,
   WorkFileSearchResponse,
   WorkProject,
@@ -205,6 +207,12 @@ export function hostRawFileUrl(hostId: string, path: string): string {
   return `/api/hosts/${encodeURIComponent(hostId)}/fs/raw?${query}`;
 }
 
+export function hostRenderPdfUrl(hostId: string, path: string, version?: number): string {
+  const query = new URLSearchParams({ path });
+  if (version) query.set('v', String(version));
+  return `/api/hosts/${encodeURIComponent(hostId)}/fs/render-pdf?${query}`;
+}
+
 export function saveWorkFile(
   request: ApiRequest,
   projectId: string,
@@ -230,11 +238,68 @@ export function saveWorkBinaryFile(
 export function saveWorkExcelFile(
   request: ApiRequest,
   projectId: string,
-  input: { path: string; workbook: Record<string, unknown>; baseRevision: string },
+  input: { path: string; spreadsheet: unknown[]; baseRevision: string },
 ): Promise<HostBinarySaveResult> {
   return request<HostBinarySaveResult>(`/api/projects/${encodeURIComponent(projectId)}/files/excel`, {
     method: 'PUT',
     body: JSON.stringify(input),
+  });
+}
+
+export function createWorkFileEntry(
+  request: ApiRequest,
+  projectId: string,
+  input: { parentPath?: string; name: string; kind: 'file' | 'directory' },
+): Promise<WorkHostEntry> {
+  return request<WorkHostEntry>(`/api/projects/${encodeURIComponent(projectId)}/files/create`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function renameWorkFileEntry(
+  request: ApiRequest,
+  projectId: string,
+  input: { path: string; newName: string },
+): Promise<WorkHostEntry> {
+  return request<WorkHostEntry>(`/api/projects/${encodeURIComponent(projectId)}/files/rename`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteWorkFileEntry(
+  request: ApiRequest,
+  projectId: string,
+  input: { path: string },
+): Promise<void> {
+  return request<void>(`/api/projects/${encodeURIComponent(projectId)}/files/delete`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function revealWorkFileInExplorer(
+  request: ApiRequest,
+  projectId: string,
+  path?: string,
+): Promise<void> {
+  return request<void>(`/api/projects/${encodeURIComponent(projectId)}/files/reveal`, {
+    method: 'POST',
+    body: JSON.stringify(path ? { path } : {}),
+  });
+}
+
+export function searchWorkProjectContent(
+  request: ApiRequest,
+  projectId: string,
+  input: WorkContentSearchRequest,
+  signal?: AbortSignal,
+): Promise<WorkContentSearchResponse> {
+  return request<WorkContentSearchResponse>(`/api/projects/${encodeURIComponent(projectId)}/content-search`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
   });
 }
 

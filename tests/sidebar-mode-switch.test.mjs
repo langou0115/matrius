@@ -8,7 +8,7 @@ import { Workspace } from '../ui/components/web/workspace.tsx';
 import { ChatProvider } from '../ui/features/chat/chat-state.tsx';
 import { ChatRuntimeProvider } from '../ui/features/chat/chat-runtime.tsx';
 import { resetSidebarTabForTests } from '../ui/features/chat/sidebar-mode.ts';
-import { Sidebar } from '../ui/features/chat/components/sidebar.tsx';
+import { Sidebar, resetLastCollapsedDrawerTabForTests } from '../ui/features/chat/components/sidebar.tsx';
 import { InstanceProvider } from '../ui/features/instance/instance-state.tsx';
 import { ModelProvider } from '../ui/features/models/model-state.tsx';
 import { MemoryProvider } from '../ui/features/memory/memory-state.tsx';
@@ -19,6 +19,7 @@ import { PreviewContext } from '../ui/features/workspace/preview-context.ts';
 
 function setupDom({ mobile = false, target = 'web' } = {}) {
   resetSidebarTabForTests();
+  resetLastCollapsedDrawerTabForTests();
   const { window, document } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const previous = {
     window: globalThis.window,
@@ -117,29 +118,46 @@ function renderSidebarTree(withWorkspace = false) {
   );
 }
 
-test('web target omits 工作/对话 switcher on desktop viewport and renders chat navigation directly', async () => {
+test('web target renders persistent Activity Rail (chat/library/tasks, no project) and chat drawer with only 新对话 + groups', async () => {
   const dom = setupDom({ mobile: false, target: 'web' });
   const root = createRoot(dom.document.getElementById('root'));
 
   try {
     await act(async () => {
-      root.render(renderSidebarTree());
+      root.render(renderSidebarTree(true));
     });
 
-    const sidebar = dom.document.querySelector('aside.sidebar');
-    assert.ok(sidebar);
-    assert.equal(sidebar.querySelector('.sidebar-mode-switch'), null);
-    assert.equal(sidebar.querySelector('#sidebar-panel-work'), null);
-    assert.ok(sidebar.querySelector('.sidebar-primary'));
-    assert.match(sidebar.textContent ?? '', /新对话/);
-    assert.match(sidebar.textContent ?? '', /测试对话/);
+    const rail = dom.document.querySelector('nav.sidebar-rail');
+    assert.ok(rail);
+    assert.ok(rail.querySelector('button[aria-label="对话"]'));
+    assert.ok(rail.querySelector('a[aria-label="打开资料库"]'));
+    assert.ok(rail.querySelector('a[aria-label="打开定时任务"]'));
+    assert.equal(rail.querySelector('button[aria-label="项目"]'), null);
+    assert.ok(rail.querySelector('a[aria-label="打开设置"]'));
+
+    const drawer = dom.document.querySelector('aside.sidebar.sidebar-drawer');
+    assert.ok(drawer);
+    assert.equal(drawer.querySelector('#sidebar-panel-work'), null);
+    assert.match(drawer.textContent ?? '', /新对话/);
+    assert.match(drawer.textContent ?? '', /测试对话/);
+    assert.doesNotMatch(drawer.textContent ?? '', /资料库/);
+    assert.doesNotMatch(drawer.textContent ?? '', /定时任务/);
+
+    // Clicking the active 对话 rail icon collapses the secondary drawer, and clicking again reopens it.
+    const chatRailBtn = rail.querySelector('button[aria-label="对话"]');
+    await act(async () => { chatRailBtn.click(); });
+    assert.equal(dom.document.querySelector('aside.sidebar.sidebar-drawer'), null);
+    assert.ok(dom.document.querySelector('nav.sidebar-rail'));
+
+    await act(async () => { chatRailBtn.click(); });
+    assert.ok(dom.document.querySelector('aside.sidebar.sidebar-drawer'));
   } finally {
     await act(async () => { root.unmount(); });
     dom.restore();
   }
 });
 
-test('desktop target renders 工作 and 对话 switcher above 新对话, with work projects panel', async () => {
+test('desktop target renders 项目 in Activity Rail, switches drawer between Chat and Project, and preserves tab across remount', async () => {
   const dom = setupDom({ mobile: false, target: 'desktop' });
   const root = createRoot(dom.document.getElementById('root'));
 
@@ -148,62 +166,39 @@ test('desktop target renders 工作 and 对话 switcher above 新对话, with wo
       root.render(renderSidebarTree());
     });
 
-    const sidebar = dom.document.querySelector('aside.sidebar');
-    assert.ok(sidebar);
+    const rail = dom.document.querySelector('nav.sidebar-rail');
+    assert.ok(rail);
+    const chatBtn = rail.querySelector('button[aria-label="对话"]');
+    const projectBtn = rail.querySelector('button[aria-label="项目"]');
+    assert.ok(chatBtn);
+    assert.ok(projectBtn);
+    assert.equal(chatBtn.getAttribute('aria-pressed'), 'true');
+    assert.equal(projectBtn.getAttribute('aria-pressed'), 'false');
 
-    const tabs = Array.from(sidebar.querySelectorAll('.sidebar-mode-switch [role="tab"]'));
-    assert.deepEqual(tabs.map((tab) => tab.textContent?.trim()), ['工作', '对话']);
-    assert.equal(tabs[0].getAttribute('aria-selected'), 'false');
-    assert.equal(tabs[1].getAttribute('aria-selected'), 'true');
-
-    // Switcher sits directly above 新对话 (before .sidebar-chat-panel / .sidebar-primary).
-    const children = Array.from(sidebar.children);
-    const switchIndex = children.findIndex((el) => el.classList.contains('sidebar-mode-switch'));
-    const chatPanelIndex = children.findIndex((el) => el.classList.contains('sidebar-chat-panel'));
-    assert.ok(switchIndex >= 0 && chatPanelIndex === switchIndex + 1);
-    assert.ok(sidebar.querySelector('.sidebar-primary'));
-    assert.match(sidebar.textContent ?? '', /新对话/);
-    assert.match(sidebar.textContent ?? '', /测试对话/);
-
-    // Clicking 工作 hides chat nav/history and renders work projects navigation.
-    await act(async () => {
-      tabs[0].click();
-    });
-    assert.equal(tabs[0].getAttribute('aria-selected'), 'true');
-    assert.equal(tabs[1].getAttribute('aria-selected'), 'false');
-    const workPanel = sidebar.querySelector('#sidebar-panel-work');
+    // Clicking 项目 switches drawer to project explorer (projects + file tree).
+    await act(async () => { projectBtn.click(); });
+    assert.equal(projectBtn.getAttribute('aria-pressed'), 'true');
+    const drawer = dom.document.querySelector('aside.sidebar.sidebar-drawer');
+    assert.ok(drawer);
+    const workPanel = drawer.querySelector('#sidebar-panel-work');
     assert.ok(workPanel);
-    assert.match(workPanel.textContent ?? '', /创建项目/);
+    assert.ok(workPanel.querySelector('button[aria-label="工作区"]'));
+    assert.ok(workPanel.querySelector('button[aria-label="创建项目"]'));
     assert.match(workPanel.textContent ?? '', /项目/);
-    assert.ok(sidebar.querySelector('.sidebar-header-actions button[aria-label="查找本机文件"]'));
-    assert.equal(sidebar.querySelector('.sidebar-header-actions button[aria-label="搜索对话"]'), null);
-    assert.doesNotMatch(sidebar.textContent ?? '', /新对话/);
-    assert.doesNotMatch(sidebar.textContent ?? '', /测试对话/);
-    assert.ok(sidebar.querySelector('.sidebar-settings-entry'));
+    assert.ok(drawer.querySelector('.work-sidebar-files-section'));
+    assert.ok(drawer.querySelector('.sidebar-primary button[aria-label="项目内全局查找"]'));
+    assert.equal(drawer.querySelector('.sidebar-header-actions button[aria-label="查找本机文件"]'), null);
+    assert.equal(drawer.querySelector('.sidebar-header-actions button[aria-label="搜索对话"]'), null);
+    assert.doesNotMatch(drawer.textContent ?? '', /新对话/);
 
-    // Unmounting Sidebar (e.g. entering Settings) and remounting preserves the active 工作 tab.
+    // Remounting preserves the active Project tab.
     await act(async () => { root.unmount(); });
     const remounted = createRoot(dom.document.getElementById('root'));
     await act(async () => {
       remounted.render(renderSidebarTree());
     });
-    const remountedSidebar = dom.document.querySelector('aside.sidebar');
-    assert.ok(remountedSidebar.querySelector('#sidebar-panel-work'));
-    assert.doesNotMatch(remountedSidebar.textContent ?? '', /新对话/);
-    const remountedTabs = Array.from(remountedSidebar.querySelectorAll('.sidebar-mode-switch [role="tab"]'));
-    assert.equal(remountedTabs[0].getAttribute('aria-selected'), 'true');
-
-    // Keyboard ArrowRight switches back to 对话 and shows 新对话 + history again.
-    const tablist = remountedSidebar.querySelector('.sidebar-mode-switch');
-    const propsKey = Object.keys(tablist).find((key) => key.startsWith('__reactProps'));
-    assert.ok(propsKey);
-    await act(async () => {
-      tablist[propsKey].onKeyDown({ key: 'ArrowRight', preventDefault() {} });
-    });
-    assert.equal(remountedTabs[1].getAttribute('aria-selected'), 'true');
-    assert.ok(remountedSidebar.querySelector('.sidebar-primary'));
-    assert.match(remountedSidebar.textContent ?? '', /新对话/);
-    assert.match(remountedSidebar.textContent ?? '', /测试对话/);
+    assert.ok(dom.document.querySelector('#sidebar-panel-work'));
+    assert.equal(dom.document.querySelector('nav.sidebar-rail button[aria-label="项目"]')?.getAttribute('aria-pressed'), 'true');
     await act(async () => { remounted.unmount(); });
   } finally {
     resetSidebarTabForTests();
@@ -211,7 +206,7 @@ test('desktop target renders 工作 and 对话 switcher above 新对话, with wo
   }
 });
 
-test('desktop target on mobile viewport omits 工作/对话 switcher and renders chat navigation directly', async () => {
+test('desktop target on mobile viewport keeps original mobile drawer layout without Activity Rail', async () => {
   const dom = setupDom({ mobile: true, target: 'desktop' });
   const root = createRoot(dom.document.getElementById('root'));
 
@@ -220,11 +215,13 @@ test('desktop target on mobile viewport omits 工作/对话 switcher and renders
       root.render(renderSidebarTree());
     });
 
+    assert.equal(dom.document.querySelector('nav.sidebar-rail'), null);
     const sidebar = dom.document.querySelector('aside.sidebar');
     assert.ok(sidebar);
-    assert.equal(sidebar.querySelector('.sidebar-mode-switch'), null);
     assert.ok(sidebar.querySelector('.sidebar-primary'));
     assert.match(sidebar.textContent ?? '', /新对话/);
+    assert.match(sidebar.textContent ?? '', /资料库/);
+    assert.match(sidebar.textContent ?? '', /定时任务/);
     assert.match(sidebar.textContent ?? '', /测试对话/);
   } finally {
     await act(async () => { root.unmount(); });
@@ -232,7 +229,7 @@ test('desktop target on mobile viewport omits 工作/对话 switcher and renders
   }
 });
 
-test('desktop workspace clears the right conversation area when switching to 工作 and keeps expand control when collapsed', async () => {
+test('desktop workspace switches to Project with right AI CLI panel and toggles secondary drawer via collapse or rail icon', async () => {
   const dom = setupDom({ mobile: false, target: 'desktop' });
   const root = createRoot(dom.document.getElementById('root'));
 
@@ -244,66 +241,48 @@ test('desktop workspace clears the right conversation area when switching to 工
     assert.ok(dom.document.querySelector('.chat-placeholder'));
     assert.equal(dom.document.querySelector('main.work-main'), null);
 
-    const workTab = dom.document.querySelector('#sidebar-tab-work');
-    assert.ok(workTab);
-    await act(async () => { workTab.click(); });
+    const projectBtn = dom.document.querySelector('nav.sidebar-rail button[aria-label="项目"]');
+    assert.ok(projectBtn);
+    await act(async () => { projectBtn.click(); });
 
     assert.equal(dom.document.querySelector('.chat-placeholder'), null);
-    const workMain = dom.document.querySelector('main.work-main');
-    assert.ok(workMain);
-    assert.equal(workMain.children.length, 0);
+    assert.ok(dom.document.querySelector('main.work-main'));
     assert.ok(dom.document.querySelector('.work-topbar .work-tabs'));
     assert.ok(dom.document.querySelector('.work-topbar button[aria-label="添加终端"]'));
-    assert.equal(dom.document.querySelector('.work-topbar button[aria-label="查找本机文件"]'), null);
-    const filesToggleBtn = dom.document.querySelector('.work-topbar button[aria-label="收起工作目录"]');
-    assert.ok(filesToggleBtn);
-    assert.ok(dom.document.querySelector('.work-files-panel'));
-    await act(async () => { filesToggleBtn.click(); });
-    assert.equal(dom.document.querySelector('.work-files-panel'), null);
-    assert.ok(dom.document.querySelector('.work-topbar button[aria-label="展开工作目录"]'));
 
-    // Collapsing the sidebar on desktop keeps the slim icon rail with top expand, create project, file search, and settings (no mode switch icon).
-    const collapseBtn = dom.document.querySelector('button[aria-label="收起侧栏"]');
+    // Right panel is now AI CLI sessions panel (WorkCliPanel).
+    const cliToggleBtn = dom.document.querySelector('.work-topbar button[aria-label="收起 AI 对话"]');
+    assert.ok(cliToggleBtn);
+    assert.ok(dom.document.querySelector('.work-cli-panel'));
+    await act(async () => { cliToggleBtn.click(); });
+    assert.equal(dom.document.querySelector('.work-cli-panel'), null);
+    assert.ok(dom.document.querySelector('.work-topbar button[aria-label="展开 AI 对话"]'));
+
+    // Collapse secondary drawer via drawer header button, then reopen via rail logo button (restores last collapsed Project drawer).
+    const collapseBtn = dom.document.querySelector('aside.sidebar-drawer button[aria-label="收起侧栏"]');
     assert.ok(collapseBtn);
     await act(async () => { collapseBtn.click(); });
-    const rail = dom.document.querySelector('aside.sidebar.is-collapsed');
-    assert.ok(rail);
-    assert.equal(dom.document.querySelector('main.work-main .sidebar-expand'), null);
-    assert.ok(rail.querySelector('button[aria-label="创建项目"]'));
-    assert.ok(rail.querySelector('button[aria-label="查找本机文件"]'));
-    assert.equal(rail.querySelector('button[aria-label="切换到对话"]'), null);
-    assert.equal(rail.querySelector('button[aria-label="切换到工作"]'), null);
-    assert.ok(rail.querySelector('a[aria-label="打开设置"]'));
-    const expandBtn = rail.querySelector('button[aria-label="展开侧栏"]');
-    assert.ok(expandBtn);
-    assert.ok(rail.firstElementChild?.classList.contains('sidebar-rail-header'));
-    assert.ok(rail.firstElementChild.contains(expandBtn));
-    assert.ok(rail.children[1]?.classList.contains('sidebar-rail-divider'));
+    assert.equal(dom.document.querySelector('aside.sidebar.sidebar-drawer'), null);
+    assert.ok(dom.document.querySelector('nav.sidebar-rail'));
 
-    await act(async () => { expandBtn.click(); });
-    assert.equal(dom.document.querySelector('aside.sidebar.is-collapsed'), null);
-    assert.ok(dom.document.querySelector('button[aria-label="收起侧栏"]'));
+    const logoBtn = dom.document.querySelector('nav.sidebar-rail button.sidebar-rail-brand');
+    assert.ok(logoBtn);
+    assert.equal(logoBtn.getAttribute('aria-label'), '展开侧栏');
+    await act(async () => { logoBtn.click(); });
+    assert.ok(dom.document.querySelector('aside.sidebar.sidebar-drawer #sidebar-panel-work'));
 
-    // Switching back to 对话 restores the right conversation content, and collapsing shows chat rail icons.
-    const chatTab = dom.document.querySelector('#sidebar-tab-chat');
-    assert.ok(chatTab);
-    await act(async () => { chatTab.click(); });
-    assert.ok(dom.document.querySelector('.sidebar-header-actions button[aria-label="搜索对话"]'));
+    // Switch back to Chat via rail icon.
+    const chatBtn = dom.document.querySelector('nav.sidebar-rail button[aria-label="对话"]');
+    assert.ok(chatBtn);
+    await act(async () => { chatBtn.click(); });
     assert.ok(dom.document.querySelector('.chat-placeholder'));
     assert.equal(dom.document.querySelector('main.work-main'), null);
 
-    const chatCollapseBtn = dom.document.querySelector('button[aria-label="收起侧栏"]');
-    assert.ok(chatCollapseBtn);
-    await act(async () => { chatCollapseBtn.click(); });
-    const chatRail = dom.document.querySelector('aside.sidebar.is-collapsed');
-    assert.ok(chatRail);
-    assert.ok(chatRail.children[1]?.classList.contains('sidebar-rail-divider'));
-    assert.ok(chatRail.querySelector('button[aria-label="新对话"]'));
-    assert.ok(chatRail.querySelector('a[aria-label="打开资料库"]'));
-    assert.ok(chatRail.querySelector('a[aria-label="打开定时任务"]'));
-    assert.ok(chatRail.querySelector('button[aria-label="搜索对话"]'));
-    assert.ok(chatRail.querySelector('a[aria-label="打开设置"]'));
-    assert.equal(chatRail.querySelector('button[aria-label="切换到工作"]'), null);
+    // Collapsing from Chat and clicking logo restores Chat drawer.
+    await act(async () => { chatBtn.click(); });
+    assert.equal(dom.document.querySelector('aside.sidebar.sidebar-drawer'), null);
+    await act(async () => { logoBtn.click(); });
+    assert.ok(dom.document.querySelector('aside.sidebar.sidebar-drawer #sidebar-panel-chat'));
   } finally {
     await act(async () => { root.unmount(); });
     resetSidebarTabForTests();

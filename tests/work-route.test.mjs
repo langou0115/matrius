@@ -283,8 +283,8 @@ test('Sidebar mode switch and WorkSidebarPanel update URLs for projects vs conve
       );
     });
 
-    // Switching from 对话 -> 工作 pushes the active project's preview URL.
-    const workTab = dom.document.querySelector('#sidebar-tab-work');
+    // Switching from 对话 -> 项目 pushes the active project's preview URL.
+    const workTab = dom.document.querySelector('nav.sidebar-rail button[aria-label="项目"]');
     assert.ok(workTab);
     await act(async () => { workTab.click(); });
     assert.deepEqual(dom.navCalls.at(-1), { method: 'push', href: '/mock/chat/p/p1' });
@@ -298,7 +298,7 @@ test('Sidebar mode switch and WorkSidebarPanel update URLs for projects vs conve
     assert.deepEqual(dom.navCalls.at(-1), { method: 'push', href: '/mock/chat/p/p2' });
 
     // Switching back to 对话 pushes the active conversation's preview URL.
-    const chatTab = dom.document.querySelector('#sidebar-tab-chat');
+    const chatTab = dom.document.querySelector('nav.sidebar-rail button[aria-label="对话"]');
     assert.ok(chatTab);
     await act(async () => { chatTab.click(); });
     assert.deepEqual(dom.navCalls.at(-1), { method: 'push', href: '/mock/chat/c/conv-1' });
@@ -334,8 +334,7 @@ test('WorkSidebarPanel updates URL when creating or removing projects', async ()
     });
 
     // Create a project from `/mock/chat/work` -> replaces URL with `/mock/chat/p/<id>`.
-    const openCreateBtn = Array.from(dom.document.querySelectorAll('button'))
-      .find((btn) => btn.textContent?.includes('创建项目'));
+    const openCreateBtn = dom.document.querySelector('button[aria-label="创建项目"]');
     assert.ok(openCreateBtn);
     await act(async () => { openCreateBtn.click(); });
 

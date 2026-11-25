@@ -194,7 +194,8 @@ function canMountXterm(): boolean {
 
 const TERMINAL_FONT_SIZE = 14;
 const TERMINAL_FONT_FAMILY = "'JetBrainsMono', 'Cascadia Mono', Consolas, 'Noto Sans Mono CJK SC', 'Microsoft YaHei Mono', ui-monospace, SFMono-Regular, Menlo, 'NotoSansSC', monospace";
-const TERMINAL_WRITE_BATCH_MAX_CHARS = 256_000;
+const TERMINAL_WRITE_BATCH_MAX_CHARS = 64_000;
+const TERMINAL_ACK_BATCH_CHARS = 5_000;
 const TERMINAL_RESIZE_SETTLE_MS = 90;
 export const TERMINAL_CONTEXT_MENU_WIDTH = 160;
 export const TERMINAL_CONTEXT_MENU_HEIGHT = 96;
@@ -316,12 +317,17 @@ export function syncHelperTextareaGeometry(options: {
   const clampedLeft = Math.min(left, Math.max(0, screenWidth - viewWidth));
   if (isComposing) {
     // xterm also sets inline geometry after rendering, including in a deferred
-    // callback. Keep the computed position stable through both writes.
+    // callback. Keep both CSS vars and textarea coordinates aligned so the OS
+    // IME candidate window and xterm's composition preview follow the cursor.
     container.style.setProperty('--work-ime-left', `${clampedLeft}px`);
     container.style.setProperty('--work-ime-top', `${top}px`);
     container.style.setProperty('--work-ime-width', `${Math.max(viewWidth, boxWidth)}px`);
     container.style.setProperty('--work-ime-height', `${boxHeight}px`);
     container.setAttribute('data-ime-composing', '');
+    textarea.style.left = `${clampedLeft}px`;
+    textarea.style.top = `${top}px`;
+    textarea.style.width = `${Math.max(viewWidth, boxWidth)}px`;
+    textarea.style.height = `${boxHeight}px`;
     return;
   }
   textarea.style.left = `${left}px`;
@@ -576,14 +582,18 @@ function WorkTerminalPane({
     let previewLine = '';
 
     void (async () => {
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
+      const [{ Terminal }, { FitAddon }, { Unicode11Addon }, webglModule] = await Promise.all([
         import('@xterm/xterm'),
         import('@xterm/addon-fit'),
+        import('@xterm/addon-unicode11'),
+        import('@xterm/addon-webgl').catch(() => null),
       ]);
       if (disposed) return;
 
       const fitAddon = new FitAddon();
+      const unicode11Addon = new Unicode11Addon();
       const term = new Terminal({
+        allowProposedApi: true,
         cursorBlink: true,
         cursorStyle: 'bar',
         cursorWidth: 1,
@@ -592,8 +602,11 @@ function WorkTerminalPane({
         fontSize: TERMINAL_FONT_SIZE,
         lineHeight: 1.15,
         letterSpacing: 0,
-        rescaleOverlappingGlyphs: true,
-        scrollback: 5000,
+        customGlyphs: true,
+        rescaleOverlappingGlyphs: false,
+        scrollback: 10_000,
+        scrollSensitivity: 1,
+        fastScrollSensitivity: 5,
         smoothScrollDuration: 0,
         scrollOnEraseInDisplay: false,
         scrollOnUserInput: true,
@@ -607,7 +620,26 @@ function WorkTerminalPane({
         ...(windowsPtyRef.current ? { windowsPty: windowsPtyRef.current } : {}),
       });
       term.loadAddon(fitAddon);
+      term.loadAddon(unicode11Addon);
+      term.unicode.activeVersion = '11';
       term.open(container);
+      let webglAddon: InstanceType<NonNullable<typeof webglModule>['WebglAddon']> | null = null;
+      if (webglModule?.WebglAddon && typeof window !== 'undefined' && typeof WebGL2RenderingContext !== 'undefined') {
+        try {
+          const addon = new webglModule.WebglAddon();
+          addon.onContextLoss(() => {
+            if (webglAddon === addon) {
+              webglAddon = null;
+            }
+            addon.dispose();
+          });
+          term.loadAddon(addon);
+          webglAddon = addon;
+          xtermDisposables.push(addon);
+        } catch {
+          // Fall back cleanly to xterm's default renderer when WebGL2 is unavailable.
+        }
+      }
       xtermDisposables.push(registerTerminalUrlLinkProvider(term));
       termRef.current = term;
       fitRef.current = fitAddon;
@@ -616,14 +648,69 @@ function WorkTerminalPane({
       let isComposing = false;
       let compositionAnchor: { x: number; y: number } | null = null;
       let lastVisibleCursor: { x: number; y: number } | null = null;
-      const syncTextarea = () => {
+      let lastSyncedCursorKey = '';
+      const findInverseCursor = (): { x: number; y: number } | null => {
+        const buf = term.buffer.active;
+        const baseRow = buf.viewportY;
+        const reusableCell = buf.getNullCell();
+        for (let row = term.rows - 1; row >= 0; row -= 1) {
+          const line = buf.getLine(baseRow + row);
+          if (!line) continue;
+          let col = 0;
+          while (col < term.cols) {
+            const cell = line.getCell(col, reusableCell);
+            if (!cell || !cell.isInverse()) {
+              col += 1;
+              continue;
+            }
+            const runStart = col;
+            let runWidth = 0;
+            while (col < term.cols) {
+              const cur = line.getCell(col, reusableCell);
+              if (!cur || !cur.isInverse()) break;
+              const w = cur.getWidth();
+              runWidth += w > 0 ? w : 1;
+              col += Math.max(1, w);
+            }
+            // Ink-based TUIs (such as Claude Code) hide the hardware cursor
+            // and render a single-cell (or 2-cell CJK) inverse block cursor.
+            if (runWidth >= 1 && runWidth <= 2) {
+              return { x: runStart, y: row };
+            }
+          }
+        }
+        return null;
+      };
+      const resolveImeCursor = (allowInverseScan: boolean): { x: number; y: number } => {
+        const buf = term.buffer.active;
+        const hwCursor = { x: buf.cursorX, y: buf.cursorY };
+        if (!cursorHidden) return hwCursor;
+        if (!allowInverseScan) return lastVisibleCursor ?? hwCursor;
+        return findInverseCursor() ?? lastVisibleCursor ?? hwCursor;
+      };
+      const syncScrollState = () => {
         if (disposed) return;
         const buf = term.buffer.active;
         const hasHistory = buf.type === 'normal' && buf.baseY > 0;
         container.toggleAttribute('data-has-scrollback', hasHistory);
         container.toggleAttribute('data-scrolled-up', hasHistory && buf.viewportY < buf.baseY);
-        const cursor = { x: buf.cursorX, y: buf.cursorY };
-        if (!isComposing && !cursorHidden) lastVisibleCursor = cursor;
+      };
+      const syncTextarea = (allowInverseScan = false) => {
+        if (disposed) return;
+        const buf = term.buffer.active;
+        const hasHistory = buf.type === 'normal' && buf.baseY > 0;
+        const scrolledUp = hasHistory && buf.viewportY < buf.baseY;
+        container.toggleAttribute('data-has-scrollback', hasHistory);
+        container.toggleAttribute('data-scrolled-up', scrolledUp);
+        // Never scan the buffer or touch DOM layout during passive output when
+        // the user is scrolled up or when the TUI hides the hardware cursor.
+        if (scrolledUp && !isComposing) return;
+        if (cursorHidden && !allowInverseScan && !isComposing) return;
+        const cursor = resolveImeCursor(allowInverseScan || isComposing);
+        if (!isComposing) lastVisibleCursor = cursor;
+        const cursorKey = `${cursor.x},${cursor.y},${term.cols},${term.rows},${isComposing ? 1 : 0}`;
+        if (!isComposing && !allowInverseScan && cursorKey === lastSyncedCursorKey) return;
+        lastSyncedCursorKey = cursorKey;
         syncHelperTextareaGeometry({
           container,
           cursor,
@@ -633,13 +720,16 @@ function WorkTerminalPane({
           isComposing,
         });
       };
-      syncTextareaRef.current = syncTextarea;
+      syncTextareaRef.current = () => {
+        lastSyncedCursorKey = '';
+        syncTextarea(true);
+      };
 
       const scheduleTextareaSync = () => {
         if (disposed || imeAnchorRaf !== 0) return;
         imeAnchorRaf = requestAnimationFrame(() => {
           imeAnchorRaf = 0;
-          syncTextarea();
+          syncTextarea(isComposing);
         });
       };
 
@@ -651,20 +741,22 @@ function WorkTerminalPane({
       };
 
       const handleFocusInCapture = () => {
-        syncTextarea();
+        lastSyncedCursorKey = '';
+        syncTextarea(true);
       };
       const handleKeyDownCapture = (event: KeyboardEvent) => {
         if (!isComposing && (event.keyCode === 229 || event.key === 'Process' || event.isComposing)) {
           ensureBottomForIme();
-          syncTextarea();
+          lastSyncedCursorKey = '';
+          syncTextarea(true);
         }
       };
       const handleCompositionStartCapture = () => {
         ensureBottomForIme();
-        const buf = term.buffer.active;
-        compositionAnchor = (cursorHidden ? lastVisibleCursor : null) ?? { x: buf.cursorX, y: buf.cursorY };
+        compositionAnchor = resolveImeCursor(true);
         isComposing = true;
-        syncTextarea();
+        lastSyncedCursorKey = '';
+        syncTextarea(true);
         scheduleTextareaSync();
       };
       const handleCompositionUpdateCapture = () => {
@@ -674,6 +766,7 @@ function WorkTerminalPane({
       const handleCompositionEndCapture = () => {
         isComposing = false;
         compositionAnchor = null;
+        lastSyncedCursorKey = '';
         scheduleTextareaSync();
       };
 
@@ -691,6 +784,7 @@ function WorkTerminalPane({
         container.removeEventListener('compositionend', handleCompositionEndCapture, { capture: true });
       });
 
+      let wheelDeltaRemainder = 0;
       term.attachCustomWheelEventHandler((event) => {
         const buffer = term.buffer.active;
         // Keep wheel control in local history once the user scrolls above the prompt.
@@ -701,11 +795,25 @@ function WorkTerminalPane({
           && (event.shiftKey || buffer.viewportY < buffer.baseY)
           && event.deltaY !== 0
         ) {
-          const lines = event.deltaY < 0 ? -3 : 3;
-          term.scrollLines(lines);
+          const rawLines = event.deltaMode === 1
+            ? event.deltaY
+            : event.deltaMode === 2
+              ? event.deltaY * Math.max(1, term.rows - 1)
+              : event.deltaY / 32;
+          if (Math.sign(wheelDeltaRemainder) !== Math.sign(rawLines)) {
+            wheelDeltaRemainder = 0;
+          }
+          wheelDeltaRemainder += rawLines;
+          const wholeLines = Math.trunc(wheelDeltaRemainder);
+          if (wholeLines !== 0) {
+            wheelDeltaRemainder -= wholeLines;
+            const clampedLines = Math.sign(wholeLines) * Math.min(12, Math.abs(wholeLines));
+            term.scrollLines(clampedLines);
+          }
           event.preventDefault();
           return false;
         }
+        wheelDeltaRemainder = 0;
         return true;
       });
 
@@ -741,7 +849,7 @@ function WorkTerminalPane({
       xtermDisposables.push(
         term.buffer.onBufferChange(scheduleTextareaSync),
         term.onCursorMove(scheduleTextareaSync),
-        term.onScroll(scheduleTextareaSync),
+        term.onScroll(syncScrollState),
         term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
           for (const param of params) {
             if (param === 25) {
@@ -837,18 +945,33 @@ function WorkTerminalPane({
         });
       };
 
+      let pendingAckChars = 0;
+      const reportProcessedChars = (count: number) => {
+        if (disposed || count <= 0) return;
+        pendingAckChars += count;
+        if (pendingAckChars >= TERMINAL_ACK_BATCH_CHARS) {
+          const toAck = pendingAckChars;
+          pendingAckChars = 0;
+          connection?.send({ type: 'ack', chars: toAck });
+        }
+      };
+
       const flushPendingOutput = (allowRepaintWait = false) => {
         outputFlushId = null;
         outputFlushKind = null;
         if (disposed || !pendingOutputBuffer) return;
         if (allowRepaintWait && waitsForTerminalRepaint(pendingOutputBuffer)) {
           outputFlushKind = 'timer';
-          outputFlushId = setTimeout(flushPendingOutput, 24);
+          outputFlushId = setTimeout(flushPendingOutput, 12);
           return;
         }
         const { chunk, rest } = sliceTerminalWriteBatch(pendingOutputBuffer);
         pendingOutputBuffer = rest;
-        writeChunk(chunk, scheduleTextareaSync);
+        const chunkLength = chunk.length;
+        writeChunk(chunk, () => {
+          reportProcessedChars(chunkLength);
+          scheduleTextareaSync();
+        });
         if (rest) {
           scheduleOutputFlush();
         }
@@ -930,10 +1053,11 @@ function WorkTerminalPane({
       });
       void document.fonts?.ready.then(() => {
         if (disposed) return;
-        // Re-trigger DomRenderer character size & glyph width cache calculation once
+        // Re-trigger character size & glyph width cache calculation once
         // custom fonts finish loading so CJK/monospace cells never drift or overlap.
         term.options.fontFamily = `${TERMINAL_FONT_FAMILY}, sans-serif`;
         term.options.fontFamily = TERMINAL_FONT_FAMILY;
+        webglAddon?.clearTextureAtlas();
         if (activeRef.current) {
           safeFit();
           term.refresh(0, Math.max(0, term.rows - 1));
@@ -948,6 +1072,7 @@ function WorkTerminalPane({
       if (appRoot) {
         themeObserver = new MutationObserver(() => {
           term.options.theme = buildTerminalTheme();
+          webglAddon?.clearTextureAtlas();
         });
         themeObserver.observe(appRoot, {
           attributes: true,
@@ -1040,6 +1165,7 @@ function WorkTerminalPane({
           const version = ++snapshotVersion;
           cancelOutputFlush();
           pendingOutputBuffer = '';
+          pendingAckChars = 0;
           replayingSnapshot = true;
           // Drain xterm writes queued by the previous connection before resetting its buffer.
           term.write('', () => {

@@ -44,6 +44,10 @@ const clientMessageSchema = z.discriminatedUnion('type', [
     cols: z.number().int().min(20).max(400),
     rows: z.number().int().min(6).max(200),
   }),
+  z.object({
+    type: z.literal('ack'),
+    chars: z.number().int().min(1).max(2_000_000),
+  }),
 ]);
 
 const workSettingsUpdateSchema = z.object({
@@ -158,8 +162,10 @@ export function registerTerminalRoutes(app: FastifyInstance, deps: TerminalRoute
           const parsed = clientMessageSchema.parse(JSON.parse(text)) as WorkTerminalClientMessage;
           if (parsed.type === 'input') {
             terminals.write(terminalId, parsed.data);
-          } else {
+          } else if (parsed.type === 'resize') {
             terminals.resize(terminalId, parsed.cols, parsed.rows);
+          } else if (parsed.type === 'ack') {
+            terminals.ack?.(terminalId, parsed.chars);
           }
         } catch {
           // Ignore malformed control frames without dropping the terminal socket.

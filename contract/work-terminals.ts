@@ -74,7 +74,8 @@ export type NormalizedWorkTerminalInput = {
 
 export type WorkTerminalClientMessage =
   | { type: 'input'; data: string }
-  | { type: 'resize'; cols: number; rows: number };
+  | { type: 'resize'; cols: number; rows: number }
+  | { type: 'ack'; chars: number };
 
 export type WorkTerminalServerMessage =
   | { type: 'snapshot'; data: string }

@@ -10,7 +10,7 @@ import { PDFDocument } from 'pdf-lib';
 import { buildApp } from '../app';
 import { loadSettings } from '../config';
 import { renderWorkDocumentPreview, sanitizeWordHtml } from '../services/work-document-preview';
-import { excelBufferToUniverWorkbook, univerWorkbookToExcelBuffer } from '../services/work-excel-univer';
+import { excelBufferToXSpreadsheet, xSpreadsheetToExcelBuffer } from '../services/work-excel-spreadsheet';
 
 function buildMinimalDocx(bodyXml: string): Uint8Array {
   return zipSync({
@@ -146,7 +146,7 @@ test('host fs document and raw endpoints serve Office previews and inline PDFs',
   assert.equal(badRaw.statusCode, 415);
 });
 
-test('excelBufferToUniverWorkbook and univerWorkbookToExcelBuffer round-trip sheets, values, formulas, and styles', async () => {
+test('excelBufferToXSpreadsheet and xSpreadsheetToExcelBuffer round-trip sheets, values, formulas, and styles', async () => {
   const wb = new ExcelJS.Workbook();
   const sheet = wb.addWorksheet('预算');
   sheet.getColumn(1).width = 20;
@@ -160,18 +160,20 @@ test('excelBufferToUniverWorkbook and univerWorkbookToExcelBuffer round-trip she
   sheet.mergeCells('C1:D1');
 
   const initialBytes = new Uint8Array(await wb.xlsx.writeBuffer());
-  const snapshot = await excelBufferToUniverWorkbook(initialBytes, 'budget.xlsx');
-  assert.equal(snapshot.sheetOrder.length, 1);
-  const s0 = snapshot.sheets[snapshot.sheetOrder[0]];
+  const sheets = await excelBufferToXSpreadsheet(initialBytes);
+  assert.equal(sheets.length, 1);
+  const s0 = sheets[0];
   assert.equal(s0.name, '预算');
-  assert.equal(s0.cellData[0][0].v, '项目');
-  assert.equal(s0.cellData[0][1].v, 100);
-  assert.equal(s0.cellData[1][1].f, '=B1*2');
-  assert.equal(s0.mergeData.length, 1);
+  const row0 = s0.rows['0'] as { cells: Record<string, { text?: string }> };
+  const row1 = s0.rows['1'] as { cells: Record<string, { text?: string }> };
+  assert.equal(row0.cells['0'].text, '项目');
+  assert.equal(row0.cells['1'].text, '100');
+  assert.equal(row1.cells['1'].text, '=B1*2');
+  assert.equal(s0.merges.length, 1);
 
   // Edit cell and round-trip back to xlsx
-  s0.cellData[0][1] = { v: 250, t: 2 };
-  const savedBuf = await univerWorkbookToExcelBuffer(snapshot as unknown as Record<string, unknown>);
+  row0.cells['1'] = { text: '250' };
+  const savedBuf = await xSpreadsheetToExcelBuffer(sheets);
   const reloaded = new ExcelJS.Workbook();
   await reloaded.xlsx.load(savedBuf as unknown as ExcelJS.Buffer);
   const reloadedSheet = reloaded.getWorksheet('预算');

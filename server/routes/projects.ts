@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { notFound } from '../errors';
 import { hasFeature } from '../features/registry';
 import { createHostFsService, type HostFsService } from '../services/host-fs';
+import { searchWorkProjectContent } from '../services/work-content-search';
 import { createWorkGitService } from '../services/work-git';
 
 import type { AppDatabase } from '../db/client';
@@ -188,6 +189,22 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const result = await git.commit(request.params.projectId, input);
     reply.code(201);
     return result;
+  });
+
+  app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/content-search', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const body = z.object({
+      query: z.string().max(500),
+      caseSensitive: z.boolean().optional(),
+      regex: z.boolean().optional(),
+      include: z.string().max(500).optional(),
+      exclude: z.string().max(500).optional(),
+    }).parse(request.body ?? {});
+    const controller = new AbortController();
+    reply.raw.on('close', () => {
+      if (!reply.raw.writableEnded) controller.abort();
+    });
+    return searchWorkProjectContent(db, request.params.projectId, body, controller.signal);
   });
 
   app.post('/api/projects', async (request, reply) => {

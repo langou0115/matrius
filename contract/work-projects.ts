@@ -39,6 +39,7 @@ export type WorkHostEntry = {
   name: string;
   path: string;
   accessible: boolean;
+  ignored?: boolean;
 };
 
 export type WorkFileTab = WorkHostEntry & {
@@ -54,6 +55,34 @@ export type WorkFileSearchResponse = {
   source: 'everything' | 'local';
   indexing: boolean;
   limited: boolean;
+};
+
+export type WorkContentSearchRequest = {
+  query: string;
+  caseSensitive?: boolean;
+  regex?: boolean;
+  include?: string;
+  exclude?: string;
+};
+
+export type WorkContentSearchMatch = {
+  line: number;
+  column: number;
+  matchLength: number;
+  text: string;
+};
+
+export type WorkContentSearchFileResult = {
+  path: string;
+  relativePath: string;
+  name: string;
+  matches: WorkContentSearchMatch[];
+};
+
+export type WorkContentSearchResponse = {
+  files: WorkContentSearchFileResult[];
+  totalMatches: number;
+  truncated: boolean;
 };
 
 export type HostFilePreview = { text: string; revision: string };
@@ -107,7 +136,7 @@ export type HostDocumentPreview =
   | {
       kind: 'excel';
       sheets: WorkSpreadsheetSheet[];
-      workbook?: Record<string, unknown>;
+      spreadsheet?: unknown[];
       revision?: string;
       readOnlyLegacy?: boolean;
     }

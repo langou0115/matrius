@@ -4,26 +4,26 @@ import {
   type WorkHostEntry,
 } from '@contract/work-projects';
 import { Code2, Eye } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
 import { MessageContent } from '@/features/chat/components/message-content';
 import { useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
 import { readHostFilePreview } from './work-api';
 import {
+  WorkCodeEditor,
+  readEditorViewSnapshot,
+  saveEditorViewSnapshot,
+  type CodeRevealTarget,
+} from './work-code-editor';
+import {
   WorkExcelView,
   WorkPdfView,
   WorkPowerPointView,
   WorkWordView,
 } from './work-document-view';
+import { useWorkFileSave } from './work-file-save';
 import { getWorkState, isFileDraftDirty, setWorkFileDraft, type WorkFileDraft } from './work-state';
-import {
-  MAX_HIGHLIGHT_LINES,
-  highlightCodeLines,
-  paintTokens,
-  type HighlightToken,
-  type HighlightedFile,
-} from './work-syntax';
 
 const exampleText: Record<string, string> = {
   'main.tsx': 'export function App() {\n  return <main>Matrius</main>;\n}\n',
@@ -31,65 +31,10 @@ const exampleText: Record<string, string> = {
   'README.md': '# Matrius\n\nReact and TypeScript workspace.\n',
 };
 
-function retainLineColors(line: string, previous: string, tokens: HighlightToken[]): HighlightToken[] {
-  let prefix = 0;
-  const sharedLength = Math.min(line.length, previous.length);
-  while (prefix < sharedLength && line[prefix] === previous[prefix]) prefix++;
-  // Keep a surrogate pair together if the edit changed only one half of it.
-  if (prefix > 0 && /[\uD800-\uDBFF]/u.test(line[prefix - 1])) prefix--;
-
-  let suffix = 0;
-  while (suffix < sharedLength - prefix && line.at(-suffix - 1) === previous.at(-suffix - 1)) suffix++;
-  if (suffix && /[\uDC00-\uDFFF]/u.test(line[line.length - suffix])) suffix--;
-
-  const replacedEnd = previous.length - suffix;
-  const inserted = line.slice(prefix, line.length - suffix);
-  let offset = 0;
-  let assignedInsertion = false;
-
-  return tokens.map((token) => {
-    const start = offset;
-    offset += token.content.length;
-    const before = token.content.slice(0, Math.max(0, prefix - start));
-    const after = token.content.slice(Math.max(0, replacedEnd - start));
-    const insertHere = !assignedInsertion && prefix <= offset;
-    if (insertHere) assignedInsertion = true;
-    return { ...token, content: before + (insertHere ? inserted : '') + after };
-  });
-}
-
-function paintLines(text: string, lines: string[], highlighted: HighlightedFile | null): ReactNode {
-  if (!highlighted || lines.length > MAX_HIGHLIGHT_LINES) return text;
-
-  const previous = highlighted.lines;
-  const sharedLength = Math.min(previous.length, lines.length);
-  let prefix = 0;
-  while (prefix < sharedLength && previous[prefix] === lines[prefix]) prefix++;
-  let suffix = 0;
-  while (suffix < sharedLength - prefix
-    && previous[previous.length - suffix - 1] === lines[lines.length - suffix - 1]) suffix++;
-
-  return lines.map((line, index) => {
-    const alignedFromEnd = index >= lines.length - suffix;
-    const previousIndex = alignedFromEnd ? index + previous.length - lines.length : index;
-    const unchanged = index < prefix || alignedFromEnd;
-    const tokens = previousIndex < previous.length - suffix ? highlighted.tokens[previousIndex] : undefined;
-    const content = unchanged
-      ? highlighted.painted[previousIndex]
-      : tokens?.length ? paintTokens(retainLineColors(line, previous[previousIndex], tokens)) : line;
-    return (
-      <span key={index}>
-        {index > 0 && '\n'}
-        {content}
-      </span>
-    );
-  });
-}
-
 type PreviewState = HostFilePreview | { error: string };
 
 export function WorkFilePreview({
-  hostId, projectId, file, draft, fontSize, readOnly = false,
+  hostId, projectId, file, draft, fontSize, readOnly = false, revealTarget = null,
 }: {
   hostId: string;
   projectId: string;
@@ -97,29 +42,40 @@ export function WorkFilePreview({
   draft: WorkFileDraft | undefined;
   fontSize: number;
   readOnly?: boolean;
+  revealTarget?: CodeRevealTarget | null;
 }) {
   const { request } = useInstance();
   const demo = useIsPreview();
+  const saveFile = useWorkFileSave();
   const docFormat = detectWorkDocumentFormat(file.name);
   const isPdf = docFormat === 'pdf';
   const isOfficeDoc = docFormat === 'word' || docFormat === 'excel' || docFormat === 'powerpoint';
   const isMarkdown = docFormat === 'markdown';
 
-  const [markdownMode, setMarkdownMode] = useState<'preview' | 'edit'>('preview');
+  const [markdownMode, setMarkdownMode] = useState<'preview' | 'edit'>(revealTarget ? 'edit' : 'preview');
   const [result, setResult] = useState<PreviewState | null>(null);
-  const [highlighted, setHighlighted] = useState<HighlightedFile | null>(null);
-  const composing = useRef(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const editorRef = useRef<HTMLDivElement>(null);
+  const mdScrollRef = useRef<HTMLDivElement>(null);
+  const editorStateKey = `${projectId}:${file.path}`;
+  const mdScrollKey = `${projectId}:md-preview:${file.path}`;
+
+  useEffect(() => {
+    if (isMarkdown && revealTarget) {
+      setMarkdownMode('edit');
+    }
+  }, [isMarkdown, revealTarget]);
+
+  useEffect(() => {
+    if (!isMarkdown || markdownMode !== 'preview' || !mdScrollRef.current) return;
+    const saved = readEditorViewSnapshot(mdScrollKey);
+    if (saved && saved.scrollTop > 0) {
+      mdScrollRef.current.scrollTop = saved.scrollTop;
+    }
+  }, [isMarkdown, markdownMode, mdScrollKey, result]);
   const saved = result && 'text' in result ? result : null;
   const base = draft?.base ?? saved;
   const canEdit = !isPdf && !isOfficeDoc && !readOnly && Boolean(base);
   const editing = canEdit && (!isMarkdown || markdownMode === 'edit');
-  const showCode = !isPdf && !isOfficeDoc && (!isMarkdown || markdownMode === 'edit');
   const text = draft?.text ?? (canEdit ? saved?.text.replace(/\r\n?/gu, '\n') : saved?.text) ?? '';
-  const lines = useMemo(() => text.split(/\r\n?|\n/u), [text]);
-  const painted = useMemo(() => paintLines(text, lines, highlighted), [highlighted, lines, text]);
-  const numbers = useMemo(() => lines.map((_, index) => index + 1).join('\n'), [lines]);
 
   useEffect(() => {
     if (isPdf || isOfficeDoc) return;
@@ -145,24 +101,6 @@ export function WorkFilePreview({
     });
     return () => controller.abort();
   }, [demo, file.name, file.path, hostId, isOfficeDoc, isPdf, projectId, readOnly, request]);
-
-  useEffect(() => {
-    if (!showCode || !text) return;
-    let current = true;
-    const timer = window.setTimeout(() => {
-      void highlightCodeLines(lines, file.name).catch(() => null).then((content) => {
-        if (current) setHighlighted(content);
-      });
-    }, editing ? 100 : 0);
-    return () => {
-      current = false;
-      window.clearTimeout(timer);
-    };
-  }, [editing, file.name, lines, showCode, text]);
-
-  useEffect(() => {
-    if (editing) inputRef.current?.focus();
-  }, [editing]);
 
   useEffect(() => () => {
     if (readOnly || isOfficeDoc || isPdf) return;
@@ -249,43 +187,34 @@ export function WorkFilePreview({
           )}
 
           {isMarkdown && markdownMode === 'preview' && saved ? (
-            <div className="work-doc-markdown-scroll" tabIndex={0}>
+            <div
+              ref={mdScrollRef}
+              className="work-doc-markdown-scroll"
+              tabIndex={0}
+              onScroll={(event) => {
+                saveEditorViewSnapshot(mdScrollKey, {
+                  anchor: 0,
+                  head: 0,
+                  scrollTop: event.currentTarget.scrollTop,
+                  scrollLeft: event.currentTarget.scrollLeft,
+                });
+              }}
+            >
               <div className="work-doc-markdown">
                 <MessageContent content={text} />
               </div>
             </div>
-          ) : editing ? (
-            <div className="work-code-editor" ref={editorRef}>
-              <div className="work-code-gutter" aria-hidden="true"><pre>{numbers}</pre></div>
-              <div className="work-code-input">
-                <pre className="work-code-paint" aria-hidden="true">{painted}</pre>
-                <textarea
-                  ref={inputRef}
-                  aria-label={`编辑 ${file.name}`}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  wrap="off"
-                  value={text}
-                  onChange={(event) => updateText(event.target.value, composing.current)}
-                  onCompositionStart={() => { composing.current = true; }}
-                  onCompositionEnd={(event) => {
-                    composing.current = false;
-                    updateText(event.currentTarget.value, false);
-                  }}
-                  onScroll={(event) => {
-                    const { scrollLeft, scrollTop } = event.currentTarget;
-                    editorRef.current?.style.setProperty('--work-code-scroll-x', `${-scrollLeft}px`);
-                    editorRef.current?.style.setProperty('--work-code-scroll-y', `${-scrollTop}px`);
-                  }}
-                />
-              </div>
-            </div>
-          ) : saved ? (
-            <div className="work-code-view" tabIndex={0}>
-              <div className="work-code-gutter" aria-hidden="true"><pre>{numbers}</pre></div>
-              <pre className="work-code-source"><code>{painted}</code></pre>
-            </div>
+          ) : saved || base ? (
+            <WorkCodeEditor
+              stateKey={editorStateKey}
+              filename={file.name}
+              value={text}
+              readOnly={!editing}
+              autoFocus={editing}
+              revealTarget={revealTarget}
+              onChange={editing ? updateText : undefined}
+              onSave={editing ? () => { void saveFile(projectId, file.path); } : undefined}
+            />
           ) : result && 'error' in result ? (
             <p className="work-tree-error" role="alert">{result.error}</p>
           ) : (

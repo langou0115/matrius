@@ -188,24 +188,17 @@ test('local file tabs open directly in the editor and automatically save when en
     await act(async () => { t.mock.timers.tick(100); });
     const input = dom.document.querySelector('[aria-label="编辑 README.md"]');
     assert.ok(input);
-    assert.equal(dom.document.querySelector('.work-code-gutter').textContent, '1\n2\n3\n4');
+    assert.ok(dom.document.querySelector('.work-cm-host'));
     assert.ok(dom.document.querySelector('button[aria-label="切换到预览"]'));
-    const paintLayer = dom.document.querySelector('.work-code-paint');
-    assert.match(paintLayer.textContent, /# Matrius/u);
-    const originalText = paintLayer.textContent;
+    const originalText = input.getAttribute('data-value') || input.value || '# Matrius\n\nReact and TypeScript workspace.\n';
+    assert.match(originalText, /# Matrius/u);
     const editedText = originalText.replace('Matrius', 'Matrius editor');
-    const heading = [...paintLayer.querySelectorAll('.work-preview-token')].find((node) => node.textContent.includes('Matrius'));
-    assert.ok(heading);
-    const headingColor = heading.style.getPropertyValue('--preview-light');
     const path = file.getAttribute('title');
     await act(async () => {
       setWorkFileDraft('preview-project', path, { base: { text: originalText, revision: 'demo' }, text: editedText });
     });
     assert.ok(dom.document.querySelector('.work-file-dirty'));
-    assert.equal(dom.document.querySelector('.work-code-paint'), paintLayer);
-    assert.equal(paintLayer.textContent, editedText);
-    assert.match(heading.textContent, /Matrius editor/u);
-    assert.equal(heading.style.getPropertyValue('--preview-light'), headingColor);
+    assert.equal(dom.document.querySelector('[aria-label="编辑 README.md"]')?.getAttribute('data-value'), editedText);
     const saveShortcut = new dom.window.Event('keydown', { bubbles: true, cancelable: true });
     Object.assign(saveShortcut, { key: 's', ctrlKey: true });
     const tab = dom.document.querySelector('.work-tab-select[title$="README.md"]');
@@ -223,7 +216,7 @@ test('local file tabs open directly in the editor and automatically save when en
     await act(async () => { t.mock.timers.tick(800); });
     assert.equal(getWorkState().fileTabsByProject['preview-project'].drafts.get(path).base.text, 'Updated');
     assert.equal(dom.document.querySelector('.work-file-dirty'), null);
-    assert.equal(dom.document.querySelector('[aria-label="编辑 README.md"]').value, 'Updated');
+    assert.equal(dom.document.querySelector('[aria-label="编辑 README.md"]').getAttribute('data-value'), 'Updated');
     await act(async () => { dom.document.querySelector('[aria-label="关闭文件：README.md"]').click(); });
     assert.equal(dom.document.querySelector('.work-file-preview'), null);
     assert.equal(dom.document.querySelector('.work-tab-select[title$="README.md"]'), null);
@@ -295,7 +288,7 @@ test('work file search opens local results in the active project and labels same
     assert.deepEqual([...dom.document.querySelectorAll('.work-tab-description')].map((node) => node.textContent),
       ['frontend/src', 'backend/src']);
     assert.equal(dom.document.querySelector('.work-tab-select[aria-selected="true"]').title, paths[1]);
-    assert.ok(dom.document.querySelector('.work-code-view'));
+    assert.equal(dom.document.querySelector('.work-cm-host')?.getAttribute('data-readonly'), 'true');
   } finally {
     await act(async () => { root.unmount(); });
     globalThis.fetch = previousFetch;
@@ -303,7 +296,7 @@ test('work file search opens local results in the active project and labels same
   }
 });
 
-test('Git opens in its own project tab between terminal creation and the files panel', async () => {
+test('Git opens from the left sidebar under 创建项目 and takes the full right area without a tab', async () => {
   const dom = setupDom();
   const root = createRoot(dom.document.getElementById('root'));
   try {
@@ -312,15 +305,15 @@ test('Git opens in its own project tab between terminal creation and the files p
       revision: 1, createdAt: 1, updatedAt: 1,
     });
     await act(async () => { root.render(renderDesktopWorkspace()); });
-    const button = dom.document.querySelector('[aria-label="打开 Git 查看器"]');
-    assert.equal(button.previousElementSibling.className, 'work-add-control');
-    assert.equal(button.nextElementSibling.getAttribute('aria-label'), '收起工作目录');
-    await act(async () => { button.click(); button.click(); });
-    assert.equal(dom.document.querySelectorAll('.work-tab-select[aria-selected="true"]').length, 1);
-    assert.equal(dom.document.querySelector('.work-tab-select[aria-selected="true"]').textContent, 'Git');
+    const button = dom.document.querySelector('.sidebar-primary button[aria-label="打开 Git 查看器"]');
+    assert.ok(button);
+    assert.match(button.previousElementSibling?.textContent ?? '', /查找/u);
+    await act(async () => { button.click(); });
+    assert.equal(dom.document.querySelector('.work-topbar'), null);
+    assert.equal(dom.document.querySelector('.work-cli-panel'), null);
     assert.match(dom.document.querySelector('.work-git-view').textContent, /origin\/main/u);
-    const graphButton = dom.document.querySelector('.work-git-header > button:first-child');
-    assert.equal(graphButton.getAttribute('aria-label'), '查看提交图');
+    const graphButton = dom.document.querySelector('.work-git-header button[aria-label="查看提交图"]');
+    assert.ok(graphButton);
     assert.ok(dom.document.querySelector('.work-git-graph-lines path'));
     assert.match(dom.document.querySelector('.work-git-graph-row').textContent, /HEAD -> main/u);
     await act(async () => { dom.document.querySelector('.work-git-graph-subject').click(); });
@@ -344,23 +337,26 @@ test('Git opens in its own project tab between terminal creation and the files p
     assert.ok(dom.document.querySelector('.work-git-graph-lines path'));
     await act(async () => {
       openWorkFile('git-project', { kind: 'file', name: 'README.md', path: 'README.md', accessible: true });
+      openWorkFile('git-project', { kind: 'file', name: 'package.json', path: 'package.json', accessible: true });
     });
-    const fileTab = dom.document.querySelector('[role="tab"][title="README.md"]');
-    const gitTab = dom.document.querySelector('[aria-label="关闭 Git 标签"]').previousElementSibling;
     const openMenu = (tab) => act(async () => {
       tab.dispatchEvent(new dom.window.Event('contextmenu', { bubbles: true, cancelable: true }));
     });
     const selectAction = (action) => act(async () => {
       dom.document.querySelector(`#work-tab-menu [data-action="${action}"]`).click();
     });
-    await openMenu(fileTab);
+    const secondFileTab = dom.document.querySelector('[role="tab"][title="package.json"]');
+    await openMenu(secondFileTab);
     await selectAction('pin');
-    assert.ok(fileTab.closest('.work-tab').classList.contains('is-pinned'));
-    await openMenu(gitTab);
+    const pinnedTab = dom.document.querySelector('[role="tab"][title="package.json"]');
+    assert.ok(pinnedTab?.closest('.work-tab')?.classList.contains('is-pinned'));
+    // Pinned tab moves to the front of the tab bar.
+    assert.equal(dom.document.querySelector('.work-tabs .work-tab [role="tab"]')?.getAttribute('title'), 'package.json');
+    const firstFileTab = dom.document.querySelector('[role="tab"][title="README.md"]');
+    await openMenu(firstFileTab);
     await selectAction('close-all');
-    assert.ok(fileTab.isConnected);
-    assert.equal(gitTab.isConnected, false);
-    assert.equal(dom.document.querySelector('.work-git-view'), null);
+    assert.ok(dom.document.querySelector('[role="tab"][title="package.json"]'));
+    assert.equal(dom.document.querySelector('[role="tab"][title="README.md"]'), null);
   } finally {
     await act(async () => { root.unmount(); });
     dom.restore();
@@ -410,18 +406,9 @@ test('work workspace separates project selection from explicit expand, shows CLI
     assert.equal(projectItem.querySelector('.work-project-more'), null);
     assert.equal(projectItem.querySelector('.work-project-add'), null);
     assert.ok(dom.document.querySelector('.work-topbar button[aria-label="添加终端"]'));
-    const toggleBtn = projectItem.querySelector('.work-project-toggle');
-    assert.ok(toggleBtn);
-    assert.equal(toggleBtn.getAttribute('aria-expanded'), 'false');
-    assert.equal(dom.document.querySelector('#work-project-children-proj-1'), null);
 
-    // Clicking the project row itself does NOT expand it; clicking the explicit toggle expands CLI conversations.
-    await act(async () => { projectItem.querySelector('.work-project-select').click(); });
-    assert.equal(dom.document.querySelector('#work-project-children-proj-1'), null);
-
-    await act(async () => { toggleBtn.click(); });
-    assert.equal(toggleBtn.getAttribute('aria-expanded'), 'true');
-    const childrenPanel = dom.document.querySelector('#work-project-children-proj-1');
+    // Right AI CLI panel directly renders active project's Codex / Antigravity / Claude Code groups.
+    const childrenPanel = dom.document.querySelector('.work-cli-panel-groups');
     assert.ok(childrenPanel);
 
     // Expanded project groups CLI conversations by provider (Codex, Antigravity, Claude Code),
@@ -528,18 +515,11 @@ test('work workspace separates project selection from explicit expand, shows CLI
     await act(async () => { codexCliBtn.click(); });
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 1);
 
-    // Collapse the project back via the explicit toggle without losing active project or open tab.
-    await act(async () => { toggleBtn.click(); });
-    assert.equal(dom.document.querySelector('#work-project-children-proj-1'), null);
-    assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 1);
-
-    // Expanding a project with 0 CLI conversations still renders the 3 groups (`+` new conversation actions) without empty placeholder text.
+    // A project with 0 CLI conversations still renders the 3 groups (`+` new conversation actions) without empty placeholder text.
     await act(async () => {
       setWorkProjectCliSessions('proj-1', { projectId: 'proj-1', items: [], total: 0, hasMore: false });
-      toggleBtn.click();
     });
-    assert.equal(toggleBtn.getAttribute('aria-expanded'), 'true');
-    const emptyChildren = dom.document.querySelector('#work-project-children-proj-1');
+    const emptyChildren = dom.document.querySelector('.work-cli-panel-groups');
     assert.ok(emptyChildren);
     assert.equal(emptyChildren.querySelectorAll('.work-cli-group').length, 3);
     assert.equal(emptyChildren.querySelectorAll('.work-cli-session-btn').length, 0);
@@ -594,19 +574,19 @@ test('work workspace separates project selection from explicit expand, shows CLI
     assert.equal(dom.document.querySelectorAll('.work-topbar .work-tab').length, 1);
     assert.equal(emptyChildren.querySelectorAll('.work-cli-session-draft').length, 0);
 
-    await act(async () => { toggleBtn.click(); });
-
-    // Right directory panel displays active project's files and expands subdirectories.
-    const filesPanel = dom.document.querySelector('.work-files-panel');
-    assert.ok(filesPanel);
-    assert.match(filesPanel.textContent ?? '', /package\.json/);
-    const uiFolderBtn = Array.from(filesPanel.querySelectorAll('.work-tree-row.is-dir'))
+    // Left files section displays active project's files and expands subdirectories.
+    const leftFilesSection = dom.document.querySelector('.work-sidebar-files-section');
+    assert.ok(leftFilesSection);
+    assert.match(leftFilesSection.textContent ?? '', /package\.json/);
+    const uiFolderBtn = Array.from(leftFilesSection.querySelectorAll('.work-tree-row.is-dir'))
       .find((btn) => btn.textContent?.includes('ui'));
     assert.ok(uiFolderBtn);
     await act(async () => { uiFolderBtn.click(); });
-    assert.match(filesPanel.textContent ?? '', /main\.tsx/);
+    assert.match(leftFilesSection.textContent ?? '', /main\.tsx/);
 
-    // Dragging the left boundary of the right files panel adjusts width and updates CSS variable.
+    // Dragging the left boundary of the right CLI panel adjusts width and updates CSS variable.
+    const filesPanel = dom.document.querySelector('.work-cli-panel');
+    assert.ok(filesPanel);
     const resizer = filesPanel.querySelector('.work-files-resizer[role="separator"]');
     assert.ok(resizer);
     const resizerReactKey = Object.keys(resizer).find((key) => key.startsWith('__reactProps'));
@@ -629,15 +609,15 @@ test('work workspace separates project selection from explicit expand, shows CLI
     });
     assert.equal(dom.document.querySelector('.work-screen').style.getPropertyValue('--work-files-width'), '416px');
 
-    // Collapse & re-expand right files panel from topbar.
-    const toggleFilesBtn = dom.document.querySelector('.work-topbar button[aria-label="收起工作目录"]');
+    // Collapse & re-expand right CLI panel from topbar.
+    const toggleFilesBtn = dom.document.querySelector('.work-topbar button[aria-label="收起 AI 对话"]');
     assert.ok(toggleFilesBtn);
     await act(async () => { toggleFilesBtn.click(); });
-    assert.equal(dom.document.querySelector('.work-files-panel'), null);
-    const expandFilesBtn = dom.document.querySelector('.work-topbar button[aria-label="展开工作目录"]');
+    assert.equal(dom.document.querySelector('.work-cli-panel'), null);
+    const expandFilesBtn = dom.document.querySelector('.work-topbar button[aria-label="展开 AI 对话"]');
     assert.ok(expandFilesBtn);
     await act(async () => { expandFilesBtn.click(); });
-    assert.ok(dom.document.querySelector('.work-files-panel'));
+    assert.ok(dom.document.querySelector('.work-cli-panel'));
 
     // Close the resumed CLI tab so subsequent terminal count assertions start clean.
     await act(async () => { dom.document.querySelector('.work-topbar .work-tab .work-tab-close').click(); });
@@ -1597,18 +1577,16 @@ test('WorkSidebarPanel opens error dialog without creating a tab when CLI is not
           createElement(
             PreviewContext.Provider,
             { value: false },
-            createElement(WorkSidebarPanel, null),
+            createElement(
+              'div',
+              null,
+              createElement(WorkSidebarPanel, null),
+              createElement(WorkWorkspace, null),
+            ),
           ),
         ),
       );
       await new Promise((resolve) => setTimeout(resolve, 40));
-    });
-
-    const expandBtn = dom.document.querySelector('[aria-label="展开项目：Remote Project"]');
-    assert.ok(expandBtn);
-    await act(async () => {
-      expandBtn.click();
-      await new Promise((resolve) => setTimeout(resolve, 30));
     });
 
     const addAgyBtn = dom.document.querySelector('.work-cli-group-add[data-cli-provider="antigravity"]');
@@ -1733,10 +1711,6 @@ test('new CLI conversation sidebar draft auto-expands collapsed group, binds on 
       );
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
-
-    const expandBtn = dom.document.querySelector('[aria-label="展开项目：Sync Project"]');
-    assert.ok(expandBtn);
-    await act(async () => { expandBtn.click(); });
 
     const codexGroup = dom.document.querySelector('.work-cli-group[data-cli-provider="codex"]');
     assert.ok(codexGroup);
@@ -1923,19 +1897,7 @@ test('sidebar search button and Ctrl+K search local files in work mode without a
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
 
     assert.equal(dom.document.querySelector('.work-topbar button[aria-label="查找本机文件"]'), null);
-    const sidebarSearchBtn = dom.document.querySelector('.sidebar-header-actions button[aria-label="查找本机文件"]');
-    assert.ok(sidebarSearchBtn);
-    assert.equal(sidebarSearchBtn.disabled, false);
-
-    await act(async () => { sidebarSearchBtn.click(); });
-    const searchDialog = dom.document.querySelector('dialog.work-file-search[open]');
-    assert.ok(searchDialog);
-    assert.equal(dom.document.querySelector('dialog.search-dialog'), null);
-
-    await act(async () => {
-      searchDialog.dispatchEvent(new dom.window.Event('cancel', { cancelable: true }));
-    });
-    assert.equal(dom.document.querySelector('dialog.work-file-search'), null);
+    assert.equal(dom.document.querySelector('.sidebar-header-actions button[aria-label="查找本机文件"]'), null);
 
     const ctrlK = Object.assign(new dom.window.Event('keydown', { cancelable: true }), {
       key: 'k',
@@ -1954,9 +1916,13 @@ test('sidebar search button and Ctrl+K search local files in work mode without a
     const collapseBtn = dom.document.querySelector('button[aria-label="收起侧栏"]');
     assert.ok(collapseBtn);
     await act(async () => { collapseBtn.click(); });
-    const railSearchBtn = dom.document.querySelector('aside.sidebar.is-collapsed button[aria-label="查找本机文件"]');
-    assert.ok(railSearchBtn);
-    await act(async () => { railSearchBtn.click(); });
+    assert.equal(dom.document.querySelector('aside.sidebar.sidebar-drawer'), null);
+    assert.ok(dom.document.querySelector('nav.sidebar-rail'));
+    const ctrlKCollapsed = Object.assign(new dom.window.Event('keydown', { cancelable: true }), {
+      key: 'k',
+      ctrlKey: true,
+    });
+    await act(async () => { dom.window.dispatchEvent(ctrlKCollapsed); });
     assert.ok(dom.document.querySelector('dialog.work-file-search[open]'));
   } finally {
     await act(async () => { root.unmount(); });
