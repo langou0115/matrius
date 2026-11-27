@@ -25,6 +25,7 @@ import type {
   WorkProject,
   WorkProjectInput,
   WorkProjectUpdateInput,
+  WorkTerminalLinkResolution,
 } from '@contract/work-projects';
 import type {
   WorkTerminalCreateInput,
@@ -287,6 +288,17 @@ export function revealWorkFileInExplorer(
   return request<void>(`/api/projects/${encodeURIComponent(projectId)}/files/reveal`, {
     method: 'POST',
     body: JSON.stringify(path ? { path } : {}),
+  });
+}
+
+export function resolveWorkTerminalLink(
+  request: ApiRequest,
+  projectId: string,
+  input: { path: string; cwd?: string; openDirectoryInExplorer?: boolean },
+): Promise<WorkTerminalLinkResolution> {
+  return request<WorkTerminalLinkResolution>(`/api/projects/${encodeURIComponent(projectId)}/terminal-link`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
 

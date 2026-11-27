@@ -436,29 +436,29 @@ export function WorkCliPanel({
         }}
       />
       <header className="research-panel-header work-cli-panel-header">
+        {project && (
+          <button
+            type="button"
+            className="icon-button work-cli-panel-settings-btn"
+            aria-label="AI 配置"
+            title="AI 配置"
+            onClick={() => setAiConfigOpen(true)}
+          >
+            <Settings2 size={15} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        )}
         <div className="work-files-header-actions">
           {project && (
-            <>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="AI 配置"
-                title="AI 配置"
-                onClick={() => setAiConfigOpen(true)}
-              >
-                <Settings2 size={15} strokeWidth={1.75} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="刷新 CLI 对话"
-                title="刷新 CLI 对话"
-                disabled={cliState?.loading}
-                onClick={() => bumpCliSessionsRefresh()}
-              >
-                <RefreshCw size={15} strokeWidth={1.75} className={cliState?.loading ? 'loading-spinner' : undefined} aria-hidden="true" />
-              </button>
-            </>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="刷新 CLI 对话"
+              title="刷新 CLI 对话"
+              disabled={cliState?.loading}
+              onClick={() => bumpCliSessionsRefresh()}
+            >
+              <RefreshCw size={15} strokeWidth={1.75} className={cliState?.loading ? 'loading-spinner' : undefined} aria-hidden="true" />
+            </button>
           )}
           <button
             type="button"

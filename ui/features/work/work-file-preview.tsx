@@ -18,6 +18,7 @@ import {
 } from './work-code-editor';
 import {
   WorkExcelView,
+  WorkImageView,
   WorkPdfView,
   WorkPowerPointView,
   WorkWordView,
@@ -29,6 +30,7 @@ const exampleText: Record<string, string> = {
   'main.tsx': 'export function App() {\n  return <main>Matrius</main>;\n}\n',
   'package.json': '{\n  "name": "matrius",\n  "private": true\n}\n',
   'README.md': '# Matrius\n\nReact and TypeScript workspace.\n',
+  'index.html': '<!doctype html>\n<html>\n<body><h1>Matrius</h1></body>\n</html>\n',
 };
 
 type PreviewState = HostFilePreview | { error: string };
@@ -49,36 +51,40 @@ export function WorkFilePreview({
   const saveFile = useWorkFileSave();
   const docFormat = detectWorkDocumentFormat(file.name);
   const isPdf = docFormat === 'pdf';
+  const isImage = docFormat === 'image';
   const isOfficeDoc = docFormat === 'word' || docFormat === 'excel' || docFormat === 'powerpoint';
   const isMarkdown = docFormat === 'markdown';
+  const isHtml = docFormat === 'html';
+  const isRenderableText = isMarkdown || isHtml;
+  const isBinaryViewer = isPdf || isImage || isOfficeDoc;
 
-  const [markdownMode, setMarkdownMode] = useState<'preview' | 'edit'>(revealTarget ? 'edit' : 'preview');
+  const [viewMode, setViewMode] = useState<'preview' | 'edit'>(revealTarget ? 'edit' : 'preview');
   const [result, setResult] = useState<PreviewState | null>(null);
   const mdScrollRef = useRef<HTMLDivElement>(null);
   const editorStateKey = `${projectId}:${file.path}`;
   const mdScrollKey = `${projectId}:md-preview:${file.path}`;
 
   useEffect(() => {
-    if (isMarkdown && revealTarget) {
-      setMarkdownMode('edit');
+    if (isRenderableText && revealTarget) {
+      setViewMode('edit');
     }
-  }, [isMarkdown, revealTarget]);
+  }, [isRenderableText, revealTarget]);
 
   useEffect(() => {
-    if (!isMarkdown || markdownMode !== 'preview' || !mdScrollRef.current) return;
+    if (!isMarkdown || viewMode !== 'preview' || !mdScrollRef.current) return;
     const saved = readEditorViewSnapshot(mdScrollKey);
     if (saved && saved.scrollTop > 0) {
       mdScrollRef.current.scrollTop = saved.scrollTop;
     }
-  }, [isMarkdown, markdownMode, mdScrollKey, result]);
+  }, [isMarkdown, viewMode, mdScrollKey, result]);
   const saved = result && 'text' in result ? result : null;
   const base = draft?.base ?? saved;
-  const canEdit = !isPdf && !isOfficeDoc && !readOnly && Boolean(base);
-  const editing = canEdit && (!isMarkdown || markdownMode === 'edit');
+  const canEdit = !isBinaryViewer && !readOnly && Boolean(base);
+  const editing = canEdit && (!isRenderableText || viewMode === 'edit');
   const text = draft?.text ?? (canEdit ? saved?.text.replace(/\r\n?/gu, '\n') : saved?.text) ?? '';
 
   useEffect(() => {
-    if (isPdf || isOfficeDoc) return;
+    if (isBinaryViewer) return;
     const controller = new AbortController();
     const { signal } = controller;
 
@@ -100,13 +106,13 @@ export function WorkFilePreview({
       if (!signal.aborted) setResult({ error: reason instanceof Error ? reason.message : '无法读取文件。' });
     });
     return () => controller.abort();
-  }, [demo, file.name, file.path, hostId, isOfficeDoc, isPdf, projectId, readOnly, request]);
+  }, [demo, file.name, file.path, hostId, isBinaryViewer, projectId, readOnly, request]);
 
   useEffect(() => () => {
-    if (readOnly || isOfficeDoc || isPdf) return;
+    if (readOnly || isBinaryViewer) return;
     const current = getWorkState().fileTabsByProject[projectId]?.drafts.get(file.path);
     if (current?.composing) setWorkFileDraft(projectId, file.path, { ...current, composing: false }, current);
-  }, [file.path, isOfficeDoc, isPdf, projectId, readOnly]);
+  }, [file.path, isBinaryViewer, projectId, readOnly]);
 
   function updateText(next: string, composingNow: boolean) {
     if (!base) return;
@@ -130,6 +136,14 @@ export function WorkFilePreview({
 
       {isPdf ? (
         <WorkPdfView hostId={hostId} path={file.path} name={file.name} demo={demo} />
+      ) : isImage ? (
+        <WorkImageView
+          key={`${hostId}:${file.path}`}
+          hostId={hostId}
+          path={file.path}
+          name={file.name}
+          demo={demo}
+        />
       ) : docFormat === 'word' ? (
         <WorkWordView
           key={`${hostId}:${file.path}`}
@@ -160,18 +174,20 @@ export function WorkFilePreview({
         />
       ) : (
         <>
-          {isMarkdown && saved && (
+          {isRenderableText && saved && (
             <div className="work-doc-toolbar">
               <span className="work-doc-meta">
-                {markdownMode === 'preview' ? 'Markdown 预览' : canEdit ? 'Markdown 编辑' : 'Markdown 源码'}
+                {isHtml
+                  ? (viewMode === 'preview' ? 'HTML 预览' : canEdit ? 'HTML 编辑' : 'HTML 源码')
+                  : (viewMode === 'preview' ? 'Markdown 预览' : canEdit ? 'Markdown 编辑' : 'Markdown 源码')}
               </span>
               <button
                 type="button"
                 className="work-doc-mode-btn"
-                aria-label={markdownMode === 'preview' ? (canEdit ? '切换到编辑器' : '查看源码') : '切换到预览'}
-                onClick={() => setMarkdownMode((current) => (current === 'preview' ? 'edit' : 'preview'))}
+                aria-label={viewMode === 'preview' ? (canEdit ? '切换到编辑器' : '查看源码') : '切换到预览'}
+                onClick={() => setViewMode((current) => (current === 'preview' ? 'edit' : 'preview'))}
               >
-                {markdownMode === 'preview' ? (
+                {viewMode === 'preview' ? (
                   <>
                     <Code2 size={14} strokeWidth={1.75} aria-hidden="true" />
                     <span>{canEdit ? '编辑源码' : '查看源码'}</span>
@@ -186,7 +202,7 @@ export function WorkFilePreview({
             </div>
           )}
 
-          {isMarkdown && markdownMode === 'preview' && saved ? (
+          {isMarkdown && viewMode === 'preview' && saved ? (
             <div
               ref={mdScrollRef}
               className="work-doc-markdown-scroll"
@@ -204,6 +220,13 @@ export function WorkFilePreview({
                 <MessageContent content={text} />
               </div>
             </div>
+          ) : isHtml && viewMode === 'preview' && saved ? (
+            <iframe
+              className="work-doc-html-frame"
+              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
+              srcDoc={text}
+              title={file.name}
+            />
           ) : saved || base ? (
             <WorkCodeEditor
               stateKey={editorStateKey}

@@ -2867,11 +2867,13 @@ input[type='password']::-ms-clear { display: none; }
 /* VS Code-style floating search/replace widget inside CodeMirror */
 .work-cm-search { display: flex; align-items: flex-start; gap: 6px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--popover, var(--background)); color: var(--foreground); box-shadow: 0 8px 26px color-mix(in srgb, #000 18%, transparent); font-family: var(--font-display, system-ui, sans-serif); font-size: 13px; }
 .work-cm-search-toggle-replace { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 28px; flex: none; border-radius: 6px; color: var(--muted-text); transition: background 120ms ease, color 120ms ease; }
+.work-cm-search-toggle-replace[hidden] { display: none; }
 .work-cm-search-toggle-replace:hover { background: var(--soft); color: var(--foreground); }
 .work-cm-search-toggle-replace > svg { transition: transform 140ms ease; }
 .work-cm-search-toggle-replace.is-open > svg { transform: rotate(90deg); }
 .work-cm-search-rows { display: flex; flex-direction: column; gap: 6px; }
 .work-cm-search-row { display: flex; align-items: center; gap: 4px; }
+.work-cm-search-row[hidden] { display: none; }
 .work-cm-search-input-wrap { display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 4px 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--background); min-width: 210px; }
 .work-cm-search-input-wrap:focus-within { border-color: var(--primary); }
 .work-cm-search-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--foreground); font-size: 13px; line-height: 20px; }
@@ -2946,13 +2948,45 @@ input[type='password']::-ms-clear { display: none; }
 .work-preview-token { color: var(--preview-light, inherit); }
 [data-color-mode='dark'] .work-preview-token { color: var(--preview-dark, inherit); }
 
-/* Work document viewer: Markdown preview + edit toggle, Word, Excel, PowerPoint, PDF */
-.work-doc-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; height: 36px; padding: 0 14px; background: var(--background); }
+/* Work document viewer: Markdown, HTML, Image, Word, Excel, PowerPoint, PDF */
+.work-doc-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; height: 36px; padding: 0 14px; background: var(--background); border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }
+.work-doc-toolbar-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .work-doc-meta { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-text); font-size: var(--text-caption); white-space: nowrap; }
 .work-doc-mode-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--soft); color: var(--foreground); font-size: var(--text-caption); font-family: var(--font-medium); transition: background 140ms ease, border-color 140ms ease; }
 .work-doc-mode-btn:hover { background: color-mix(in srgb, var(--foreground) 7%, var(--background)); border-color: color-mix(in srgb, var(--foreground) 22%, var(--border)); }
 .work-doc-markdown-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 28px 36px 64px; }
 .work-doc-markdown { width: 100%; max-width: 820px; margin: 0 auto; color: var(--foreground); font-size: var(--text-body); line-height: 1.7; }
+.work-doc-html-frame { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; background: #ffffff; }
+.work-doc-image-shell { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; background: var(--background); }
+.work-doc-image-stage { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; align-items: center; justify-content: center; padding: 24px; background: color-mix(in srgb, var(--foreground) 3%, var(--background)); }
+.work-doc-image-frame {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: auto;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 14px rgb(0 0 0 / 12%);
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, #e5e7eb 25%, transparent 25%),
+    linear-gradient(-45deg, #e5e7eb 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e5e7eb 75%),
+    linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+[data-color-mode='dark'] .work-doc-image-frame {
+  background-color: #1f242c;
+  background-image:
+    linear-gradient(45deg, #2b313c 25%, transparent 25%),
+    linear-gradient(-45deg, #2b313c 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2b313c 75%),
+    linear-gradient(-45deg, transparent 75%, #2b313c 75%);
+}
+.work-doc-image-frame.is-fit { max-width: 100%; max-height: 100%; }
+.work-doc-image-img { display: block; max-width: none; height: auto; }
+.work-doc-image-frame.is-fit .work-doc-image-img { max-width: 100%; max-height: calc(100vh - 140px); width: auto; height: auto; object-fit: contain; }
 .work-doc-pdf-frame { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; background: #ffffff; }
 .work-doc-pdf-demo { display: flex; flex: 1 1 auto; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted-text); font-size: var(--text-small); }
 .work-doc-pdf-demo strong { color: var(--foreground); font-size: var(--text-ui); font-family: var(--font-medium); font-weight: 400; }
@@ -3225,7 +3259,7 @@ input[type='password']::-ms-clear { display: none; }
 .sidebar .work-tree-empty { color: var(--sidebar-text-muted); }
 
 /* Right CLI sessions panel in Work workspace */
-.work-cli-panel .work-cli-panel-header { justify-content: flex-end; }
+.work-cli-panel .work-cli-panel-header { justify-content: space-between; }
 .work-cli-panel .work-files-header-actions { margin-left: auto; }
 .work-cli-panel-body { padding: 8px 12px 20px; }
 .work-cli-panel-groups { display: flex; flex-direction: column; gap: 6px; }
@@ -3247,12 +3281,13 @@ input[type='password']::-ms-clear { display: none; }
 .work-project-dialog .dialog-panel { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 .work-project-dialog .dialog-header { flex: none; margin: 0; padding: 20px 22px 14px; }
 .work-project-dialog .provider-edit-form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-.work-project-dialog .provider-edit-form fieldset.work-project-form-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; gap: 14px; padding: 4px 22px 6px; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.work-project-dialog .work-project-form-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 22px 6px; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.work-project-dialog .provider-edit-form fieldset.work-project-form-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; margin: 0; padding: 0; border: 0; }
 @supports selector(::-webkit-scrollbar) {
-  .matrius-app .work-project-dialog .provider-edit-form fieldset.work-project-form-body { scrollbar-width: auto; }
-  .matrius-app .work-project-dialog .provider-edit-form fieldset.work-project-form-body::-webkit-scrollbar { width: 10px; }
-  .matrius-app .work-project-dialog .provider-edit-form fieldset.work-project-form-body::-webkit-scrollbar-button:vertical:decrement:start,
-  .matrius-app .work-project-dialog .provider-edit-form fieldset.work-project-form-body::-webkit-scrollbar-button:vertical:increment:end { display: none; }
+  .matrius-app .work-project-dialog .work-project-form-scroll { scrollbar-width: auto; }
+  .matrius-app .work-project-dialog .work-project-form-scroll::-webkit-scrollbar { width: 10px; }
+  .matrius-app .work-project-dialog .work-project-form-scroll::-webkit-scrollbar-button:vertical:decrement:start,
+  .matrius-app .work-project-dialog .work-project-form-scroll::-webkit-scrollbar-button:vertical:increment:end { display: none; }
 }
 .work-project-dialog .dialog-footer { flex: none; margin: 0; padding: 14px 22px 20px; }
 .work-field-block { display: flex; flex-direction: column; gap: 6px; }

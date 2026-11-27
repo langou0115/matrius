@@ -59,8 +59,11 @@ test('host file preview returns bounded UTF-8 text without caching', async () =>
     assert.equal((await app.inject({ url })).json().text, '');
     writeFileSync(path, Buffer.from([0, 0xff]));
     assert.equal((await app.inject({ url })).statusCode, 415);
-    writeFileSync(path, Buffer.alloc(256 * 1024 + 1, 'a'));
-    assert.equal((await app.inject({ url })).statusCode, 413);
+    const largeText = 'a'.repeat(300 * 1024);
+    writeFileSync(path, largeText);
+    const largeRes = await app.inject({ url });
+    assert.equal(largeRes.statusCode, 200);
+    assert.equal(largeRes.json().text.length, largeText.length);
   } finally {
     await app.close();
     db.close();
@@ -100,6 +103,48 @@ test('project file save replaces text, rejects stale revisions, and stays inside
     writeFileSync(outside, 'outside');
     assert.equal((await save({ path: outside, text: 'outside-change', baseRevision })).statusCode, 403);
     assert.equal(readFileSync(outside, 'utf8'), 'outside');
+
+    // Terminal link resolution: relative file, directory, file:// URL, outside file, missing path
+    const subDir = join(projectDirectory, 'src');
+    mkdirSync(subDir);
+    const subFile = join(subDir, 'index.ts');
+    writeFileSync(subFile, 'export {};\n');
+
+    const linkUrl = `/api/projects/${project.json().id}/terminal-link`;
+    const relFileRes = await app.inject({
+      method: 'POST',
+      url: linkUrl,
+      payload: { path: 'src/index.ts', cwd: projectDirectory, openDirectoryInExplorer: false },
+    });
+    assert.equal(relFileRes.statusCode, 200);
+    assert.equal(relFileRes.json().kind, 'file');
+    assert.equal(relFileRes.json().name, 'index.ts');
+    assert.equal(relFileRes.json().outsideProject, false);
+
+    const dirRes = await app.inject({
+      method: 'POST',
+      url: linkUrl,
+      payload: { path: './src', cwd: projectDirectory, openDirectoryInExplorer: false },
+    });
+    assert.equal(dirRes.statusCode, 200);
+    assert.equal(dirRes.json().kind, 'directory');
+
+    const outsideRes = await app.inject({
+      method: 'POST',
+      url: linkUrl,
+      payload: { path: outside, cwd: projectDirectory, openDirectoryInExplorer: false },
+    });
+    assert.equal(outsideRes.statusCode, 200);
+    assert.equal(outsideRes.json().kind, 'file');
+    assert.equal(outsideRes.json().outsideProject, true);
+
+    const missingRes = await app.inject({
+      method: 'POST',
+      url: linkUrl,
+      payload: { path: 'does/not/exist.ts', cwd: projectDirectory, openDirectoryInExplorer: false },
+    });
+    assert.equal(missingRes.statusCode, 200);
+    assert.equal(missingRes.json().kind, 'not_found');
   } finally {
     await app.close();
     db.close();

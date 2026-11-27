@@ -1,4 +1,4 @@
-import { LOCAL_WORK_HOST_ID } from '@contract/work-projects';
+import { LOCAL_WORK_HOST_ID, type WorkFileTab } from '@contract/work-projects';
 import {
   normalizeConptyClearChunk,
   type WorkTerminalSession,
@@ -9,14 +9,21 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { copyText } from '@/core/platform/clipboard';
 import { useInstance } from '@/features/instance/instance-state';
 import { useIsPreview } from '@/features/workspace/preview-context';
-import { deleteWorkTerminal, resumeWorkTerminal, workTerminalWsUrl } from './work-api';
+import {
+  deleteWorkTerminal,
+  resolveWorkTerminalLink,
+  resumeWorkTerminal,
+  workTerminalWsUrl,
+} from './work-api';
 import { connectWorkTerminal, type TerminalConnectionStatus } from './work-terminal-connection';
 import {
   bumpCliSessionsRefresh,
   bumpHostUnlockVersion,
   detectPreviewPlatform,
+  openWorkFile,
   removeWorkTerminal,
   replaceWorkTerminalSession,
+  revealWorkFileLine,
   updateWorkTerminalStatus,
   useWorkState,
 } from './work-state';
@@ -28,7 +35,21 @@ type XtermWindowsPty = import('@xterm/xterm').IWindowsPty;
 type FitAddonInstance = import('@xterm/addon-fit').FitAddon;
 
 const TERMINAL_HTTP_URL_RE = /https?:\/\/[^\s<>"'`]+/gu;
+const TERMINAL_FILE_URL_RE = /file:\/\/[^\s<>"'`]+/giu;
+const TERMINAL_QUOTED_WIN_PATH_RE = /["']([A-Za-z]:[\\/][^"'\r\n<>|?*]+)["']/gu;
+const TERMINAL_PATH_RE = /(?<![A-Za-z0-9_.:/\\])(?:[A-Za-z]:[\\/][^\s<>"'`|?*]*|(?:~|\.{1,2})[\\/][^\s<>"'`|?*]+|\/[^\s<>"'`|?*]+|(?:[A-Za-z0-9_.@-]+[\\/])+[A-Za-z0-9_.@:-]+(?:\(\d+(?:,\d+)?\))?)/gu;
 const TRAILING_URL_PUNCTUATION_RE = /[.,;:!?)}\]>'"]+$/u;
+const TRAILING_PATH_PUNCTUATION_RE = /[.,;:!?}\]>'"]+$/u;
+
+export type DetectedTerminalLink = {
+  kind: 'url' | 'path';
+  start: number;
+  end: number;
+  text: string;
+  target: string;
+  line?: number;
+  column?: number;
+};
 
 function stripTrailingControlChars(text: string): string {
   for (let index = 0; index < text.length; index += 1) {
@@ -38,6 +59,163 @@ function stripTrailingControlChars(text: string): string {
     }
   }
   return text;
+}
+
+function cleanUrlMatch(raw: string): string {
+  let cleaned = stripTrailingControlChars(raw);
+  while (cleaned.length > 0 && TRAILING_URL_PUNCTUATION_RE.test(cleaned)) {
+    const last = cleaned.at(-1);
+    if (last === ')' && (cleaned.match(/\(/gu)?.length ?? 0) >= (cleaned.match(/\)/gu)?.length ?? 0)) {
+      break;
+    }
+    cleaned = cleaned.slice(0, -1);
+  }
+  return cleaned;
+}
+
+export function parseTerminalPathTarget(raw: string): {
+  target: string;
+  line?: number;
+  column?: number;
+} {
+  let cleaned = stripTrailingControlChars(raw).trim();
+  while (cleaned.length > 0 && TRAILING_PATH_PUNCTUATION_RE.test(cleaned)) {
+    cleaned = cleaned.slice(0, -1);
+  }
+  // Support path(line,col) or path(line)
+  const parenMatch = /^(.*)\((\d+)(?:,(\d+))?\)$/u.exec(cleaned);
+  if (parenMatch && parenMatch[1]) {
+    const line = Number(parenMatch[2]);
+    const column = parenMatch[3] ? Number(parenMatch[3]) : undefined;
+    if (Number.isInteger(line) && line >= 1) {
+      return {
+        target: parenMatch[1],
+        line,
+        ...(column && Number.isInteger(column) && column >= 1 ? { column } : {}),
+      };
+    }
+  }
+  // Strip unbalanced trailing ')' after checking (line,col)
+  while (cleaned.endsWith(')') && (cleaned.match(/\(/gu)?.length ?? 0) < (cleaned.match(/\)/gu)?.length ?? 0)) {
+    cleaned = cleaned.slice(0, -1);
+  }
+  // Support path:line:col or path:line (preserving Windows drive letter C:\...)
+  const colonMatch = /^(.*?):(\d+)(?::(\d+))?$/u.exec(cleaned);
+  if (colonMatch && colonMatch[1] && colonMatch[1].length > 1) {
+    const line = Number(colonMatch[2]);
+    const column = colonMatch[3] ? Number(colonMatch[3]) : undefined;
+    if (Number.isInteger(line) && line >= 1) {
+      return {
+        target: colonMatch[1],
+        line,
+        ...(column && Number.isInteger(column) && column >= 1 ? { column } : {}),
+      };
+    }
+  }
+  return { target: cleaned };
+}
+
+function isLikelyFilePath(target: string): boolean {
+  if (!target || target.length < 2) return false;
+  if (/^https?:\/\//iu.test(target)) return false;
+  // Ignore pure numeric dates/ratios such as 2026/11/27 or 1/2
+  if (/^\d+(?:[\\/]\d+)+$/u.test(target)) return false;
+  // Ignore bare '/' or '//'
+  if (/^[\\/]+$/u.test(target)) return false;
+  // Ignore CLI flags like /c or /select
+  if (/^\/[A-Za-z]$/u.test(target)) return false;
+  return true;
+}
+
+export function findTerminalLinks(text: string): DetectedTerminalLink[] {
+  const results: DetectedTerminalLink[] = [];
+  const overlaps = (start: number, end: number) =>
+    results.some((item) => start < item.end && end > item.start);
+
+  // 1. HTTP / HTTPS URLs
+  TERMINAL_HTTP_URL_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = TERMINAL_HTTP_URL_RE.exec(text)) !== null) {
+    const cleaned = cleanUrlMatch(match[0]);
+    if (!cleaned) continue;
+    const start = match.index;
+    const end = start + cleaned.length;
+    if (!overlaps(start, end)) {
+      results.push({ kind: 'url', start, end, text: cleaned, target: cleaned });
+    }
+  }
+
+  // 2. file:// URLs
+  TERMINAL_FILE_URL_RE.lastIndex = 0;
+  while ((match = TERMINAL_FILE_URL_RE.exec(text)) !== null) {
+    const cleaned = cleanUrlMatch(match[0]);
+    if (!cleaned) continue;
+    const start = match.index;
+    const end = start + cleaned.length;
+    if (!overlaps(start, end)) {
+      const parsed = parseTerminalPathTarget(cleaned);
+      results.push({
+        kind: 'path',
+        start,
+        end,
+        text: cleaned,
+        target: parsed.target,
+        ...(parsed.line ? { line: parsed.line } : {}),
+        ...(parsed.column ? { column: parsed.column } : {}),
+      });
+    }
+  }
+
+  // 3. Quoted Windows paths (may contain spaces, e.g. "C:\Program Files\My App")
+  TERMINAL_QUOTED_WIN_PATH_RE.lastIndex = 0;
+  while ((match = TERMINAL_QUOTED_WIN_PATH_RE.exec(text)) !== null) {
+    const inner = match[1];
+    if (!inner) continue;
+    const start = match.index + 1;
+    const end = start + inner.length;
+    if (!overlaps(start, end)) {
+      const parsed = parseTerminalPathTarget(inner);
+      if (isLikelyFilePath(parsed.target)) {
+        results.push({
+          kind: 'path',
+          start,
+          end,
+          text: inner,
+          target: parsed.target,
+          ...(parsed.line ? { line: parsed.line } : {}),
+          ...(parsed.column ? { column: parsed.column } : {}),
+        });
+      }
+    }
+  }
+
+  // 4. Unquoted Windows, POSIX, home, and relative paths
+  TERMINAL_PATH_RE.lastIndex = 0;
+  while ((match = TERMINAL_PATH_RE.exec(text)) !== null) {
+    const raw = stripTrailingControlChars(match[0]);
+    let trimmedRaw = raw;
+    while (trimmedRaw.length > 0 && TRAILING_PATH_PUNCTUATION_RE.test(trimmedRaw)) {
+      trimmedRaw = trimmedRaw.slice(0, -1);
+    }
+    if (!trimmedRaw) continue;
+    const start = match.index;
+    const end = start + trimmedRaw.length;
+    if (overlaps(start, end)) continue;
+    const parsed = parseTerminalPathTarget(trimmedRaw);
+    if (!isLikelyFilePath(parsed.target)) continue;
+    results.push({
+      kind: 'path',
+      start,
+      end,
+      text: trimmedRaw,
+      target: parsed.target,
+      ...(parsed.line ? { line: parsed.line } : {}),
+      ...(parsed.column ? { column: parsed.column } : {}),
+    });
+  }
+
+  results.sort((left, right) => left.start - right.start);
+  return results;
 }
 
 export function openTerminalExternalLink(
@@ -55,43 +233,116 @@ export function openTerminalExternalLink(
   }
 }
 
-function registerTerminalUrlLinkProvider(terminal: XtermInstance): { dispose(): void } {
+function collectWrappedLogicalLine(
+  terminal: XtermInstance,
+  bufferLineNumber: number,
+): { text: string; charToCell: Array<{ x: number; y: number }> } | null {
+  const buffer = terminal.buffer.active;
+  const zeroBased = bufferLineNumber - 1;
+  const anchorLine = buffer.getLine(zeroBased);
+  if (!anchorLine) return null;
+
+  let startRow = zeroBased;
+  let stepsBack = 0;
+  while (startRow > 0 && stepsBack < 10) {
+    const cur = buffer.getLine(startRow);
+    if (!cur?.isWrapped) break;
+    startRow -= 1;
+    stepsBack += 1;
+  }
+
+  let endRow = zeroBased;
+  let stepsForward = 0;
+  while (endRow + 1 < buffer.length && stepsForward < 10) {
+    const next = buffer.getLine(endRow + 1);
+    if (!next?.isWrapped) break;
+    endRow += 1;
+    stepsForward += 1;
+  }
+
+  const reusableCell = buffer.getNullCell();
+  let text = '';
+  const charToCell: Array<{ x: number; y: number }> = [];
+
+  for (let row = startRow; row <= endRow; row += 1) {
+    const line = buffer.getLine(row);
+    if (!line) continue;
+    const isLast = row === endRow;
+    const lineLength = isLast
+      ? line.translateToString(true).length
+      : line.length;
+    if (isLast && lineLength === 0) continue;
+
+    let lastNonEmptyCol = -1;
+    if (isLast) {
+      for (let col = line.length - 1; col >= 0; col -= 1) {
+        const cell = line.getCell(col, reusableCell);
+        const chars = cell?.getChars() ?? '';
+        if (chars && chars !== ' ') {
+          lastNonEmptyCol = col;
+          break;
+        }
+      }
+      if (lastNonEmptyCol < 0) continue;
+    }
+    const maxCol = isLast ? lastNonEmptyCol : line.length - 1;
+
+    for (let col = 0; col <= maxCol; col += 1) {
+      const cell = line.getCell(col, reusableCell);
+      if (!cell) continue;
+      const width = cell.getWidth();
+      if (width === 0) continue;
+      const chars = cell.getChars() || ' ';
+      text += chars;
+      const cellPos = { x: col + 1, y: row + 1 };
+      for (let i = 0; i < chars.length; i += 1) {
+        charToCell.push(cellPos);
+      }
+    }
+  }
+
+  return text ? { text, charToCell } : null;
+}
+
+function registerTerminalLinkProvider(
+  terminal: XtermInstance,
+  onActivatePath: (link: DetectedTerminalLink) => void,
+): { dispose(): void } {
   return terminal.registerLinkProvider({
     provideLinks(bufferLineNumber, callback) {
-      const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
-      if (!line) {
+      const logical = collectWrappedLogicalLine(terminal, bufferLineNumber);
+      if (!logical) {
         callback(undefined);
         return;
       }
-      const text = line.translateToString(true);
-      if (!text.includes('http://') && !text.includes('https://')) {
+      const detected = findTerminalLinks(logical.text);
+      if (detected.length === 0) {
         callback(undefined);
         return;
       }
-      const directClick = terminal.modes.mouseTrackingMode === 'none';
       const links: XtermLink[] = [];
-      TERMINAL_HTTP_URL_RE.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = TERMINAL_HTTP_URL_RE.exec(text)) !== null) {
-        const cleaned = stripTrailingControlChars(match[0]).replace(TRAILING_URL_PUNCTUATION_RE, '');
-        if (!cleaned) continue;
-        const startX = match.index + 1;
-        const endX = match.index + cleaned.length;
+      for (const item of detected) {
+        const startPos = logical.charToCell[item.start];
+        const endPos = logical.charToCell[item.end - 1];
+        if (!startPos || !endPos) continue;
+        if (bufferLineNumber < startPos.y || bufferLineNumber > endPos.y) continue;
         links.push({
           range: {
-            start: { x: startX, y: bufferLineNumber },
-            end: { x: endX, y: bufferLineNumber },
+            start: startPos,
+            end: endPos,
           },
-          text: cleaned,
+          text: item.text,
           decorations: {
-            pointerCursor: directClick,
-            underline: directClick,
+            pointerCursor: true,
+            underline: true,
           },
-          activate(event, linkText) {
-            if (terminal.modes.mouseTrackingMode !== 'none' && !event.ctrlKey && !event.metaKey) {
-              return;
+          activate(event) {
+            if (!event.ctrlKey && !event.metaKey) return;
+            if (item.kind === 'url') {
+              openTerminalExternalLink(item.target);
+            } else {
+              onActivatePath(item);
             }
-            openTerminalExternalLink(linkText);
           },
         });
       }
@@ -109,7 +360,10 @@ function resolveWindowsPty(
   if (hostId !== LOCAL_WORK_HOST_ID) return undefined;
   const platform = preview ? (serverPlatform ?? detectPreviewPlatform()) : serverPlatform;
   if (platform !== 'win32') return undefined;
-  return { backend: 'conpty', buildNumber: windowsBuild ?? 22631 };
+  // Server spawns Windows PTYs with bundled modern conpty.dll (`useConptyDll: true`),
+  // so keep buildNumber at least 22631 to prevent xterm from falling into legacy pre-21376
+  // ConPTY workarounds that break reflow and scrollback on Windows 10 hosts.
+  return { backend: 'conpty', buildNumber: Math.max(windowsBuild ?? 22631, 22631) };
 }
 
 function readColorMode(): 'light' | 'dark' {
@@ -194,7 +448,7 @@ function canMountXterm(): boolean {
 
 const TERMINAL_FONT_SIZE = 14;
 const TERMINAL_FONT_FAMILY = "'JetBrainsMono', 'Cascadia Mono', Consolas, 'Noto Sans Mono CJK SC', 'Microsoft YaHei Mono', ui-monospace, SFMono-Regular, Menlo, 'NotoSansSC', monospace";
-const TERMINAL_WRITE_BATCH_MAX_CHARS = 64_000;
+const TERMINAL_WRITE_BATCH_MAX_CHARS = 256_000;
 const TERMINAL_ACK_BATCH_CHARS = 5_000;
 const TERMINAL_RESIZE_SETTLE_MS = 90;
 export const TERMINAL_CONTEXT_MENU_WIDTH = 160;
@@ -535,12 +789,61 @@ function WorkTerminalPane({
   const previewCwdRef = useRef(session.cwd);
   const previewCommandRef = useRef(session.command);
   const presetRef = useRef(session.preset);
+  const projectIdRef = useRef(session.projectId);
+  const requestRef = useRef(instance.request);
 
   useEffect(() => {
     previewCwdRef.current = session.cwd;
     previewCommandRef.current = session.command;
     presetRef.current = session.preset;
-  }, [session.command, session.cwd, session.preset]);
+    projectIdRef.current = session.projectId;
+    requestRef.current = instance.request;
+  }, [instance.request, session.command, session.cwd, session.preset, session.projectId]);
+
+  const handleActivateTerminalPath = useCallback((link: Pick<DetectedTerminalLink, 'target' | 'line' | 'column'>) => {
+    const projectId = projectIdRef.current;
+    if (!projectId) return;
+    if (preview) {
+      showClipboardHint(`预览模式暂不支持打开本地路径：${link.target}`);
+      return;
+    }
+    void resolveWorkTerminalLink(requestRef.current, projectId, {
+      path: link.target,
+      cwd: previewCwdRef.current,
+      openDirectoryInExplorer: true,
+    }).then((res) => {
+      if (res.kind === 'file') {
+        const entry: WorkFileTab = {
+          kind: 'file',
+          name: res.name,
+          path: res.path,
+          accessible: true,
+          ...(res.outsideProject ? { localOutsideProject: true } : {}),
+        };
+        if (link.line) {
+          revealWorkFileLine(projectId, entry, link.line, link.column);
+        } else {
+          openWorkFile(projectId, entry);
+        }
+        return;
+      }
+      if (res.kind === 'directory') {
+        showClipboardHint(
+          res.openedInExplorer
+            ? `已在系统文件夹中打开：${res.path}`
+            : `远程目录不支持在本地打开：${res.path}`,
+        );
+        return;
+      }
+      showClipboardHint(`未找到文件或文件夹：${link.target}`);
+    }).catch((reason: unknown) => {
+      showClipboardHint(reason instanceof Error && reason.message ? reason.message : '打开路径失败');
+    });
+  }, [preview, showClipboardHint]);
+  const handleActivateTerminalPathRef = useRef(handleActivateTerminalPath);
+  useEffect(() => {
+    handleActivateTerminalPathRef.current = handleActivateTerminalPath;
+  }, [handleActivateTerminalPath]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -561,6 +864,8 @@ function WorkTerminalPane({
     let cliRefreshShortTimer: ReturnType<typeof setTimeout> | null = null;
     let cliRefreshFollowupTimer: ReturnType<typeof setTimeout> | null = null;
     let imeAnchorRaf = 0;
+    let scrollStateRaf = 0;
+    let lastUserScrollAt = 0;
     const scheduleCliRefreshOnSubmit = (data: string) => {
       if (presetRef.current === 'shell') return;
       const triggersTurnChange = data.includes('\r') || data.includes('\n') || data.includes('\x03') || data.includes('\x1b');
@@ -582,11 +887,10 @@ function WorkTerminalPane({
     let previewLine = '';
 
     void (async () => {
-      const [{ Terminal }, { FitAddon }, { Unicode11Addon }, webglModule] = await Promise.all([
+      const [{ Terminal }, { FitAddon }, { Unicode11Addon }] = await Promise.all([
         import('@xterm/xterm'),
         import('@xterm/addon-fit'),
         import('@xterm/addon-unicode11'),
-        import('@xterm/addon-webgl').catch(() => null),
       ]);
       if (disposed) return;
 
@@ -602,8 +906,8 @@ function WorkTerminalPane({
         fontSize: TERMINAL_FONT_SIZE,
         lineHeight: 1.15,
         letterSpacing: 0,
-        customGlyphs: true,
-        rescaleOverlappingGlyphs: false,
+        customGlyphs: false,
+        rescaleOverlappingGlyphs: true,
         scrollback: 10_000,
         scrollSensitivity: 1,
         fastScrollSensitivity: 5,
@@ -613,8 +917,13 @@ function WorkTerminalPane({
         allowTransparency: false,
         theme: buildTerminalTheme(),
         linkHandler: {
-          activate(_event, text) {
-            openTerminalExternalLink(text);
+          activate(event, text) {
+            if (!event.ctrlKey && !event.metaKey) return;
+            if (openTerminalExternalLink(text)) return;
+            const parsed = parseTerminalPathTarget(text);
+            if (parsed.target) {
+              handleActivateTerminalPathRef.current(parsed);
+            }
           },
         },
         ...(windowsPtyRef.current ? { windowsPty: windowsPtyRef.current } : {}),
@@ -622,25 +931,13 @@ function WorkTerminalPane({
       term.loadAddon(fitAddon);
       term.loadAddon(unicode11Addon);
       term.unicode.activeVersion = '11';
+      // Use xterm v6's built-in DOM renderer instead of `@xterm/addon-webgl@0.19.0`,
+      // which suffers from texture-atlas corruption and blank/garbled frames when
+      // rapidly scrolling heavy box-drawing TUIs like Codex `/status`.
       term.open(container);
-      let webglAddon: InstanceType<NonNullable<typeof webglModule>['WebglAddon']> | null = null;
-      if (webglModule?.WebglAddon && typeof window !== 'undefined' && typeof WebGL2RenderingContext !== 'undefined') {
-        try {
-          const addon = new webglModule.WebglAddon();
-          addon.onContextLoss(() => {
-            if (webglAddon === addon) {
-              webglAddon = null;
-            }
-            addon.dispose();
-          });
-          term.loadAddon(addon);
-          webglAddon = addon;
-          xtermDisposables.push(addon);
-        } catch {
-          // Fall back cleanly to xterm's default renderer when WebGL2 is unavailable.
-        }
-      }
-      xtermDisposables.push(registerTerminalUrlLinkProvider(term));
+      xtermDisposables.push(
+        registerTerminalLinkProvider(term, (link) => handleActivateTerminalPathRef.current(link)),
+      );
       termRef.current = term;
       fitRef.current = fitAddon;
 
@@ -688,20 +985,33 @@ function WorkTerminalPane({
         if (!allowInverseScan) return lastVisibleCursor ?? hwCursor;
         return findInverseCursor() ?? lastVisibleCursor ?? hwCursor;
       };
-      const syncScrollState = () => {
-        if (disposed) return;
-        const buf = term.buffer.active;
-        const hasHistory = buf.type === 'normal' && buf.baseY > 0;
-        container.toggleAttribute('data-has-scrollback', hasHistory);
-        container.toggleAttribute('data-scrolled-up', hasHistory && buf.viewportY < buf.baseY);
-      };
-      const syncTextarea = (allowInverseScan = false) => {
-        if (disposed) return;
+      let lastHasHistory = false;
+      let lastScrolledUp = false;
+      const applyScrollAttributes = () => {
+        if (disposed) return { hasHistory: false, scrolledUp: false };
         const buf = term.buffer.active;
         const hasHistory = buf.type === 'normal' && buf.baseY > 0;
         const scrolledUp = hasHistory && buf.viewportY < buf.baseY;
-        container.toggleAttribute('data-has-scrollback', hasHistory);
-        container.toggleAttribute('data-scrolled-up', scrolledUp);
+        if (hasHistory !== lastHasHistory) {
+          lastHasHistory = hasHistory;
+          container.toggleAttribute('data-has-scrollback', hasHistory);
+        }
+        if (scrolledUp !== lastScrolledUp) {
+          lastScrolledUp = scrolledUp;
+          container.toggleAttribute('data-scrolled-up', scrolledUp);
+        }
+        return { hasHistory, scrolledUp };
+      };
+      const syncScrollState = () => {
+        if (disposed || scrollStateRaf !== 0) return;
+        scrollStateRaf = requestAnimationFrame(() => {
+          scrollStateRaf = 0;
+          applyScrollAttributes();
+        });
+      };
+      const syncTextarea = (allowInverseScan = false) => {
+        if (disposed) return;
+        const { scrolledUp } = applyScrollAttributes();
         // Never scan the buffer or touch DOM layout during passive output when
         // the user is scrolled up or when the TUI hides the hardware cursor.
         if (scrolledUp && !isComposing) return;
@@ -786,13 +1096,18 @@ function WorkTerminalPane({
 
       let wheelDeltaRemainder = 0;
       term.attachCustomWheelEventHandler((event) => {
+        if (event.deltaY !== 0) {
+          lastUserScrollAt = Date.now();
+        }
         const buffer = term.buffer.active;
-        // Keep wheel control in local history once the user scrolls above the prompt.
+        // For inline TUIs running on the normal buffer (e.g. Codex / Claude Code),
+        // scrolling up from the bottom or scrolling while in history should stay in
+        // local scrollback rather than flipping into SGR mouse wheel sequences.
         if (
           term.modes.mouseTrackingMode !== 'none'
           && buffer.type === 'normal'
           && buffer.baseY > 0
-          && (event.shiftKey || buffer.viewportY < buffer.baseY)
+          && (event.shiftKey || event.deltaY < 0 || buffer.viewportY < buffer.baseY)
           && event.deltaY !== 0
         ) {
           const rawLines = event.deltaMode === 1
@@ -899,6 +1214,7 @@ function WorkTerminalPane({
       const writeChunk = (raw: string, after?: () => void) => {
         const bufferBefore = term.buffer.active;
         const wasAtBottomBeforeWrite = bufferBefore.type !== 'normal' || bufferBefore.viewportY >= bufferBefore.baseY;
+        const scrollMarkBeforeWrite = lastUserScrollAt;
         const normalized = normalizeConptyClearChunk(raw);
         term.write(normalized, () => {
           if (disposed) return;
@@ -907,7 +1223,8 @@ function WorkTerminalPane({
           trimPostHomeLeak = false;
           clearRanInWrite = false;
           const currentBuffer = term.buffer.active;
-          const allowAutoScrollOnClear = wasAtBottomBeforeWrite || currentBuffer.baseY === 0;
+          const userScrolled = lastUserScrollAt !== scrollMarkBeforeWrite;
+          const allowAutoScrollOnClear = (!userScrolled && wasAtBottomBeforeWrite) || currentBuffer.baseY === 0;
           let onlyBlankLeaked = false;
           if (shouldTrimLeak && currentBuffer.type === 'normal' && currentBuffer.baseY > 0 && currentBuffer.baseY <= 2) {
             onlyBlankLeaked = true;
@@ -928,7 +1245,8 @@ function WorkTerminalPane({
             term.write('\x1b[3J', () => {
               suppressInternalClear = false;
               if (!disposed) {
-                if (wasAtBottomBeforeWrite || term.buffer.active.baseY === 0) {
+                const userScrolledAgain = lastUserScrollAt !== scrollMarkBeforeWrite;
+                if ((!userScrolledAgain && wasAtBottomBeforeWrite) || term.buffer.active.baseY === 0) {
                   term.scrollToBottom();
                 }
                 after?.();
@@ -951,8 +1269,9 @@ function WorkTerminalPane({
         pendingAckChars += count;
         if (pendingAckChars >= TERMINAL_ACK_BATCH_CHARS) {
           const toAck = pendingAckChars;
-          pendingAckChars = 0;
-          connection?.send({ type: 'ack', chars: toAck });
+          if (connection?.send({ type: 'ack', chars: toAck })) {
+            pendingAckChars = 0;
+          }
         }
       };
 
@@ -1016,18 +1335,21 @@ function WorkTerminalPane({
           const isNormal = buffer.type === 'normal';
           const wasAtBottom = !isNormal || buffer.viewportY >= buffer.baseY;
           const distanceFromBottom = isNormal ? Math.max(0, buffer.baseY - buffer.viewportY) : 0;
+          const scrollMarkBeforeFit = lastUserScrollAt;
           fitAddon.fit();
           if (restoreScrollFrame !== undefined) cancelAnimationFrame(restoreScrollFrame);
           // xterm updates its viewport's scroll range on the render after a resize.
           restoreScrollFrame = requestAnimationFrame(() => {
             restoreScrollFrame = undefined;
             if (disposed || !activeRef.current || term.buffer.active.type !== 'normal') return;
-            if (wasAtBottom) {
-              term.scrollToBottom();
-            } else {
-              const targetY = Math.max(0, term.buffer.active.baseY - distanceFromBottom);
-              if (targetY !== term.buffer.active.viewportY) {
-                term.scrollToLine(targetY);
+            if (lastUserScrollAt === scrollMarkBeforeFit) {
+              if (wasAtBottom) {
+                term.scrollToBottom();
+              } else {
+                const targetY = Math.max(0, term.buffer.active.baseY - distanceFromBottom);
+                if (targetY !== term.buffer.active.viewportY) {
+                  term.scrollToLine(targetY);
+                }
               }
             }
             syncTextarea();
@@ -1057,7 +1379,6 @@ function WorkTerminalPane({
         // custom fonts finish loading so CJK/monospace cells never drift or overlap.
         term.options.fontFamily = `${TERMINAL_FONT_FAMILY}, sans-serif`;
         term.options.fontFamily = TERMINAL_FONT_FAMILY;
-        webglAddon?.clearTextureAtlas();
         if (activeRef.current) {
           safeFit();
           term.refresh(0, Math.max(0, term.rows - 1));
@@ -1072,7 +1393,6 @@ function WorkTerminalPane({
       if (appRoot) {
         themeObserver = new MutationObserver(() => {
           term.options.theme = buildTerminalTheme();
-          webglAddon?.clearTextureAtlas();
         });
         themeObserver.observe(appRoot, {
           attributes: true,
@@ -1156,6 +1476,7 @@ function WorkTerminalPane({
       connection = connectWorkTerminal(workTerminalWsUrl(session.id), (status) => {
         setConnectionStatus(status);
         if (status === 'connected') {
+          pendingAckChars = 0;
           lastSentSizeRef.current = { cols: 0, rows: 0 };
           safeFit();
           sendResizeIfChanged();
@@ -1206,6 +1527,9 @@ function WorkTerminalPane({
       if (restoreScrollFrame !== undefined) cancelAnimationFrame(restoreScrollFrame);
       if (imeAnchorRaf !== 0 && typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(imeAnchorRaf);
+      }
+      if (scrollStateRaf !== 0 && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(scrollStateRaf);
       }
       if (outputFlushId !== null) {
         if (outputFlushKind === 'raf' && typeof cancelAnimationFrame === 'function') {
@@ -1442,7 +1766,9 @@ function WorkTerminalPane({
         onClick={(event) => {
           if ((event.target as HTMLElement | null)?.closest('.work-terminal-status-bar, .work-terminal-menu')) return;
           setContextMenu(null);
-          termRef.current?.focus();
+          if (!event.ctrlKey && !event.metaKey) {
+            termRef.current?.focus();
+          }
         }}
         onMouseUp={(event) => {
           if ((event.target as HTMLElement | null)?.closest('.scrollbar')) {

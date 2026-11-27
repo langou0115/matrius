@@ -175,8 +175,67 @@ test('WorkFilePreview renders Word, Excel, PowerPoint, and PDF viewers', async (
     const iframe = dom.document.querySelector('iframe.work-doc-pdf-frame');
     assert.ok(iframe);
     assert.match(iframe.getAttribute('src') ?? '', /\/api\/hosts\/local\/fs\/raw\?path=/u);
+
+    // PNG image viewer
+    await act(async () => {
+      root.render(wrap(createElement(WorkFilePreview, {
+        key: 'png',
+        hostId: 'local',
+        projectId: 'p1',
+        file: { kind: 'file', name: 'diagram.png', path: 'D:\\repo\\diagram.png', accessible: true },
+        draft: undefined,
+        fontSize: 14,
+      })));
+    });
+    const img = dom.document.querySelector('img.work-doc-image-img');
+    assert.ok(img);
+    assert.match(img.getAttribute('src') ?? '', /\/api\/hosts\/local\/fs\/raw\?path=/u);
+    assert.ok(dom.document.querySelector('button[aria-label="放大图片"]'));
   } finally {
     await act(async () => { root.unmount(); });
+    resetWorkStateForTests();
+    dom.restore();
+  }
+});
+
+test('WorkFilePreview renders HTML in a sandboxed iframe by default and toggles to source editor', async () => {
+  const dom = setupDom();
+  const root = createRoot(dom.document.getElementById('root'));
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(input, 'http://localhost');
+    if (url.pathname === '/api/hosts/local/fs/preview') {
+      return Response.json({ text: '<!doctype html><html><body><h1>预览页</h1></body></html>', revision: 'rev-html' });
+    }
+    return Response.json({});
+  };
+
+  try {
+    await act(async () => {
+      root.render(wrap(createElement(WorkFilePreview, {
+        hostId: 'local',
+        projectId: 'p1',
+        file: { kind: 'file', name: 'index.html', path: 'D:\\repo\\index.html', accessible: true },
+        draft: undefined,
+        fontSize: 14,
+      })));
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+
+    const htmlFrame = dom.document.querySelector('iframe.work-doc-html-frame');
+    assert.ok(htmlFrame);
+    const renderedHtml = htmlFrame.getAttribute('srcdoc') || htmlFrame.getAttribute('srcDoc') || htmlFrame.srcdoc || '';
+    assert.match(renderedHtml, /预览页/u);
+    assert.equal(htmlFrame.getAttribute('sandbox')?.includes('allow-same-origin'), false);
+
+    const toEdit = dom.document.querySelector('button[aria-label="切换到编辑器"]');
+    assert.ok(toEdit);
+    await act(async () => { toEdit.click(); });
+    assert.ok(dom.document.querySelector('.work-cm-host'));
+    assert.equal(dom.document.querySelector('iframe.work-doc-html-frame'), null);
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.fetch = previousFetch;
     resetWorkStateForTests();
     dom.restore();
   }

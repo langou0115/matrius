@@ -69,9 +69,12 @@ const MAX_SCROLLBACK_CHARS = 128_000;
 const SCROLLBACK_COMPACT_THRESHOLD = 192_000;
 const SCROLLBACK_PERSIST_DELAY_MS = 1_200;
 const OUTPUT_COALESCE_MS = 6;
-const OUTPUT_COALESCE_MAX_CHARS = 32_768;
+const OUTPUT_COALESCE_SYNC_MS = 12;
+const OUTPUT_COALESCE_MAX_CHARS = 65_536;
+const OUTPUT_COALESCE_SYNC_MAX_CHARS = 131_072;
 const FLOW_CONTROL_HIGH_WATERMARK = 100_000;
 const FLOW_CONTROL_LOW_WATERMARK = 5_000;
+const FLOW_CONTROL_SAFETY_RESUME_MS = 1_500;
 
 export type PtyProcess = Pick<IPty, 'write' | 'resize' | 'kill' | 'onData' | 'onExit'> & {
   readonly pid?: number;
@@ -100,6 +103,7 @@ type ActiveTerminal = {
   outputTimer: ReturnType<typeof setTimeout> | null;
   unackedChars: number;
   ptyPaused: boolean;
+  flowResumeTimer: ReturnType<typeof setTimeout> | null;
   listeners: Set<(message: WorkTerminalServerMessage) => void>;
 };
 
@@ -584,11 +588,20 @@ export function createWorkTerminalService(options: {
       outputTimer: null,
       unackedChars: 0,
       ptyPaused: false,
+      flowResumeTimer: null,
       listeners: new Set(),
     });
   }
 
+  function clearFlowResumeTimer(entry: ActiveTerminal): void {
+    if (entry.flowResumeTimer) {
+      clearTimeout(entry.flowResumeTimer);
+      entry.flowResumeTimer = null;
+    }
+  }
+
   function resetFlowControl(entry: ActiveTerminal): void {
+    clearFlowResumeTimer(entry);
     entry.unackedChars = 0;
     if (entry.ptyPaused) {
       entry.ptyPaused = false;
@@ -607,8 +620,18 @@ export function createWorkTerminalService(options: {
       entry.ptyPaused = true;
       try {
         entry.pty.pause();
+        clearFlowResumeTimer(entry);
+        // Never leave a Windows ConPTY or remote PTY permanently paused if a client
+        // drops an ACK or gets background-throttled while scrolling.
+        entry.flowResumeTimer = setTimeout(() => {
+          entry.flowResumeTimer = null;
+          if (entry.ptyPaused) {
+            resetFlowControl(entry);
+          }
+        }, FLOW_CONTROL_SAFETY_RESUME_MS);
       } catch {
         entry.ptyPaused = false;
+        clearFlowResumeTimer(entry);
       }
     }
   }
@@ -641,12 +664,16 @@ export function createWorkTerminalService(options: {
     broadcast(entry, { type: 'output', data });
   }
 
+  function hasUnclosedSyncOutput(data: string): boolean {
+    const syncStart = data.lastIndexOf('\x1b[?2026h');
+    return syncStart >= 0 && data.indexOf('\x1b[?2026l', syncStart) < 0;
+  }
+
   function shouldCoalesceLeadingChunk(data: string): boolean {
     if (data.includes('\x1b[2J') || data.includes('\x1b[3J') || data.includes('\x1b[?1049')) {
       return true;
     }
-    const syncStart = data.lastIndexOf('\x1b[?2026h');
-    if (syncStart >= 0 && data.indexOf('\x1b[?2026l', syncStart) < 0) {
+    if (hasUnclosedSyncOutput(data)) {
       return true;
     }
     const lastEsc = data.lastIndexOf('\x1b');
@@ -663,7 +690,7 @@ export function createWorkTerminalService(options: {
     if (!data) return;
     // Deliver normal interactive chunks immediately unless the burst begins with a
     // screen clear / synchronized redraw / partial control sequence, then coalesce
-    // rapid follow-ups inside a 6ms window so full TUI repaints land atomically.
+    // rapid follow-ups inside a short window so full TUI repaints land atomically.
     if (!entry.outputTimer && !entry.pendingOutput && !shouldCoalesceLeadingChunk(data)) {
       broadcast(entry, { type: 'output', data });
       entry.outputTimer = setTimeout(() => {
@@ -675,7 +702,9 @@ export function createWorkTerminalService(options: {
       return;
     }
     entry.pendingOutput += data;
-    if (entry.pendingOutput.length >= OUTPUT_COALESCE_MAX_CHARS) {
+    const waitingSyncClose = hasUnclosedSyncOutput(entry.pendingOutput);
+    const maxChars = waitingSyncClose ? OUTPUT_COALESCE_SYNC_MAX_CHARS : OUTPUT_COALESCE_MAX_CHARS;
+    if (entry.pendingOutput.length >= maxChars) {
       flushPendingOutput(entry);
       return;
     }
@@ -685,7 +714,7 @@ export function createWorkTerminalService(options: {
         if (entry.pendingOutput) {
           flushPendingOutput(entry);
         }
-      }, OUTPUT_COALESCE_MS);
+      }, waitingSyncClose ? OUTPUT_COALESCE_SYNC_MS : OUTPUT_COALESCE_MS);
     }
   }
 
@@ -1126,6 +1155,7 @@ export function createWorkTerminalService(options: {
         outputTimer: null,
         unackedChars: 0,
         ptyPaused: false,
+        flowResumeTimer: null,
         listeners: new Set(),
       };
       terminals.set(session.id, entry);
@@ -1281,6 +1311,7 @@ export function createWorkTerminalService(options: {
       if (!entry || !Number.isFinite(chars) || chars <= 0) return;
       entry.unackedChars = Math.max(0, entry.unackedChars - Math.floor(chars));
       if (entry.ptyPaused && entry.unackedChars <= FLOW_CONTROL_LOW_WATERMARK) {
+        clearFlowResumeTimer(entry);
         entry.ptyPaused = false;
         try {
           entry.pty?.resume?.();
@@ -1324,6 +1355,7 @@ export function createWorkTerminalService(options: {
         clearTimeout(entry.flushTimer);
         entry.flushTimer = null;
       }
+      clearFlowResumeTimer(entry);
       clearOutputCoalesce(entry);
       terminals.delete(terminalId);
       const activePty = entry.pty;
@@ -1343,6 +1375,7 @@ export function createWorkTerminalService(options: {
           clearTimeout(entry.flushTimer);
           entry.flushTimer = null;
         }
+        clearFlowResumeTimer(entry);
         clearOutputCoalesce(entry);
         terminals.delete(entry.session.id);
         const activePty = entry.pty;
@@ -1386,6 +1419,7 @@ export function createWorkTerminalService(options: {
           clearTimeout(entry.flushTimer);
           entry.flushTimer = null;
         }
+        clearFlowResumeTimer(entry);
         clearOutputCoalesce(entry);
         const persistStatus = entry.session.status === 'running' ? 'restored' : entry.session.status;
         flushEntryToDb(entry, persistStatus);

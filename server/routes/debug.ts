@@ -1,7 +1,3 @@
-import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
-
-import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -12,24 +8,29 @@ import type { FetchService } from '../services/fetch';
 import type { SearchProviderStatus, SearchService } from '../services/search';
 
 /**
- * Add a section here to grow `/debug`. Only `api` and `health` are implemented
- * today; future sections should add a panel renderer instead of editing the
- * page shell by hand.
+ * Add a section here to grow `/debug`.
  */
 export type DebugSection = {
   id: string;
   label: string;
   description: string;
-  kind: 'api' | 'health';
+  kind: 'health' | 'openapi';
 };
 
 export const DEBUG_SECTIONS: readonly DebugSection[] = [
-  { id: 'api', label: '接口查询', description: 'Swagger UI for the /api contract', kind: 'api' },
   { id: 'health', label: '运行状态', description: 'Database, schema, storage and cache readiness', kind: 'health' },
+  { id: 'openapi', label: 'OpenAPI 契约', description: 'Raw JSON for /api/openapi.json', kind: 'openapi' },
 ];
 
 function sectionContent(section: DebugSection): string {
-  if (section.kind === 'api') return '<div id="swagger-ui"></div>';
+  if (section.kind === 'openapi') {
+    return `
+    <div class="toolbar">
+      <button id="refresh-openapi" type="button">刷新</button>
+      <a class="muted" href="/api/openapi.json" target="_blank" rel="noreferrer">GET /api/openapi.json</a>
+    </div>
+    <pre id="openapi-output">加载中…</pre>`;
+  }
   return `
     <div class="toolbar">
       <button id="refresh-health" type="button">刷新</button>
@@ -59,7 +60,6 @@ function debugHtml(): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Matrius Debug</title>
-  <link rel="stylesheet" href="/debug-assets/swagger-ui.css" />
   <style>
     :root { color-scheme: light dark; --bg:#f7f7f8; --panel:#fff; --text:#1f2328; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; }
     @media (prefers-color-scheme: dark) { :root { --bg:#111315; --panel:#191c1f; --text:#e8eaed; --muted:#9aa0a6; --line:#2b3035; --accent:#7aa2ff; } }
@@ -83,7 +83,6 @@ function debugHtml(): string {
     .toolbar button { border:1px solid var(--line); background:var(--panel); color:var(--text); border-radius:6px; padding:6px 12px; cursor:pointer; }
     .muted { color:var(--muted); font-size:12px; }
     pre { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
-    .swagger-ui .topbar { display:none; }
     @media (max-width: 760px) { .layout { display:block; } .sidebar { width:auto; height:auto; position:static; border-right:0; border-bottom:1px solid var(--line); } .content { padding:18px; } }
   </style>
 </head>
@@ -96,46 +95,35 @@ function debugHtml(): string {
     </aside>
     <main class="content">${panels}</main>
   </div>
-  <script src="/debug-assets/swagger-ui-bundle.js"></script>
   <script>
     (function () {
       var buttons = Array.from(document.querySelectorAll('[data-section]'));
       var panels = Array.from(document.querySelectorAll('[data-panel]'));
+      function loadJson(url, outputId) {
+        var output = document.getElementById(outputId);
+        if (!output) return;
+        output.textContent = '加载中…';
+        fetch(url, { cache: 'no-store' })
+          .then(function (response) { return response.json().then(function (body) { return { status: response.status, body: body }; }); })
+          .then(function (result) { output.textContent = JSON.stringify(result, null, 2); })
+          .catch(function (error) { output.textContent = '请求失败：' + error; });
+      }
       function activate(id) {
         var known = buttons.some(function (button) { return button.dataset.section === id; });
         if (!known) id = buttons[0] && buttons[0].dataset.section;
         buttons.forEach(function (button) { button.classList.toggle('active', button.dataset.section === id); });
         panels.forEach(function (panel) { panel.classList.toggle('active', panel.dataset.panel === id); });
-        if (id === 'health') loadHealth();
+        if (id === 'health') loadJson('/api/health/ready', 'health-output');
+        if (id === 'openapi') loadJson('/api/openapi.json', 'openapi-output');
       }
       buttons.forEach(function (button) {
         button.addEventListener('click', function () { activate(button.dataset.section); history.replaceState(null, '', '#' + button.dataset.section); });
       });
-      function loadHealth() {
-        var output = document.getElementById('health-output');
-        if (!output) return;
-        output.textContent = '加载中…';
-        fetch('/api/health/ready', { cache: 'no-store' })
-          .then(function (response) { return response.json().then(function (body) { return { status: response.status, body: body }; }); })
-          .then(function (result) { output.textContent = JSON.stringify(result, null, 2); })
-          .catch(function (error) { output.textContent = '请求失败：' + error; });
-      }
-      var refresh = document.getElementById('refresh-health');
-      if (refresh) refresh.addEventListener('click', loadHealth);
-      var initial = (location.hash || '').replace('#', '');
-      if (initial) activate(initial);
-      if (window.SwaggerUIBundle) {
-        window.ui = SwaggerUIBundle({
-          url: '/api/openapi.json',
-          dom_id: '#swagger-ui',
-          deepLinking: true,
-          docExpansion: 'list',
-          defaultModelsExpandDepth: 1,
-          tryItOutEnabled: true,
-          presets: [SwaggerUIBundle.presets.apis],
-          layout: 'BaseLayout'
-        });
-      }
+      var refreshHealth = document.getElementById('refresh-health');
+      if (refreshHealth) refreshHealth.addEventListener('click', function () { loadJson('/api/health/ready', 'health-output'); });
+      var refreshOpenapi = document.getElementById('refresh-openapi');
+      if (refreshOpenapi) refreshOpenapi.addEventListener('click', function () { loadJson('/api/openapi.json', 'openapi-output'); });
+      activate((location.hash || '').replace('#', '') || 'health');
     })();
   </script>
 </body>
@@ -179,15 +167,6 @@ export async function registerDebugRoutes(
   deps: DebugRouteDeps,
 ): Promise<void> {
   if (!deps.settings.enableDebugPage) return;
-
-  const require = createRequire(import.meta.url);
-  const swaggerRoot = dirname(require.resolve('swagger-ui-dist/package.json'));
-  await app.register(fastifyStatic, {
-    root: swaggerRoot,
-    prefix: '/debug-assets/',
-    decorateReply: false,
-    index: false,
-  });
 
   app.get('/api/openapi.json', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');

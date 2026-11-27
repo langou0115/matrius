@@ -159,8 +159,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<BuiltApp>
         || pathname === '/api/health/ready'
         || pathname.startsWith('/api/auth/');
       const isProtected = (pathname.startsWith('/api/') && !isPublicApi)
-        || pathname === '/debug'
-        || pathname.startsWith('/debug-assets/');
+        || pathname === '/debug';
       if (!isProtected) return;
       if (!isAuthorizedCookie(request.headers.cookie, settings.AUTH_SECRET)) {
         reply.header('Cache-Control', 'no-store');

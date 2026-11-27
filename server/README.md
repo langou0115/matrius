@@ -36,13 +36,12 @@ implementation has been removed; UI chat now uses the server Agent over SSE.
 
 `GET /debug` is a local development dashboard. It currently has two sections:
 
-- **接口查询** — Swagger UI for `/api/openapi.json`, including all implemented routes.
 - **运行状态** — live `/api/health/ready` output.
+- **OpenAPI 契约** — raw `/api/openapi.json` output, including all implemented routes.
 
 Add future sections in [`server/routes/debug.ts`](routes/debug.ts) via
 `DEBUG_SECTIONS`; do not create another top-level debug page. The page is off in
-production unless `ENABLE_DEBUG_PAGE=true`. Swagger UI assets come from the
-local `swagger-ui-dist` package, so the page works offline.
+production unless `ENABLE_DEBUG_PAGE=true`.
 
 ## Layout
 

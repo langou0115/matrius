@@ -3,12 +3,16 @@ import {
   Eye,
   FileSpreadsheet,
   FileText,
+  Image as ImageIcon,
   Loader2,
+  Maximize2,
   Pencil,
   Presentation,
   Save,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type WheelEvent } from 'react';
 
 import { useInstance } from '@/features/instance/instance-state';
 import {
@@ -653,5 +657,134 @@ export function WorkPdfView({
       src={hostRawFileUrl(hostId, path)}
       title={name}
     />
+  );
+}
+
+const IMAGE_ZOOM_MIN = 0.1;
+const IMAGE_ZOOM_MAX = 8;
+
+function clampImageScale(value: number): number {
+  return Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, Math.round(value * 100) / 100));
+}
+
+export function WorkImageView({
+  hostId,
+  path,
+  name,
+  demo,
+}: {
+  hostId: string;
+  path: string;
+  name: string;
+  demo: boolean;
+}) {
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [zoomMode, setZoomMode] = useState<'fit' | 'scale'>('fit');
+  const [scale, setScale] = useState(1);
+  const [error, setError] = useState<string | null>(null);
+
+  if (demo) {
+    return (
+      <div className="work-doc-pdf-demo" role="status">
+        <ImageIcon size={28} strokeWidth={1.6} aria-hidden="true" />
+        <strong>{name}</strong>
+        <span>图片渲染预览（示例模式）</span>
+      </div>
+    );
+  }
+
+  const src = hostRawFileUrl(hostId, path);
+
+  function zoomBy(factor: number) {
+    setZoomMode('scale');
+    setScale((current) => clampImageScale(current * factor));
+  }
+
+  function handleWheel(event: WheelEvent<HTMLDivElement>) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    zoomBy(event.deltaY < 0 ? 1.2 : 1 / 1.2);
+  }
+
+  return (
+    <div className="work-doc-image-shell">
+      <div className="work-doc-toolbar">
+        <span className="work-doc-meta">
+          <span>图片预览</span>
+          {naturalSize && <span>· {naturalSize.width} × {naturalSize.height}</span>}
+        </span>
+        <div className="work-doc-toolbar-actions">
+          <button
+            type="button"
+            className="work-doc-mode-btn"
+            aria-label="缩小图片"
+            title="缩小"
+            onClick={() => zoomBy(1 / 1.25)}
+          >
+            <ZoomOut size={14} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="work-doc-mode-btn"
+            aria-label={zoomMode === 'fit' ? '切换到原始尺寸' : '适应窗口'}
+            title={zoomMode === 'fit' ? '点击切换到 100%' : '点击适应窗口'}
+            onClick={() => {
+              if (zoomMode === 'fit') {
+                setZoomMode('scale');
+                setScale(1);
+              } else {
+                setZoomMode('fit');
+                setScale(1);
+              }
+            }}
+          >
+            {zoomMode === 'fit' ? (
+              <>
+                <Maximize2 size={13} strokeWidth={1.75} aria-hidden="true" />
+                <span>适应</span>
+              </>
+            ) : (
+              <span>{Math.round(scale * 100)}%</span>
+            )}
+          </button>
+          <button
+            type="button"
+            className="work-doc-mode-btn"
+            aria-label="放大图片"
+            title="放大"
+            onClick={() => zoomBy(1.25)}
+          >
+            <ZoomIn size={14} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      {error ? (
+        <p className="work-tree-error work-doc-office-notice" role="alert">{error}</p>
+      ) : (
+        <div className="work-doc-image-stage" onWheel={handleWheel}>
+          <div className={`work-doc-image-frame${zoomMode === 'fit' ? ' is-fit' : ''}`}>
+            <img
+              className="work-doc-image-img"
+              src={src}
+              alt={name}
+              style={zoomMode === 'scale' && naturalSize
+                ? { width: `${Math.max(1, Math.round(naturalSize.width * scale))}px`, height: 'auto' }
+                : undefined}
+              onLoad={(event) => {
+                const img = event.currentTarget;
+                setError(null);
+                if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                  setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+                }
+              }}
+              onError={() => {
+                setError('无法加载图片预览。');
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

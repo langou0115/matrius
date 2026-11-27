@@ -27,14 +27,14 @@ async function withApp(
   }
 }
 
-test('the debug page exposes API and health sections with local Swagger assets', async () => {
+test('the debug page exposes health and OpenAPI sections without Swagger UI assets', async () => {
   await withApp({}, async (app) => {
     const page = await app.inject({ method: 'GET', url: '/debug' });
     assert.equal(page.statusCode, 200);
     assert.match(page.headers['content-type'] ?? '', /^text\/html/u);
-    assert.match(page.body, /接口查询/u);
     assert.match(page.body, /运行状态/u);
-    assert.match(page.body, /swagger-ui-bundle\.js/u);
+    assert.match(page.body, /OpenAPI 契约/u);
+    assert.doesNotMatch(page.body, /swagger-ui/u);
 
     const spec = await app.inject({ method: 'GET', url: '/api/openapi.json' });
     assert.equal(spec.statusCode, 200);
@@ -48,10 +48,6 @@ test('the debug page exposes API and health sections with local Swagger assets',
     assert.ok(document.paths['/api/agent/runs']);
     assert.ok(document.components.schemas.Conversation);
     assert.ok(document.components.schemas.AgentRunRequest);
-
-    const asset = await app.inject({ method: 'GET', url: '/debug-assets/swagger-ui.css' });
-    assert.equal(asset.statusCode, 200);
-    assert.match(asset.headers['content-type'] ?? '', /^text\/css/u);
   });
 });
 

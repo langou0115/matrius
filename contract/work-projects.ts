@@ -87,9 +87,11 @@ export type WorkContentSearchResponse = {
 
 export type HostFilePreview = { text: string; revision: string };
 
-export type WorkDocumentFormat = 'markdown' | 'pdf' | 'word' | 'excel' | 'powerpoint';
+export type WorkDocumentFormat = 'markdown' | 'html' | 'image' | 'pdf' | 'word' | 'excel' | 'powerpoint';
 
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown']);
+const HTML_EXTENSIONS = new Set(['html', 'htm']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'apng']);
 const WORD_EXTENSIONS = new Set(['docx', 'doc']);
 const EXCEL_EXTENSIONS = new Set(['xlsx', 'xls']);
 const POWERPOINT_EXTENSIONS = new Set(['pptx', 'ppt']);
@@ -100,12 +102,19 @@ export function detectWorkDocumentFormat(filename: string): WorkDocumentFormat |
   if (dot <= 0 || dot === base.length - 1) return null;
   const ext = base.slice(dot + 1).toLowerCase();
   if (MARKDOWN_EXTENSIONS.has(ext)) return 'markdown';
+  if (HTML_EXTENSIONS.has(ext)) return 'html';
+  if (IMAGE_EXTENSIONS.has(ext)) return 'image';
   if (ext === 'pdf') return 'pdf';
   if (WORD_EXTENSIONS.has(ext)) return 'word';
   if (EXCEL_EXTENSIONS.has(ext)) return 'excel';
   if (POWERPOINT_EXTENSIONS.has(ext)) return 'powerpoint';
   return null;
 }
+
+export type WorkTerminalLinkResolution =
+  | { kind: 'file'; path: string; name: string; outsideProject: boolean }
+  | { kind: 'directory'; path: string; openedInExplorer: boolean }
+  | { kind: 'not_found' };
 
 export type WorkSpreadsheetSheet = {
   name: string;

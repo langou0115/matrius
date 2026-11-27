@@ -137,6 +137,22 @@ test('host fs document and raw endpoints serve Office previews and inline PDFs',
   assert.equal(rawDocx.headers['content-type'], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   assert.match(String(rawDocx.headers['x-file-revision'] ?? ''), /^[a-f0-9]{64}$/u);
 
+  const pngPath = join(directory, 'sample.png');
+  const minimalPng = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  ]);
+  writeFileSync(pngPath, minimalPng);
+  const rawPng = await built.app.inject({
+    method: 'GET',
+    url: `/api/hosts/local/fs/raw?path=${encodeURIComponent(pngPath)}`,
+  });
+  assert.equal(rawPng.statusCode, 200);
+  assert.equal(rawPng.headers['content-type'], 'image/png');
+  assert.equal(rawPng.headers['content-disposition'], 'inline');
+  assert.equal(rawPng.headers['x-content-type-options'], 'nosniff');
+  assert.ok(rawPng.rawPayload.equals(minimalPng));
+
   const txtPath = join(directory, 'plain.txt');
   writeFileSync(txtPath, 'hello');
   const badRaw = await built.app.inject({

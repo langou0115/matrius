@@ -77,7 +77,7 @@ cp .env.local.example .env.local
 | `DATA_DIR` | `~/.matrius` | 数据根目录，存放 `matrius.db`、`files/` 与 `drafts/` |
 | `STORAGE_LIMIT_BYTES` | `134217728` | 资料库文件总量逻辑配额（字节，默认 128 MiB） |
 | `WEBTOOL_PROXY_URL` | 空 | 联网搜索与网页抓取可选上游 HTTP/SOCKS 代理地址 |
-| `ENABLE_DEBUG_PAGE` | 开发开启 / 生产关闭 | 是否启用 `/debug`（本地 Swagger 与健康检查） |
+| `ENABLE_DEBUG_PAGE` | 开发开启 / 生产关闭 | 是否启用 `/debug`（健康检查与 OpenAPI JSON） |
 | `LOG_LEVEL` | `info` | Fastify / Pino 日志级别（已对密钥与 Cookie 字段脱敏） |
 
 更多环境变量见 [.env.local.example](.env.local.example) 与 [server/README.md](server/README.md)。

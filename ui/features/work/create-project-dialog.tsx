@@ -262,7 +262,8 @@ export function CreateProjectDialog({
         className="compact-dialog work-project-dialog"
       >
         <form className="provider-edit-form" onSubmit={(event) => void handleSubmit(event)}>
-          <fieldset className="work-project-form-body" disabled={saving}>
+          <div className="work-project-form-scroll">
+            <fieldset className="work-project-form-body" disabled={saving}>
             {!aiConfigOnly && editing && project && (
               <label className="model-form-field">
                 项目名称
@@ -423,7 +424,8 @@ export function CreateProjectDialog({
               )}
             </div>
             )}
-          </fieldset>
+            </fieldset>
+          </div>
 
           <div className="dialog-footer">
             <button type="button" className="secondary-button" disabled={saving} onClick={onClose}>取消</button>

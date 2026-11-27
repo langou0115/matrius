@@ -21,7 +21,9 @@ import { createPreviewCliSessions } from '../ui/features/work/work-api.ts';
 import {
   attachTerminalClipboard,
   clampTerminalContextMenuPosition,
+  findTerminalLinks,
   openTerminalExternalLink,
+  parseTerminalPathTarget,
   sliceTerminalWriteBatch,
   syncHelperTextareaGeometry,
   waitsForTerminalRepaint,
@@ -1657,6 +1659,24 @@ test('terminal mode tracker and external link handler preserve interactive TUI m
     { url: 'https://openai.com/codex', target: '_blank', features: 'noopener,noreferrer' },
   ]);
   assert.equal(openTerminalExternalLink('javascript:alert(1)', () => { throw new Error('must not open'); }), false);
+
+  const detected = findTerminalLinks(
+    '打开 https://example.com/docs(1) 和 D:\\Engineer\\matrius\\ui\\main.tsx:12:4 以及 ./src/app.ts(8,2) 或 "C:\\Program Files\\Demo" 日期 2026/11/27',
+  );
+  assert.deepEqual(
+    detected.map(({ kind, target, line, column }) => ({ kind, target, line, column })),
+    [
+      { kind: 'url', target: 'https://example.com/docs(1)', line: undefined, column: undefined },
+      { kind: 'path', target: 'D:\\Engineer\\matrius\\ui\\main.tsx', line: 12, column: 4 },
+      { kind: 'path', target: './src/app.ts', line: 8, column: 2 },
+      { kind: 'path', target: 'C:\\Program Files\\Demo', line: undefined, column: undefined },
+    ],
+  );
+  assert.deepEqual(parseTerminalPathTarget('server/routes/hosts.ts:42:9'), {
+    target: 'server/routes/hosts.ts',
+    line: 42,
+    column: 9,
+  });
 });
 
 test('new CLI conversation sidebar draft auto-expands collapsed group, binds on first turn, and syncs live title updates unless manually renamed', async () => {

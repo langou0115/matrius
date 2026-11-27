@@ -134,7 +134,7 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     reply.header('X-Content-Type-Options', 'nosniff');
     const { path } = fsQuerySchema.required().parse(request.query ?? {});
     const format = detectWorkDocumentFormat(path);
-    if (format !== 'pdf' && format !== 'word' && format !== 'excel' && format !== 'powerpoint') {
+    if (format !== 'pdf' && format !== 'image' && format !== 'word' && format !== 'excel' && format !== 'powerpoint') {
       throw new AppError(415, 'raw_preview_unsupported', '暂不支持直接内嵌查看此文件类型。');
     }
     const rawBytes = await hostFs.readBinaryFile(request.params.hostId, path);
@@ -153,6 +153,17 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     }
     const mimeByExt: Record<string, string> = {
       pdf: 'application/pdf',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      jfif: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      svg: 'image/svg+xml',
+      bmp: 'image/bmp',
+      ico: 'image/x-icon',
+      avif: 'image/avif',
+      apng: 'image/apng',
       docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -187,17 +198,17 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     return reply.send(pdfBytes);
   });
 
-  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/text', { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
+  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/text', { bodyLimit: 25 * 1024 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { path, text, baseRevision } = z.object({
       path: z.string().min(1).max(1000),
-      text: z.string().max(256 * 1024),
+      text: z.string(),
       baseRevision: z.string().regex(/^[a-f0-9]{64}$/u),
     }).parse(request.body ?? {});
     return hostFs.savePreview(request.params.projectId, path, text, baseRevision);
   });
 
-  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/binary', { bodyLimit: 30 * 1024 * 1024 }, async (request, reply) => {
+  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/binary', { bodyLimit: 70 * 1024 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { path, dataBase64, baseRevision } = z.object({
       path: z.string().min(1).max(1000),
@@ -208,7 +219,7 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     return hostFs.saveBinaryFile(request.params.projectId, path, bytes, baseRevision);
   });
 
-  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/excel', { bodyLimit: 30 * 1024 * 1024 }, async (request, reply) => {
+  app.put<{ Params: { projectId: string } }>('/api/projects/:projectId/files/excel', { bodyLimit: 70 * 1024 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { path, spreadsheet, baseRevision } = z.object({
       path: z.string().min(1).max(1000),
@@ -256,6 +267,16 @@ export function registerHostRoutes(app: FastifyInstance, deps: HostRouteDeps): v
     }).parse(request.body ?? {});
     await hostFs.revealInSystemExplorer(request.params.projectId, path);
     reply.code(204);
+  });
+
+  app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/terminal-link', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { path, cwd, openDirectoryInExplorer } = z.object({
+      path: z.string().min(1).max(1000),
+      cwd: z.string().max(1000).optional(),
+      openDirectoryInExplorer: z.boolean().optional(),
+    }).parse(request.body ?? {});
+    return hostFs.resolveTerminalLink(request.params.projectId, path, { cwd, openDirectoryInExplorer });
   });
 
   app.delete<{ Params: { hostId: string } }>('/api/hosts/:hostId', async (request, reply) => {

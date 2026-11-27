@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { access, constants as fsConstants, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   LOCAL_WORK_HOST_ID,
@@ -12,6 +13,7 @@ import {
   type HostDirectoryListing,
   type HostFilePreview,
   type WorkHostEntry,
+  type WorkTerminalLinkResolution,
 } from '../../contract/work-projects';
 import type { AppDatabase } from '../db/client';
 import { fromDbUuid } from '../db/codecs';
@@ -93,11 +95,11 @@ const POSIX_BROWSE_SCRIPT = [
   'done',
 ].join('\n');
 
-const MAX_PREVIEW_BYTES = 256 * 1024;
-const MAX_BINARY_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_TEXT_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_BINARY_PREVIEW_BYTES = 50 * 1024 * 1024;
 const POSIX_PREVIEW_SCRIPT = [
   '[ -f "$1" ] || exit 2',
-  'head -c ' + (MAX_PREVIEW_BYTES + 1) + ' < "$1"',
+  `head -c ${MAX_TEXT_PREVIEW_BYTES + 1} < "$1"`,
 ].join('\n');
 
 function posixBinaryPreviewScript(maxBytes: number): string {
@@ -108,8 +110,8 @@ function posixBinaryPreviewScript(maxBytes: number): string {
 }
 
 function decodeFilePreview(bytes: Buffer): HostFilePreview {
-  if (bytes.length > MAX_PREVIEW_BYTES) {
-    throw new AppError(413, 'file_preview_too_large', '文件超过 256 KiB，无法预览。');
+  if (bytes.length > MAX_TEXT_PREVIEW_BYTES) {
+    throw new AppError(413, 'file_preview_too_large', `文件超过 ${Math.round(MAX_TEXT_PREVIEW_BYTES / (1024 * 1024))} MiB，无法预览。`);
   }
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -120,11 +122,11 @@ function decodeFilePreview(bytes: Buffer): HostFilePreview {
   }
 }
 
-async function readLocalPreviewBytes(path: string, maxBytes = MAX_PREVIEW_BYTES): Promise<Buffer> {
+async function readLocalPreviewBytes(path: string, maxBytes?: number): Promise<Buffer> {
   try {
     const info = await stat(path);
     if (!info.isFile()) throw invalid('只能预览普通文件。');
-    if (info.size > maxBytes) {
+    if (maxBytes !== undefined && info.size > maxBytes) {
       const limitLabel = maxBytes >= 1024 * 1024
         ? `${Math.round(maxBytes / (1024 * 1024))} MiB`
         : `${Math.round(maxBytes / 1024)} KiB`;
@@ -133,6 +135,9 @@ async function readLocalPreviewBytes(path: string, maxBytes = MAX_PREVIEW_BYTES)
     const file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
     try {
       if (!(await file.stat()).isFile()) throw invalid('只能预览普通文件。');
+      if (maxBytes === undefined) {
+        return await file.readFile();
+      }
       const allocSize = Math.min(maxBytes + 1, Math.max(info.size + 1, 1));
       const bytes = Buffer.alloc(allocSize);
       let offset = 0;
@@ -156,6 +161,31 @@ async function readLocalPreviewBytes(path: string, maxBytes = MAX_PREVIEW_BYTES)
   }
 }
 
+function openPathInSystemExplorer(
+  resolvedTarget: string,
+  isDir: boolean,
+  currentPlatform: NodeJS.Platform,
+): void {
+  if (currentPlatform === 'win32') {
+    const args = isDir ? [resolvedTarget] : [`/select,${resolvedTarget}`];
+    const child = spawn('explorer.exe', args, { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+    return;
+  }
+  if (currentPlatform === 'darwin') {
+    const args = isDir ? [resolvedTarget] : ['-R', resolvedTarget];
+    const child = spawn('open', args, { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+    return;
+  }
+  const dirToOpen = isDir ? resolvedTarget : dirname(resolvedTarget);
+  const child = spawn('xdg-open', [dirToOpen], { detached: true, stdio: 'ignore' });
+  child.on('error', () => {});
+  child.unref();
+}
+
 const POSIX_PROJECT_GIT = [
   'directory=$1',
   'shift',
@@ -171,6 +201,11 @@ export type HostFsService = {
   renameEntry(projectId: string, path: string, newName: string): Promise<WorkHostEntry>;
   deleteEntry(projectId: string, path: string): Promise<void>;
   revealInSystemExplorer(projectId: string, path?: string): Promise<void>;
+  resolveTerminalLink(
+    projectId: string,
+    rawPath: string,
+    options?: { cwd?: string; openDirectoryInExplorer?: boolean },
+  ): Promise<WorkTerminalLinkResolution>;
   readPreview(hostId: string, path: string): Promise<HostFilePreview>;
   readBinaryFile(hostId: string, path: string, maxBytes?: number): Promise<Buffer>;
   listEntries(hostId: string, rawPath?: string, options?: { refresh?: boolean }): Promise<HostDirectoryListing>;
@@ -599,7 +634,6 @@ export function createHostFsService(options: {
     '  python3 -c \'',
     'import hashlib, os, sys, tempfile',
     'root_raw, target_raw, base_rev = sys.argv[1], sys.argv[2], sys.argv[3]',
-    `max_bytes = ${MAX_PREVIEW_BYTES}`,
     'if not os.path.isfile(target_raw): sys.exit(2)',
     'root = os.path.realpath(root_raw)',
     'target = os.path.realpath(target_raw)',
@@ -611,16 +645,14 @@ export function createHostFsService(options: {
     '    sys.exit(4)',
     'try:',
     '    with open(target, "rb") as f:',
-    '        original = f.read(max_bytes + 1)',
+    '        original = f.read()',
     'except PermissionError:',
     '    sys.exit(5)',
-    'if len(original) > max_bytes: sys.exit(6)',
     'current_rev = hashlib.sha256(original).hexdigest()',
     'if current_rev != base_rev: sys.exit(3)',
     'bom = b"\\xef\\xbb\\xbf" if original.startswith(b"\\xef\\xbb\\xbf") else b""',
-    'new_text = sys.stdin.buffer.read(max_bytes + 1)',
+    'new_text = sys.stdin.buffer.read()',
     'replacement = bom + new_text',
-    'if len(replacement) > max_bytes: sys.exit(6)',
     'next_rev = hashlib.sha256(replacement).hexdigest()',
     'if next_rev == current_rev:',
     '    sys.stdout.write(next_rev)',
@@ -637,7 +669,7 @@ export function createHostFsService(options: {
     '    finally:',
     '        os.close(fd)',
     '    with open(target, "rb") as f:',
-    '        if hashlib.sha256(f.read(max_bytes + 1)).hexdigest() != base_rev: sys.exit(3)',
+    '        if hashlib.sha256(f.read()).hexdigest() != base_rev: sys.exit(3)',
     '    os.replace(tmp_path, target)',
     '    tmp_path = None',
     '    sys.stdout.write(next_rev)',
@@ -829,7 +861,7 @@ export function createHostFsService(options: {
             throw new AppError(403, 'path_forbidden', '没有权限写入远程文件。');
           }
           if (result.code === 6) {
-            throw new AppError(413, 'file_preview_too_large', '文件超过 256 KiB，无法保存。');
+            throw new AppError(413, 'file_preview_too_large', '文件超过大小限制，无法保存。');
           }
           if (result.code !== 0) {
             throw new AppError(502, 'host_save_failed', summarizeBrowseFailure(result.stderr, '保存远程文件失败。'));
@@ -904,7 +936,6 @@ export function createHostFsService(options: {
         if (savingPaths.has(lockKey)) throw new AppError(409, 'file_preview_busy', '文件正在保存，请稍后重试。');
         savingPaths.add(lockKey);
         const binaryScript = POSIX_SAVE_FILE_SCRIPT
-          .replace(`max_bytes = ${MAX_PREVIEW_BYTES}`, `max_bytes = ${MAX_BINARY_PREVIEW_BYTES}`)
           .replace('bom = b"\\xef\\xbb\\xbf" if original.startswith(b"\\xef\\xbb\\xbf") else b""', 'bom = b""');
         try {
           const row = requireWorkHostRow(db, INSTANCE_ID, project.host_id);
@@ -1155,26 +1186,158 @@ export function createHostFsService(options: {
         throw new AppError(403, 'path_forbidden', '只能打开项目目录内的文件或文件夹。');
       }
       const info = await lstat(resolvedTarget);
-      const isDir = info.isDirectory();
+      openPathInSystemExplorer(resolvedTarget, info.isDirectory(), currentPlatform);
+    },
 
-      if (currentPlatform === 'win32') {
-        const args = isDir ? [resolvedTarget] : [`/select,${resolvedTarget}`];
-        const child = spawn('explorer.exe', args, { detached: true, stdio: 'ignore' });
-        child.on('error', () => {});
-        child.unref();
-        return;
+    async resolveTerminalLink(projectId, rawInput, linkOptions) {
+      const openDirectoryInExplorer = linkOptions?.openDirectoryInExplorer !== false;
+      const trimmed = rawInput.trim().replace(/^['"`]|['"`]$/gu, '');
+      if (!trimmed || trimmed.includes('\0') || trimmed.length > 1000) {
+        return { kind: 'not_found' };
       }
-      if (currentPlatform === 'darwin') {
-        const args = isDir ? [resolvedTarget] : ['-R', resolvedTarget];
-        const child = spawn('open', args, { detached: true, stdio: 'ignore' });
-        child.on('error', () => {});
-        child.unref();
-        return;
+      const project = requireWorkProjectRow(db, INSTANCE_ID, projectId);
+      const cwd = linkOptions?.cwd?.trim() || undefined;
+
+      if (project.host_id === LOCAL_WORK_HOST_ID) {
+        let normalizedInput = trimmed;
+        if (/^file:\/\//iu.test(normalizedInput)) {
+          try {
+            normalizedInput = fileURLToPath(normalizedInput);
+          } catch {
+            return { kind: 'not_found' };
+          }
+        }
+        const candidates: string[] = [];
+        const seen = new Set<string>();
+        const pushCandidate = (value: string) => {
+          const key = currentPlatform === 'win32' ? value.toLowerCase() : value;
+          if (!seen.has(key)) {
+            seen.add(key);
+            candidates.push(value);
+          }
+        };
+        const isExplicitAbsolute = normalizedInput === '~'
+          || normalizedInput.startsWith('~/')
+          || normalizedInput.startsWith('~\\')
+          || isAbsolute(normalizedInput)
+          || (currentPlatform === 'win32' && /^[A-Za-z]:(?:[\\/]|$)/u.test(normalizedInput));
+        if (isExplicitAbsolute) {
+          pushCandidate(resolveLocalTarget(normalizedInput, homeDir, currentPlatform));
+        } else {
+          if (cwd) {
+            pushCandidate(resolve(resolveLocalTarget(cwd, homeDir, currentPlatform), normalizedInput));
+          }
+          pushCandidate(resolve(resolveLocalTarget(project.directory, homeDir, currentPlatform), normalizedInput));
+        }
+
+        const root = await realpath(resolveLocalTarget(project.directory, homeDir, currentPlatform))
+          .catch(() => resolveLocalTarget(project.directory, homeDir, currentPlatform));
+
+        for (const candidate of candidates) {
+          let info;
+          try {
+            info = await stat(candidate);
+          } catch {
+            continue;
+          }
+          const resolvedTarget = await realpath(candidate).catch(() => candidate);
+          if (info.isDirectory()) {
+            if (openDirectoryInExplorer) {
+              openPathInSystemExplorer(resolvedTarget, true, currentPlatform);
+            }
+            return { kind: 'directory', path: resolvedTarget, openedInExplorer: openDirectoryInExplorer };
+          }
+          if (info.isFile()) {
+            const rel = relative(root, resolvedTarget);
+            const outsideProject = isAbsolute(rel) || rel === '..' || rel.startsWith('..' + sep);
+            return {
+              kind: 'file',
+              path: resolvedTarget,
+              name: basename(resolvedTarget),
+              outsideProject,
+            };
+          }
+        }
+        return { kind: 'not_found' };
       }
-      const dirToOpen = isDir ? resolvedTarget : dirname(resolvedTarget);
-      const child = spawn('xdg-open', [dirToOpen], { detached: true, stdio: 'ignore' });
-      child.on('error', () => {});
-      child.unref();
+
+      let remoteInput = trimmed;
+      if (/^file:\/\//iu.test(remoteInput)) {
+        try {
+          remoteInput = decodeURIComponent(new URL(remoteInput).pathname);
+        } catch {
+          return { kind: 'not_found' };
+        }
+      }
+      const row = requireWorkHostRow(db, INSTANCE_ID, project.host_id);
+      const resolveScript = [
+        'raw=$1',
+        'cwd_dir=$2',
+        'proj_dir=$3',
+        'expand_home() { case "$1" in "~") printf "%s" "$HOME" ;; "~/"*) printf "%s" "$HOME/${1#~/}" ;; *) printf "%s" "$1" ;; esac; }',
+        'raw=$(expand_home "$raw")',
+        'cwd_dir=$(expand_home "$cwd_dir")',
+        'proj_dir=$(expand_home "$proj_dir")',
+        'check_path() {',
+        '  p=$1',
+        '  [ -n "$p" ] || return 1',
+        '  if [ -d "$p" ]; then',
+        '    rp=$(cd -- "$p" 2>/dev/null && pwd -P) || rp=$p',
+        '    printf "d\\0%s\\0" "$rp"',
+        '    return 0',
+        '  fi',
+        '  if [ -f "$p" ]; then',
+        '    dir=$(cd -- "$(dirname -- "$p")" 2>/dev/null && pwd -P) || dir=$(dirname -- "$p")',
+        '    rp="$dir/$(basename -- "$p")"',
+        '    root=$(cd -- "$proj_dir" 2>/dev/null && pwd -P) || root=$proj_dir',
+        '    case "$rp" in "$root"/*) in_proj=1 ;; *) in_proj=0 ;; esac',
+        '    printf "f\\0%s\\0%s\\0" "$rp" "$in_proj"',
+        '    return 0',
+        '  fi',
+        '  return 1',
+        '}',
+        'case "$raw" in',
+        '  /*) check_path "$raw" && exit 0 ;;',
+        '  *)',
+        '    if [ -n "$cwd_dir" ]; then check_path "$cwd_dir/$raw" && exit 0; fi',
+        '    if [ -n "$proj_dir" ]; then check_path "$proj_dir/$raw" && exit 0; fi',
+        '    ;;',
+        'esac',
+        'exit 2',
+      ].join('\n');
+
+      const result = await runRemoteFs(row, remoteInput, resolveScript, [cwd ?? '', project.directory], 10_000);
+      if (result.code !== 0) {
+        return { kind: 'not_found' };
+      }
+      const tokens = result.stdout.toString('utf8').split('\0');
+      const kindTag = tokens[0];
+      const resolvedPath = tokens[1];
+      if (!resolvedPath) return { kind: 'not_found' };
+      if (kindTag === 'd') {
+        let openedInExplorer = false;
+        if (row.kind === 'wsl' && currentPlatform === 'win32' && openDirectoryInExplorer && wslCommand) {
+          const wslPathRes = await runCommand(wslCommand, ['-d', row.distro, '--exec', 'wslpath', '-w', resolvedPath], {
+            timeoutMs: 5_000,
+            env: { WSL_UTF8: '1' },
+          }).catch(() => null);
+          const winPath = wslPathRes && wslPathRes.code === 0 ? decodeWslText(wslPathRes.stdout).trim() : '';
+          if (winPath) {
+            openPathInSystemExplorer(winPath, true, currentPlatform);
+            openedInExplorer = true;
+          }
+        }
+        return { kind: 'directory', path: resolvedPath, openedInExplorer };
+      }
+      if (kindTag === 'f') {
+        return {
+          kind: 'file',
+          path: resolvedPath,
+          name: posix.basename(resolvedPath),
+          outsideProject: tokens[2] !== '1',
+        };
+      }
+      return { kind: 'not_found' };
     },
 
     async readPreview(hostId, path) {
@@ -1188,11 +1351,13 @@ export function createHostFsService(options: {
         if (!isAbsolute(path) || (currentPlatform === 'win32' && !/^[a-z]:[\\/][^:]*$/iu.test(path))) {
           throw invalid('文件路径不合法。');
         }
-        return decodeFilePreview(await readLocalPreviewBytes(path));
+        return decodeFilePreview(await readLocalPreviewBytes(path, MAX_TEXT_PREVIEW_BYTES));
       }
       if (!posix.isAbsolute(path)) throw invalid('文件路径不合法。');
       const row = requireWorkHostRow(db, INSTANCE_ID, hostId);
-      const result = await runRemoteFs(row, path, POSIX_PREVIEW_SCRIPT);
+      const result = await runRemoteFs(row, path, POSIX_PREVIEW_SCRIPT, [], 20_000, {
+        maxBuffer: MAX_TEXT_PREVIEW_BYTES + 64 * 1024,
+      });
       if (result.code === 2) throw invalid('文件不存在或不是普通文件。');
       if (result.code !== 0) {
         throw new AppError(502, 'host_preview_failed', summarizeBrowseFailure(result.stderr, '无法读取主机文件。'));
